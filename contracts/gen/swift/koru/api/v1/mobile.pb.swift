@@ -8,6 +8,8 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+// SPDX-License-Identifier: MPL-2.0
+
 #if canImport(FoundationEssentials)
 import FoundationEssentials
 #else
@@ -118,6 +120,13 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
   /// open a browser (BrowserSignInPrompt) and to hand back the verified App
   /// Link that returns from it (BrowserSignInReply).
   case startApple // = 17
+
+  /// Read the exact current account Cloud plan and storage count.
+  case inspectCloudPlan // = 18
+  case inspectCloudUsageWorkspaces // = 19
+  case inspectCloudUsageDocuments // = 20
+  case inspectCloudDocument // = 21
+  case removeCloudFile // = 22
   case UNRECOGNIZED(Int)
 
   public init() {
@@ -143,6 +152,11 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     case 15: self = .inspectCloudSync
     case 16: self = .startEmail
     case 17: self = .startApple
+    case 18: self = .inspectCloudPlan
+    case 19: self = .inspectCloudUsageWorkspaces
+    case 20: self = .inspectCloudUsageDocuments
+    case 21: self = .inspectCloudDocument
+    case 22: self = .removeCloudFile
     default: self = .UNRECOGNIZED(rawValue)
     }
   }
@@ -166,6 +180,11 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     case .inspectCloudSync: return 15
     case .startEmail: return 16
     case .startApple: return 17
+    case .inspectCloudPlan: return 18
+    case .inspectCloudUsageWorkspaces: return 19
+    case .inspectCloudUsageDocuments: return 20
+    case .inspectCloudDocument: return 21
+    case .removeCloudFile: return 22
     case .UNRECOGNIZED(let i): return i
     }
   }
@@ -189,6 +208,11 @@ public nonisolated enum KORAPIAccountAction: SwiftProtobuf.Enum, Swift.CaseItera
     .inspectCloudSync,
     .startEmail,
     .startApple,
+    .inspectCloudPlan,
+    .inspectCloudUsageWorkspaces,
+    .inspectCloudUsageDocuments,
+    .inspectCloudDocument,
+    .removeCloudFile,
   ]
 
 }
@@ -3266,64 +3290,135 @@ public nonisolated struct KORAPIDeviceHistory: Sendable {
   fileprivate var _errorCode: String? = nil
 }
 
-public nonisolated struct KORAPIAccountCommandRequest: Sendable {
+public nonisolated struct KORAPIAccountCommandRequest: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
   public var host: KORAPIHostContext {
-    get {_host ?? KORAPIHostContext()}
-    set {_host = newValue}
+    get {_storage._host ?? KORAPIHostContext()}
+    set {_uniqueStorage()._host = newValue}
   }
   /// Returns true if `host` has been explicitly set.
-  public var hasHost: Bool {self._host != nil}
+  public var hasHost: Bool {_storage._host != nil}
   /// Clears the value of `host`. Subsequent reads from it will return its default value.
-  public mutating func clearHost() {self._host = nil}
+  public mutating func clearHost() {_uniqueStorage()._host = nil}
 
-  public var version: UInt32 = 0
+  public var version: UInt32 {
+    get {_storage._version}
+    set {_uniqueStorage()._version = newValue}
+  }
 
-  public var requester: UInt64 = 0
+  public var requester: UInt64 {
+    get {_storage._requester}
+    set {_uniqueStorage()._requester = newValue}
+  }
 
-  public var action: KORAPIAccountAction = .unspecified
+  public var action: KORAPIAccountAction {
+    get {_storage._action}
+    set {_uniqueStorage()._action = newValue}
+  }
 
-  public var generation: UInt64 = 0
+  public var generation: UInt64 {
+    get {_storage._generation}
+    set {_uniqueStorage()._generation = newValue}
+  }
 
-  public var locale: String = String()
+  public var locale: String {
+    get {_storage._locale}
+    set {_uniqueStorage()._locale = newValue}
+  }
 
-  public var profileID: String = String()
+  public var profileID: String {
+    get {_storage._profileID}
+    set {_uniqueStorage()._profileID = newValue}
+  }
 
-  public var accountID: String = String()
+  public var accountID: String {
+    get {_storage._accountID}
+    set {_uniqueStorage()._accountID = newValue}
+  }
 
   public var expectedOwnerScope: UInt64 {
-    get {_expectedOwnerScope ?? 0}
-    set {_expectedOwnerScope = newValue}
+    get {_storage._expectedOwnerScope ?? 0}
+    set {_uniqueStorage()._expectedOwnerScope = newValue}
   }
   /// Returns true if `expectedOwnerScope` has been explicitly set.
-  public var hasExpectedOwnerScope: Bool {self._expectedOwnerScope != nil}
+  public var hasExpectedOwnerScope: Bool {_storage._expectedOwnerScope != nil}
   /// Clears the value of `expectedOwnerScope`. Subsequent reads from it will return its default value.
-  public mutating func clearExpectedOwnerScope() {self._expectedOwnerScope = nil}
+  public mutating func clearExpectedOwnerScope() {_uniqueStorage()._expectedOwnerScope = nil}
 
   /// Canonical sorted, unique Profile IDs; empty clears unfinished selection.
-  public var profileIds: [String] = []
+  public var profileIds: [String] {
+    get {_storage._profileIds}
+    set {_uniqueStorage()._profileIds = newValue}
+  }
 
   /// SET_PROFILE_CLOUD_SYNC only: the switch's new position for profile_id.
   /// Absent on every other action; a missing value is never read as "off".
   public var cloudSyncEnabled: Bool {
-    get {_cloudSyncEnabled ?? false}
-    set {_cloudSyncEnabled = newValue}
+    get {_storage._cloudSyncEnabled ?? false}
+    set {_uniqueStorage()._cloudSyncEnabled = newValue}
   }
   /// Returns true if `cloudSyncEnabled` has been explicitly set.
-  public var hasCloudSyncEnabled: Bool {self._cloudSyncEnabled != nil}
+  public var hasCloudSyncEnabled: Bool {_storage._cloudSyncEnabled != nil}
   /// Clears the value of `cloudSyncEnabled`. Subsequent reads from it will return its default value.
-  public mutating func clearCloudSyncEnabled() {self._cloudSyncEnabled = nil}
+  public mutating func clearCloudSyncEnabled() {_uniqueStorage()._cloudSyncEnabled = nil}
+
+  /// Inventory reads only. The exact Workspace/incarnation pair is required
+  /// only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+  public var cloudWorkspaceID: String {
+    get {_storage._cloudWorkspaceID ?? String()}
+    set {_uniqueStorage()._cloudWorkspaceID = newValue}
+  }
+  /// Returns true if `cloudWorkspaceID` has been explicitly set.
+  public var hasCloudWorkspaceID: Bool {_storage._cloudWorkspaceID != nil}
+  /// Clears the value of `cloudWorkspaceID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudWorkspaceID() {_uniqueStorage()._cloudWorkspaceID = nil}
+
+  public var cloudIncarnationID: String {
+    get {_storage._cloudIncarnationID ?? String()}
+    set {_uniqueStorage()._cloudIncarnationID = newValue}
+  }
+  /// Returns true if `cloudIncarnationID` has been explicitly set.
+  public var hasCloudIncarnationID: Bool {_storage._cloudIncarnationID != nil}
+  /// Clears the value of `cloudIncarnationID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudIncarnationID() {_uniqueStorage()._cloudIncarnationID = nil}
+
+  public var cloudCursor: String {
+    get {_storage._cloudCursor ?? String()}
+    set {_uniqueStorage()._cloudCursor = newValue}
+  }
+  /// Returns true if `cloudCursor` has been explicitly set.
+  public var hasCloudCursor: Bool {_storage._cloudCursor != nil}
+  /// Clears the value of `cloudCursor`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudCursor() {_uniqueStorage()._cloudCursor = nil}
+
+  /// Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+  public var cloudDocumentSelectionJson: String {
+    get {_storage._cloudDocumentSelectionJson ?? String()}
+    set {_uniqueStorage()._cloudDocumentSelectionJson = newValue}
+  }
+  /// Returns true if `cloudDocumentSelectionJson` has been explicitly set.
+  public var hasCloudDocumentSelectionJson: Bool {_storage._cloudDocumentSelectionJson != nil}
+  /// Clears the value of `cloudDocumentSelectionJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudDocumentSelectionJson() {_uniqueStorage()._cloudDocumentSelectionJson = nil}
+
+  /// REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+  public var cloudFileNodeID: String {
+    get {_storage._cloudFileNodeID ?? String()}
+    set {_uniqueStorage()._cloudFileNodeID = newValue}
+  }
+  /// Returns true if `cloudFileNodeID` has been explicitly set.
+  public var hasCloudFileNodeID: Bool {_storage._cloudFileNodeID != nil}
+  /// Clears the value of `cloudFileNodeID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudFileNodeID() {_uniqueStorage()._cloudFileNodeID = nil}
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _host: KORAPIHostContext? = nil
-  fileprivate var _expectedOwnerScope: UInt64? = nil
-  fileprivate var _cloudSyncEnabled: Bool? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 public nonisolated struct KORAPIAccountCommandReply: Sendable {
@@ -3622,73 +3717,175 @@ public nonisolated struct KORAPIMobileAccountSummary: Sendable {
   public init() {}
 }
 
-public nonisolated struct KORAPIMobileAccountResult: Sendable {
+public nonisolated struct KORAPIMobileAccountResult: @unchecked Sendable {
   // SwiftProtobuf.Message conformance is added in an extension below. See the
   // `Message` and `Message+*Additions` files in the SwiftProtobuf library for
   // methods supported on all messages.
 
-  public var sequence: UInt64 = 0
+  public var sequence: UInt64 {
+    get {_storage._sequence}
+    set {_uniqueStorage()._sequence = newValue}
+  }
 
-  public var requester: UInt64 = 0
+  public var requester: UInt64 {
+    get {_storage._requester}
+    set {_uniqueStorage()._requester = newValue}
+  }
 
-  public var generation: UInt64 = 0
+  public var generation: UInt64 {
+    get {_storage._generation}
+    set {_uniqueStorage()._generation = newValue}
+  }
 
-  public var kind: String = String()
+  public var kind: String {
+    get {_storage._kind}
+    set {_uniqueStorage()._kind = newValue}
+  }
 
   public var errorCode: String {
-    get {_errorCode ?? String()}
-    set {_errorCode = newValue}
+    get {_storage._errorCode ?? String()}
+    set {_uniqueStorage()._errorCode = newValue}
   }
   /// Returns true if `errorCode` has been explicitly set.
-  public var hasErrorCode: Bool {self._errorCode != nil}
+  public var hasErrorCode: Bool {_storage._errorCode != nil}
   /// Clears the value of `errorCode`. Subsequent reads from it will return its default value.
-  public mutating func clearErrorCode() {self._errorCode = nil}
+  public mutating func clearErrorCode() {_uniqueStorage()._errorCode = nil}
 
-  public var profiles: [KORAPIMobileAccountProfile] = []
+  public var profiles: [KORAPIMobileAccountProfile] {
+    get {_storage._profiles}
+    set {_uniqueStorage()._profiles = newValue}
+  }
 
   public var account: KORAPIMobileAccountSummary {
-    get {_account ?? KORAPIMobileAccountSummary()}
-    set {_account = newValue}
+    get {_storage._account ?? KORAPIMobileAccountSummary()}
+    set {_uniqueStorage()._account = newValue}
   }
   /// Returns true if `account` has been explicitly set.
-  public var hasAccount: Bool {self._account != nil}
+  public var hasAccount: Bool {_storage._account != nil}
   /// Clears the value of `account`. Subsequent reads from it will return its default value.
-  public mutating func clearAccount() {self._account = nil}
+  public mutating func clearAccount() {_uniqueStorage()._account = nil}
 
-  public var ownerScope: UInt64 = 0
+  public var ownerScope: UInt64 {
+    get {_storage._ownerScope}
+    set {_uniqueStorage()._ownerScope = newValue}
+  }
 
   public var selectedAccountID: String {
-    get {_selectedAccountID ?? String()}
-    set {_selectedAccountID = newValue}
+    get {_storage._selectedAccountID ?? String()}
+    set {_uniqueStorage()._selectedAccountID = newValue}
   }
   /// Returns true if `selectedAccountID` has been explicitly set.
-  public var hasSelectedAccountID: Bool {self._selectedAccountID != nil}
+  public var hasSelectedAccountID: Bool {_storage._selectedAccountID != nil}
   /// Clears the value of `selectedAccountID`. Subsequent reads from it will return its default value.
-  public mutating func clearSelectedAccountID() {self._selectedAccountID = nil}
+  public mutating func clearSelectedAccountID() {_uniqueStorage()._selectedAccountID = nil}
 
   public var selectedScope: UInt64 {
-    get {_selectedScope ?? 0}
-    set {_selectedScope = newValue}
+    get {_storage._selectedScope ?? 0}
+    set {_uniqueStorage()._selectedScope = newValue}
   }
   /// Returns true if `selectedScope` has been explicitly set.
-  public var hasSelectedScope: Bool {self._selectedScope != nil}
+  public var hasSelectedScope: Bool {_storage._selectedScope != nil}
   /// Clears the value of `selectedScope`. Subsequent reads from it will return its default value.
-  public mutating func clearSelectedScope() {self._selectedScope = nil}
+  public mutating func clearSelectedScope() {_uniqueStorage()._selectedScope = nil}
 
-  public var enrollments: [KORAPIMobileProfileEnrollment] = []
+  public var enrollments: [KORAPIMobileProfileEnrollment] {
+    get {_storage._enrollments}
+    set {_uniqueStorage()._enrollments = newValue}
+  }
 
   /// Present on a "cloud_sync" result: every local Profile of the signed-in
   /// account. A Profile absent from the list has no Cloud sync state here.
-  public var cloudSync: [KORAPIMobileCloudSyncProfile] = []
+  public var cloudSync: [KORAPIMobileCloudSyncProfile] {
+    get {_storage._cloudSync}
+    set {_uniqueStorage()._cloudSync = newValue}
+  }
+
+  /// Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+  /// failed cloud_plan read; never interpreted as known zero.
+  public var cloudPlanJson: String {
+    get {_storage._cloudPlanJson ?? String()}
+    set {_uniqueStorage()._cloudPlanJson = newValue}
+  }
+  /// Returns true if `cloudPlanJson` has been explicitly set.
+  public var hasCloudPlanJson: Bool {_storage._cloudPlanJson != nil}
+  /// Clears the value of `cloudPlanJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudPlanJson() {_uniqueStorage()._cloudPlanJson = nil}
+
+  public var cloudPlanRequestElapsedMillis: UInt64 {
+    get {_storage._cloudPlanRequestElapsedMillis}
+    set {_uniqueStorage()._cloudPlanRequestElapsedMillis = newValue}
+  }
+
+  /// One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+  /// has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+  public var cloudInventoryJson: String {
+    get {_storage._cloudInventoryJson ?? String()}
+    set {_uniqueStorage()._cloudInventoryJson = newValue}
+  }
+  /// Returns true if `cloudInventoryJson` has been explicitly set.
+  public var hasCloudInventoryJson: Bool {_storage._cloudInventoryJson != nil}
+  /// Clears the value of `cloudInventoryJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudInventoryJson() {_uniqueStorage()._cloudInventoryJson = nil}
+
+  /// Exact request selectors, echoed for documents on success and failure.
+  public var cloudWorkspaceID: String {
+    get {_storage._cloudWorkspaceID ?? String()}
+    set {_uniqueStorage()._cloudWorkspaceID = newValue}
+  }
+  /// Returns true if `cloudWorkspaceID` has been explicitly set.
+  public var hasCloudWorkspaceID: Bool {_storage._cloudWorkspaceID != nil}
+  /// Clears the value of `cloudWorkspaceID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudWorkspaceID() {_uniqueStorage()._cloudWorkspaceID = nil}
+
+  public var cloudIncarnationID: String {
+    get {_storage._cloudIncarnationID ?? String()}
+    set {_uniqueStorage()._cloudIncarnationID = newValue}
+  }
+  /// Returns true if `cloudIncarnationID` has been explicitly set.
+  public var hasCloudIncarnationID: Bool {_storage._cloudIncarnationID != nil}
+  /// Clears the value of `cloudIncarnationID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudIncarnationID() {_uniqueStorage()._cloudIncarnationID = nil}
+
+  /// Echoed on inspection/removal success and failure.
+  public var cloudDocumentSelectionJson: String {
+    get {_storage._cloudDocumentSelectionJson ?? String()}
+    set {_uniqueStorage()._cloudDocumentSelectionJson = newValue}
+  }
+  /// Returns true if `cloudDocumentSelectionJson` has been explicitly set.
+  public var hasCloudDocumentSelectionJson: Bool {_storage._cloudDocumentSelectionJson != nil}
+  /// Clears the value of `cloudDocumentSelectionJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudDocumentSelectionJson() {_uniqueStorage()._cloudDocumentSelectionJson = nil}
+
+  /// Validated detached passive projection, <=1 MiB UTF-8 bytes.
+  public var cloudDocumentInspectionJson: String {
+    get {_storage._cloudDocumentInspectionJson ?? String()}
+    set {_uniqueStorage()._cloudDocumentInspectionJson = newValue}
+  }
+  /// Returns true if `cloudDocumentInspectionJson` has been explicitly set.
+  public var hasCloudDocumentInspectionJson: Bool {_storage._cloudDocumentInspectionJson != nil}
+  /// Clears the value of `cloudDocumentInspectionJson`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudDocumentInspectionJson() {_uniqueStorage()._cloudDocumentInspectionJson = nil}
+
+  public var cloudFileNodeID: String {
+    get {_storage._cloudFileNodeID ?? String()}
+    set {_uniqueStorage()._cloudFileNodeID = newValue}
+  }
+  /// Returns true if `cloudFileNodeID` has been explicitly set.
+  public var hasCloudFileNodeID: Bool {_storage._cloudFileNodeID != nil}
+  /// Clears the value of `cloudFileNodeID`. Subsequent reads from it will return its default value.
+  public mutating func clearCloudFileNodeID() {_uniqueStorage()._cloudFileNodeID = nil}
+
+  /// True only after the ordinary remote durable Ack; never bytes-freed evidence.
+  public var cloudFileRemoved: Bool {
+    get {_storage._cloudFileRemoved}
+    set {_uniqueStorage()._cloudFileRemoved = newValue}
+  }
 
   public var unknownFields = SwiftProtobuf.UnknownStorage()
 
   public init() {}
 
-  fileprivate var _errorCode: String? = nil
-  fileprivate var _account: KORAPIMobileAccountSummary? = nil
-  fileprivate var _selectedAccountID: String? = nil
-  fileprivate var _selectedScope: UInt64? = nil
+  fileprivate var _storage = _StorageClass.defaultInstance
 }
 
 /// One Profile's Cloud sync state on this device. Ids, booleans, counts and a
@@ -4014,7 +4211,7 @@ nonisolated extension KORAPIRelayState: SwiftProtobuf._ProtoNameProviding {
 }
 
 nonisolated extension KORAPIAccountAction: SwiftProtobuf._ProtoNameProviding {
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCOUNT_ACTION_UNSPECIFIED\0\u{1}ACCOUNT_ACTION_START_GOOGLE\0\u{1}ACCOUNT_ACTION_CANCEL\0\u{1}ACCOUNT_ACTION_RETRY\0\u{1}ACCOUNT_ACTION_LOGOUT\0\u{1}ACCOUNT_ACTION_LIST_PROFILES\0\u{2}\u{2}ACCOUNT_ACTION_RETRY_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CANCEL_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CONFIRM_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_CANCEL_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_SWITCH_ACCOUNT\0\u{1}ACCOUNT_ACTION_ADD_ACCOUNT\0\u{1}ACCOUNT_ACTION_SELECT_PROFILES\0\u{1}ACCOUNT_ACTION_SET_PROFILE_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_START_EMAIL\0\u{1}ACCOUNT_ACTION_START_APPLE\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{2}\0ACCOUNT_ACTION_UNSPECIFIED\0\u{1}ACCOUNT_ACTION_START_GOOGLE\0\u{1}ACCOUNT_ACTION_CANCEL\0\u{1}ACCOUNT_ACTION_RETRY\0\u{1}ACCOUNT_ACTION_LOGOUT\0\u{1}ACCOUNT_ACTION_LIST_PROFILES\0\u{2}\u{2}ACCOUNT_ACTION_RETRY_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CANCEL_ENROLLMENT\0\u{1}ACCOUNT_ACTION_CONFIRM_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_CANCEL_ACCOUNT_CREATION\0\u{1}ACCOUNT_ACTION_SWITCH_ACCOUNT\0\u{1}ACCOUNT_ACTION_ADD_ACCOUNT\0\u{1}ACCOUNT_ACTION_SELECT_PROFILES\0\u{1}ACCOUNT_ACTION_SET_PROFILE_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_SYNC\0\u{1}ACCOUNT_ACTION_START_EMAIL\0\u{1}ACCOUNT_ACTION_START_APPLE\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_PLAN\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS\0\u{1}ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT\0\u{1}ACCOUNT_ACTION_REMOVE_CLOUD_FILE\0")
 }
 
 nonisolated extension KORAPIAccountVaultAction: SwiftProtobuf._ProtoNameProviding {
@@ -8396,83 +8593,174 @@ nonisolated extension KORAPIDeviceHistory: SwiftProtobuf.Message, SwiftProtobuf.
 
 nonisolated extension KORAPIAccountCommandRequest: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".AccountCommandRequest"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}host\0\u{1}version\0\u{1}requester\0\u{1}action\0\u{1}generation\0\u{1}locale\0\u{3}profile_id\0\u{3}account_id\0\u{3}expected_owner_scope\0\u{3}profile_ids\0\u{3}cloud_sync_enabled\0")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}host\0\u{1}version\0\u{1}requester\0\u{1}action\0\u{1}generation\0\u{1}locale\0\u{3}profile_id\0\u{3}account_id\0\u{3}expected_owner_scope\0\u{3}profile_ids\0\u{3}cloud_sync_enabled\0\u{3}cloud_workspace_id\0\u{3}cloud_incarnation_id\0\u{3}cloud_cursor\0\u{3}cloud_document_selection_json\0\u{3}cloud_file_node_id\0")
+
+  fileprivate class _StorageClass {
+    var _host: KORAPIHostContext? = nil
+    var _version: UInt32 = 0
+    var _requester: UInt64 = 0
+    var _action: KORAPIAccountAction = .unspecified
+    var _generation: UInt64 = 0
+    var _locale: String = String()
+    var _profileID: String = String()
+    var _accountID: String = String()
+    var _expectedOwnerScope: UInt64? = nil
+    var _profileIds: [String] = []
+    var _cloudSyncEnabled: Bool? = nil
+    var _cloudWorkspaceID: String? = nil
+    var _cloudIncarnationID: String? = nil
+    var _cloudCursor: String? = nil
+    var _cloudDocumentSelectionJson: String? = nil
+    var _cloudFileNodeID: String? = nil
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _host = source._host
+      _version = source._version
+      _requester = source._requester
+      _action = source._action
+      _generation = source._generation
+      _locale = source._locale
+      _profileID = source._profileID
+      _accountID = source._accountID
+      _expectedOwnerScope = source._expectedOwnerScope
+      _profileIds = source._profileIds
+      _cloudSyncEnabled = source._cloudSyncEnabled
+      _cloudWorkspaceID = source._cloudWorkspaceID
+      _cloudIncarnationID = source._cloudIncarnationID
+      _cloudCursor = source._cloudCursor
+      _cloudDocumentSelectionJson = source._cloudDocumentSelectionJson
+      _cloudFileNodeID = source._cloudFileNodeID
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularMessageField(value: &self._host) }()
-      case 2: try { try decoder.decodeSingularUInt32Field(value: &self.version) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.requester) }()
-      case 4: try { try decoder.decodeSingularEnumField(value: &self.action) }()
-      case 5: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 6: try { try decoder.decodeSingularStringField(value: &self.locale) }()
-      case 7: try { try decoder.decodeSingularStringField(value: &self.profileID) }()
-      case 8: try { try decoder.decodeSingularStringField(value: &self.accountID) }()
-      case 9: try { try decoder.decodeSingularUInt64Field(value: &self._expectedOwnerScope) }()
-      case 10: try { try decoder.decodeRepeatedStringField(value: &self.profileIds) }()
-      case 11: try { try decoder.decodeSingularBoolField(value: &self._cloudSyncEnabled) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularMessageField(value: &_storage._host) }()
+        case 2: try { try decoder.decodeSingularUInt32Field(value: &_storage._version) }()
+        case 3: try { try decoder.decodeSingularUInt64Field(value: &_storage._requester) }()
+        case 4: try { try decoder.decodeSingularEnumField(value: &_storage._action) }()
+        case 5: try { try decoder.decodeSingularUInt64Field(value: &_storage._generation) }()
+        case 6: try { try decoder.decodeSingularStringField(value: &_storage._locale) }()
+        case 7: try { try decoder.decodeSingularStringField(value: &_storage._profileID) }()
+        case 8: try { try decoder.decodeSingularStringField(value: &_storage._accountID) }()
+        case 9: try { try decoder.decodeSingularUInt64Field(value: &_storage._expectedOwnerScope) }()
+        case 10: try { try decoder.decodeRepeatedStringField(value: &_storage._profileIds) }()
+        case 11: try { try decoder.decodeSingularBoolField(value: &_storage._cloudSyncEnabled) }()
+        case 12: try { try decoder.decodeSingularStringField(value: &_storage._cloudWorkspaceID) }()
+        case 13: try { try decoder.decodeSingularStringField(value: &_storage._cloudIncarnationID) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._cloudCursor) }()
+        case 15: try { try decoder.decodeSingularStringField(value: &_storage._cloudDocumentSelectionJson) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._cloudFileNodeID) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    try { if let v = self._host {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
-    } }()
-    if self.version != 0 {
-      try visitor.visitSingularUInt32Field(value: self.version, fieldNumber: 2)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      try { if let v = _storage._host {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 1)
+      } }()
+      if _storage._version != 0 {
+        try visitor.visitSingularUInt32Field(value: _storage._version, fieldNumber: 2)
+      }
+      if _storage._requester != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._requester, fieldNumber: 3)
+      }
+      if _storage._action != .unspecified {
+        try visitor.visitSingularEnumField(value: _storage._action, fieldNumber: 4)
+      }
+      if _storage._generation != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._generation, fieldNumber: 5)
+      }
+      if !_storage._locale.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._locale, fieldNumber: 6)
+      }
+      if !_storage._profileID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._profileID, fieldNumber: 7)
+      }
+      if !_storage._accountID.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._accountID, fieldNumber: 8)
+      }
+      try { if let v = _storage._expectedOwnerScope {
+        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 9)
+      } }()
+      if !_storage._profileIds.isEmpty {
+        try visitor.visitRepeatedStringField(value: _storage._profileIds, fieldNumber: 10)
+      }
+      try { if let v = _storage._cloudSyncEnabled {
+        try visitor.visitSingularBoolField(value: v, fieldNumber: 11)
+      } }()
+      try { if let v = _storage._cloudWorkspaceID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 12)
+      } }()
+      try { if let v = _storage._cloudIncarnationID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 13)
+      } }()
+      try { if let v = _storage._cloudCursor {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 14)
+      } }()
+      try { if let v = _storage._cloudDocumentSelectionJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 15)
+      } }()
+      try { if let v = _storage._cloudFileNodeID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 16)
+      } }()
     }
-    if self.requester != 0 {
-      try visitor.visitSingularUInt64Field(value: self.requester, fieldNumber: 3)
-    }
-    if self.action != .unspecified {
-      try visitor.visitSingularEnumField(value: self.action, fieldNumber: 4)
-    }
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 5)
-    }
-    if !self.locale.isEmpty {
-      try visitor.visitSingularStringField(value: self.locale, fieldNumber: 6)
-    }
-    if !self.profileID.isEmpty {
-      try visitor.visitSingularStringField(value: self.profileID, fieldNumber: 7)
-    }
-    if !self.accountID.isEmpty {
-      try visitor.visitSingularStringField(value: self.accountID, fieldNumber: 8)
-    }
-    try { if let v = self._expectedOwnerScope {
-      try visitor.visitSingularUInt64Field(value: v, fieldNumber: 9)
-    } }()
-    if !self.profileIds.isEmpty {
-      try visitor.visitRepeatedStringField(value: self.profileIds, fieldNumber: 10)
-    }
-    try { if let v = self._cloudSyncEnabled {
-      try visitor.visitSingularBoolField(value: v, fieldNumber: 11)
-    } }()
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: KORAPIAccountCommandRequest, rhs: KORAPIAccountCommandRequest) -> Bool {
-    if lhs._host != rhs._host {return false}
-    if lhs.version != rhs.version {return false}
-    if lhs.requester != rhs.requester {return false}
-    if lhs.action != rhs.action {return false}
-    if lhs.generation != rhs.generation {return false}
-    if lhs.locale != rhs.locale {return false}
-    if lhs.profileID != rhs.profileID {return false}
-    if lhs.accountID != rhs.accountID {return false}
-    if lhs._expectedOwnerScope != rhs._expectedOwnerScope {return false}
-    if lhs.profileIds != rhs.profileIds {return false}
-    if lhs._cloudSyncEnabled != rhs._cloudSyncEnabled {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._host != rhs_storage._host {return false}
+        if _storage._version != rhs_storage._version {return false}
+        if _storage._requester != rhs_storage._requester {return false}
+        if _storage._action != rhs_storage._action {return false}
+        if _storage._generation != rhs_storage._generation {return false}
+        if _storage._locale != rhs_storage._locale {return false}
+        if _storage._profileID != rhs_storage._profileID {return false}
+        if _storage._accountID != rhs_storage._accountID {return false}
+        if _storage._expectedOwnerScope != rhs_storage._expectedOwnerScope {return false}
+        if _storage._profileIds != rhs_storage._profileIds {return false}
+        if _storage._cloudSyncEnabled != rhs_storage._cloudSyncEnabled {return false}
+        if _storage._cloudWorkspaceID != rhs_storage._cloudWorkspaceID {return false}
+        if _storage._cloudIncarnationID != rhs_storage._cloudIncarnationID {return false}
+        if _storage._cloudCursor != rhs_storage._cloudCursor {return false}
+        if _storage._cloudDocumentSelectionJson != rhs_storage._cloudDocumentSelectionJson {return false}
+        if _storage._cloudFileNodeID != rhs_storage._cloudFileNodeID {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }
@@ -8899,88 +9187,209 @@ nonisolated extension KORAPIMobileAccountSummary: SwiftProtobuf.Message, SwiftPr
 
 nonisolated extension KORAPIMobileAccountResult: SwiftProtobuf.Message, SwiftProtobuf._MessageImplementationBase, SwiftProtobuf._ProtoNameProviding {
   public static let protoMessageName: String = _protobuf_package + ".MobileAccountResult"
-  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}requester\0\u{1}generation\0\u{1}kind\0\u{3}error_code\0\u{1}profiles\0\u{2}\u{2}account\0\u{3}owner_scope\0\u{3}selected_account_id\0\u{3}selected_scope\0\u{1}enrollments\0\u{3}cloud_sync\0\u{b}selected_profile_id\0\u{c}\u{7}\u{1}")
+  public static let _protobuf_nameMap = SwiftProtobuf._NameMap(bytecode: "\0\u{1}sequence\0\u{1}requester\0\u{1}generation\0\u{1}kind\0\u{3}error_code\0\u{1}profiles\0\u{2}\u{2}account\0\u{3}owner_scope\0\u{3}selected_account_id\0\u{3}selected_scope\0\u{1}enrollments\0\u{3}cloud_sync\0\u{3}cloud_plan_json\0\u{3}cloud_plan_request_elapsed_millis\0\u{3}cloud_inventory_json\0\u{3}cloud_workspace_id\0\u{3}cloud_incarnation_id\0\u{3}cloud_document_selection_json\0\u{3}cloud_document_inspection_json\0\u{3}cloud_file_node_id\0\u{3}cloud_file_removed\0\u{b}selected_profile_id\0\u{c}\u{7}\u{1}")
+
+  fileprivate class _StorageClass {
+    var _sequence: UInt64 = 0
+    var _requester: UInt64 = 0
+    var _generation: UInt64 = 0
+    var _kind: String = String()
+    var _errorCode: String? = nil
+    var _profiles: [KORAPIMobileAccountProfile] = []
+    var _account: KORAPIMobileAccountSummary? = nil
+    var _ownerScope: UInt64 = 0
+    var _selectedAccountID: String? = nil
+    var _selectedScope: UInt64? = nil
+    var _enrollments: [KORAPIMobileProfileEnrollment] = []
+    var _cloudSync: [KORAPIMobileCloudSyncProfile] = []
+    var _cloudPlanJson: String? = nil
+    var _cloudPlanRequestElapsedMillis: UInt64 = 0
+    var _cloudInventoryJson: String? = nil
+    var _cloudWorkspaceID: String? = nil
+    var _cloudIncarnationID: String? = nil
+    var _cloudDocumentSelectionJson: String? = nil
+    var _cloudDocumentInspectionJson: String? = nil
+    var _cloudFileNodeID: String? = nil
+    var _cloudFileRemoved: Bool = false
+
+      // This property is used as the initial default value for new instances of the type.
+      // The type itself is protecting the reference to its storage via CoW semantics.
+      // This will force a copy to be made of this reference when the first mutation occurs;
+      // hence, it is safe to mark this as `nonisolated(unsafe)`.
+      static nonisolated(unsafe) let defaultInstance = _StorageClass()
+
+    private init() {}
+
+    init(copying source: _StorageClass) {
+      _sequence = source._sequence
+      _requester = source._requester
+      _generation = source._generation
+      _kind = source._kind
+      _errorCode = source._errorCode
+      _profiles = source._profiles
+      _account = source._account
+      _ownerScope = source._ownerScope
+      _selectedAccountID = source._selectedAccountID
+      _selectedScope = source._selectedScope
+      _enrollments = source._enrollments
+      _cloudSync = source._cloudSync
+      _cloudPlanJson = source._cloudPlanJson
+      _cloudPlanRequestElapsedMillis = source._cloudPlanRequestElapsedMillis
+      _cloudInventoryJson = source._cloudInventoryJson
+      _cloudWorkspaceID = source._cloudWorkspaceID
+      _cloudIncarnationID = source._cloudIncarnationID
+      _cloudDocumentSelectionJson = source._cloudDocumentSelectionJson
+      _cloudDocumentInspectionJson = source._cloudDocumentInspectionJson
+      _cloudFileNodeID = source._cloudFileNodeID
+      _cloudFileRemoved = source._cloudFileRemoved
+    }
+  }
+
+  fileprivate mutating func _uniqueStorage() -> _StorageClass {
+    if !isKnownUniquelyReferenced(&_storage) {
+      _storage = _StorageClass(copying: _storage)
+    }
+    return _storage
+  }
 
   public mutating func decodeMessage<D: SwiftProtobuf.Decoder>(decoder: inout D) throws {
-    while let fieldNumber = try decoder.nextFieldNumber() {
-      // The use of inline closures is to circumvent an issue where the compiler
-      // allocates stack space for every case branch when no optimizations are
-      // enabled. https://github.com/apple/swift-protobuf/issues/1034
-      switch fieldNumber {
-      case 1: try { try decoder.decodeSingularUInt64Field(value: &self.sequence) }()
-      case 2: try { try decoder.decodeSingularUInt64Field(value: &self.requester) }()
-      case 3: try { try decoder.decodeSingularUInt64Field(value: &self.generation) }()
-      case 4: try { try decoder.decodeSingularStringField(value: &self.kind) }()
-      case 5: try { try decoder.decodeSingularStringField(value: &self._errorCode) }()
-      case 6: try { try decoder.decodeRepeatedMessageField(value: &self.profiles) }()
-      case 8: try { try decoder.decodeSingularMessageField(value: &self._account) }()
-      case 9: try { try decoder.decodeSingularUInt64Field(value: &self.ownerScope) }()
-      case 10: try { try decoder.decodeSingularStringField(value: &self._selectedAccountID) }()
-      case 11: try { try decoder.decodeSingularUInt64Field(value: &self._selectedScope) }()
-      case 12: try { try decoder.decodeRepeatedMessageField(value: &self.enrollments) }()
-      case 13: try { try decoder.decodeRepeatedMessageField(value: &self.cloudSync) }()
-      default: break
+    _ = _uniqueStorage()
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      while let fieldNumber = try decoder.nextFieldNumber() {
+        // The use of inline closures is to circumvent an issue where the compiler
+        // allocates stack space for every case branch when no optimizations are
+        // enabled. https://github.com/apple/swift-protobuf/issues/1034
+        switch fieldNumber {
+        case 1: try { try decoder.decodeSingularUInt64Field(value: &_storage._sequence) }()
+        case 2: try { try decoder.decodeSingularUInt64Field(value: &_storage._requester) }()
+        case 3: try { try decoder.decodeSingularUInt64Field(value: &_storage._generation) }()
+        case 4: try { try decoder.decodeSingularStringField(value: &_storage._kind) }()
+        case 5: try { try decoder.decodeSingularStringField(value: &_storage._errorCode) }()
+        case 6: try { try decoder.decodeRepeatedMessageField(value: &_storage._profiles) }()
+        case 8: try { try decoder.decodeSingularMessageField(value: &_storage._account) }()
+        case 9: try { try decoder.decodeSingularUInt64Field(value: &_storage._ownerScope) }()
+        case 10: try { try decoder.decodeSingularStringField(value: &_storage._selectedAccountID) }()
+        case 11: try { try decoder.decodeSingularUInt64Field(value: &_storage._selectedScope) }()
+        case 12: try { try decoder.decodeRepeatedMessageField(value: &_storage._enrollments) }()
+        case 13: try { try decoder.decodeRepeatedMessageField(value: &_storage._cloudSync) }()
+        case 14: try { try decoder.decodeSingularStringField(value: &_storage._cloudPlanJson) }()
+        case 15: try { try decoder.decodeSingularUInt64Field(value: &_storage._cloudPlanRequestElapsedMillis) }()
+        case 16: try { try decoder.decodeSingularStringField(value: &_storage._cloudInventoryJson) }()
+        case 17: try { try decoder.decodeSingularStringField(value: &_storage._cloudWorkspaceID) }()
+        case 18: try { try decoder.decodeSingularStringField(value: &_storage._cloudIncarnationID) }()
+        case 19: try { try decoder.decodeSingularStringField(value: &_storage._cloudDocumentSelectionJson) }()
+        case 20: try { try decoder.decodeSingularStringField(value: &_storage._cloudDocumentInspectionJson) }()
+        case 21: try { try decoder.decodeSingularStringField(value: &_storage._cloudFileNodeID) }()
+        case 22: try { try decoder.decodeSingularBoolField(value: &_storage._cloudFileRemoved) }()
+        default: break
+        }
       }
     }
   }
 
   public func traverse<V: SwiftProtobuf.Visitor>(visitor: inout V) throws {
-    // The use of inline closures is to circumvent an issue where the compiler
-    // allocates stack space for every if/case branch local when no optimizations
-    // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
-    // https://github.com/apple/swift-protobuf/issues/1182
-    if self.sequence != 0 {
-      try visitor.visitSingularUInt64Field(value: self.sequence, fieldNumber: 1)
-    }
-    if self.requester != 0 {
-      try visitor.visitSingularUInt64Field(value: self.requester, fieldNumber: 2)
-    }
-    if self.generation != 0 {
-      try visitor.visitSingularUInt64Field(value: self.generation, fieldNumber: 3)
-    }
-    if !self.kind.isEmpty {
-      try visitor.visitSingularStringField(value: self.kind, fieldNumber: 4)
-    }
-    try { if let v = self._errorCode {
-      try visitor.visitSingularStringField(value: v, fieldNumber: 5)
-    } }()
-    if !self.profiles.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.profiles, fieldNumber: 6)
-    }
-    try { if let v = self._account {
-      try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
-    } }()
-    if self.ownerScope != 0 {
-      try visitor.visitSingularUInt64Field(value: self.ownerScope, fieldNumber: 9)
-    }
-    try { if let v = self._selectedAccountID {
-      try visitor.visitSingularStringField(value: v, fieldNumber: 10)
-    } }()
-    try { if let v = self._selectedScope {
-      try visitor.visitSingularUInt64Field(value: v, fieldNumber: 11)
-    } }()
-    if !self.enrollments.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.enrollments, fieldNumber: 12)
-    }
-    if !self.cloudSync.isEmpty {
-      try visitor.visitRepeatedMessageField(value: self.cloudSync, fieldNumber: 13)
+    try withExtendedLifetime(_storage) { (_storage: _StorageClass) in
+      // The use of inline closures is to circumvent an issue where the compiler
+      // allocates stack space for every if/case branch local when no optimizations
+      // are enabled. https://github.com/apple/swift-protobuf/issues/1034 and
+      // https://github.com/apple/swift-protobuf/issues/1182
+      if _storage._sequence != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._sequence, fieldNumber: 1)
+      }
+      if _storage._requester != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._requester, fieldNumber: 2)
+      }
+      if _storage._generation != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._generation, fieldNumber: 3)
+      }
+      if !_storage._kind.isEmpty {
+        try visitor.visitSingularStringField(value: _storage._kind, fieldNumber: 4)
+      }
+      try { if let v = _storage._errorCode {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 5)
+      } }()
+      if !_storage._profiles.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._profiles, fieldNumber: 6)
+      }
+      try { if let v = _storage._account {
+        try visitor.visitSingularMessageField(value: v, fieldNumber: 8)
+      } }()
+      if _storage._ownerScope != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._ownerScope, fieldNumber: 9)
+      }
+      try { if let v = _storage._selectedAccountID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 10)
+      } }()
+      try { if let v = _storage._selectedScope {
+        try visitor.visitSingularUInt64Field(value: v, fieldNumber: 11)
+      } }()
+      if !_storage._enrollments.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._enrollments, fieldNumber: 12)
+      }
+      if !_storage._cloudSync.isEmpty {
+        try visitor.visitRepeatedMessageField(value: _storage._cloudSync, fieldNumber: 13)
+      }
+      try { if let v = _storage._cloudPlanJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 14)
+      } }()
+      if _storage._cloudPlanRequestElapsedMillis != 0 {
+        try visitor.visitSingularUInt64Field(value: _storage._cloudPlanRequestElapsedMillis, fieldNumber: 15)
+      }
+      try { if let v = _storage._cloudInventoryJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 16)
+      } }()
+      try { if let v = _storage._cloudWorkspaceID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 17)
+      } }()
+      try { if let v = _storage._cloudIncarnationID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 18)
+      } }()
+      try { if let v = _storage._cloudDocumentSelectionJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 19)
+      } }()
+      try { if let v = _storage._cloudDocumentInspectionJson {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 20)
+      } }()
+      try { if let v = _storage._cloudFileNodeID {
+        try visitor.visitSingularStringField(value: v, fieldNumber: 21)
+      } }()
+      if _storage._cloudFileRemoved != false {
+        try visitor.visitSingularBoolField(value: _storage._cloudFileRemoved, fieldNumber: 22)
+      }
     }
     try unknownFields.traverse(visitor: &visitor)
   }
 
   public static func ==(lhs: KORAPIMobileAccountResult, rhs: KORAPIMobileAccountResult) -> Bool {
-    if lhs.sequence != rhs.sequence {return false}
-    if lhs.requester != rhs.requester {return false}
-    if lhs.generation != rhs.generation {return false}
-    if lhs.kind != rhs.kind {return false}
-    if lhs._errorCode != rhs._errorCode {return false}
-    if lhs.profiles != rhs.profiles {return false}
-    if lhs._account != rhs._account {return false}
-    if lhs.ownerScope != rhs.ownerScope {return false}
-    if lhs._selectedAccountID != rhs._selectedAccountID {return false}
-    if lhs._selectedScope != rhs._selectedScope {return false}
-    if lhs.enrollments != rhs.enrollments {return false}
-    if lhs.cloudSync != rhs.cloudSync {return false}
+    if lhs._storage !== rhs._storage {
+      let storagesAreEqual: Bool = withExtendedLifetime((lhs._storage, rhs._storage)) { (_args: (_StorageClass, _StorageClass)) in
+        let _storage = _args.0
+        let rhs_storage = _args.1
+        if _storage._sequence != rhs_storage._sequence {return false}
+        if _storage._requester != rhs_storage._requester {return false}
+        if _storage._generation != rhs_storage._generation {return false}
+        if _storage._kind != rhs_storage._kind {return false}
+        if _storage._errorCode != rhs_storage._errorCode {return false}
+        if _storage._profiles != rhs_storage._profiles {return false}
+        if _storage._account != rhs_storage._account {return false}
+        if _storage._ownerScope != rhs_storage._ownerScope {return false}
+        if _storage._selectedAccountID != rhs_storage._selectedAccountID {return false}
+        if _storage._selectedScope != rhs_storage._selectedScope {return false}
+        if _storage._enrollments != rhs_storage._enrollments {return false}
+        if _storage._cloudSync != rhs_storage._cloudSync {return false}
+        if _storage._cloudPlanJson != rhs_storage._cloudPlanJson {return false}
+        if _storage._cloudPlanRequestElapsedMillis != rhs_storage._cloudPlanRequestElapsedMillis {return false}
+        if _storage._cloudInventoryJson != rhs_storage._cloudInventoryJson {return false}
+        if _storage._cloudWorkspaceID != rhs_storage._cloudWorkspaceID {return false}
+        if _storage._cloudIncarnationID != rhs_storage._cloudIncarnationID {return false}
+        if _storage._cloudDocumentSelectionJson != rhs_storage._cloudDocumentSelectionJson {return false}
+        if _storage._cloudDocumentInspectionJson != rhs_storage._cloudDocumentInspectionJson {return false}
+        if _storage._cloudFileNodeID != rhs_storage._cloudFileNodeID {return false}
+        if _storage._cloudFileRemoved != rhs_storage._cloudFileRemoved {return false}
+        return true
+      }
+      if !storagesAreEqual {return false}
+    }
     if lhs.unknownFields != rhs.unknownFields {return false}
     return true
   }

@@ -13,6 +13,26 @@ fn lost_completion_reply_can_finish_cleanup_only_after_authoritative_absence() {
     );
 }
 
+/// The grant is for destroying what is still here. A Profile the catalog
+/// has already dropped settles without it, so a window that is not vouched
+/// does not announce that deletion on every launch.
+#[test]
+fn a_profile_already_removed_settles_without_the_destroy_grant() {
+    assert!(matches!(
+        settled_without_destroy(true, false),
+        Ok(Some(CascadeReady::AlreadyRemoved))
+    ));
+    assert!(matches!(
+        settled_without_destroy(false, false),
+        Err(CascadeFailure::NotPermitted)
+    ));
+    assert!(matches!(settled_without_destroy(false, true), Ok(None)));
+    assert!(matches!(
+        settled_without_destroy(true, true),
+        Ok(Some(CascadeReady::AlreadyRemoved))
+    ));
+}
+
 #[test]
 fn keep_or_an_unfinished_empty_profile_cannot_be_mistaken_for_completed_removal() {
     // Keep clears the attempt too. The remaining Profile distinguishes it

@@ -1,0 +1,677 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:koru:cloud-usage-documents-v1:review-rev1",
+  "title": "PROPOSED read-only Cloud document inventory; not registered",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/page"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
+  ],
+  "$defs": {
+    "decimal": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)$",
+      "maxLength": 19,
+      "description": "Runtime ceiling 9223372036854775807; never a JSON number."
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "cursor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "usage": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "known"
+            },
+            "reason": {
+              "type": "null"
+            },
+            "files_bytes": {
+              "$ref": "#/$defs/decimal"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "files_bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "unknown"
+            },
+            "reason": {
+              "enum": [
+                "usage_unknown",
+                "cloud_schema_update_required"
+              ]
+            },
+            "files_bytes": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "files_bytes"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "building"
+            },
+            "reason": {
+              "type": "null"
+            },
+            "files_bytes": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "files_bytes"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "membership": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "enum": [
+                "listed",
+                "trash",
+                "unfiled",
+                "structural"
+              ]
+            },
+            "reason": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "unknown"
+            },
+            "reason": {
+              "enum": [
+                "manifest_unavailable",
+                "cloud_schema_update_required",
+                "unit_identity_unknown"
+              ]
+            }
+          },
+          "required": [
+            "state",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "manifest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "verified"
+            },
+            "reason": {
+              "type": "null"
+            },
+            "source_head_digest": {
+              "$ref": "#/$defs/digest"
+            },
+            "proof_digest": {
+              "$ref": "#/$defs/digest"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "source_head_digest",
+            "proof_digest"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "state": {
+              "const": "unknown"
+            },
+            "reason": {
+              "enum": [
+                "manifest_unavailable",
+                "cloud_schema_update_required"
+              ]
+            },
+            "source_head_digest": {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/digest"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "proof_digest": {
+              "type": "null"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "source_head_digest",
+            "proof_digest"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "item": {
+      "type": "object",
+      "properties": {
+        "cloud_unit_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "document_id": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "unit_role": {
+          "enum": [
+            "content",
+            "structure",
+            "unknown"
+          ]
+        },
+        "source_head_digest": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/digest"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "display_name": {
+          "oneOf": [
+            {
+              "type": "string",
+              "maxLength": 128
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "membership": {
+          "$ref": "#/$defs/membership"
+        },
+        "usage": {
+          "$ref": "#/$defs/usage"
+        }
+      },
+      "required": [
+        "cloud_unit_id",
+        "document_id",
+        "unit_role",
+        "source_head_digest",
+        "display_name",
+        "membership",
+        "usage"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "unit_role": {
+                "const": "unknown"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "document_id": {
+                "type": "null"
+              },
+              "display_name": {
+                "type": "null"
+              },
+              "membership": {
+                "properties": {
+                  "state": {
+                    "const": "unknown"
+                  },
+                  "reason": {
+                    "const": "unit_identity_unknown"
+                  }
+                }
+              },
+              "usage": {
+                "properties": {
+                  "state": {
+                    "const": "unknown"
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "document_id": {
+                "$ref": "#/$defs/uuid"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unit_role": {
+                "const": "structure"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display_name": {
+                "type": "null"
+              },
+              "membership": {
+                "properties": {
+                  "state": {
+                    "const": "structural"
+                  }
+                }
+              },
+              "usage": {
+                "if": {
+                  "properties": {
+                    "state": {
+                      "const": "known"
+                    }
+                  }
+                },
+                "then": {
+                  "properties": {
+                    "files_bytes": {
+                      "const": "0"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "unit_role": {
+                "const": "content"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "membership": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "listed",
+                      "trash",
+                      "unfiled",
+                      "unknown"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "membership": {
+                "properties": {
+                  "state": {
+                    "enum": [
+                      "unfiled",
+                      "unknown",
+                      "structural"
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "display_name": {
+                "type": "null"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "usage": {
+                "properties": {
+                  "state": {
+                    "const": "known"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "source_head_digest": {
+                "$ref": "#/$defs/digest"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "page": {
+      "type": "object",
+      "properties": {
+        "contract": {
+          "const": "cloud-usage-documents-v1"
+        },
+        "algorithm": {
+          "const": "files-plain-v0"
+        },
+        "row_totals": {
+          "const": "non_additive"
+        },
+        "revision": {
+          "$ref": "#/$defs/decimal"
+        },
+        "generation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evaluated_at_millis": {
+          "$ref": "#/$defs/decimal"
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "incarnation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/decimal"
+        },
+        "inventory_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "manifest": {
+          "$ref": "#/$defs/manifest"
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/item"
+          }
+        },
+        "next_cursor": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "contract",
+        "algorithm",
+        "row_totals",
+        "revision",
+        "generation",
+        "evaluated_at_millis",
+        "workspace_id",
+        "incarnation_id",
+        "source_revision",
+        "inventory_digest",
+        "manifest",
+        "items",
+        "next_cursor"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "generation": {
+                "type": "null"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "usage": {
+                      "properties": {
+                        "state": {
+                          "enum": [
+                            "building",
+                            "unknown"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "usage": {
+                      "properties": {
+                        "state": {
+                          "enum": [
+                            "known",
+                            "unknown"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "manifest": {
+                "properties": {
+                  "state": {
+                    "const": "unknown"
+                  }
+                }
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "items": {
+                "items": {
+                  "properties": {
+                    "membership": {
+                      "properties": {
+                        "state": {
+                          "enum": [
+                            "unknown",
+                            "structural"
+                          ]
+                        }
+                      }
+                    },
+                    "display_name": {
+                      "type": "null"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "error": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "enum": [
+            "invalid_usage_cursor",
+            "unauthenticated",
+            "workspace_not_found",
+            "usage_revision_changed",
+            "server_unavailable"
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "retry_after_millis": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 18446744073709551615
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false
+    },
+    "cursor_payload": {
+      "type": "object",
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "account_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "workspace_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "incarnation_id": {
+          "$ref": "#/$defs/uuid"
+        },
+        "generation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/uuid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "revision": {
+          "$ref": "#/$defs/decimal"
+        },
+        "source_revision": {
+          "$ref": "#/$defs/decimal"
+        },
+        "inventory_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "manifest_epoch_digest": {
+          "$ref": "#/$defs/digest"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        },
+        "last_cloud_unit_id": {
+          "$ref": "#/$defs/uuid"
+        }
+      },
+      "required": [
+        "v",
+        "account_id",
+        "workspace_id",
+        "incarnation_id",
+        "generation",
+        "revision",
+        "source_revision",
+        "inventory_digest",
+        "manifest_epoch_digest",
+        "limit",
+        "last_cloud_unit_id"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

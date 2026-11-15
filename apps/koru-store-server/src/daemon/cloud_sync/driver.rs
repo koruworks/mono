@@ -160,6 +160,7 @@ pub struct Status {
 }
 
 pub(crate) enum Command {
+    Inspect(crate::cloud_inspection_host::Job),
     Fetch {
         unit: Unit,
         reply: oneshot::Sender<Result<Fetched, FetchError>>,
@@ -185,6 +186,9 @@ pub struct Driver {
 }
 
 impl Driver {
+    pub(crate) fn inspection_commands(&self) -> mpsc::Sender<Command> {
+        self.commands.clone()
+    }
     /// Start the driver on the current Tokio runtime.
     pub fn spawn<S, J, P, F>(source: S, parts: Parts<J, P, F>) -> Self
     where

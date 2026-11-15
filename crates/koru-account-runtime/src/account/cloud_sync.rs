@@ -625,12 +625,15 @@ impl ProductionAccountService {
         cancel: &Cancel,
         woken: &mut bool,
         persist: &mut dyn FnMut(ProfileId, &ProfileCloudSync),
-    ) -> CloudSyncProfile {
-        let mut last_error: Option<String> = None;
+    ) -> (CloudSyncProfile, bool) {
+        // A code recorded this pass means a Workspace did not settle. The
+        // profile row stays clear of it: copying one refusal there painted
+        // every Workspace unavailable. The bool is what the default spends.
+        let mut unsettled = false;
         let mut record = |entry: &mut WorkspaceCloudSync, code: Option<String>| {
             if let Some(code) = code {
-                entry.error = Some(code.clone());
-                last_error = Some(code);
+                entry.error = Some(code);
+                unsettled = true;
             }
         };
         match change {
@@ -728,13 +731,18 @@ impl ProductionAccountService {
                     .is_some_and(|entry| entry.enabled)
             })
             .count();
-        CloudSyncProfile {
-            profile_id: profile.to_storage(),
-            enabled: state.enabled,
-            workspaces: u32::try_from(local.len()).unwrap_or(u32::MAX),
-            synced_workspaces: u32::try_from(synced).unwrap_or(u32::MAX),
-            error: last_error,
-        }
+        (
+            CloudSyncProfile {
+                profile_id: profile.to_storage(),
+                enabled: state.enabled,
+                workspaces: u32::try_from(local.len()).unwrap_or(u32::MAX),
+                synced_workspaces: u32::try_from(synced).unwrap_or(u32::MAX),
+                // A Workspace refusal stays on that Workspace. Copying it here
+                // painted every row, including the ones that synced, as unavailable.
+                error: None,
+            },
+            !unsettled,
+        )
     }
 
     /// Both Cloud sync commands. `InspectCloudSync` reports every local
@@ -880,7 +888,7 @@ impl ProductionAccountService {
                 // Written before it is applied, as a pressed switch is.
                 persist(*profile, &profile_state);
             }
-            let row = self.apply_profile(
+            let (row, settled) = self.apply_profile(
                 *profile,
                 &mut profile_state,
                 &workspaces,
@@ -894,8 +902,10 @@ impl ProductionAccountService {
             // The intention is spent by the first pass that settled every
             // Workspace the Profile has here. Until one has arrived there is
             // nothing to settle; a refusal or an outage tries again on the
-            // next pass, as a Workspace the Cloud has never held does.
-            if starting && row.error.is_none() && row.workspaces > 0 && !cancel.cancelled() {
+            // next pass, as a Workspace the Cloud has never held does. The
+            // profile row's error stays empty either way, so the settle is
+            // the pass itself, not that field.
+            if starting && settled && row.workspaces > 0 && !cancel.cancelled() {
                 profile_state.starts_on = false;
             }
             persist(*profile, &profile_state);

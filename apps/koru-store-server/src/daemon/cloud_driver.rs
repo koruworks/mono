@@ -91,6 +91,7 @@ pub(crate) fn install(
     rooms: Arc<koru_store_api::rooms::Rooms>,
     activity: Arc<Mutex<CloudActivity>>,
     blobs: BlobEngineSlot,
+    inspections: Arc<crate::cloud_inspection_host::InspectionHub>,
 ) {
     // One ledger for the whole gateway, minted here rather than inside a
     // session: a bound on consecutive refusals only means something if it
@@ -105,9 +106,18 @@ pub(crate) fn install(
         let deferrals = Arc::clone(&deferrals);
         let blobs = Arc::clone(&blobs);
         let budget = budget.clone();
+        let inspections = inspections.clone();
         tokio::spawn(async move {
             run_session(
-                session, host, store, rooms, activity, deferrals, blobs, budget,
+                session,
+                host,
+                store,
+                rooms,
+                activity,
+                deferrals,
+                blobs,
+                budget,
+                inspections,
             )
             .await;
         });
@@ -269,6 +279,7 @@ async fn run_session(
     deferrals: cloud_sync::DeferralLedger,
     blobs: BlobEngineSlot,
     budget: MemoryBudget,
+    inspections: Arc<crate::cloud_inspection_host::InspectionHub>,
 ) {
     let Some(principal) = session.principal.cloud().copied() else {
         session.reset(1);
@@ -571,11 +582,40 @@ async fn run_session(
             },
         },
     );
+    let inspection_host = host.clone();
+    let inspection_expiry = principal
+        .expires_at_seconds
+        .min(permit.expires_at_seconds)
+        .checked_mul(1000)
+        .and_then(|v| v.checked_sub(now_millis()))
+        .unwrap_or(0)
+        .max(0);
+    let inspection_deadline = Instant::now()
+        .checked_add(std::time::Duration::from_millis(inspection_expiry as u64))
+        .unwrap_or_else(Instant::now);
+    let _inspection_registration = inspections.register(
+        crate::cloud_inspection_host::Session {
+            control_session: principal.control_session_id,
+            account: permit.account_id,
+            account_generation: permit.account_generation,
+            scope,
+        },
+        &driver,
+        Arc::new(move || {
+            Instant::now() < inspection_deadline
+                && lock(&inspection_host)
+                    .installed_cloud_permit(&principal)
+                    .is_ok()
+        }),
+    );
     let outcome = tokio::select! {
         result = driver.join() => result,
         () = blob_work => unreachable!("file follower stays alive with the stream"),
     };
 
+    if let Some(registration) = &_inspection_registration {
+        registration.finish_delivery().await;
+    }
     if let Err(error) = outcome {
         let code = error.code();
         tracing::warn!(code, "cloud session: pass ended with a refusal");

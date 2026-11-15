@@ -8,8 +8,8 @@ use koru_agent_wire::{UpdateChoice, UpdateStage};
 mod tests;
 
 impl MainView {
-    /// Adopt whole reports before layout/input. Opening the menu does not mark
-    /// release notes read; only opening their page does that.
+    /// Adopt whole reports before layout/input. Opening Help acknowledges
+    /// the release notes; an active update offer keeps its own indication.
     pub(super) fn refresh_help(&mut self) {
         if let Some(rx) = self.help_headlines_rx.as_ref()
             && let Ok(answer) = rx.try_recv()
@@ -17,9 +17,8 @@ impl MainView {
             self.help_headlines = answer;
             self.help_headlines_rx = None;
         }
-        // The published releases: asked for once per window, the first time
-        // its Help popover opens — not at startup, so a window nobody asks
-        // for help in makes no request. A failure keeps this build's row.
+        // Fetch only when Help opens, and keep a successful list. A failed
+        // attempt keeps this build's row and can retry on the next opening.
         if !self.help_releases_asked
             && self
                 .explore

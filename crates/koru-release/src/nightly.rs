@@ -77,7 +77,6 @@ const NIGHTLY_PLATFORM_NOTES: &[&str] = &[
     "**Android** nightlies (the `-android-aarch64.apk` below, when it is listed) install as their own \
      app, *Koru Nightly*, beside Koru, and offer the next nightly in the app; installing it is your \
      choice, on the system's own screen.",
-    "No Koru Cloud in the nightly yet.",
 ];
 
 /// The same for a stable release (STABLE.md), which is built with Koru Cloud

@@ -5,11 +5,7 @@ use crate::panes::explore::popover_elements::profiles::{MANAGE_PROFILES, MenuAct
 
 #[test]
 fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
-    for key in [
-        MANAGE_PROFILES,
-        MenuAction::New.key(),
-        MenuAction::Sync.key(),
-    ] {
+    for key in [MANAGE_PROFILES, MenuAction::Sync.key()] {
         let (mut view, mut workspace) = harness::container();
         let owner = ProfileSummary {
             id: ProfileId::new(),
@@ -54,13 +50,11 @@ fn profile_menu_actions_open_the_existing_pages_and_close_the_menu() {
     }
 }
 
-/// The sync channel icons live on the Profile menu only: the workspace menu
-/// lost its Profile card on 2026-11-10 and lists workspaces.
+/// All configured channel icons belong to the single Global sync action.
 #[test]
-fn profile_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
+fn profile_sync_icons_open_linked_devices_and_reuse_the_tab() {
     use crate::manage::Page;
     use koru_agent_wire::{AccountProfileCloud, AccountStage, AccountState, CloudConnectionStage};
-    use koru_draw::el::Key;
 
     for (devices, cloud) in [(false, false), (true, false), (false, true), (true, true)] {
         let (mut view, mut workspace) = harness::container();
@@ -88,22 +82,35 @@ fn profile_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
             });
         }
         let before = view.tabs().len();
-        let destinations: Vec<_> = [
-            (devices || !cloud, "workspace-sync", Page::Devices),
-            (cloud, "workspace-cloud", Page::Cloud),
-        ]
-        .into_iter()
-        .filter(|(shown, _, _)| *shown)
-        .collect();
         for _ in 0..2 {
-            for &(_, part, page) in &destinations {
+            for icon_index in 0..1 {
                 view.select(0);
                 view.explore.toggle_profile_popover();
-                let key = Key::surface("explore-popover", part);
+                let key = MenuAction::Sync.key();
                 let (x, y) = view
                     .explore
                     .with_page(view.explore_popover_area(), view.viewport, |frame| {
-                        let rect = frame.node(key).expect("configured channel control").rect;
+                        let channels = frame
+                            .nodes
+                            .iter()
+                            .position(|n| n.name == "Sync channels")
+                            .unwrap();
+                        let rect = frame
+                            .nodes
+                            .iter()
+                            .filter(|n| n.parent == Some(channels))
+                            .nth(icon_index)
+                            .unwrap()
+                            .rect;
+                        assert_eq!(
+                            frame
+                                .nodes
+                                .iter()
+                                .filter(|n| n.parent == Some(channels))
+                                .count(),
+                            1,
+                            "one cloud icon"
+                        );
                         assert_eq!(frame.hit_at(rect.centre().0, rect.centre().1), Some(key));
                         rect.centre()
                     })
@@ -114,7 +121,7 @@ fn profile_channel_icons_open_their_manage_pages_and_reuse_the_tab() {
                 let TabView::Manage(manage) = &tab.view else {
                     panic!("channel icons must open Manage, not a document");
                 };
-                assert_eq!(manage.page(), Some(page));
+                assert_eq!(manage.page(), Some(Page::Devices));
                 assert!(tab.document.is_none());
                 assert!(tab.whats_new.is_none());
                 assert_eq!(view.tabs().len(), before + 1, "reuse the Manage tab");

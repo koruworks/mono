@@ -497,6 +497,11 @@ pub fn run(
                     .with_responder_session(Arc::clone(responder_session));
             }
             service = service.with_directory_namespace(entry.namespace());
+            if let Some(control) = lifecycle_sync.clone() {
+                service = service.with_cloud_document_port(Arc::new(
+                    crate::cloud_host::DesktopCloudDocumentPort::new(control),
+                ));
+            }
             // The Cloud coordinator, composed only when this machine has
             // everything it needs to dial a worker: a regional credential
             // policy naming the region and issuer the sync credential is

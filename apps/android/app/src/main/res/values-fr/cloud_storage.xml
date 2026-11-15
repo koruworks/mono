@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_storage_refresh">Actualiser</string>
+    <string name="cloud_storage_title">Stockage Cloud</string>
+    <string name="cloud_storage_available">Disponible : %1$s sur %2$s octets</string>
+    <string name="cloud_storage_used">Utilisé : %1$s octets</string>
+    <string name="cloud_storage_total">Total : %1$s octets</string>
+    <string name="cloud_storage_no_limit">Stockage illimité</string>
+    <string name="cloud_storage_allowance_unknown">Quota de stockage indisponible</string>
+    <string name="cloud_storage_checking">Vérification du stockage Cloud…</string>
+    <string name="cloud_storage_calculating">Calcul du stockage Cloud…</string>
+    <string name="cloud_storage_unknown">Utilisation du stockage Cloud indisponible</string>
+    <string name="cloud_storage_schema">Le stockage Cloud ne peut pas être calculé tant que ce format de données n’est pas pris en charge.</string>
+    <string name="cloud_storage_failed">Impossible de vérifier le stockage Cloud</string>
+    <string name="cloud_storage_stale">Dernière vérification : %1$s ; peut être obsolète</string>
+    <string name="cloud_storage_explanation">Les fichiers comptent selon leur taille d’origine. Le texte ne compte pas encore.</string>
+    <string name="cloud_storage_reserved">Envois en cours : %1$s octets</string>
+    <string name="cloud_storage_details">Détails</string>
+    <string name="cloud_storage_checked">Dernière vérification : %1$s</string>
+</resources>

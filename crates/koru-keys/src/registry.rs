@@ -138,7 +138,7 @@ pub enum ShortcutId {
     // ---------------------------------------------------------- the container
     NewTab,
     /// The New… launcher: a document, a task, an agent or a shell, each
-    /// chosen by its letter. The `+` button's chord.
+    /// chosen by its letter, opened with Ctrl+N.
     New,
     CloseTab,
     CloseAllTabs,
@@ -158,7 +158,7 @@ pub enum ShortcutId {
     /// chord goes through.
     ///
     /// Plain Alt (⌃⌘ on a Mac, [`crate::VIEW`]), not the primary modifier:
-    /// `Ctrl+Alt+digit` is a heading and `Ctrl+digit` a tab, and the digits
+    /// `Ctrl+Alt+digit` is a heading and `Ctrl+digit` a workspace, and the digits
     /// are free under Alt alone on every layer. `Alt+0` and `Alt+9` stay
     /// free: eight is every view this build can show with Home hidden, and a
     /// view past the eighth slot has no digit.
@@ -180,6 +180,16 @@ pub enum ShortcutId {
     /// binding outside the headings**, and it works only because the shell
     /// rebuilds the letter from its physical key — see `alt_letter` there.
     SwitchWorkspace,
+    /// Workspaces in rail order; the primary modifier plus their position.
+    SelectWorkspace1,
+    SelectWorkspace2,
+    SelectWorkspace3,
+    SelectWorkspace4,
+    SelectWorkspace5,
+    SelectWorkspace6,
+    SelectWorkspace7,
+    SelectWorkspace8,
+    SelectWorkspace9,
     /// The profiles list shared by the Explore header and global search.
     SwitchProfile,
     /// Step the context column to its next section, opening the column if it
@@ -746,6 +756,60 @@ pub const REGISTRY: &[Shortcut] = &[
         Chord::new(On::Letter('w'), PRIMARY_ALT),
     ),
     s(
+        ShortcutId::SelectWorkspace1,
+        Layer::Container,
+        "Workspace 1",
+        Chord::new(On::Letter('1'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace2,
+        Layer::Container,
+        "Workspace 2",
+        Chord::new(On::Letter('2'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace3,
+        Layer::Container,
+        "Workspace 3",
+        Chord::new(On::Letter('3'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace4,
+        Layer::Container,
+        "Workspace 4",
+        Chord::new(On::Letter('4'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace5,
+        Layer::Container,
+        "Workspace 5",
+        Chord::new(On::Letter('5'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace6,
+        Layer::Container,
+        "Workspace 6",
+        Chord::new(On::Letter('6'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace7,
+        Layer::Container,
+        "Workspace 7",
+        Chord::new(On::Letter('7'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace8,
+        Layer::Container,
+        "Workspace 8",
+        Chord::new(On::Letter('8'), PRIMARY),
+    ),
+    s(
+        ShortcutId::SelectWorkspace9,
+        Layer::Container,
+        "Workspace 9",
+        Chord::new(On::Letter('9'), PRIMARY),
+    ),
+    s(
         ShortcutId::SwitchProfile,
         Layer::Container,
         "Switch profile",
@@ -1191,6 +1255,23 @@ pub const RAIL_SLOTS: [ShortcutId; 8] = [
 /// views the rail draws. `None` past the eighth: that view has no digit.
 pub fn rail_slot(index: usize) -> Option<ShortcutId> {
     RAIL_SLOTS.get(index).copied()
+}
+
+/// The primary-modifier digit for a workspace's position in the rail.
+pub fn workspace_slot(index: usize) -> Option<ShortcutId> {
+    [
+        ShortcutId::SelectWorkspace1,
+        ShortcutId::SelectWorkspace2,
+        ShortcutId::SelectWorkspace3,
+        ShortcutId::SelectWorkspace4,
+        ShortcutId::SelectWorkspace5,
+        ShortcutId::SelectWorkspace6,
+        ShortcutId::SelectWorkspace7,
+        ShortcutId::SelectWorkspace8,
+        ShortcutId::SelectWorkspace9,
+    ]
+    .get(index)
+    .copied()
 }
 
 /// The entry for `id`. Panics if the table has no such row, which can only be a

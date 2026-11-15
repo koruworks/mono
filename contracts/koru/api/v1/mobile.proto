@@ -801,6 +801,12 @@ enum AccountAction {
   // open a browser (BrowserSignInPrompt) and to hand back the verified App
   // Link that returns from it (BrowserSignInReply).
   ACCOUNT_ACTION_START_APPLE = 17;
+  // Read the exact current account Cloud plan and storage count.
+  ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;
+  ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT = 21;
+  ACCOUNT_ACTION_REMOVE_CLOUD_FILE = 22;
 }
 message AccountCommandRequest {
   HostContext host = 1;
@@ -817,6 +823,15 @@ message AccountCommandRequest {
   // SET_PROFILE_CLOUD_SYNC only: the switch's new position for profile_id.
   // Absent on every other action; a missing value is never read as "off".
   optional bool cloud_sync_enabled = 11;
+  // Inventory reads only. The exact Workspace/incarnation pair is required
+  // only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+  optional string cloud_workspace_id = 12;
+  optional string cloud_incarnation_id = 13;
+  optional string cloud_cursor = 14;
+  // Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+  optional string cloud_document_selection_json = 15;
+  // REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+  optional string cloud_file_node_id = 16;
 }
 message AccountCommandReply {
   uint64 requester = 1;
@@ -898,7 +913,25 @@ message MobileAccountResult {
   // Present on a "cloud_sync" result: every local Profile of the signed-in
   // account. A Profile absent from the list has no Cloud sync state here.
   repeated MobileCloudSyncProfile cloud_sync = 13;
+  // Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+  // failed cloud_plan read; never interpreted as known zero.
+  optional string cloud_plan_json = 14;
+  uint64 cloud_plan_request_elapsed_millis = 15;
+  // One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+  // has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+  optional string cloud_inventory_json = 16;
+  // Exact request selectors, echoed for documents on success and failure.
+  optional string cloud_workspace_id = 17;
+  optional string cloud_incarnation_id = 18;
+  // Echoed on inspection/removal success and failure.
+  optional string cloud_document_selection_json = 19;
+  // Validated detached passive projection, <=1 MiB UTF-8 bytes.
+  optional string cloud_document_inspection_json = 20;
+  optional string cloud_file_node_id = 21;
+  // True only after the ordinary remote durable Ack; never bytes-freed evidence.
+  bool cloud_file_removed = 22;
 }
+
 // One Profile's Cloud sync state on this device. Ids, booleans, counts and a
 // stable code only — never a Workspace name, a path or a credential.
 message MobileCloudSyncProfile {
@@ -933,6 +966,7 @@ message AccountVaultPrompt {
   // Only STORE carries this opaque credential. Never in status or results.
   optional bytes credential = 4;
 }
+
 // Open this provider page in a browser tab. A new request_id means a new page
 // (the collision proof opens a second one); open each request_id once.
 message BrowserSignInPrompt {
@@ -960,6 +994,7 @@ message AccountVaultReply {
   // LOAD only; absent means no stored credential. STORE success means durable.
   optional bytes credential = 3;
 }
+
 // The App Link URL the browser returned to (it carries the one-use grant:
 // never log it), or cancelled when the person backed out of the tab.
 message BrowserSignInReply {

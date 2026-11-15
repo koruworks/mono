@@ -49,7 +49,9 @@ Linux, Windows and macOS and publishes them together as the GitHub release
 `v<version>` (`.github/workflows/stable.yml`), or publishes nothing if one
 platform fails; the GitHub release's page shows the same notes. Commit the
 descriptor on main, then `git tag v<version>` on that commit and
-`git push origin v<version>`.
+`git push origin v<version>`. After the release, the same run lists that
+version in the official MCP registry as `do.koru/koru` (`server.json` at the
+root; the hosted server only), and skips a version already listed.
 
 **The GitHub nightly is the exception.** Its notes are dated files in
 [nightly/](nightly/README.md), drafted by `./koru.sh nightly-notes` with the

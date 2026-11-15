@@ -41,6 +41,8 @@ fn safe_api_code(code: &ErrorCode) -> &'static str {
     // vocabulary may enter logs, even if a server puts a secret in a valid token.
     match code.as_str() {
         ErrorCode::INVALID_REQUEST => ErrorCode::INVALID_REQUEST,
+        ErrorCode::INVALID_USAGE_CURSOR => ErrorCode::INVALID_USAGE_CURSOR,
+        ErrorCode::USAGE_REVISION_CHANGED => ErrorCode::USAGE_REVISION_CHANGED,
         ErrorCode::UNAUTHENTICATED => ErrorCode::UNAUTHENTICATED,
         ErrorCode::PERMISSION_DENIED => ErrorCode::PERMISSION_DENIED,
         ErrorCode::PROFILE_OFFLINE_ONLY_CONFIRMATION_REQUIRED => {

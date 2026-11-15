@@ -245,3 +245,53 @@ fn detached_wal_inspection_keeps_its_captured_lifecycle() {
         }
     ));
 }
+
+#[test]
+fn detached_cold_unfiled_document_survives_restart_without_storage_mutation() {
+    use koru_store_core::service::DocumentInspectionBudget;
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let workspace = WorkspaceId::new();
+    let document = DocumentId::new();
+    {
+        let backend = SqliteBackend::new(root);
+        let mut repo = backend.create_workspace(workspace).unwrap();
+        repo.create_document(document, DocumentKind::Document, Timestamp::now())
+            .unwrap();
+        let doc = loro::LoroDoc::new();
+        doc.get_text("body")
+            .insert(0, "Retained without a manifest entry")
+            .unwrap();
+        repo.commit_updates(&UpdateBatch {
+            document,
+            updates: vec![doc.export(loro::ExportMode::all_updates()).unwrap()],
+            version_vector: doc.state_vv().encode(),
+            frontiers: doc.state_frontiers().encode(),
+            received_at: Timestamp::now(),
+            origins: vec![UpdateOrigin::Store],
+        })
+        .unwrap();
+    }
+    let before = inventory(root);
+    let backend = SqliteBackend::new(root);
+    let budget = DocumentInspectionBudget {
+        payload_bytes: 1_048_576,
+        journal_rows: 100,
+        metadata_bytes: 4096,
+    };
+    let prepared = backend.prepare_document_inspection(workspace, document, budget);
+    drop(backend);
+    let detached = prepared().unwrap();
+    assert_eq!(detached.workspace(), workspace);
+    assert_eq!(detached.document(), document);
+    assert_eq!(
+        detached.into_doc().get_text("body").to_string(),
+        "Retained without a manifest entry"
+    );
+    assert_read_only(&before, &inventory(root));
+    let backend = SqliteBackend::new(root);
+    let missing = WorkspaceId::new();
+    assert!(backend.prepare_document_inspection(missing, document, budget)().is_err());
+    assert!(!backend.workspace_dir(missing).exists());
+    assert_read_only(&before, &inventory(root));
+}

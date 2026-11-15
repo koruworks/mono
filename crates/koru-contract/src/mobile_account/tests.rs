@@ -212,3 +212,64 @@ fn secret_payloads_are_bounded_and_cancel_cannot_smuggle_a_token() {
     }
     assert!(platform(&value).is_err());
 }
+
+#[test]
+fn cloud_inventory_requires_exact_selectors_and_bounded_cursor_only_on_read_actions() {
+    let mut request = wire::AccountCommandRequest {
+        version: 1,
+        requester: 42,
+        expected_owner_scope: Some(9),
+        action: wire::AccountAction::InspectCloudUsageWorkspaces as i32,
+        ..Default::default()
+    };
+    assert_eq!(command(&request), Ok(()));
+    request.cloud_cursor = Some("aB9_-".into());
+    assert_eq!(command(&request), Ok(()));
+    for cursor in ["".into(), "x".repeat(2049), "a/b".into(), "a=b".into()] {
+        request.cloud_cursor = Some(cursor);
+        assert!(command(&request).is_err());
+    }
+    request.cloud_cursor = None;
+    request.action = wire::AccountAction::InspectCloudUsageDocuments as i32;
+    assert!(command(&request).is_err());
+    request.cloud_workspace_id = Some("00000000-0000-0000-0000-000000000050".into());
+    request.cloud_incarnation_id = Some("00000000-0000-0000-0000-000000000051".into());
+    assert_eq!(command(&request), Ok(())); // Read contract does not require UUID v4.
+    let bytes = request.encode_to_vec();
+    assert_eq!(
+        command(&wire::AccountCommandRequest::decode(bytes.as_slice()).unwrap()),
+        Ok(())
+    );
+    request.cloud_workspace_id = Some("00000000000000000000000000000050".into());
+    assert!(command(&request).is_err());
+    request.cloud_workspace_id = Some("00000000-0000-0000-0000-000000000050".into());
+    request.action = wire::AccountAction::InspectCloudUsageWorkspaces as i32;
+    assert!(command(&request).is_err());
+    request.action = wire::AccountAction::InspectCloudPlan as i32;
+    assert!(command(&request).is_err());
+}
+
+#[test]
+fn cloud_document_actions_require_bounded_selection_and_exact_removal_node() {
+    let mut request = wire::AccountCommandRequest {
+        version: 1,
+        requester: 42,
+        expected_owner_scope: Some(9),
+        action: wire::AccountAction::InspectCloudDocument as i32,
+        ..Default::default()
+    };
+    assert!(command(&request).is_err());
+    request.cloud_document_selection_json = Some("{}".into());
+    assert!(command(&request).is_ok()); // Full schema is checked by the account service.
+    request.cloud_document_selection_json = Some("x".repeat(1025));
+    assert!(command(&request).is_err());
+    request.cloud_document_selection_json = Some("{}".into());
+    request.cloud_file_node_id = Some("00000000-0000-0000-0000-000000001234".into());
+    assert!(command(&request).is_err());
+    request.action = wire::AccountAction::RemoveCloudFile as i32;
+    assert!(command(&request).is_ok());
+    request.cloud_file_node_id = Some("wrong".into());
+    assert!(command(&request).is_err());
+    request.action = wire::AccountAction::InspectCloudPlan as i32;
+    assert!(command(&request).is_err());
+}
