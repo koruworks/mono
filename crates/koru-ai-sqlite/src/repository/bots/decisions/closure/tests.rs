@@ -4,8 +4,9 @@
 use super::*;
 use koru_delegate_core as d;
 
+/// After the fixture's message creation: a completion may not precede it.
 fn at() -> Timestamp {
-    Timestamp::from_millis(30)
+    Timestamp::from_millis(1_770_000_100_000)
 }
 
 fn enrolled() -> (
