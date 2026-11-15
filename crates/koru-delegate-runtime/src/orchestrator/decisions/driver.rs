@@ -44,6 +44,7 @@ fn retry_code(error: &RunError) -> Option<&'static str> {
     match error {
         RunError::Port(error) => match error.code.as_str() {
             "publication_pending" => Some("publication_pending"),
+            "decision_enrollment_pending" => Some("decision_enrollment_pending"),
             "bot_stale" => Some("bot_stale"),
             "bot_fenced" => Some("bot_fenced"),
             "bot_capacity" => Some("bot_capacity"),
