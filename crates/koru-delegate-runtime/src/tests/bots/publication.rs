@@ -11,15 +11,19 @@ fn waiting() -> (Harness, BotSubmission, BotExecutionFence) {
 }
 
 fn waiting_with_memory(keep_memory: bool) -> (Harness, BotSubmission, BotExecutionFence) {
-    let (h, submission, fence, _, _) = waiting_with(keep_memory, false);
+    let (h, submission, fence, _, _) = waiting_with(keep_memory, false, None);
     (h, submission, fence)
 }
 
 /// The waiting fixture, optionally with a native approval decision, plus the
 /// exact fresh policy proof and delegate boot its later answer must present.
+/// `effect`: before the decision, lease the fixture's native page effect and
+/// leave it held (`Some(false)`) or confirm it DrainedUnknown (`Some(true)`),
+/// through the real ledger methods only.
 fn waiting_with(
     keep_memory: bool,
     native: bool,
+    effect: Option<bool>,
 ) -> (
     Harness,
     BotSubmission,
@@ -27,7 +31,7 @@ fn waiting_with(
     FreshBotPolicyProof,
     DelegateBootId,
 ) {
-    let (mut h, submission, fence, policy, _) = native_results::active();
+    let (mut h, submission, fence, policy, request) = native_results::active();
     h.orchestrator
         .synchronize_native_policy(policy.clone(), fence.owner.device)
         .unwrap();
@@ -129,6 +133,26 @@ fn waiting_with(
         routine: None,
     };
     let boot = DelegateBootId::mint();
+    if let Some(drained) = effect {
+        db.prepare_native_result(&request).unwrap();
+        let intent = db
+            .lease_native_result(&request.key, request.request_fingerprint, &fence, &proof)
+            .unwrap()
+            .intent;
+        if drained {
+            let receipt = NativeEffectDrainReceipt {
+                binding: intent.pending_effect().unwrap().binding,
+                fenced_at: NativeEffectTimestamp::from_millis(999),
+                drained_at: NativeEffectTimestamp::from_millis(1000),
+            };
+            db.confirm_native_result(&ConfirmNativeResult {
+                key: request.key.clone(),
+                request_fingerprint: request.request_fingerprint,
+                observation: NativeResultObservation::DrainedUnknown { receipt },
+            })
+            .unwrap();
+        }
+    }
     db.prepare_bot_decision(&binding, &proof, boot, &base)
         .unwrap();
     drop(db);

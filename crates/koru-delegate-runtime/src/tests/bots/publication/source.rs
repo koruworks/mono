@@ -467,7 +467,7 @@ fn settle_native(
 
 #[test]
 fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
-    let (mut h, _, fence, proof, boot) = waiting_with(true, true);
+    let (mut h, _, fence, proof, boot) = waiting_with(true, true, None);
     let run = fence.run;
     apply_next(&mut h, run);
     let decision = settle_native(&mut h, &fence, &proof, boot);
@@ -529,7 +529,7 @@ fn pending_code(error: RunError) -> bool {
 
 #[test]
 fn decision_delivery_while_exclusive_records_receipt_then_publishes_owed_completion() {
-    let (mut h, s, fence, proof, boot) = waiting_with(true, true);
+    let (mut h, s, fence, proof, boot) = waiting_with(true, true, None);
     let run = fence.run;
     let turn = fence.turn.unwrap();
     apply_next(&mut h, run);
@@ -619,4 +619,42 @@ fn decision_delivery_while_exclusive_records_receipt_then_publishes_owed_complet
         .unwrap();
     assert_eq!(header.status, RunStatus::Completed);
     assert_eq!(header.chat_delivery, Some(receipt));
+}
+
+#[test]
+fn decision_cleanup_with_a_drained_effect_completes_but_a_held_lease_keeps_occupancy() {
+    for drained in [true, false] {
+        let (mut h, submission, fence, _, _) = waiting_with(true, false, Some(drained));
+        let run = fence.run;
+        apply_next(&mut h, run);
+        let _ = h
+            .orchestrator
+            .bot_stop(&key(&submission), fence.owner.device, Some(&fence));
+        let _ = h.orchestrator.bot_budget_tick(run);
+        let execution = h
+            .schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .decision_wait_execution(fence.owner, run)
+            .unwrap()
+            .unwrap();
+        if drained {
+            // The complete drain from the C reader names the drained effect.
+            let Some(ConsumerCleanup::Confirmed { native_drain, .. }) = execution.wait.cleanup
+            else {
+                panic!("final cleanup recorded")
+            };
+            assert_eq!(native_drain.effects.as_slice().len(), 1);
+            assert!(h.attempt(run).retired);
+        } else {
+            // A held lease may still commit: nothing is recorded or retired.
+            assert!(execution.wait.cleanup.is_none());
+            assert!(!h.attempt(run).retired);
+        }
+        assert_eq!(
+            h.schedule_store.bot_execution(run).unwrap().unwrap().state,
+            BotAdmissionState::Executing
+        );
+    }
 }
