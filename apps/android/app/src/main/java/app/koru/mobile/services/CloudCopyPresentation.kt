@@ -161,6 +161,10 @@ internal class CloudCopyPresentation(
             else -> if (node != null) CloudCopyPhase.OutcomeUnknown else CloudCopyPhase.Unavailable
         })
     }
+    private fun refreshRetiredRemoval(operation: Operation) {
+        if (!operation.drained && operation.node != null && status.activeScope == operation.key.ownerScope &&
+            status.activeAccountId == operation.key.selection.accountId) refreshes.trySend(Unit)
+    }
     suspend fun observe(next: AndroidAccountStatus, results: List<MobileAccountResult>) = lock.withLock {
         align(next)
         pending?.let { operation ->
@@ -171,7 +175,7 @@ internal class CloudCopyPresentation(
                 next.pollSequence > operation.pollBoundary && next.heldAccounts.any {
                     it.scopeId == operation.key.ownerScope && it.accountId == operation.key.selection.accountId &&
                         it.requesterActive == false && generation !in it.activeGenerations
-                }) pending = null
+                }) { refreshRetiredRemoval(operation); pending = null }
         }
         for (result in results) {
             if (result.sequence <= sequence) continue
@@ -183,6 +187,7 @@ internal class CloudCopyPresentation(
             if (result.kind != if (removal) "cloud_file_removal" else "cloud_document_inspection") continue
             timeout?.cancel(); timeout = null
             if (operation.retired) {
+                refreshRetiredRemoval(operation)
                 operation.drained = true
                 if (!operation.cancelling || operation.cancellationFinished) pending = null
                 continue

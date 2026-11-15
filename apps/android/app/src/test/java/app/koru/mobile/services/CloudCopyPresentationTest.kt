@@ -197,4 +197,22 @@ class CloudCopyPresentationTest {
         assertThrows(IllegalArgumentException::class.java) { MobileAccountContract.validate(request.clearCloudFileNodeId().build()) }
         assertThrows(IllegalArgumentException::class.java) { MobileAccountContract.validate(request.setCloudDocumentSelectionJson("x".repeat(1025)).build()) }
     }
+    @Test fun closedRemovalRefreshesOnlyItsStillActiveAccountWithoutReopening() = runTest {
+        for (failure in listOf(null, "cloud_edit_outcome_unknown")) {
+            val calls = Calls(); val state = presenter(calls); enter(state)
+            state.observe(status(), listOf(result(1, 10)))
+            state.remove(state.state.value.key!!, node); runCurrent()
+            state.close(); runCurrent()
+            state.observe(status(), listOf(result(2, 11, removal = true, failure = failure))); runCurrent()
+            assertNull(state.state.value.key)
+            assertEquals(1, calls.refreshes)
+        }
+        val calls = Calls(); val state = presenter(calls); enter(state)
+        state.observe(status(), listOf(result(1, 10)))
+        state.remove(state.state.value.key!!, node); runCurrent()
+        state.observe(status(2, id(20)), emptyList()); runCurrent()
+        state.observe(status(2, id(20)), listOf(result(2, 11, removal = true))); runCurrent()
+        assertNull(state.state.value.key)
+        assertEquals(0, calls.refreshes)
+    }
 }
