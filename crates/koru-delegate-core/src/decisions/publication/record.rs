@@ -70,6 +70,16 @@ pub struct DecisionExpected {
     pub binding_digest: DecisionDigest,
 }
 
+/// Exact local runtime-wait CAS; cleanup-only waits have no synthetic decision.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionWaitExpected {
+    pub owner: BotOwner,
+    pub run: RunId,
+    pub wait: BotWaitId,
+    pub revision: DecisionRevision,
+    pub decision: Option<DecisionExpected>,
+}
+
 /// First-entry observation from the sole attached document owner. SQL repeats
 /// physical placement and immutable request checks. Same-wait entries use the
 /// retained predecessor. Re-entry after a completely settled prior wait uses

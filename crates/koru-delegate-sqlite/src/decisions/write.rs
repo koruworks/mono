@@ -6,12 +6,16 @@ use rusqlite::{params_from_iter, types::Value};
 mod answer;
 mod native;
 mod phase;
+mod resume;
 #[cfg(test)]
 pub(super) use answer::{AnswerDecision, answer_on};
 #[cfg(test)]
 pub(super) use native::record_native_answer_on;
+pub(super) use phase::{DecisionStopCause, phase_on};
 #[cfg(test)]
-pub(super) use phase::{DecisionStopCause, enroll_on, phase_on, record_enrollment_on};
+pub(super) use phase::{enroll_on, record_enrollment_on};
+#[cfg(test)]
+pub(super) use resume::{bind_resume_session_on, record_resume_input_on};
 
 #[derive(Debug)]
 pub(crate) struct DecisionMutation {

@@ -26,10 +26,8 @@ fn decision_wait_execution_absence_is_owner_checked_and_retired_origin_is_explic
     assert!(observed.resume.is_none());
 }
 
-#[test]
-fn decision_wait_execution_unknown_successor_never_reuses_retired_origin_cleanup() {
-    let mut h = Harness::new();
-    let retired = enrollment::retired(&mut h);
+pub(super) fn successor(h: &mut Harness) -> DecisionRecord {
+    let retired = enrollment::retired(h);
     let input = h.answer_input(&retired, true);
     let allowed = h.answer(&input, 1004).unwrap().record;
     let f = h.origin();
@@ -54,11 +52,21 @@ fn decision_wait_execution_unknown_successor_never_reuses_retired_origin_cleanup
     tx.execute("UPDATE bot_decisions SET phase='resume_prepared',revision=revision+1,updated_at_ms=1005 WHERE decision_id=?1",[allowed.receipt.decision.to_storage()]).unwrap();
     tx.execute("INSERT INTO bot_decision_resumes(decision_id,run_id,kind,origin_attempt_id,origin_generation,origin_session_id,consumer_attempt_id,consumer_generation,session_creation_key,input_key,input_fingerprint,state,created_at_ms,updated_at_ms) VALUES(?1,?2,'recorded_successor',?3,?4,?5,?6,?7,?8,?9,?10,'prepared',1005,1005)",params![allowed.receipt.decision.to_storage(),f.run.to_storage(),f.attempt.to_storage(),f.generation.get(),f.session.to_string(),attempt.attempt.to_storage(),attempt.generation.get(),creation.to_string(),IdempotencyKey::mint().to_string(),[3u8;32].as_slice()]).unwrap();
     tx.commit().unwrap();
+    h.read(allowed.receipt.decision).unwrap()
+}
+
+#[test]
+fn decision_wait_execution_unknown_successor_never_reuses_retired_origin_cleanup() {
+    let mut h = Harness::new();
+    let record = successor(&mut h);
+    let f = h.origin();
+    let resume = record.resume.as_ref().unwrap();
+    let (attempt, _, _, creation) = resume.consumer_identity();
     let observed =
         h.db.decision_wait_execution(f.owner, f.run)
             .unwrap()
             .unwrap();
-    assert_eq!(observed.current_attempt.attempt, attempt.attempt);
+    assert_eq!(observed.current_attempt.attempt, attempt);
     assert!(!observed.current_attempt.retired);
     assert_eq!(observed.cleanup_target.session(), None);
     assert_eq!(observed.cleanup_target.creation_key(), creation);
@@ -77,7 +85,7 @@ fn decision_wait_execution_unknown_successor_never_reuses_retired_origin_cleanup
     h.db.conn()
         .execute(
             "DELETE FROM run_attempts WHERE attempt_id=?1",
-            [attempt.attempt.to_storage()],
+            [attempt.to_storage()],
         )
         .unwrap();
     assert!(

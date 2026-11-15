@@ -13,8 +13,9 @@ pub use routines::{
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::decisions::{
-    BotWaitId, DecisionPreparedProjection, DecisionProjectionAcknowledgment,
-    DecisionProjectionRecord, DecisionPublicationBase, DecisionTransitionId, RunProjectionTargetV1,
+    BotWaitId, DecisionBindingV1, DecisionClosureReason, DecisionPreparedProjection,
+    DecisionProjectionAcknowledgment, DecisionProjectionRecord, DecisionPublicationBase,
+    DecisionTransitionId, DecisionWaitExpected, RunProjectionTargetV1,
 };
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
@@ -175,6 +176,19 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn prepare_bot_decision(
+        &mut self,
+        binding: &DecisionBindingV1,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<crate::DecisionRecord, BotLedgerError>;
+    fn request_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        cause: DecisionClosureReason,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
     fn decision_wait_execution(
         &self,
         owner: BotOwner,

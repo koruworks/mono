@@ -2,8 +2,15 @@
 
 use super::*;
 
-fn prior(record: &DecisionProjectionRecord) -> DecisionProjectionPredecessor {
-    DecisionProjectionPredecessor {
+pub(super) fn prior(
+    record: &DecisionProjectionRecord,
+) -> Result<DecisionProjectionPredecessor, BotLedgerError> {
+    Ok(DecisionProjectionPredecessor {
+        observed_created_at_ms: record.target.predecessor().observed_created_at_ms,
+        timeline_start: record
+            .target
+            .timeline_end()
+            .map_err(|_| BotLedgerError::Invalid)?,
         projection: Some(DecisionProjectionPrior {
             transition: record.identity.transition,
             sequence: record.identity.sequence,
@@ -11,7 +18,7 @@ fn prior(record: &DecisionProjectionRecord) -> DecisionProjectionPredecessor {
         }),
         status: record.target.effects().status.clone(),
         failure_reason: record.target.effects().failure_reason,
-    }
+    })
 }
 
 fn base_on(
@@ -24,6 +31,10 @@ fn base_on(
     authority::owner(tx, owner, run)?;
     crate::bots::routines::bounded_admission(tx, run)?;
     let admitted = crate::bots::routines::native_admission(tx, run)?;
+    require(matches!(
+        admitted.state,
+        BotAdmissionState::Reserved | BotAdmissionState::Executing
+    ))?;
     let (intent, request) = crate::intents::retained_bounded(tx, run)?;
     require(
         intent.state == crate::IntentState::Satisfied
@@ -31,6 +42,10 @@ fn base_on(
             && intent.run_document == Some(base.document)
             && request == admitted.submission.request
             && admitted.submission.provenance.owner == owner,
+    )?;
+    require(
+        base.predecessor.observed_created_at_ms == base.observed_created_at_ms
+            && base.predecessor.timeline_start == base.timeline_len,
     )?;
     let mut header = RunHeader::from_request(request, base.observed_created_at_ms);
     header.bot = Some(admitted.submission.provenance.clone());
@@ -52,11 +67,11 @@ fn base_on(
                 && base.workspace == applied.identity.workspace
                 && base.document == applied.identity.document
                 && base.subject_digest == applied.identity.subject_digest
-                && base.predecessor.projection == prior(&applied).projection,
+                && base.predecessor.projection == prior(&applied)?.projection,
         )?;
         if applied.identity.wait == wait {
             require(
-                base.predecessor == prior(&applied)
+                base.predecessor == prior(&applied)?
                     && base.bookkeeping
                         == applied
                             .target
@@ -153,6 +168,17 @@ pub(super) fn insert_on(
             && target.fence().owner == owner
             && target.fence().bot == wait.origin.bot,
     )?;
+    if let RunProjectionTargetV1::Control {
+        action:
+            DecisionControlAction::CleanupRequested {
+                expected_wait_revision,
+                ..
+            },
+        ..
+    } = target
+    {
+        require(wait.revision == next(*expected_wait_revision)?)?;
+    }
     let mut resume = None;
     let decision = match wait.reason {
         BotWaitReason::Decision { decision } => {
@@ -185,9 +211,19 @@ pub(super) fn insert_on(
                 )?;
                 match (disposition, &record.receipt.closure) {
                     (DecisionDisposition::Open { .. }, None) => {}
-                    (DecisionDisposition::Settled { reason, .. }, Some(closure)) => {
-                        require(*reason == closure.reason)?
-                    }
+                    (
+                        DecisionDisposition::Settled {
+                            reason,
+                            outcome_digest,
+                            ..
+                        },
+                        Some(closure),
+                    ) => require(
+                        *reason == closure.reason
+                            && *outcome_digest
+                                == decision_outcome_digest(&record.receipt)
+                                    .map_err(|_| BotLedgerError::Invalid)?,
+                    )?,
                     _ => return Err(BotLedgerError::Conflict),
                 }
             }
@@ -243,7 +279,7 @@ pub(super) fn insert_on(
     };
     let (expected, bookkeeping) = if let Some(last) = open.last() {
         (
-            prior(last),
+            prior(last)?,
             last.target
                 .resulting_bookkeeping()
                 .map_err(|_| BotLedgerError::Invalid)?,

@@ -49,6 +49,7 @@ pub struct DecisionWaitRecord {
 /// with a missing or mismatched attempt is an error, not an empty observation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionWaitExecution {
+    pub expected: DecisionWaitExpected,
     pub wait: DecisionWaitRecord,
     pub decision_state: Option<DecisionState>,
     pub resume: Option<DecisionResume>,
