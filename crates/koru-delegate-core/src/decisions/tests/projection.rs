@@ -5,6 +5,8 @@ fn target() -> RunProjectionTargetV1 {
     RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: 1,
+            timeline_start: 0,
             projection: None,
             status: RunStatus::running(),
             failure_reason: None,
@@ -297,8 +299,8 @@ fn decision_source_transitions_are_ordered_bounded_and_never_delivery_authority(
         version: DecisionVersionV1,
         predecessor: base.predecessor().clone(),
         transitions: DecisionList::new(vec![
-            RunEvent::ChildSessionDetected,
-            RunEvent::ChildSessionTerminated,
+            RunEvent::ApprovalRequired,
+            RunEvent::ApprovalResolved,
         ])
         .unwrap(),
         effects,
@@ -349,4 +351,83 @@ fn decision_source_transitions_are_ordered_bounded_and_never_delivery_authority(
         source.validate().is_err(),
         "there is only one Source transition authority"
     );
+}
+
+#[test]
+fn decision_source_child_fact_matches_accepted_termination_request_only() {
+    let fence = edit().origin();
+    let base = target();
+    for accepted in [false, true] {
+        let transitions = if accepted {
+            vec![
+                RunEvent::ChildSessionDetected,
+                RunEvent::ChildSessionTerminated,
+            ]
+        } else {
+            vec![RunEvent::ChildSessionDetected]
+        };
+        let mut effects = base.effects().clone();
+        effects.event = None;
+        effects.status = transitions
+            .iter()
+            .fold(base.predecessor().status.clone(), |status, event| {
+                transition_bot(&status, event).unwrap()
+            });
+        effects.steps = DecisionList::new(vec![TimelineEntry {
+            id: id(90),
+            kind: StepKind::ChildSessionDetected,
+            at_ms: 8,
+            refs: TimelineRefs::new([
+                TimelineRef::Attempt {
+                    attempt: fence.attempt,
+                },
+                TimelineRef::Turn { turn: fence.turn },
+                TimelineRef::Session { session: id(91) },
+            ])
+            .unwrap(),
+        }])
+        .unwrap();
+        let publication = DecisionProjectionPublication {
+            event: id(93),
+            step: Some(id(90)),
+            fact: RunFact::ChildSessionDetected {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                child: id(91),
+                terminated: accepted,
+            },
+        };
+        effects.publications = DecisionList::new(vec![publication.clone()]).unwrap();
+        let mut source = RunProjectionTargetV1::Source {
+            version: DecisionVersionV1,
+            predecessor: base.predecessor().clone(),
+            transitions: DecisionList::new(transitions).unwrap(),
+            effects,
+            bookkeeping: DecisionSourceBookkeeping {
+                boundary: DecisionSourceBoundary {
+                    fence,
+                    producer_epoch: uuid(92),
+                    stream: DecisionSourceStream::Agent,
+                    sequence: StreamSequence::new(8).unwrap(),
+                    resulting: DecisionSourceFrontiers {
+                        agent_after: Some(StreamSequence::new(8).unwrap()),
+                        session_after: None,
+                    },
+                },
+                unflushed: DecisionList::default(),
+                usage: None,
+                allocated_steps: DecisionList::new(vec![id(90)]).unwrap(),
+            },
+        };
+        assert!(source.validate().is_ok());
+        let mut wrong = publication;
+        if let RunFact::ChildSessionDetected { terminated, .. } = &mut wrong.fact {
+            *terminated = !accepted;
+        }
+        if let RunProjectionTargetV1::Source { effects, .. } = &mut source {
+            effects.publications = DecisionList::new(vec![wrong]).unwrap();
+        }
+        assert!(source.validate().is_err());
+    }
 }

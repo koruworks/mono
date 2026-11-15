@@ -225,6 +225,7 @@ impl RunDocument {
                 && (schema != 4 || bot.routine.is_some())
                 && header.bot_fields_valid()
                 && header.run == identity.run
+                && header.created_at_ms == target.predecessor().observed_created_at_ms
                 && target.fence().owner == bot.owner
                 && target.fence().bot == bot.bot
                 && header.executing_device() == Some(bot.owner.device)
@@ -253,7 +254,8 @@ impl RunDocument {
         let header = self.header()?;
         require_document(
             header.status == target.predecessor().status
-                && header.failure_reason == target.predecessor().failure_reason,
+                && header.failure_reason == target.predecessor().failure_reason
+                && self.timeline().len() as u64 == target.predecessor().timeline_start,
         )?;
         match (&target.predecessor().projection, self.marker()?) {
             (None, None) => Ok(()),
@@ -394,6 +396,8 @@ impl RunDocument {
         }
         require_document(
             marker.identity == prepared.identity
+                && marker.timeline_start == target.predecessor().timeline_start
+                && marker.timeline_end == target.timeline_end().map_err(invalid)?
                 && marker.status == effects.status
                 && marker.bookkeeping == target.resulting_bookkeeping().map_err(invalid)?
                 && self.header()?.status == effects.status

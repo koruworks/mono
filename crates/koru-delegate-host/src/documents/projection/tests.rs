@@ -49,6 +49,8 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
     let target = RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: header.created_at_ms,
+            timeline_start: doc.timeline_len() as u64,
             projection: None,
             status: header.status.clone(),
             failure_reason: None,

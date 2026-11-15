@@ -38,6 +38,8 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
     let target = RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: h.created_at_ms,
+            timeline_start: doc.timeline_len() as u64,
             projection: None,
             status: h.status.clone(),
             failure_reason: h.failure_reason,
@@ -107,6 +109,8 @@ fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> R
     value.target = RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor {
+            observed_created_at_ms: doc.header().unwrap().created_at_ms,
+            timeline_start: doc.timeline_len() as u64,
             projection: Some(DecisionProjectionPrior {
                 transition: previous.identity.transition,
                 sequence: previous.identity.sequence,
@@ -558,6 +562,46 @@ fn projection_new_wait_uses_current_baseline_but_same_wait_keeps_exact_bookkeepi
     let mut late = RunProjectionStaging::default();
     assert!(late.apply(&doc, &old).is_err());
     assert_eq!(doc.header().unwrap().status, RunStatus::Cancelled);
+}
+
+#[test]
+fn projection_retained_baseline_rejects_wrong_creation_time_or_timeline_offset() {
+    let doc = bot(false);
+    let exact = intent(&doc);
+    let before = doc.version();
+    for wrong_time in [false, true] {
+        let mut wrong = exact.clone();
+        if let RunProjectionTargetV1::Control { predecessor, .. } = &mut wrong.target {
+            if wrong_time {
+                predecessor.observed_created_at_ms += 1;
+            } else {
+                predecessor.timeline_start += 1;
+            }
+        }
+        wrong.identity.target_digest = wrong.target.digest().unwrap();
+        assert!(
+            RunProjectionStaging::default()
+                .prepare(&doc, &wrong)
+                .is_err()
+        );
+        assert!(
+            DecisionProjectionMarker::for_target(
+                &wrong.identity,
+                &wrong.target,
+                doc.timeline_len() as u64
+            )
+            .is_err()
+                || wrong_time
+        );
+        assert_eq!(doc.version(), before);
+    }
+    let prepared = RunProjectionStaging::default()
+        .prepare(&doc, &exact)
+        .unwrap();
+    assert_eq!(
+        prepared.identity.target_digest,
+        exact.identity.target_digest
+    );
 }
 
 #[test]

@@ -27,6 +27,11 @@ pub struct DecisionProjectionPrior {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionProjectionPredecessor {
+    /// Canonical materialization time first qualified by the document owner.
+    /// Retained here so cold controls do not invent an intent timestamp.
+    pub observed_created_at_ms: i64,
+    /// Exact expected document offset before this target's retained effects.
+    pub timeline_start: u64,
     pub projection: Option<DecisionProjectionPrior>,
     #[serde(deserialize_with = "strict_leaf")]
     pub status: RunStatus,
@@ -236,6 +241,19 @@ impl RunProjectionTargetV1 {
         steps.extend_from_slice(self.effects().steps.as_slice());
         Ok(steps)
     }
+    pub fn timeline_end(&self) -> Result<u64, DecisionError> {
+        let steps =
+            u64::try_from(self.projected_steps()?.len()).map_err(|_| DecisionError::TooLarge)?;
+        self.predecessor()
+            .timeline_start
+            .checked_add(steps)
+            .and_then(|end| {
+                end.checked_add(u64::from(
+                    self.source_bookkeeping().is_some_and(|b| b.usage.is_some()),
+                ))
+            })
+            .ok_or(DecisionError::TooLarge)
+    }
     pub fn canonical_bytes(&self) -> Result<DecisionPayload, DecisionError> {
         self.validate()?;
         DecisionBytes::new(bounded::encode(self, DECISION_PAYLOAD_BYTES)?)
@@ -390,6 +408,7 @@ impl DecisionValidate for RunProjectionTargetV1 {
         flush::derive(self)?;
         delivery::validate(self)?;
         facts::validate(self)?;
+        self.timeline_end()?;
         // Count with the existing bounded streaming digest owner before copying.
         crate::routine_digest_json(
             b"koru.bot.decision.projection.target.v1",
