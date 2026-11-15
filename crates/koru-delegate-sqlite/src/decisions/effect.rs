@@ -74,6 +74,65 @@ pub(super) fn retained_key(
     Ok(Some(key))
 }
 
+/// The retained outcome final cleanup must name for a consumed Koru edit, read
+/// through the companion's immutable first consuming key. `None` means no
+/// outcome is owed (not a consumed Koru edit). An unresolved effect is Fenced:
+/// it is never reported as NotApplied, and cleanup keeps waiting.
+pub(super) fn retained_outcome_on(
+    conn: &Connection,
+    owner: BotOwner,
+    run: RunId,
+    decision: DecisionId,
+) -> Result<Option<DecisionRetainedEffect>, BotLedgerError> {
+    authority::owner(conn, owner, run)?;
+    let Some(record) = rows::read(conn, owner, run, decision)? else {
+        return Ok(None);
+    };
+    if record.receipt.state.kind != DecisionKind::KoruEdit
+        || record.receipt.state.authorization != DecisionAuthorization::Consumed
+    {
+        return Ok(None);
+    }
+    let key = retained_key(conn, &record.receipt, record.resume.as_ref())?
+        .ok_or_else(|| corrupt("native_decision_leases", "consumed"))?;
+    let intent = crate::native_results::retained_result_on(conn, &key)?
+        .ok_or_else(|| corrupt("native_decision_leases", "intent"))?;
+    if intent.lease_state != crate::NativeLeaseState::Settled {
+        return Err(BotLedgerError::Fenced);
+    }
+    let bad = || corrupt("native_result_intents", "outcome");
+    Ok(Some(match intent.stage {
+        NativeResultStage::Refused => DecisionRetainedEffect::NotApplied {
+            code: intent.refusal.ok_or_else(bad)?,
+            key,
+        },
+        NativeResultStage::Verified | NativeResultStage::Registered => {
+            DecisionRetainedEffect::Durable {
+                reference: intent.verified.ok_or_else(bad)?,
+                key,
+            }
+        }
+        NativeResultStage::SettledUnknown => DecisionRetainedEffect::DrainedUnknown {
+            drain: intent.drain.ok_or_else(bad)?,
+            key,
+        },
+        _ => return Err(BotLedgerError::Fenced),
+    }))
+}
+
+impl RunsDb {
+    /// The exact retained effect outcome a consumed Koru edit's final cleanup
+    /// must carry. Read-only; it grants no cleanup or settlement by itself.
+    pub fn decision_retained_effect(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: DecisionId,
+    ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError> {
+        retained_outcome_on(self.conn(), owner, run, decision)
+    }
+}
+
 /// Runs after the ordinary full-key native decoder and its policy/Memory/
 /// Routine checks. This does not recurse into another native intent read.
 pub(crate) fn validate_native_on(

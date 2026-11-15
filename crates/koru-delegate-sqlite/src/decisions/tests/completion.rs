@@ -8,7 +8,7 @@ use lifecycle::expected;
 
 /// The returned-handle acknowledgment for a projection applied through
 /// `projection::apply`, which always prepares the same delta and observes [3].
-fn ack(record: &DecisionProjectionRecord) -> DecisionProjectionAcknowledgment {
+pub(super) fn ack(record: &DecisionProjectionRecord) -> DecisionProjectionAcknowledgment {
     DecisionProjectionAcknowledgment {
         identity: record.identity.clone(),
         delta_digest: projection::prepared(record).delta_digest,
@@ -70,7 +70,7 @@ fn provider_source(
     target
 }
 
-fn ticket(h: &Harness) -> DecisionWaitExpected {
+pub(super) fn ticket(h: &Harness) -> DecisionWaitExpected {
     let f = h.origin();
     h.db.decision_wait_execution(f.owner, f.run)
         .unwrap()
@@ -318,7 +318,7 @@ fn decision_confirmed_cleanup_settles_wait_with_needed_you_interrupt_or_stop() {
 }
 
 /// D's trusted base after one accepted Session event at `observed`.
-fn fallback_base(h: &Harness, observed: StreamSequence) -> DecisionPublicationBase {
+pub(super) fn fallback_base(h: &Harness, observed: StreamSequence) -> DecisionPublicationBase {
     let mut base = projection::base(h);
     base.bookkeeping = Some(DecisionSourceBookkeeping {
         boundary: DecisionSourceBoundary {
@@ -338,7 +338,7 @@ fn fallback_base(h: &Harness, observed: StreamSequence) -> DecisionPublicationBa
     base
 }
 
-fn sequence(n: u64) -> StreamSequence {
+pub(super) fn sequence(n: u64) -> StreamSequence {
     StreamSequence::new(n).unwrap()
 }
 
@@ -476,7 +476,7 @@ fn decision_nondecision_fallback_retains_one_occupied_obligation_for_every_reaso
 }
 
 /// The exact physical evidence for the current attempt, without retiring it.
-fn observed_cleanup(h: &Harness, now: i64) -> (DecisionWaitExpected, ConsumerCleanup) {
+pub(super) fn observed_cleanup(h: &Harness, now: i64) -> (DecisionWaitExpected, ConsumerCleanup) {
     let f = h.origin();
     let attempt = h.db.current_attempt(f.run).unwrap().unwrap();
     let observed =
@@ -510,7 +510,7 @@ fn observed_cleanup(h: &Harness, now: i64) -> (DecisionWaitExpected, ConsumerCle
     (observed.expected, cleanup)
 }
 
-fn execution_fence(f: &DecisionFence) -> BotExecutionFence {
+pub(super) fn execution_fence(f: &DecisionFence) -> BotExecutionFence {
     BotExecutionFence {
         owner: f.owner,
         bot: f.bot,
@@ -522,7 +522,7 @@ fn execution_fence(f: &DecisionFence) -> BotExecutionFence {
     }
 }
 
-fn result_request(h: &Harness) -> PrepareNativeResult {
+pub(super) fn result_request(h: &Harness) -> PrepareNativeResult {
     let f = h.origin();
     let admission = h.db.bot_admission(f.run).unwrap().unwrap();
     PrepareNativeResult {

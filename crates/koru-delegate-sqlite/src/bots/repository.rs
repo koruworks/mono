@@ -556,6 +556,24 @@ impl BotLedger for RunsDb {
     {
         RunsDb::read_bot_decision_wait(self, owner, bot, run, wait, decision)
     }
+    fn decision_native_drain(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        attempt: RunAttemptId,
+        generation: AttemptGeneration,
+        observed_at_ms: i64,
+    ) -> Result<koru_delegate_core::decisions::DecisionNativeDrain, BotLedgerError> {
+        RunsDb::decision_native_drain(self, owner, run, attempt, generation, observed_at_ms)
+    }
+    fn decision_retained_effect(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError> {
+        RunsDb::decision_retained_effect(self, owner, run, decision)
+    }
     fn record_decision_source(
         &mut self,
         owner: BotOwner,
