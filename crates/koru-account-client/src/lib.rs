@@ -22,6 +22,7 @@ use zeroize::Zeroizing;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+mod cloud_plan;
 mod diagnostics;
 mod subscription;
 pub use subscription::CloudSubscriptionStatus;

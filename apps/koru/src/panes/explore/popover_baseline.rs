@@ -290,11 +290,7 @@ fn cases(page: Page) -> Vec<Case> {
     };
     let mut states = vec![State::HoverRow, State::HoverGear, State::Keyboard];
     if page == Page::Profiles {
-        states.extend([
-            State::ProfileAction(MenuAction::New),
-            State::ProfileAction(MenuAction::Sync),
-            State::Synced,
-        ]);
+        states.extend([State::ProfileAction(MenuAction::Sync), State::Synced]);
     }
     out.extend(states.into_iter().map(|state| Case { state, ..base }));
     for state in [State::Rest, State::ScrolledToEnd] {
@@ -772,7 +768,7 @@ fn approved_line(page: Page, section: &str, line: &str, band: Option<(f64, f64)>
         Page::Profiles => {
             line.starts_with("sem ")
                 || (line.starts_with("focus ") && section.ends_with("state=hover-gear"))
-                // Global sync's channel glyphs retain their state-dependent paint.
+                // Record Sync's paint in the connected-state case as well.
                 || (section.ends_with("state=synced") && line.starts_with("paint profile-action "))
                 // E7: a Profile's name is elided like a workspace's, so a
                 // long one ends in `…` where P0 cut it at a word. The name is

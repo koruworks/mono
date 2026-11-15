@@ -37,9 +37,10 @@ expose every Koru control, arbitrary actions or complete upstream A2UI support.
 ## The task/document view
 
 The experimental **Tasks and document** host places an existing task collection
-beside a document editor. Open **+**, then choose **Tasks and document** in the
-New launcher. Use the arrow keys and Enter, a pointer, or accessible activation
-to choose the tile. The host remains experimental; native acceptance is still
+beside a document editor. Open **+ → Documents → Tasks and document**, or use
+**Ctrl+N** and choose **Tasks and document** in the New launcher. Use the arrow
+keys and Enter, a pointer, or accessible activation to choose the tile.
+The host remains experimental; native acceptance is still
 pending.
 
 Choose Today, Next, Upcoming, Later, Completed, or one of your lists in the

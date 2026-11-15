@@ -87,10 +87,9 @@ fn actions_route_and_only_import_keeps_the_parent_open() {
     assert!(!view.popover_open());
 }
 
-/// The channel icons live on the Profiles page; the workspace menu no
-/// longer carries them.
+/// Global sync has one target, including its decorative channel icons.
 #[test]
-fn both_channel_icons_have_distinct_keyboard_and_accessibility_destinations() {
+fn global_sync_icons_and_label_share_one_keyboard_and_accessibility_destination() {
     use koru_agent_wire::{AccountProfileCloud, AccountState, CloudConnectionStage};
     use koru_workspace_host::accessibility::{ControlPart, Occurrence, ViewSlot, WindowSlot};
     use winit::keyboard::{Key as WKey, NamedKey};
@@ -109,46 +108,48 @@ fn both_channel_icons_have_distinct_keyboard_and_accessibility_destinations() {
         view.toggle_profile_popover();
         view
     };
-    for (action, outcome) in [
-        (MenuAction::Sync, Outcome::OpenSyncSettings),
-        (MenuAction::Cloud, Outcome::ManageCloud),
-    ] {
-        let occurrence = Occurrence::surface(
-            WindowSlot::from_raw(1),
-            ViewSlot::from_raw(1),
-            popover_elements::SURFACE,
-            ControlPart::new(action.key().part),
-        );
-        let mut view = configured();
-        let (x, y) = view
-            .with_page(area(), VIEWPORT, |frame| {
-                assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
-                let rect = frame.node(action.key()).unwrap().rect;
-                assert_eq!(
-                    frame.hit_at(rect.centre().0, rect.centre().1),
-                    Some(action.key())
-                );
-                rect.centre()
-            })
-            .unwrap();
-        let (_, description, _) = view.menu_tooltip(area(), VIEWPORT, x, y).unwrap();
-        assert_eq!(description, view.sync_control_name());
-        assert_eq!(view.mouse_down(area(), VIEWPORT, x, y, false), outcome);
-        assert!(!view.popover_open());
+    let action = popover_elements::profiles::MenuAction::Sync;
+    let outcome = Outcome::OpenSyncSettings;
+    let occurrence = Occurrence::surface(
+        WindowSlot::from_raw(1),
+        ViewSlot::from_raw(1),
+        popover_elements::SURFACE,
+        ControlPart::new(action.key().part),
+    );
+    let mut view = configured();
+    let (x, y) = view
+        .with_page(area(), VIEWPORT, |frame| {
+            assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+            let rect = frame.node(action.key()).unwrap().rect;
+            assert!(frame.node(MenuAction::Sync.key()).is_none());
+            assert!(frame.node(MenuAction::Cloud.key()).is_none());
+            for glyph in frame.named("Sync channels") {
+                let (x, y) = glyph.rect.centre();
+                assert_eq!(frame.hit_at(x, y), Some(action.key()));
+            }
+            assert_eq!(
+                frame.hit_at(rect.centre().0, rect.centre().1),
+                Some(action.key())
+            );
+            rect.centre()
+        })
+        .unwrap();
+    assert!(view.menu_tooltip(area(), VIEWPORT, x, y).is_none());
+    assert_eq!(view.mouse_down(area(), VIEWPORT, x, y, false), outcome);
+    assert!(!view.popover_open());
+    let mut view = configured();
+    assert_eq!(
+        view.accessibility_action(area(), occurrence, accesskit::Action::Click, VIEWPORT),
+        Some(outcome.clone())
+    );
+    for key in [NamedKey::Enter, NamedKey::Space] {
         let mut view = configured();
         assert_eq!(
-            view.accessibility_action(area(), occurrence, accesskit::Action::Click, VIEWPORT),
-            Some(outcome.clone())
+            view.accessibility_action(area(), occurrence, accesskit::Action::Focus, VIEWPORT),
+            Some(Outcome::Consumed)
         );
-        for key in [NamedKey::Enter, NamedKey::Space] {
-            let mut view = configured();
-            assert_eq!(
-                view.accessibility_action(area(), occurrence, accesskit::Action::Focus, VIEWPORT),
-                Some(Outcome::Consumed)
-            );
-            assert_eq!(view.popover_key(&WKey::Named(key)), Some(outcome.clone()));
-            assert!(!view.popover_open());
-        }
+        assert_eq!(view.popover_key(&WKey::Named(key)), Some(outcome.clone()));
+        assert!(!view.popover_open());
     }
 }
 
@@ -209,10 +210,6 @@ fn configured_channels_are_independent_of_health_and_other_profiles() {
                     ..AccountState::default()
                 });
                 assert_eq!(view.sync_channels(), SyncChannels { devices, cloud });
-                assert_eq!(
-                    view.sync_channels().controls().len(),
-                    if devices && cloud { 2 } else { 1 }
-                );
                 let name = view.sync_control_name();
                 assert!(name.contains(t(crate::format::lang(), view.sync_status().key())));
                 assert_eq!(
@@ -240,7 +237,14 @@ fn the_summary_has_no_profile_header_and_no_sync_cloud_or_trash() {
         }],
         ..AccountState::default()
     });
-    assert_eq!(view.sync_channels().controls().len(), 2, "both configured");
+    assert_eq!(
+        view.sync_channels(),
+        SyncChannels {
+            devices: true,
+            cloud: true
+        },
+        "both configured"
+    );
     let rows = view.popover_rows();
     assert_eq!(rows.first(), Some(&PopoverRow::WorkspacesHeading));
     for gone in [MenuAction::Sync, MenuAction::Cloud, MenuAction::Trash] {

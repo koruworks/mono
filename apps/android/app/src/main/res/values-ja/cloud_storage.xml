@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_storage_refresh">更新</string>
+    <string name="cloud_storage_title">クラウドストレージ</string>
+    <string name="cloud_storage_available">空き容量：%1$s バイト / %2$s バイト</string>
+    <string name="cloud_storage_used">使用量：%1$s バイト</string>
+    <string name="cloud_storage_total">合計：%1$s バイト</string>
+    <string name="cloud_storage_no_limit">ストレージ容量の上限なし</string>
+    <string name="cloud_storage_allowance_unknown">ストレージ上限を確認できません</string>
+    <string name="cloud_storage_checking">クラウドストレージを確認中…</string>
+    <string name="cloud_storage_calculating">クラウドストレージを計算中…</string>
+    <string name="cloud_storage_unknown">クラウドストレージの使用量を確認できません</string>
+    <string name="cloud_storage_schema">このデータ形式に対応するまで、クラウドストレージの使用量を計算できません。</string>
+    <string name="cloud_storage_failed">クラウドストレージを確認できませんでした</string>
+    <string name="cloud_storage_stale">最終確認：%1$s。情報が古い可能性があります</string>
+    <string name="cloud_storage_explanation">ファイルは元のサイズで計上されます。文章はまだ計上されません。</string>
+    <string name="cloud_storage_reserved">アップロード中：%1$s バイト</string>
+    <string name="cloud_storage_details">詳細</string>
+    <string name="cloud_storage_checked">最終確認：%1$s</string>
+</resources>

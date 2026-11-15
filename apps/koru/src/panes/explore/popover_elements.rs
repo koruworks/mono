@@ -265,16 +265,6 @@ impl ExploreView {
         y: f32,
     ) -> Option<(Rect, String, Option<koru_keys::ShortcutId>)> {
         self.with_page(area, viewport, |frame| {
-            if let Some(node) = [
-                profiles::MenuAction::Sync.key(),
-                super::workspace_menu_elements::MenuAction::Sync.key(),
-                super::workspace_menu_elements::MenuAction::Cloud.key(),
-            ]
-            .into_iter()
-            .find_map(|key| frame.node(key).filter(|node| node.rect.contains(x, y)))
-            {
-                return Some((node.rect, self.sync_control_name(), None));
-            }
             if let Some((rect, description)) = self.profiles.iter().find_map(|profile| {
                 let rect = frame.node(profiles::primary(profile.id))?.rect;
                 rect.contains(x, y)
@@ -331,13 +321,9 @@ impl ExploreView {
     pub(crate) fn workspaces_page(&self, scroll: f32) -> El {
         let rows = self.rows_for(PopoverKind::Summary);
         let mut list = Vec::new();
-        let mut previous_pin = false;
         for row in rows {
             if let PopoverRow::Workspace(i) = row {
                 if let Some(w) = self.workspaces.get(i) {
-                    if previous_pin && !w.pinned {
-                        list.push(super::workspace_menu_elements::rule());
-                    }
                     list.push(self.workspace_row(
                         w.id,
                         &w.name,
@@ -345,7 +331,6 @@ impl ExploreView {
                         w.color.clone(),
                         self.current == Some(w.id),
                     ));
-                    previous_pin = w.pinned;
                 }
             }
         }
@@ -382,6 +367,7 @@ impl ExploreView {
             return page.child(
                 scroll_y(LIST)
                     .fill()
+                    .gap(Space::S1)
                     .min_h(metrics::ROW_MIN)
                     .offset(scroll)
                     .children(list),
@@ -400,15 +386,20 @@ impl ExploreView {
         if let Some(group) = self.unassigned_group() {
             page = page.child(group);
         }
-        page.child(self.workspace_menu_heading())
-            .child(
-                scroll_y(LIST)
-                    .fill()
-                    .min_h(metrics::ROW_MIN)
-                    .offset(scroll)
-                    .children(list),
-            )
-            .child(self.workspace_menu_footer())
+        page.child(
+            col("Workspace header spacing")
+                .child(self.workspace_menu_heading())
+                .child(super::workspace_menu_elements::rule()),
+        )
+        .child(
+            scroll_y(LIST)
+                .fill()
+                .gap(Space::S1)
+                .min_h(metrics::ROW_MIN)
+                .offset(scroll)
+                .children(list),
+        )
+        .child(self.workspace_menu_footer())
     }
 
     /// One workspace row: a neutral row whose whole width presses the
@@ -468,7 +459,7 @@ impl ExploreView {
                     .child(
                         row("Workspace primary action")
                             .fill()
-                            .gap(Space::S2)
+                            .pad_y(Space::S0_5)
                             .id(primary)
                             .focusable()
                             .action(Action::Click)
@@ -477,39 +468,45 @@ impl ExploreView {
                             .name_text(row_name)
                             .selected(current)
                             .child(
-                                leaf(
-                                    TILE,
-                                    TileLeaf {
-                                        icon,
-                                        color,
-                                        name: name.to_string(),
-                                    },
-                                )
-                                .decorative()
-                                .align_self(Align::Centre),
-                            )
-                            .child(
-                                text(label_fit(name))
-                                    .named(NAME)
-                                    .role(roles::ROW)
-                                    .ink(if current {
-                                        Ink::Primary
-                                    } else {
-                                        Ink::Secondary
-                                    })
-                                    .emphasis(current)
+                                row("Workspace identity")
                                     .fill()
-                                    .truncate()
-                                    .ink_centred(),
-                            )
-                            .children(organization.map(|status| {
-                                text(koru_i18n::t(lang, status.key()))
-                                    .named(ORGANIZATION)
-                                    .role(roles::ROW)
-                                    .ink(Ink::Hint)
-                                    .truncate()
-                                    .ink_centred()
-                            })),
+                                    .min_h(metrics::ROW_MIN)
+                                    .gap(Space::S2)
+                                    .child(
+                                        leaf(
+                                            TILE,
+                                            TileLeaf {
+                                                icon,
+                                                color,
+                                                name: name.to_string(),
+                                            },
+                                        )
+                                        .decorative()
+                                        .align_self(Align::Centre),
+                                    )
+                                    .child(
+                                        text(label_fit(name))
+                                            .named(NAME)
+                                            .role(roles::ROW)
+                                            .ink(if current {
+                                                Ink::Primary
+                                            } else {
+                                                Ink::Secondary
+                                            })
+                                            .emphasis(current)
+                                            .fill()
+                                            .truncate()
+                                            .ink_centred(),
+                                    )
+                                    .children(organization.map(|status| {
+                                        text(koru_i18n::t(lang, status.key()))
+                                            .named(ORGANIZATION)
+                                            .role(roles::ROW)
+                                            .ink(Ink::Hint)
+                                            .truncate()
+                                            .ink_centred()
+                                    })),
+                            ),
                     )
                     .child(
                         leaf(GEAR, TrailingAdapter { current, key: gear })
@@ -572,9 +569,12 @@ impl ExploreView {
             }),
             PopoverRow::ProfileAction(action) => Some(action.key()),
             PopoverRow::Help(action) => Some(action.key()),
-            PopoverRow::ProfilesHeading => Some(profiles::MANAGE_PROFILES),
+            PopoverRow::ProfilesHeading => {
+                (self.popover_part != Some(PopoverPart::Row)).then_some(profiles::MANAGE_PROFILES)
+            }
             PopoverRow::WorkspaceAction(action) => Some(action.key()),
-            PopoverRow::WorkspacesHeading => Some(super::workspace_menu_elements::MANAGE),
+            PopoverRow::WorkspacesHeading => (self.popover_part != Some(PopoverPart::Row))
+                .then_some(super::workspace_menu_elements::MANAGE),
             _ => None,
         }
     }

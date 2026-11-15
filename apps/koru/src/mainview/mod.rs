@@ -795,7 +795,7 @@ pub struct MainView {
     /// The place chooser an Alt+click on a reference opened, while it stands
     /// (`place_chooser`). Modal the way the menu is, and never up beside it.
     place_chooser: Option<place_chooser::PlaceAsk>,
-    /// The `+` button's New… dialog (`launcher`), centred over the window.
+    /// The Ctrl+N New… dialog (`launcher`), centred over the window.
     /// Modal the way the place chooser is; Alt on a tile hands over to it.
     launcher: Option<launcher::LauncherAsk>,
     /// The modal opened by the taskbar's “New document” action. It is kept at
@@ -1245,7 +1245,7 @@ pub struct MainView {
     help_releases: Option<Vec<crate::whatsnew::PublishedRelease>>,
     help_releases_rx:
         Option<std::sync::mpsc::Receiver<Option<Vec<crate::whatsnew::PublishedRelease>>>>,
-    /// Asked once per window, whatever the answer.
+    /// One attempt per opening; a successful list is kept for the window.
     help_releases_asked: bool,
     help_notes_read: bool,
     /// The global-search chord the agent registered (`Ctrl+Shift+K`), once it
@@ -4424,6 +4424,9 @@ impl MainView {
                 _ => matches!(
                     action,
                     MenuAction::Documents
+                        | MenuAction::OpenWelcome
+                        | MenuAction::Socials
+                        | MenuAction::Delegate
                         | MenuAction::NewDocument
                         | MenuAction::MiniApp
                         | MenuAction::OpenRecentDocument(_)
@@ -4824,6 +4827,9 @@ impl MainView {
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
                 MenuAction::MiniApp => self.open_mini_app_fixture(),
+                MenuAction::OpenWelcome => self.open_welcome_tab(),
+                MenuAction::Socials => self.open_socials_tab(),
+                MenuAction::Delegate => self.begin_delegation(delegate::DelegationOrigin::Blank),
                 MenuAction::NewCanvas => self.new_canvas(),
                 MenuAction::OpenRecentDocument(id) => self.open_recent_document(id),
                 MenuAction::Documents
@@ -7371,9 +7377,7 @@ impl MainView {
         true
     }
 
-    /// Select the one Welcome tab, or open it. No row offers it since the
-    /// `+` menu went; a test uses it to put a second tab in front.
-    #[cfg(test)]
+    /// Select the one Welcome tab, or reopen it from the `+` menu.
     fn open_welcome_tab(&mut self) -> bool {
         let existing = self
             .tabs()
@@ -7827,7 +7831,13 @@ impl MainView {
         if self.explore.popover_is(PopoverKind::Help) {
             self.explore.close_popover()
         } else {
-            self.explore.open_popover(PopoverKind::Help)
+            self.help_notes_read = true;
+            if self.help_releases.is_none() && self.help_releases_rx.is_none() {
+                self.help_releases_asked = false;
+            }
+            let opened = self.explore.open_popover(PopoverKind::Help);
+            self.refresh_help();
+            opened
         }
     }
 
@@ -7984,7 +7994,7 @@ impl MainView {
             Outcome::SelectTab(i) => self.select(i),
             Outcome::CloseTab(i) => self.close_requested(i),
             Outcome::MoveTab { from, to } => self.move_tab(from, to),
-            Outcome::NewTab => self.open_launcher(),
+            Outcome::NewTab => self.open_new_tab_menu(),
             Outcome::NewChildDocument(parent) => self.prompt_new_child_document(parent),
             Outcome::Search => self.open_search(),
             Outcome::OpenHelp => self.open_help_beside(),
@@ -8499,7 +8509,7 @@ impl MainView {
             // press rather than opening an empty column.
             Hit::ToggleContext if !context_has_sections() => Outcome::Consumed,
             Hit::ToggleContext => Outcome::ToggleContext,
-            // The lane's New: the launcher the tab strip's `+` opens.
+            // The lane's New opens the same launcher as Ctrl+N.
             Hit::New => {
                 return if self.open_launcher() {
                     Outcome::Consumed
@@ -12396,7 +12406,7 @@ impl View for MainView {
             return true;
         }
         // **The releases list is on its way** from another thread, which
-        // cannot ask for a frame. Bounded by the request's 8 s timeout.
+        // cannot ask for a frame. Each of the two sources has an 8 s timeout.
         if self.help_releases_rx.is_some() {
             return true;
         }
@@ -16282,7 +16292,12 @@ impl MainView {
                 Chord::ReopenClosedTab => self.reopen_closed_tab(),
                 Chord::CloseAllTabs => self.close_all(),
                 Chord::Search => self.open_search(),
-                Chord::SelectTab(i) => self.select(i),
+                Chord::SelectWorkspace(i) => self
+                    .explore
+                    .rail_workspace_ids()
+                    .get(i)
+                    .copied()
+                    .is_some_and(|id| self.open_workspace(id)),
                 Chord::ToggleSidebar => self.focus_or_toggle_sidebar(ws),
                 Chord::ToggleContext => self.toggle_context(),
                 Chord::ToggleAi => self.toggle_ai(),
@@ -18196,7 +18211,10 @@ impl MainView {
                         square,
                         koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
                     )
-                    .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::New))
+                    .with_optional_shortcut(koru_keys::show_hint(
+                        koru_keys::ShortcutId::New,
+                        koru_keys::Section::Tooltip,
+                    ))
                 })
             }
             Hit::HostAction if reminder_bell() => Some(TooltipContent::new(
@@ -18217,7 +18235,6 @@ impl MainView {
                         slot,
                         koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
                     )
-                    .with_shortcut(koru_keys::label_of(koru_keys::ShortcutId::New))
                 })
             }
             // A hovered history row answers with the exact moment behind its
@@ -18720,7 +18737,15 @@ impl MainView {
                     .find(|item| item.hit == hit)
                     .map(|item| item.name)
                     .unwrap_or_default();
-                Some(TooltipContent::new(5, *square, name))
+                let shortcut = id.and_then(|id| {
+                    self.explore
+                        .rail_workspace_ids()
+                        .iter()
+                        .position(|candidate| *candidate == id)
+                        .and_then(koru_keys::registry::workspace_slot)
+                        .and_then(|key| koru_keys::show_hint(key, koru_keys::Section::Tooltip))
+                });
+                Some(TooltipContent::new(5, *square, name).with_optional_shortcut(shortcut))
             } else if on(rail.workspace_menu) {
                 // The chord that opens the menu, on the control that does.
                 Some(
@@ -18761,17 +18786,11 @@ impl MainView {
                     )),
                 )
             } else if on(rail.profile) {
-                Some(
-                    TooltipContent::new(
-                        10,
-                        rail.profile,
-                        koru_i18n::t(lang, koru_i18n::Key::FloorChipAction),
-                    )
-                    .with_optional_shortcut(koru_keys::show_hint(
-                        koru_keys::ShortcutId::SwitchProfile,
-                        koru_keys::Section::Tooltip,
-                    )),
+                koru_keys::show_hint(
+                    koru_keys::ShortcutId::SwitchProfile,
+                    koru_keys::Section::Tooltip,
                 )
+                .map(|hint| TooltipContent::new(10, rail.profile, hint))
             } else {
                 self.navigator_mode_tooltip(x, y)
             }

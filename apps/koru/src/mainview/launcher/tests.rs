@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The New… launcher in the window: the `+` and Ctrl+N open it, a letter
+//! The New… launcher in the window: Ctrl+N opens it, a letter
 //! makes its tile's kind, Alt hands over to the place chooser, Escape and a
 //! press off it make nothing. The grid on its own — geometry, keys,
 //! semantics — is pinned beside the component, in `koru_ui::launcher`.
@@ -25,7 +25,7 @@ fn letter(
 }
 
 #[test]
-fn the_plus_opens_the_launcher_as_a_modal() {
+fn the_launcher_opens_as_a_modal() {
     let (mut v, _w) = container();
     assert!(v.open_launcher());
     assert_eq!(v.blockers(), Blockers::Modal(ModalKind::Launcher));
@@ -84,6 +84,64 @@ fn task_document_tile_opens_the_declared_host_from_the_live_launcher() {
         vec![MenuAction::MiniApp],
     );
     assert!(v.item_is_enabled(&menu, MenuAction::MiniApp));
+}
+
+#[test]
+fn the_tab_plus_opens_the_anchored_menu_and_its_flyouts() {
+    use crate::mainview::{
+        context_menu::{self, MenuAction, MenuSubject},
+        tabs,
+    };
+    let (mut v, mut w) = container();
+    v.ensure_tab_widths();
+    let button = tabs::new_tab(v.strip(), &v.tab_widths(), v.tab_scroll());
+    let (x, y) = button.centre();
+    let before = v.tabs().len();
+    assert!(v.mouse_down(&mut w.ws, x, y, false));
+    assert!(v.launcher.is_none());
+    let menu = v.menu.as_ref().expect("the + list");
+    assert!(matches!(menu.subject, MenuSubject::NewTab));
+    assert_eq!(
+        menu.items(),
+        context_menu::shown(context_menu::new_tab_items())
+    );
+    assert_eq!(v.tabs().len(), before, "opening the menu creates nothing");
+    for parent in [
+        MenuAction::Documents,
+        MenuAction::NewShell,
+        MenuAction::NewAgent,
+        MenuAction::Chats,
+        MenuAction::ImportAs,
+    ] {
+        let index = v
+            .menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .iter()
+            .position(|a| *a == parent)
+            .unwrap();
+        assert!(v.open_submenu(index));
+        assert!(!v.submenu.as_ref().unwrap().1.items().is_empty());
+        if parent == MenuAction::Documents {
+            assert!(
+                v.submenu
+                    .as_ref()
+                    .unwrap()
+                    .1
+                    .items()
+                    .contains(&MenuAction::MiniApp)
+            );
+        }
+    }
+    v.menu = None;
+    v.submenu = None;
+    assert!(v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::NewDocument));
+    assert_eq!(v.tabs().len(), before + 1);
+    assert!(v.tabs().active_tab().draft.is_some());
+    assert!(v.run_menu_action_for_test(MenuSubject::NewTab, MenuAction::OpenWelcome));
+    assert!(matches!(v.tabs().active_tab().view, TabView::Welcome(_)));
+    assert_eq!(v.tabs().len(), before + 1, "Welcome is reused");
 }
 
 /// **D makes a document**: a draft tab in front, nothing else standing.

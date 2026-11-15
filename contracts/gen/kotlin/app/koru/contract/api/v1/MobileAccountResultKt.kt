@@ -460,6 +460,282 @@ public object MobileAccountResultKt {
     public fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.MobileCloudSyncProfile, CloudSyncProxy>.clear() {
       _builder.clearCloudSync()
     }
+
+    /**
+     * ```
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * ```
+     *
+     * `optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];`
+     */
+    public var cloudPlanJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudPlanJson")
+        get() = _builder.cloudPlanJson
+      @kotlin.jvm.JvmName("setCloudPlanJson")
+        set(value) {
+        _builder.cloudPlanJson = value
+      }
+    /**
+     * ```
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * ```
+     *
+     * `optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];`
+     */
+    public fun clearCloudPlanJson() {
+      _builder.clearCloudPlanJson()
+    }
+    /**
+     * ```
+     * Canonical cloud-plan-v1 JSON, at most 32768 UTF-8 bytes. Absent on a
+     * failed cloud_plan read; never interpreted as known zero.
+     * ```
+     *
+     * `optional string cloud_plan_json = 14 [json_name = "cloudPlanJson"];`
+     * @return Whether the cloudPlanJson field is set.
+     */
+    public fun hasCloudPlanJson(): kotlin.Boolean {
+      return _builder.hasCloudPlanJson()
+    }
+
+    /**
+     * `uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];`
+     */
+    public var cloudPlanRequestElapsedMillis: kotlin.Long
+      @kotlin.jvm.JvmName("getCloudPlanRequestElapsedMillis")
+        get() = _builder.cloudPlanRequestElapsedMillis
+      @kotlin.jvm.JvmName("setCloudPlanRequestElapsedMillis")
+        set(value) {
+        _builder.cloudPlanRequestElapsedMillis = value
+      }
+    /**
+     * `uint64 cloud_plan_request_elapsed_millis = 15 [json_name = "cloudPlanRequestElapsedMillis"];`
+     */
+    public fun clearCloudPlanRequestElapsedMillis() {
+      _builder.clearCloudPlanRequestElapsedMillis()
+    }
+
+    /**
+     * ```
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * ```
+     *
+     * `optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];`
+     */
+    public var cloudInventoryJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudInventoryJson")
+        get() = _builder.cloudInventoryJson
+      @kotlin.jvm.JvmName("setCloudInventoryJson")
+        set(value) {
+        _builder.cloudInventoryJson = value
+      }
+    /**
+     * ```
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * ```
+     *
+     * `optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];`
+     */
+    public fun clearCloudInventoryJson() {
+      _builder.clearCloudInventoryJson()
+    }
+    /**
+     * ```
+     * One approved inventory DTO page, at most 1 MiB UTF-8, limit 100. Failure
+     * has no payload and error_code usage_revision_changed/cloud_inventory_unavailable.
+     * ```
+     *
+     * `optional string cloud_inventory_json = 16 [json_name = "cloudInventoryJson"];`
+     * @return Whether the cloudInventoryJson field is set.
+     */
+    public fun hasCloudInventoryJson(): kotlin.Boolean {
+      return _builder.hasCloudInventoryJson()
+    }
+
+    /**
+     * ```
+     * Exact request selectors, echoed for documents on success and failure.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];`
+     */
+    public var cloudWorkspaceId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudWorkspaceId")
+        get() = _builder.cloudWorkspaceId
+      @kotlin.jvm.JvmName("setCloudWorkspaceId")
+        set(value) {
+        _builder.cloudWorkspaceId = value
+      }
+    /**
+     * ```
+     * Exact request selectors, echoed for documents on success and failure.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];`
+     */
+    public fun clearCloudWorkspaceId() {
+      _builder.clearCloudWorkspaceId()
+    }
+    /**
+     * ```
+     * Exact request selectors, echoed for documents on success and failure.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 17 [json_name = "cloudWorkspaceId"];`
+     * @return Whether the cloudWorkspaceId field is set.
+     */
+    public fun hasCloudWorkspaceId(): kotlin.Boolean {
+      return _builder.hasCloudWorkspaceId()
+    }
+
+    /**
+     * `optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];`
+     */
+    public var cloudIncarnationId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudIncarnationId")
+        get() = _builder.cloudIncarnationId
+      @kotlin.jvm.JvmName("setCloudIncarnationId")
+        set(value) {
+        _builder.cloudIncarnationId = value
+      }
+    /**
+     * `optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];`
+     */
+    public fun clearCloudIncarnationId() {
+      _builder.clearCloudIncarnationId()
+    }
+    /**
+     * `optional string cloud_incarnation_id = 18 [json_name = "cloudIncarnationId"];`
+     * @return Whether the cloudIncarnationId field is set.
+     */
+    public fun hasCloudIncarnationId(): kotlin.Boolean {
+      return _builder.hasCloudIncarnationId()
+    }
+
+    /**
+     * ```
+     * Echoed on inspection/removal success and failure.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];`
+     */
+    public var cloudDocumentSelectionJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudDocumentSelectionJson")
+        get() = _builder.cloudDocumentSelectionJson
+      @kotlin.jvm.JvmName("setCloudDocumentSelectionJson")
+        set(value) {
+        _builder.cloudDocumentSelectionJson = value
+      }
+    /**
+     * ```
+     * Echoed on inspection/removal success and failure.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];`
+     */
+    public fun clearCloudDocumentSelectionJson() {
+      _builder.clearCloudDocumentSelectionJson()
+    }
+    /**
+     * ```
+     * Echoed on inspection/removal success and failure.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];`
+     * @return Whether the cloudDocumentSelectionJson field is set.
+     */
+    public fun hasCloudDocumentSelectionJson(): kotlin.Boolean {
+      return _builder.hasCloudDocumentSelectionJson()
+    }
+
+    /**
+     * ```
+     * Validated detached passive projection, <=1 MiB UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];`
+     */
+    public var cloudDocumentInspectionJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudDocumentInspectionJson")
+        get() = _builder.cloudDocumentInspectionJson
+      @kotlin.jvm.JvmName("setCloudDocumentInspectionJson")
+        set(value) {
+        _builder.cloudDocumentInspectionJson = value
+      }
+    /**
+     * ```
+     * Validated detached passive projection, <=1 MiB UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];`
+     */
+    public fun clearCloudDocumentInspectionJson() {
+      _builder.clearCloudDocumentInspectionJson()
+    }
+    /**
+     * ```
+     * Validated detached passive projection, <=1 MiB UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];`
+     * @return Whether the cloudDocumentInspectionJson field is set.
+     */
+    public fun hasCloudDocumentInspectionJson(): kotlin.Boolean {
+      return _builder.hasCloudDocumentInspectionJson()
+    }
+
+    /**
+     * `optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];`
+     */
+    public var cloudFileNodeId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudFileNodeId")
+        get() = _builder.cloudFileNodeId
+      @kotlin.jvm.JvmName("setCloudFileNodeId")
+        set(value) {
+        _builder.cloudFileNodeId = value
+      }
+    /**
+     * `optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];`
+     */
+    public fun clearCloudFileNodeId() {
+      _builder.clearCloudFileNodeId()
+    }
+    /**
+     * `optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];`
+     * @return Whether the cloudFileNodeId field is set.
+     */
+    public fun hasCloudFileNodeId(): kotlin.Boolean {
+      return _builder.hasCloudFileNodeId()
+    }
+
+    /**
+     * ```
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * ```
+     *
+     * `bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];`
+     */
+    public var cloudFileRemoved: kotlin.Boolean
+      @kotlin.jvm.JvmName("getCloudFileRemoved")
+        get() = _builder.cloudFileRemoved
+      @kotlin.jvm.JvmName("setCloudFileRemoved")
+        set(value) {
+        _builder.cloudFileRemoved = value
+      }
+    /**
+     * ```
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * ```
+     *
+     * `bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];`
+     */
+    public fun clearCloudFileRemoved() {
+      _builder.clearCloudFileRemoved()
+    }
   }
 }
 public inline fun app.koru.contract.api.v1.MobileAccountResult.copy(block: `app.koru.contract.api.v1`.MobileAccountResultKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.MobileAccountResult =

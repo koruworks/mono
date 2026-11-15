@@ -70,7 +70,7 @@ fn resize_badge_hosts_preserve_sidebar_clamp_pane_center_and_small_pane_suppress
             .unwrap()
             .rect();
         let label = view.engine.simple_layout_in(
-            &format!("{:.0} px", view.sidebar.full()),
+            &format!("{:.0}px", view.sidebar.full()),
             theme::role::hint(),
             theme::code_stack(),
         );

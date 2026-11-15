@@ -242,6 +242,8 @@ pub enum MenuAction {
     /// The last row of the Documents flyout when it lists recents: forget
     /// them. It moved here from the Welcome page, which no longer lists them.
     ClearRecents,
+    /// Select the existing Welcome tab, or reopen it.
+    OpenWelcome,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
@@ -296,6 +298,9 @@ pub enum MenuAction {
     /// beside the document, the document already a chip in its composer.
     OpenInChat,
     NewSocialPost,
+    Socials,
+    /// Start a delegation without a document or task as its context.
+    Delegate,
     /// *Delegate…* on a task (ROADMAP D7): its title becomes the objective's
     /// first line. It reaches `MainView::begin_delegation`, the same single
     /// path the editor's `/delegate` and a document selection's row reach.
@@ -1000,7 +1005,7 @@ impl MenuAction {
                         .is_none_or(|profile| profile.kind != ProfileKind::Agent)
             }
             // Starting Delegate: with Koru AI *and* the agent views.
-            Self::TaskDelegate => f::delegate(),
+            Self::Delegate | Self::TaskDelegate => f::delegate(),
             // Koru AI chat, with the runs and schedules Delegate has made —
             // those keep their menus whether or not a new one can be started.
             Self::NewAiChat
@@ -1047,7 +1052,7 @@ impl MenuAction {
             // `OpenRecentDocument`, listed only inside this flyout.
             Self::Canvases | Self::NewCanvas => f::canvas(),
             // Socials authoring (the Agent's publisher runs regardless).
-            Self::NewSocialPost => f::socials(),
+            Self::Socials | Self::NewSocialPost => f::socials(),
             Self::NewTaskIn(_) => f::tasks(),
             _ => true,
         }
@@ -1113,6 +1118,10 @@ impl MenuAction {
             }
             MenuAction::Divider => "",
             MenuAction::Documents => "Documents",
+            MenuAction::OpenWelcome => "Welcome",
+            MenuAction::Socials => {
+                koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
+            }
             MenuAction::NewDocument => "New",
             MenuAction::MiniApp => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
@@ -1133,7 +1142,7 @@ impl MenuAction {
             MenuAction::TerminalProfile(index) => {
                 return Cow::Owned(terminal_profile_label(index));
             }
-            MenuAction::TaskDelegate => {
+            MenuAction::Delegate | MenuAction::TaskDelegate => {
                 return Cow::Borrowed(koru_i18n::t(
                     crate::format::lang(),
                     koru_i18n::Key::DelegateMenuRow,
@@ -1523,7 +1532,8 @@ impl MenuAction {
             MenuAction::NewAiChat => Some(koru_draw::icons::CHATS_CIRCLE),
             // Koru AI's mark, the one the ✦ button this menu replaced wore.
             MenuAction::OpenInChat => Some(koru_draw::icons::SPARKLE),
-            MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
+            MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
+            MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
             MenuAction::NewTaskIn(crate::panes::explore::rail::RailTarget::Bucket(bucket)) => {
                 Some(crate::panes::explore::rail::bucket_glyph(bucket))
             }
@@ -1531,7 +1541,7 @@ impl MenuAction {
             MenuAction::ImportAs | MenuAction::ImportFiles => Some(koru_draw::icons::IMPORT),
             // The Agents identity glyph, the same one the slash row and
             // the document's row wear: four gestures, one mark.
-            MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
+            MenuAction::Delegate | MenuAction::TaskDelegate => Some(koru_draw::icons::ROBOT),
             // A result is a document, and it opens as one.
             MenuAction::OpenRunResult(_) => Some(koru_draw::icons::FILE),
             MenuAction::Chats => Some(koru_draw::icons::CHATS_CIRCLE),
@@ -1985,6 +1995,22 @@ pub fn export_items() -> Vec<MenuAction> {
 /// Built-in shell profiles, the lower half of the *Shell* flyout.
 pub fn shell_profile_items() -> Vec<MenuAction> {
     profile_items_of_kind(ProfileKind::Shell)
+}
+
+/// The tab strip's anchored list, with its existing content and session flyouts.
+pub fn new_tab_items() -> Vec<MenuAction> {
+    vec![
+        MenuAction::OpenWelcome,
+        MenuAction::Documents,
+        MenuAction::Canvases,
+        MenuAction::NewShell,
+        MenuAction::NewAgent,
+        MenuAction::Delegate,
+        MenuAction::Chats,
+        MenuAction::Socials,
+        MenuAction::Divider,
+        MenuAction::ImportAs,
+    ]
 }
 
 /// Built-in agent profiles, the lower half of the *Agents* flyout.

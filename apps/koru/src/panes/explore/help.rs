@@ -228,38 +228,32 @@ impl Model {
         }
     }
 
-    /// A release row's two lines: *Nightly* or the version, then what it is
-    /// — built nightly, or the day it was published — and *This version* on
-    /// the one that is running.
+    /// A release row's two lines: *Nightly* or the version, then its
+    /// publication date and *This version* on the one that is running.
     pub(crate) fn release_lines(&self, index: u8) -> Option<(String, String)> {
         let release = self.release(index)?;
         let lang = crate::format::lang();
-        let (title, mut detail) = match &release.version {
-            None => (
-                t(lang, Words::HelpReleaseNightly).to_owned(),
-                t(lang, Words::HelpReleaseNightlyBody).to_owned(),
-            ),
-            Some(version) => (
-                version.clone(),
-                release
-                    .published
-                    .map(|(year, month, day)| {
-                        koru_i18n::time::absolute_date(
-                            lang,
-                            koru_i18n::time::DateTimeParts {
-                                year,
-                                month,
-                                day,
-                                hour: 0,
-                                minute: 0,
-                                second: 0,
-                            },
-                            true,
-                        )
-                    })
-                    .unwrap_or_default(),
-            ),
-        };
+        let title = release
+            .version
+            .clone()
+            .unwrap_or_else(|| t(lang, Words::HelpReleaseNightly).to_owned());
+        let mut detail = release
+            .published
+            .map(|(year, month, day)| {
+                koru_i18n::time::absolute_date(
+                    lang,
+                    koru_i18n::time::DateTimeParts {
+                        year,
+                        month,
+                        day,
+                        hour: 0,
+                        minute: 0,
+                        second: 0,
+                    },
+                    true,
+                )
+            })
+            .unwrap_or_default();
         if Self::is_running(release) {
             let this = t(lang, Words::HelpReleaseThisVersion);
             detail = if detail.is_empty() {
@@ -424,37 +418,35 @@ impl ExploreView {
                 list = list.child(super::workspace_menu_elements::rule());
             }
             let label = self.help.action_label(action);
-            list = list.child(
-                row("Help link")
-                    .id(action.key())
-                    .min_h(metrics::ROW_MIN)
-                    .pad_x(alias::NAV_PAD)
-                    .radius(Radius::M)
-                    .states(&WORKSPACE_ROW_STATES)
-                    .hit()
-                    .focusable()
-                    .action(ElAction::Click)
-                    .action(ElAction::Focus)
-                    .semantics(Role::MenuItem)
-                    .name_text(&label)
-                    .child(text(label).role(roles::ROW).fill()),
-            );
+            let mut link = row("Help link")
+                .id(action.key())
+                .min_h(metrics::ROW_MIN)
+                .pad_x(alias::NAV_PAD)
+                .gap(Space::S2)
+                .radius(Radius::M)
+                .states(&WORKSPACE_ROW_STATES)
+                .hit()
+                .focusable()
+                .action(ElAction::Click)
+                .action(ElAction::Focus)
+                .semantics(Role::MenuItem)
+                .name_text(&label);
+            let glyph = match action {
+                Action::Feedback => Some(koru_draw::icons::CHAT_CIRCLE),
+                Action::GitHub => Some(koru_draw::icons::GITHUB),
+                Action::X => Some(koru_draw::icons::X_LOGO),
+                _ => None,
+            };
+            if let Some(glyph) = glyph {
+                link = link.child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary));
+            }
+            list = list.child(link.child(text(label).role(roles::ROW).fill()));
         }
         col("Help page")
             .id(PAGE)
             .semantics(Role::Menu)
             .name(Words::Help)
             .pad_y(alias::PANEL_PAD)
-            .child(
-                text(t(crate::format::lang(), Words::WhatsNew).to_uppercase())
-                    .id(Key::surface(SURFACE, "help-heading"))
-                    .semantics(Role::Heading)
-                    .name(Words::WhatsNew)
-                    .role(roles::POPOVER_HEADING)
-                    .ink(Ink::Hint)
-                    .min_h(metrics::ROW_MIN)
-                    .pad_x(alias::NAV_PAD),
-            )
             .child(list)
     }
 
@@ -515,7 +507,8 @@ impl ExploreView {
                     text(description)
                         .role(roles::HINT)
                         .ink(Ink::Secondary)
-                        .fill(),
+                        .fill()
+                        .truncate(),
                 ),
         );
         if enabled {

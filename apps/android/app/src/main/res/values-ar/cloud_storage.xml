@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_storage_refresh">تحديث</string>
+    <string name="cloud_storage_title">التخزين السحابي</string>
+    <string name="cloud_storage_available">المتاح: %1$s من %2$s بايت</string>
+    <string name="cloud_storage_used">المستخدم: %1$s بايت</string>
+    <string name="cloud_storage_total">الإجمالي: %1$s بايت</string>
+    <string name="cloud_storage_no_limit">لا حد للتخزين</string>
+    <string name="cloud_storage_allowance_unknown">حصة التخزين غير متاحة</string>
+    <string name="cloud_storage_checking">جارٍ التحقق من التخزين السحابي…</string>
+    <string name="cloud_storage_calculating">جارٍ حساب التخزين السحابي…</string>
+    <string name="cloud_storage_unknown">استخدام التخزين السحابي غير متاح</string>
+    <string name="cloud_storage_schema">لا يمكن حساب التخزين السحابي حتى يتم دعم تنسيق البيانات هذا.</string>
+    <string name="cloud_storage_failed">تعذّر التحقق من التخزين السحابي</string>
+    <string name="cloud_storage_stale">آخر تحقق: %1$s؛ قد تكون البيانات قديمة</string>
+    <string name="cloud_storage_explanation">تُحتسب الملفات بحجمها الأصلي. لا تُحتسب الكتابة بعد.</string>
+    <string name="cloud_storage_reserved">التحميلات الجارية: %1$s بايت</string>
+    <string name="cloud_storage_details">التفاصيل</string>
+    <string name="cloud_storage_checked">آخر تحقق: %1$s</string>
+</resources>

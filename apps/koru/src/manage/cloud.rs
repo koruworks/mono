@@ -69,6 +69,8 @@ use koru_ui::text_paragraph::KoruTextParagraph;
 use koru_ui::toggle::Toggle;
 use profiles::{CloudStatus, ProgressOwner, SyncAvailability};
 
+pub(crate) mod copy;
+pub(crate) mod inventory;
 pub(crate) mod progress;
 #[cfg(test)]
 mod tests;
@@ -181,6 +183,7 @@ pub(crate) struct CloudLaid {
     /// *This device has Profiles from another account*.
     pub different: Option<Words>,
     pub subscription: Subscription,
+    pub storage: Option<Words>,
     /// *Which profiles sync*, its title included.
     pub sync_card: Rect,
     pub rows: Vec<SyncRow>,
@@ -320,6 +323,12 @@ impl ManageView {
     // ---- layout --------------------------------------------------------------
 
     pub(super) fn lay_cloud_page(&mut self) -> profile_page::Laid {
+        if self.c.cloud_copy().visible() {
+            return self.lay_cloud_copy();
+        }
+        if self.c.cloud_inventory().visible {
+            return self.lay_inventory();
+        }
         let column = self.column();
         let mut controls = Vec::new();
         let subscribed =
@@ -437,6 +446,50 @@ impl ManageView {
             subscription.bullets = bullets;
         }
 
+        let storage = if self.c.account().active_account_id.is_some()
+            && matches!(
+                self.c.account().stage,
+                AccountStage::SignedIn | AccountStage::Refreshing
+            ) {
+            let lang = crate::format::lang();
+            let storage = self.c.cloud_storage();
+            let label = if storage.failed
+                || storage.snapshot.as_ref().is_none_or(|snapshot| {
+                    snapshot.plan.usage.state == koru_account_wire::cloud_plan::UsageState::Unknown
+                        || matches!(
+                            snapshot.plan.policy.allowance,
+                            koru_account_wire::cloud_plan::AllowanceV1::Unavailable { .. }
+                        )
+                }) {
+                TextKey::TryAgain
+            } else {
+                TextKey::CloudStorageRefresh
+            };
+            let buttons = vec![
+                (
+                    Control::CloudStorageRetry,
+                    koru_i18n::t(lang, label).to_owned(),
+                    ButtonRole::Secondary,
+                ),
+                (
+                    Control::CloudInventory,
+                    koru_i18n::t(lang, TextKey::CloudInventoryView).to_owned(),
+                    ButtonRole::Secondary,
+                ),
+            ];
+            let block = self.lay_words(
+                Rect::new(column.x, y, column.w, 0.0),
+                koru_i18n::t(lang, TextKey::CloudStorageTitle).to_owned(),
+                self.c.cloud_storage_words(lang),
+                buttons,
+                &mut controls,
+            );
+            y = block.rect.y + block.rect.h + Card::GAP;
+            Some(block)
+        } else {
+            None
+        };
+
         // Which profiles sync.
         let sync_top = y;
         let mut ry = y + Card::new(Some(SYNC_TITLE)).header_h();
@@ -485,12 +538,18 @@ impl ManageView {
                 },
                 different,
                 subscription,
+                storage,
                 sync_card,
                 rows,
                 elsewhere,
                 empty,
             }),
             controls,
+            disabled: if self.c.cloud_storage().checking() {
+                vec![Control::CloudStorageRetry]
+            } else {
+                Vec::new()
+            },
             height: ry - column.y,
             ..Default::default()
         }
@@ -883,6 +942,9 @@ impl ManageView {
 
     /// What a control of this page does. `None` for one that is not.
     pub(super) fn activate_cloud_control(&mut self, control: Control) -> Option<bool> {
+        if let Some(result) = self.activate_inventory(control) {
+            return Some(result);
+        }
         let intent = match control {
             Control::Accounts => {
                 self.open_account_switcher();
@@ -900,6 +962,7 @@ impl ManageView {
             }
             Control::DifferentSignIn => Intent::SignInAnotherAccount,
             Control::DifferentOffline => Intent::DismissDifferentAccount,
+            Control::CloudStorageRetry => Intent::CloudStorageRetry,
             Control::CloudPrimary => Intent::CloudPrimary,
             Control::CloudLearnMore => Intent::CloudLearnMore,
             // D258's question comes up from the controller when this turns
@@ -946,6 +1009,10 @@ impl ManageView {
     // ---- paint ---------------------------------------------------------------
 
     pub(super) fn paint_cloud_page(&mut self, canvas: &mut Scene, root: Affine) {
+        if self.laid.inventory.is_some() {
+            self.paint_inventory(canvas, root);
+            return;
+        }
         let Some(laid) = self.laid.cloud.clone() else {
             return;
         };
@@ -1010,6 +1077,19 @@ impl ManageView {
             );
         }
         self.paint_subscription(canvas, root, &laid.subscription);
+        if let Some(words) = &laid.storage {
+            let r = words.rect;
+            let _scope = inspect::scope(
+                "Cloud storage",
+                "part",
+                root,
+                scene::rect(r.x, r.y, r.w, r.h),
+                |_| {},
+            );
+            let _card = Card::new(None).draw(canvas, root, &mut self.engine, r, &[], 1.0);
+            let page = self.laid.clone();
+            self.paint_words(canvas, root, words, &page);
+        }
         self.paint_sync_section(canvas, root, &laid);
     }
 

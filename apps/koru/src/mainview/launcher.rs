@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **The `+` button's New… dialog** — the window's half of the launcher.
+//! The tab strip's New menu and the Ctrl+N launcher.
 //!
-//! The tab strip's `+`, the lane's New and Ctrl+N all open one centred grid
+//! The lane's New and Ctrl+N open one centred grid
 //! of what can be made here: a document, a task, an agent, a shell. Each
 //! tile has a letter (D, T, A, S) that chooses it the moment the dialog is
 //! up, and two modifiers that ask one question more:
@@ -27,10 +27,10 @@ use vello::kurbo::Affine;
 use winit::keyboard::{Key as WKey, ModifiersState};
 use winit::window::CursorIcon;
 
-use super::MainView;
 use super::context_menu::{self, Anchor as MenuAnchor, ContextMenu, MenuSubject};
 use super::place_chooser::PlaceTarget;
 use super::tab::{Tab, TabView};
+use super::{MainView, tabs};
 use crate::panes::explore::rail::{Bucket, RailTarget};
 
 #[cfg(test)]
@@ -155,6 +155,34 @@ pub(crate) struct LauncherAsk {
 }
 
 impl MainView {
+    /// Restore the list under the tab strip's `+`, using the existing flyouts.
+    pub(super) fn open_new_tab_menu(&mut self) -> bool {
+        self.dismiss_settings_menus();
+        self.nested = None;
+        self.submenu = None;
+        self.launcher = None;
+        self.place_chooser = None;
+        self.tooltip.clear();
+        self.ensure_tab_widths();
+        let button = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
+        self.profile_probe.refresh(self.agent.wake_proxy());
+        if koru_features::ai() {
+            self.ai_chat.activate();
+        }
+        self.snapshot_plus_menu();
+        let mut menu = ContextMenu::aligned(
+            &mut self.engine,
+            MenuSubject::NewTab,
+            (button.x, button.y + button.h),
+            context_menu::new_tab_items(),
+            MenuAnchor::Cursor,
+        );
+        let enabled = self.enabled_items(&menu);
+        menu.step(&enabled, 1);
+        self.menu = Some(menu);
+        true
+    }
+
     /// Open the launcher. Any menu, chooser or tooltip goes: it is the
     /// newest thing asked for.
     pub(crate) fn open_launcher(&mut self) -> bool {
@@ -172,7 +200,8 @@ impl MainView {
         let tiles = kinds.iter().map(|kind| kind.tile(lang)).collect();
         self.launcher = Some(LauncherAsk {
             launcher: Launcher::open(t(lang, I18nKey::LauncherTitle), tiles)
-                .with_hint(t(lang, I18nKey::LauncherHint)),
+                .with_hint(t(lang, I18nKey::LauncherHint))
+                .with_hint_emphasis(&["Alt", "Shift", "Mayús", "Umschalt", "Maj"]),
             kinds,
         });
         true
@@ -469,6 +498,9 @@ impl MainView {
             return;
         };
         let launcher = ask.launcher.clone();
-        launcher.draw(scene, root, &mut self.engine, self.viewport);
+        let viewport = self.viewport;
+        koru_ui::modal::draw(scene, root, viewport, |scene| {
+            launcher.draw(scene, root, &mut self.engine, viewport);
+        });
     }
 }

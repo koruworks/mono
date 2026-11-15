@@ -2455,7 +2455,6 @@ impl koru_account_core::cloud_selection::CloudSelectionRepository for Repository
                     request.authenticated_by,
                     request.profile_id,
                 )
-                || !state.cloud_eligible(request.profile_id, request.workspace_id)
             {
                 return Err(CloudSelectionError::PermissionDenied);
             }
