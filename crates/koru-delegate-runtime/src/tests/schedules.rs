@@ -2807,7 +2807,7 @@ fn listing_coordinator(
         )),
         script: Arc::new(Mutex::new(LedgerScript::default())),
     };
-    ScheduleCoordinator::new(
+    let coordinator = ScheduleCoordinator::new(
         Box::new(schedules),
         Box::new(store),
         Box::new(TestSchedulePreparation {
@@ -2822,7 +2822,8 @@ fn listing_coordinator(
         }),
         Box::new(EvaluationNowClock),
         device,
-    )
+    );
+    routine::mutations::with_routes(coordinator, None, false)
 }
 
 #[test]

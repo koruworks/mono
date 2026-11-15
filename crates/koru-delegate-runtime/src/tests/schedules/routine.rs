@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+pub(super) mod mutations;
 
 struct NoOrdinaryPreparation;
 
@@ -44,7 +45,8 @@ fn associated_schedules(owner: DeviceId, active: bool) -> MemorySchedules {
     header.definition.lifecycle = ScheduleLifecycle::Paused {
         reason: SchedulePauseReason::Manual,
     };
-    let schedules = MemorySchedules::one(&header);
+    let mut schedules = MemorySchedules::one(&header);
+    schedules.document = DocumentId::from_uuid(header.schedule.as_uuid());
     if active {
         // An externally authored Active associated Schedule may be imported.
         // The ordinary coordinator must refuse it even though it is readable.
@@ -91,6 +93,7 @@ fn routine_resume_refuses_before_events_or_document_mutation() {
     let before = inspect.schedule().version();
     let (events, script) = recording_schedule_events();
     let (coordinator, _) = associated_coordinator(schedules, owner);
+    let coordinator = mutations::with_routes(coordinator, Some(&header), false);
     let mut coordinator = coordinator.with_events(events);
     let zone = koru_time_zone::IanaZoneRules::parse("UTC").unwrap();
     let error = coordinator
@@ -111,6 +114,7 @@ fn routine_edit_refuses_before_events_or_document_mutation() {
     let before = inspect.schedule().version();
     let (events, script) = recording_schedule_events();
     let (coordinator, _) = associated_coordinator(schedules, owner);
+    let coordinator = mutations::with_routes(coordinator, Some(&header), false);
     let mut coordinator = coordinator.with_events(events);
     let zone = koru_time_zone::IanaZoneRules::parse("UTC").unwrap();
     let error = coordinator
@@ -139,6 +143,7 @@ fn routine_pause_event_preserves_the_persisted_association() {
     let header = inspect.schedule().header().unwrap();
     let (events, script) = recording_schedule_events();
     let (coordinator, _) = associated_coordinator(schedules, owner);
+    let coordinator = mutations::with_routes(coordinator, Some(&header), false);
     let mut coordinator = coordinator.with_events(events);
     let zone = koru_time_zone::IanaZoneRules::parse("UTC").unwrap();
     let paused = coordinator

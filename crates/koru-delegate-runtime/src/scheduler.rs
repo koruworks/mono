@@ -447,11 +447,19 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let document = self.schedule_document(workspace, schedule)?;
+        let (document, expected) = self.schedule_document(workspace, schedule)?;
+        let location = ScheduleEventRef {
+            schedule,
+            workspace,
+            document,
+        };
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
+        self.mutation_header(location, &expected, &handle.document().header()?)?;
         let mut outcome = None;
         handle.commit(&mut |document| {
+            self.mutation_header(location, &expected, &document.header()?)
+                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?;
             outcome = Some(document.rename(self.device, expected_name, name)?);
             Ok(())
         })?;
@@ -482,11 +490,18 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let document = self.schedule_document(workspace, schedule)?;
+        let (document, expected) = self.schedule_document(workspace, schedule)?;
+        let location = ScheduleEventRef {
+            schedule,
+            workspace,
+            document,
+        };
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
-        let current = handle.document().header()?.definition;
-        if current.routine.is_some() {
+        let header = handle.document().header()?;
+        let route = self.mutation_header(location, &expected, &header)?;
+        let current = header.definition;
+        if route.is_some() {
             return Err(PortError::new(
                 Port::Schedules,
                 "bot_routine_unavailable",
@@ -516,6 +531,13 @@ impl ScheduleCoordinator {
         };
         let prepared = self.events.prepare_definition(reference, &definition)?;
         handle.commit(&mut |document| {
+            if self
+                .mutation_header(location, &expected, &document.header()?)
+                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?
+                .is_some()
+            {
+                return Err(ScheduleDocumentError::RoutineAssociationChanged);
+            }
             document.edit(
                 self.device,
                 expected_revision,
@@ -576,11 +598,18 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let document = self.schedule_document(workspace, schedule)?;
+        let (document, expected) = self.schedule_document(workspace, schedule)?;
+        let location = ScheduleEventRef {
+            schedule,
+            workspace,
+            document,
+        };
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
-        let current = handle.document().header()?.definition;
-        if current.routine.is_some() && matches!(lifecycle, ScheduleLifecycle::Active) {
+        let header = handle.document().header()?;
+        let route = self.mutation_header(location, &expected, &header)?;
+        let current = header.definition;
+        if route.is_some() && matches!(lifecycle, ScheduleLifecycle::Active) {
             return Err(PortError::new(
                 Port::Schedules,
                 "bot_routine_unavailable",
@@ -612,6 +641,12 @@ impl ScheduleCoordinator {
             &definition,
         )?;
         handle.commit(&mut |document| {
+            let route = self
+                .mutation_header(location, &expected, &document.header()?)
+                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?;
+            if route.is_some() && matches!(lifecycle, ScheduleLifecycle::Active) {
+                return Err(ScheduleDocumentError::RoutineAssociationChanged);
+            }
             document.set_lifecycle(
                 self.device,
                 expected_revision,
@@ -633,10 +668,18 @@ impl ScheduleCoordinator {
         now_ms: i64,
         floating_zone: &R,
     ) -> PortResult<ScheduleListing> {
-        let document = self.schedule_document(workspace, schedule)?;
+        let (document, expected) = self.schedule_document(workspace, schedule)?;
+        let location = ScheduleEventRef {
+            schedule,
+            workspace,
+            document,
+        };
         let mut handle = self.schedules.open(workspace, document)?;
         handle.absorb()?;
+        self.mutation_header(location, &expected, &handle.document().header()?)?;
         handle.commit(&mut |document| {
+            self.mutation_header(location, &expected, &document.header()?)
+                .map_err(|_| ScheduleDocumentError::RoutineAssociationChanged)?;
             document.retire(self.device, now_ms)?;
             Ok(())
         })?;
@@ -647,8 +690,18 @@ impl ScheduleCoordinator {
         &mut self,
         workspace: WorkspaceId,
         schedule: ScheduleId,
-    ) -> PortResult<DocumentId> {
+    ) -> PortResult<(DocumentId, ScheduleHeader)> {
         let active = self.schedules.discover_active()?;
+        if active.failures != 0
+            || !active.failed_workspaces.is_empty()
+            || !active.unavailable_documents.is_empty()
+        {
+            return Err(PortError::new(
+                Port::Schedules,
+                "schedule_unavailable",
+                "schedule identity cannot be proven from a partial catalog",
+            ));
+        }
         if !active.workspaces.contains(&workspace) {
             return Err(PortError::new(
                 Port::Schedules,
@@ -657,12 +710,29 @@ impl ScheduleCoordinator {
             ));
         }
         let identities = self.schedules.discover_identities()?;
-        if identities.failures != 0 {
+        if identities.failures != 0
+            || !identities.failed_workspaces.is_empty()
+            || !identities.unavailable_documents.is_empty()
+        {
             return Err(PortError::new(
                 Port::Schedules,
                 "schedule_unavailable",
                 "schedule identity cannot be proven from a partial catalog",
             ));
+        }
+        for listed in identities
+            .schedules
+            .iter()
+            .filter(|listed| listed.header.schedule == schedule)
+        {
+            self.mutation_route(
+                ScheduleEventRef {
+                    schedule,
+                    workspace: listed.workspace,
+                    document: listed.document,
+                },
+                &listed.header,
+            )?;
         }
         let existing = identities
             .schedules
@@ -683,7 +753,7 @@ impl ScheduleCoordinator {
                 "the schedule belongs to another workspace",
             ));
         }
-        Ok(existing.document)
+        Ok((existing.document, existing.header.clone()))
     }
 
     /// Read one workspace without letting public callers race the evaluator's
