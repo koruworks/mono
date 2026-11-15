@@ -1,15 +1,47 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
-fn validate_owner(owner: BotOwner, key: &BotWaitEnrollmentKey) -> Result<(), BotError> {
+pub(super) fn validate_owner(owner: BotOwner, key: &BotWaitEnrollmentKey) -> Result<(), BotError> {
     if owner.user_scope != key.owner.user_scope || owner.device != key.owner.device {
         return Err(BotError::Forbidden);
     }
     key.validate().map_err(|_| BotError::Invalid)
 }
 
+fn decode_enrolled(json: &str) -> Result<BotWaitEnrollmentReply, BotError> {
+    let receipt: BotWaitEnrollmentReply = serde_json::from_str(json).map_err(bad)?;
+    receipt.validate().map_err(bad)?;
+    if !matches!(receipt, BotWaitEnrollmentReply::Enrolled { .. }) {
+        return Err(BotError::Storage);
+    }
+    Ok(receipt)
+}
+
+/// Indexed historical decision lookup for the replay owner. The same decoder
+/// and normalized column crosschecks own both entry points.
+pub(super) fn for_decision_on(
+    conn: &Connection,
+    decision: DecisionId,
+) -> Result<Option<BotWaitEnrollmentReply>, BotError> {
+    let body: Option<String> = conn.query_row(
+        "SELECT CASE WHEN typeof(receipt_json)='text' AND length(CAST(receipt_json AS BLOB)) BETWEEN 1 AND 4096 THEN receipt_json END
+         FROM bot_decision_wait_enrollments WHERE decision_id=?1", [decision.to_storage()], |r| r.get(0),
+    ).optional().map_err(bad)?;
+    let Some(body) = body else {
+        return Ok(None);
+    };
+    let receipt = decode_enrolled(&body)?;
+    let BotWaitEnrollmentReply::Enrolled { key, .. } = receipt else {
+        return Err(BotError::Storage);
+    };
+    if key.decision_id != decision {
+        return Err(BotError::Storage);
+    }
+    retained_on(conn, &key)
+}
+
 /// Read only after SQL type/byte preflight; the receipt is the sole decoder.
-fn retained_on(
+pub(super) fn retained_on(
     conn: &Connection,
     key: &BotWaitEnrollmentKey,
 ) -> Result<Option<BotWaitEnrollmentReply>, BotError> {
@@ -47,8 +79,7 @@ fn retained_on(
         "SELECT receipt_json FROM bot_decision_wait_enrollments WHERE wait_id=?1 OR decision_id=?2",
         params![key.wait_id.to_string(),key.decision_id.to_string()], |r| r.get(0),
     ).map_err(bad)?;
-    let receipt: BotWaitEnrollmentReply = serde_json::from_str(&json).map_err(bad)?;
-    receipt.validate().map_err(bad)?;
+    let receipt = decode_enrolled(&json)?;
     let BotWaitEnrollmentReply::Enrolled {
         key: stored,
         ai_attempt,
@@ -77,7 +108,7 @@ fn retained_on(
     Ok(Some(receipt))
 }
 
-fn subject_on(
+pub(super) fn subject_on(
     conn: &Connection,
     owner: BotOwner,
     key: &BotWaitEnrollmentKey,
@@ -195,12 +226,26 @@ impl Repository {
         {
             return Err(BotError::RevisionConflict);
         }
-        if !matches!(&retained.outcome, Some(BotExecutionOutcome::Accepted { admission, .. }) if admission.fence == replay.fence)
-            || !matches!(
-                retained.stage,
-                BotReceiptStage::Accepted | BotReceiptStage::Completed
-            )
-            || replay.stop_reason.is_some()
+        let original_fence = match &retained.outcome {
+            Some(BotExecutionOutcome::Accepted { admission, .. }) => {
+                admission.fence.as_ref().ok_or(BotError::Storage)?
+            }
+            _ => return Err(BotError::Conflict),
+        };
+        if !matches!(
+            retained.stage,
+            BotReceiptStage::Accepted | BotReceiptStage::Completed
+        ) || replay.stop_reason.is_some()
+        {
+            return Err(BotError::Conflict);
+        }
+        if Some(original_fence) != replay.fence.as_ref()
+            && replay::installed_consumer_on(
+                &tx,
+                attempt,
+                replay.fence.as_ref().ok_or(BotError::Storage)?,
+            )?
+            .is_none()
         {
             return Err(BotError::Conflict);
         }
@@ -229,4 +274,4 @@ impl Repository {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

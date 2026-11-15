@@ -5,3 +5,5 @@ use koru_ai_core::bots::replay::BotReplayState;
 use koru_delegate_core::decisions::*;
 
 mod enrollment;
+mod replay;
+pub use replay::BotDecisionReplayRollover;
