@@ -49,6 +49,9 @@ pub struct RunState {
     pub(crate) source_obligation: Option<super::publication::source::SourceObligation>,
     /// Bounded exact-key usage/model evidence for this exclusive window only.
     pub(crate) source_usage: super::publication::source::SourceUsageCache,
+    /// The one exact Delivery Control request for this exclusive window. A
+    /// retried receipt replays it; nothing mints a second Control.
+    pub(crate) delivery_retry: Option<DeliveryRetry>,
     pub(crate) publication_returned: Option<super::publication::ReturnedRunProjection>,
     /// Bounded volatile retry identity for the retained decision cleanup CAS.
     /// Unknown SQL outcomes reuse this exact request; restart reads its row.
@@ -93,6 +96,7 @@ impl RunState {
             decision_source: None,
             source_obligation: None,
             source_usage: Default::default(),
+            delivery_retry: None,
             publication_returned: None,
             decision_cleanup: None,
         }
@@ -200,6 +204,14 @@ pub(crate) struct DecisionCleanupRetry {
     )>,
     pub due: std::time::Instant,
     pub round: u8,
+}
+
+#[derive(Clone)]
+pub(crate) struct DeliveryRetry {
+    pub receipt: koru_delegate_core::BotDeliveryReceipt,
+    pub transition: koru_delegate_core::decisions::DecisionTransitionId,
+    pub step: koru_delegate_core::TimelineEntryId,
+    pub outcome: koru_delegate_core::decisions::DecisionDeliveryOutcome,
 }
 
 #[derive(Clone)]

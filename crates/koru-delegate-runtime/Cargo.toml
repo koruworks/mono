@@ -48,5 +48,6 @@ tracing = { workspace = true }
 koru-core = { path = "../koru-core" }
 
 [dev-dependencies]
+koru-delegate-sqlite = { path = "../koru-delegate-sqlite", features = ["test-support"] }
 koru-delegate-scope = { path = "../koru-delegate-scope", features = ["fixtures"] }
 koru-time-zone = { path = "../koru-time-zone" }

@@ -503,6 +503,7 @@ impl Orchestrator {
         state.source_epoch = None;
         state.source_obligation = None;
         state.source_usage.clear();
+        state.delivery_retry = None;
         state.decision_cleanup = None;
         let Some(attempt) = state.attempt.as_ref().filter(|_| !ended) else {
             return Ok(None);

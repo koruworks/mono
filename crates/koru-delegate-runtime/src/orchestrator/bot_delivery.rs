@@ -11,6 +11,8 @@ use koru_delegate_core::{
 use koru_delegate_sqlite::AttemptPhase;
 use koru_session_protocol::{AgentEvent, HandoverState, ManagedState};
 
+mod decision;
+
 impl Orchestrator {
     pub fn bot_acknowledge_delivery(
         &mut self,
@@ -21,6 +23,12 @@ impl Orchestrator {
         let record = self.bot_record(key, device)?;
         if !receipt.valid() || receipt.run != key.run {
             return Err(refused("bot_fenced"));
+        }
+        // While the sole handle is held for decision publication the receipt
+        // and its owed header publication go through one Delivery Control.
+        self.restore_publication_owner(key.run)?;
+        if self.run_publication_pending(key.run) {
+            return self.bot_acknowledge_decision_delivery(key, device, receipt, &record);
         }
         let row = self
             .ports

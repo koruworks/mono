@@ -2,13 +2,7 @@
 use super::*;
 
 pub(super) fn expected(record: &DecisionRecord) -> DecisionExpected {
-    DecisionExpected {
-        owner: record.wait.origin.owner,
-        run: record.wait.origin.run,
-        decision: record.receipt.decision,
-        revision: record.receipt.state.revision,
-        binding_digest: record.receipt.binding_digest,
-    }
+    crate::test_support::expected(record)
 }
 
 pub(super) fn confirmed_cleanup(
@@ -75,61 +69,17 @@ pub(super) fn koru_enrollment_ready() -> (
             .unwrap()
             .unwrap();
     projection::apply(&mut h, &initial);
-    let ticket =
-        h.db.decision_wait_execution(f.owner, f.run)
-            .unwrap()
-            .unwrap()
-            .expected;
-    let record =
-        h.db.enroll_decision_cleanup(&ticket, DecisionTransitionId::mint())
-            .unwrap();
+    let record = crate::test_support::request_enrollment(&mut h.db, &prepared).unwrap();
     assert_eq!(record.receipt.decision, prepared.receipt.decision);
     (h, record, clock)
 }
 
 pub(super) fn enrolled(h: &mut Harness, record: &DecisionRecord) -> DecisionRecord {
-    let key = record.wait.enrollment_request.as_ref().unwrap().key.clone();
-    h.db.record_decision_enrollment(
-        &expected(record),
-        DecisionTransitionId::mint(),
-        &BotWaitEnrollmentReply::Enrolled {
-            receipt_digest: key.receipt_digest,
-            key,
-            ai_attempt: fixtures::v4(210),
-        },
-    )
-    .unwrap()
+    crate::test_support::record_enrollment(&mut h.db, record).unwrap()
 }
 
 pub(super) fn origin_release(h: &mut Harness, record: &DecisionRecord, now: i64) -> OriginWaitStop {
-    let f = h.origin();
-    let mut attempt = h.db.current_attempt(f.run).unwrap().unwrap();
-    if !attempt.retired {
-        h.db.advance(f.run, attempt.generation, crate::AttemptPhase::Ended)
-            .unwrap();
-        attempt = h.db.retire(f.run, attempt.generation).unwrap();
-    }
-    let key = &record.wait.enrollment_request.as_ref().unwrap().key;
-    OriginWaitStop::Confirmed {
-        origin_fence: f,
-        wait_id: record.wait.wait,
-        intent_digest: key.receipt_digest,
-        enrollment_digest: key.receipt_digest,
-        cause: BotWaitCleanupCause::DecisionWaitCleanup,
-        creation_retirement: ObservedCreationRetirement {
-            creation_key: attempt.provider_session.unwrap().idempotency,
-            host: attempt.host_instance.unwrap(),
-            result: ObservedRetirementResult::KnownEnded { session: f.session },
-            observed_at_ms: now,
-        },
-        native_drain: DecisionNativeDrain {
-            run: f.run,
-            attempt: f.attempt,
-            generation: f.generation,
-            observed_at_ms: now,
-            effects: DecisionList::default(),
-        },
-    }
+    crate::test_support::origin_release(&mut h.db, record, now).unwrap()
 }
 
 pub(super) fn native_ready() -> (Harness, DecisionRecord) {

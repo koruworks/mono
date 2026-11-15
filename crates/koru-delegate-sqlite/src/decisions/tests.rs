@@ -11,6 +11,7 @@ mod cleanup_evidence;
 mod completion;
 mod consume;
 mod corruption;
+mod delivery;
 mod enrollment;
 mod lifecycle;
 mod native_completion;

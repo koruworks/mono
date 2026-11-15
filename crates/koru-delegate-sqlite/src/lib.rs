@@ -99,3 +99,7 @@ pub use schedule_publications::{
 
 #[cfg(test)]
 pub(crate) mod fixtures;
+/// Shared decision-ledger state builders over the public API only. Dev-only:
+/// dependents enable `test-support` in their `[dev-dependencies]`.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;

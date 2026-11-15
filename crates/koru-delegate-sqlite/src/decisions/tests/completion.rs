@@ -18,7 +18,7 @@ pub(super) fn ack(record: &DecisionProjectionRecord) -> DecisionProjectionAcknow
 
 /// A native prompt answered and acknowledged: the decision settles while the
 /// native runtime continues. The returned Control is still pending.
-fn native_settled(allow: bool) -> (Harness, DecisionRecord, DecisionProjectionRecord) {
+pub(super) fn native_settled(allow: bool) -> (Harness, DecisionRecord, DecisionProjectionRecord) {
     let (mut h, record) = lifecycle::native_ready();
     let f = h.origin();
     let input = h.answer_input(&record, allow);
@@ -829,40 +829,18 @@ fn decision_successor_delivery_requires_the_exact_acknowledged_continuation() {
     let f = h.origin();
     let record = lifecycle::enrolled(&mut h, &record);
     clock.store(1001, std::sync::atomic::Ordering::Relaxed);
-    let release = lifecycle::origin_release(&mut h, &record, 1001);
-    let record = h
-        .db
-        .record_decision_origin_stop(&expected(&record), DecisionTransitionId::mint(), &release)
-        .unwrap();
-    let input = h.answer_input(&record, true);
-    let record =
-        h.db.answer_bot_decision(&input, DecisionTransitionId::mint(), &h.proof, h.boot)
-            .unwrap();
+    let record = crate::test_support::stop_origin(&mut h.db, &record, 1001).unwrap();
     let host = HostInstanceId::from_uuid(uuid::Uuid::new_v4());
-    let record =
-        h.db.reserve_decision_successor(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            host,
-            [42; 32],
-            &h.proof,
-            h.boot,
-        )
-        .unwrap();
-    let (attempt, generation, _, creation) = record.resume.as_ref().unwrap().consumer_identity();
-    let record =
-        h.db.bind_decision_successor(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            creation,
-            host,
-            SessionId::mint(),
-        )
-        .unwrap();
-    h.db.advance(f.run, generation, AttemptPhase::Starting)
-        .unwrap();
-    h.db.advance(f.run, generation, AttemptPhase::Running)
-        .unwrap();
+    let record = crate::test_support::bind_successor(
+        &mut h.db,
+        &record,
+        host,
+        SessionId::mint(),
+        &h.proof,
+        h.boot,
+    )
+    .unwrap();
+    let (attempt, generation, _, _) = record.resume.as_ref().unwrap().consumer_identity();
     let admission = h.db.bot_admission(f.run).unwrap().unwrap();
     let provenance = &admission.submission.provenance;
     let receipt = BotDeliveryReceipt {
@@ -887,18 +865,7 @@ fn decision_successor_delivery_requires_the_exact_acknowledged_continuation() {
         BotLedgerError::Fenced,
         "the retired original cannot deliver the successor's response"
     );
-    let resume = record.resume.as_ref().unwrap();
-    h.db.record_decision_resume_input(
-        &expected(&record),
-        DecisionTransitionId::mint(),
-        resume.input_key,
-        resume.input_fingerprint,
-        Some(&DecisionInputAcknowledgment {
-            turn: AgentTurnId::mint(),
-            receipt_digest: DecisionDigest::from_bytes([43; 32]),
-        }),
-    )
-    .unwrap();
+    crate::test_support::acknowledge_successor(&mut h.db, &record, AgentTurnId::mint()).unwrap();
     let event = h.db.record_bot_delivery(&receipt).unwrap();
     assert_eq!(h.db.record_bot_delivery(&receipt).unwrap(), event);
     let mut changed = receipt.clone();
