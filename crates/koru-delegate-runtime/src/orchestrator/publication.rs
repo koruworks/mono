@@ -17,12 +17,16 @@ mod cleanup;
 mod source;
 
 pub(crate) enum RunDocumentOwner {
+    /// Retained placement is known, but no document handle has been opened.
+    /// Unlike ReopenOwed this is not evidence of a lost physical operation.
+    Unopened,
     Attached {
         handle: Box<dyn RunDocumentHandle>,
         exclusive: bool,
     },
     PublicationInFlight {
         ticket: RunPublicationTicket,
+        previous_loss: Option<RunPublicationTicket>,
     },
     ReopenOwed {
         ticket: RunPublicationTicket,
@@ -85,7 +89,13 @@ impl RunDocumentOwner {
         if !matches!(self, Self::Attached { .. }) {
             return Err(publication_pending());
         }
-        let old = std::mem::replace(self, Self::PublicationInFlight { ticket });
+        let old = std::mem::replace(
+            self,
+            Self::PublicationInFlight {
+                ticket,
+                previous_loss: None,
+            },
+        );
         let Self::Attached { handle, .. } = old else {
             unreachable!()
         };
@@ -96,7 +106,8 @@ impl RunDocumentOwner {
         ticket: RunPublicationTicket,
         handle: Box<dyn RunDocumentHandle>,
     ) -> Result<(), Box<dyn RunDocumentHandle>> {
-        if !matches!(self, Self::PublicationInFlight { ticket: current } if *current == ticket) {
+        if !matches!(self, Self::PublicationInFlight { ticket: current, .. } if *current == ticket)
+        {
             return Err(handle);
         }
         *self = Self::Attached {
@@ -229,10 +240,12 @@ impl Orchestrator {
                 return Err(publication_pending().into());
             }
         }
-        let cold = self
-            .runs
-            .get(&run)
-            .is_none_or(|state| matches!(state.doc, RunDocumentOwner::ReopenOwed { .. }));
+        let cold = self.runs.get(&run).is_none_or(|state| {
+            matches!(
+                state.doc,
+                RunDocumentOwner::Unopened | RunDocumentOwner::ReopenOwed { .. }
+            )
+        });
         let document = if cold {
             // Only the validated SQL placement is used. Freeze a specification
             // without opening or joining anything on this actor thread.
@@ -241,14 +254,24 @@ impl Orchestrator {
                 .documents
                 .publication_open(identity.workspace, identity.document)?;
             if let Some(state) = self.runs.get_mut(&run) {
-                state.doc = RunDocumentOwner::PublicationInFlight { ticket };
+                let previous_loss = match state.doc {
+                    RunDocumentOwner::ReopenOwed { ticket } => Some(ticket),
+                    _ => None,
+                };
+                state.doc = RunDocumentOwner::PublicationInFlight {
+                    ticket,
+                    previous_loss,
+                };
             } else {
                 self.runs.insert(
                     run,
                     RunState::with_document_owner(
                         identity.workspace,
                         identity.document,
-                        RunDocumentOwner::PublicationInFlight { ticket },
+                        RunDocumentOwner::PublicationInFlight {
+                            ticket,
+                            previous_loss: None,
+                        },
                     ),
                 );
             }
@@ -276,7 +299,21 @@ impl Orchestrator {
             }
             RunPublicationDocument::Cold(job) => {
                 drop(job);
-                self.lost_run_publication(start.ticket);
+                if self.publication_ticket == Some(start.ticket)
+                    && let Some(state) = self.runs.get_mut(&start.ticket.run)
+                    && let RunDocumentOwner::PublicationInFlight {
+                        ticket,
+                        previous_loss,
+                    } = state.doc
+                    && ticket == start.ticket
+                {
+                    // This specification never opened a handle. Preserve the
+                    // metadata fence without manufacturing a physical loss.
+                    state.doc = previous_loss.map_or(RunDocumentOwner::Unopened, |ticket| {
+                        RunDocumentOwner::ReopenOwed { ticket }
+                    });
+                    self.publication_ticket = None;
+                }
             }
         }
     }
@@ -308,7 +345,7 @@ impl Orchestrator {
         let Some(state) = self.runs.get_mut(&ticket.run) else {
             return false;
         };
-        if !matches!(state.doc, RunDocumentOwner::PublicationInFlight { ticket: current } if current == ticket)
+        if !matches!(state.doc, RunDocumentOwner::PublicationInFlight { ticket: current, .. } if current == ticket)
         {
             return false;
         }

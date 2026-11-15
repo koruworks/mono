@@ -241,7 +241,7 @@ impl NativeResultLedger for RecordingStore {
     }
 }
 
-fn active() -> (
+pub(super) fn active() -> (
     Harness,
     BotSubmission,
     BotExecutionFence,

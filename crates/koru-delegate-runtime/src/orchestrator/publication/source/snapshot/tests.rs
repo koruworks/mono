@@ -63,3 +63,40 @@ fn decision_source_snapshot_refuses_large_or_unproved_boundary_without_empty_fal
         "refusal never erases ordinary progress"
     );
 }
+
+#[test]
+fn decision_source_snapshot_canonicalizes_all_unordered_identity_collections() {
+    let mut attempt = attempt();
+    for _ in 0..16 {
+        let turn = AgentTurnId::mint();
+        attempt
+            .turns
+            .insert(turn, TurnState::new(TurnOriginator::Human));
+        attempt.pending_approvals.insert(ApprovalId::mint(), turn);
+        attempt
+            .pending_questions
+            .insert(QuestionRequestId::mint(), turn);
+    }
+    let frozen = SourceMemory::freeze(&attempt).unwrap();
+    assert!(
+        frozen
+            .turns
+            .as_slice()
+            .windows(2)
+            .all(|pair| pair[0].turn < pair[1].turn)
+    );
+    assert!(
+        frozen
+            .approvals
+            .as_slice()
+            .windows(2)
+            .all(|pair| pair[0].0 < pair[1].0)
+    );
+    assert!(
+        frozen
+            .questions
+            .as_slice()
+            .windows(2)
+            .all(|pair| pair[0].0 < pair[1].0)
+    );
+}

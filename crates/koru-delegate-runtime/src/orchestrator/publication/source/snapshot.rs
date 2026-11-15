@@ -73,6 +73,12 @@ impl SourceMemory {
         let mut turns = frozen.turns.as_slice().to_vec();
         turns.sort_by_key(|turn| turn.turn);
         frozen.turns = DecisionList::new(turns)?;
+        let mut approvals = frozen.approvals.as_slice().to_vec();
+        approvals.sort_by_key(|(approval, _)| *approval);
+        frozen.approvals = DecisionList::new(approvals)?;
+        let mut questions = frozen.questions.as_slice().to_vec();
+        questions.sort_by_key(|(question, _)| *question);
+        frozen.questions = DecisionList::new(questions)?;
         Ok(frozen)
     }
 }

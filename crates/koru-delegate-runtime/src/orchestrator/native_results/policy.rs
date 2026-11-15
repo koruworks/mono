@@ -109,6 +109,7 @@ impl Orchestrator {
         config_revision: u64,
         policy_revision: u64,
     ) -> Result<FreshBotPolicyProof, RunError> {
+        self.restore_publication_owner(key.run)?;
         let admitted = self
             .bot_ledger()?
             .bot_admission(key.run)?

@@ -4,6 +4,7 @@ mod admission_read;
 mod boot;
 mod host_gone;
 mod native_results;
+mod publication;
 mod routines;
 
 use super::*;
@@ -11,6 +12,33 @@ use koru_delegate_core::decisions::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn prepare_bot_decision(
+        &mut self,
+        binding: &DecisionBindingV1,
+        proof: &FreshBotPolicyProof,
+        boot: DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .prepare_bot_decision(binding, proof, boot, base)
+    }
+    fn request_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        cause: DecisionClosureReason,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        self.check("decision_cleanup_before")?;
+        let record = self
+            .inner
+            .lock()
+            .unwrap()
+            .request_decision_cleanup(expected, transition, cause)?;
+        self.check("decision_cleanup_after")?;
+        Ok(record)
+    }
     fn decision_wait_execution(
         &self,
         owner: BotOwner,

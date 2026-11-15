@@ -40,6 +40,7 @@ pub const TOOL_STEP_BOUND: u32 = 64;
 impl Orchestrator {
     /// Apply one update from the run's session.
     pub fn handle(&mut self, run: RunId, update: SessionUpdate) -> Result<HandleOutcome, RunError> {
+        self.restore_publication_owner(run)?;
         // The decision source owner accepts/journals the complete bounded
         // observation first. This ordinary path cannot mutate turns, approval
         // maps, tallies or usage while that owner holds publication exclusively.

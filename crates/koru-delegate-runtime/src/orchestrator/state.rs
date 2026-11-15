@@ -41,6 +41,9 @@ pub struct RunState {
     /// A noncontiguous sequence is legal; only an explicit gap invalidates it.
     pub source_frontiers: koru_delegate_core::decisions::DecisionSourceFrontiers,
     pub source_gap: bool,
+    /// Bounded volatile retry identity for the retained decision cleanup CAS.
+    /// Unknown SQL outcomes reuse this exact request; restart reads its row.
+    pub(crate) decision_cleanup: Option<DecisionCleanupRetry>,
 }
 
 impl RunState {
@@ -76,6 +79,7 @@ impl RunState {
                 session_after: None,
             },
             source_gap: false,
+            decision_cleanup: None,
         }
     }
 
@@ -169,6 +173,19 @@ impl Attempt {
 pub struct BotCleanupRetry {
     pub due: std::time::Instant,
     pub round: u8,
+}
+
+pub(crate) struct DecisionCleanupRetry {
+    pub request: Option<DecisionCleanupRequest>,
+    pub due: std::time::Instant,
+    pub round: u8,
+}
+
+#[derive(Clone)]
+pub(crate) struct DecisionCleanupRequest {
+    pub expected: koru_delegate_core::decisions::DecisionWaitExpected,
+    pub transition: koru_delegate_core::decisions::DecisionTransitionId,
+    pub cause: koru_delegate_core::decisions::DecisionClosureReason,
 }
 
 /// One turn's running tally: who asked, and the tool completions not yet

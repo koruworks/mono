@@ -629,6 +629,7 @@ impl Orchestrator {
         run: RunId,
         workspace: Option<WorkspaceId>,
     ) -> Result<&mut RunState, RunError> {
+        self.restore_publication_owner(run)?;
         if !self.runs.contains_key(&run) {
             let placed = self
                 .ports
