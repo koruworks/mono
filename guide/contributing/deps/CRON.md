@@ -99,4 +99,3 @@ the range. A signed pre-epoch observation is a valid input, but the next
 every-minute UTC occurrence after `-60001` is `0`, not `-60000`. Preserve this
 owner horizon in wrappers and tests. An unavailable/no-next forecast is not
 permission to borrow a viewer zone or invent an occurrence beyond the explorer.
-
