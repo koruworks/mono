@@ -602,7 +602,27 @@ fn memory_write_gate_catalog_and_complete_response_remain_bounded() {
         );
     }
     let catalog = super::super::super::definitions();
-    assert_eq!(catalog.len(), 9);
+    // The four document tools, two Memory reads, three Memory writes and the
+    // four own-Bot Routine tools (added in ef149885), in any order.
+    let mut names: Vec<&str> = catalog.iter().map(|tool| tool.name.as_ref()).collect();
+    names.sort_unstable();
+    let mut expected = [
+        "search_documents",
+        "read_document",
+        "create_document",
+        "edit_document",
+        "list_memory",
+        "read_memory",
+        "remember_memory",
+        "correct_memory",
+        "forget_memory",
+        "create_routine",
+        "read_routine_creation",
+        "retry_routine_creation",
+        "list_routines",
+    ];
+    expected.sort_unstable();
+    assert_eq!(names, expected);
     eprintln!(
         "Complete native catalog: {} serialized bytes",
         serde_json::to_vec(&json!({"tools":catalog})).unwrap().len()
