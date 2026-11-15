@@ -608,6 +608,13 @@ impl BotLedger for RunsDb {
     ) -> Result<Option<crate::DecisionRecord>, BotLedgerError> {
         RunsDb::bot_decision(self, owner, run, decision)
     }
+    fn decision_resume_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<(BotOwner, RunId)>, BotLedgerError> {
+        RunsDb::decision_resume_runs(self, after, limit)
+    }
     fn decision_acknowledged_continuation(
         &self,
         owner: BotOwner,

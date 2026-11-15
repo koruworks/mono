@@ -71,6 +71,16 @@ impl BotLedger for RecordingStore {
             .unwrap()
             .bot_decision(owner, run, decision)
     }
+    fn decision_resume_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<(BotOwner, RunId)>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_resume_runs(after, limit)
+    }
     fn decision_acknowledged_continuation(
         &self,
         owner: BotOwner,

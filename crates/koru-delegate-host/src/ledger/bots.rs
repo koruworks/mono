@@ -62,6 +62,13 @@ impl BotLedger for SharedLedger {
     ) -> Result<Option<koru_delegate_sqlite::DecisionRecord>, BotLedgerError> {
         self.0.lock().unwrap().bot_decision(owner, run, decision)
     }
+    fn decision_resume_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<(BotOwner, RunId)>, BotLedgerError> {
+        self.0.lock().unwrap().decision_resume_runs(after, limit)
+    }
     fn decision_acknowledged_continuation(
         &self,
         owner: BotOwner,

@@ -798,3 +798,20 @@ fn key_of(s: &BotSubmission) -> BotRunKey {
         run: s.request.run,
     }
 }
+
+#[test]
+fn decision_resume_runs_offer_the_open_decision_and_wrap_after_the_cursor() {
+    let mut c = edit_decision();
+    let (run, owner) = (c.fence.run, c.fence.owner);
+    assert_eq!(
+        c.h.orchestrator.bot_decision_resume_runs(None).unwrap(),
+        vec![(owner, run)]
+    );
+    // Rotating past the only Run wraps to it once, never twice.
+    assert_eq!(
+        c.h.orchestrator
+            .bot_decision_resume_runs(Some(run))
+            .unwrap(),
+        vec![(owner, run)]
+    );
+}
