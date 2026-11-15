@@ -72,7 +72,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         refreshUsage = {
             cloudStorage.usageChanged(adapter.status.value)
             cloudInventory.workspaces(adapter.status.value.activeScope)
-        })
+        }, pollBoundary = adapter::pollBoundary)
     internal val cloudCopyState = cloudCopy.state
     private val cycle = AccountPresentationCycle(presentation) {
         try {

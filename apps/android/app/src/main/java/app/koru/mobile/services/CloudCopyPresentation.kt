@@ -28,6 +28,7 @@ internal class CloudCopyPresentation(
     private val command: suspend (Long, CloudCopySelection, BlockId?) -> AccountCommandReply,
     private val cancel: suspend (Long, Long) -> Unit,
     private val refreshUsage: suspend () -> Unit,
+    private val pollBoundary: () -> Long,
 ) {
     private val lock = Mutex()
     private val mutableState = MutableStateFlow(CloudCopyState())
@@ -44,6 +45,7 @@ internal class CloudCopyPresentation(
         var cancelling = false
         var cancellationFinished = false
         var drained = false
+        var pollBoundary = Long.MAX_VALUE
     }
     private var pending: Operation? = null
     private var timeout: Job? = null
@@ -68,8 +70,10 @@ internal class CloudCopyPresentation(
             try { cancel(operation.key.ownerScope, generation) }
             catch (error: CancellationException) { throw error }
             catch (_: Exception) { /* The terminal operation result can still establish drainage. */ }
+            val boundary = pollBoundary()
             lock.withLock {
                 operation.cancellationFinished = true
+                operation.pollBoundary = maxOf(operation.pollBoundary, boundary)
                 // A Cancel acknowledgement alone does not prove the original
                 // operation drained. Keep one lease until its terminal result.
                 if (operation.drained && pending === operation) pending = null
@@ -120,6 +124,7 @@ internal class CloudCopyPresentation(
             val reply = try { command(key.ownerScope, key.selection, node) }
             catch (error: CancellationException) { throw error }
             catch (_: Exception) { null }
+            val boundary = pollBoundary()
             lock.withLock {
                 if (pending !== operation) return@withLock
                 if (reply == null) {
@@ -133,6 +138,7 @@ internal class CloudCopyPresentation(
                     if (!operation.retired && mutableState.value.key == key) fail(node)
                 } else {
                     operation.generation = reply.generation
+                    operation.pollBoundary = boundary
                     cancelRetired(operation)
                 }
             }
@@ -157,6 +163,16 @@ internal class CloudCopyPresentation(
     }
     suspend fun observe(next: AndroidAccountStatus, results: List<MobileAccountResult>) = lock.withLock {
         align(next)
+        pending?.let { operation ->
+            val generation = operation.generation
+            // Only an explicitly present held owner from a poll STARTED after
+            // admission and cancellation can replace a lost terminal result.
+            if (operation.retired && operation.cancellationFinished && generation != null &&
+                next.pollSequence > operation.pollBoundary && next.heldAccounts.any {
+                    it.scopeId == operation.key.ownerScope && it.accountId == operation.key.selection.accountId &&
+                        it.requesterActive == false && generation !in it.activeGenerations
+                }) pending = null
+        }
         for (result in results) {
             if (result.sequence <= sequence) continue
             sequence = maxOf(sequence, result.sequence)

@@ -58,6 +58,8 @@ data class AndroidAccountStatus(
     val activeScope: Long = 0,
     val activeAccountId: String? = null,
     val heldAccounts: List<HeldAccount> = emptyList(),
+    /** Local poll-start ordering only; never a Cloud account generation. */
+    val pollSequence: Long = 0,
 )
 
 data class HeldAccount(
@@ -84,6 +86,8 @@ internal class AndroidAccountAdapter(
 ) {
     companion object { const val REQUESTER = 2L }
     private val lock = Mutex()
+    private val pollSequence = java.util.concurrent.atomic.AtomicLong()
+    internal fun pollBoundary(): Long = pollSequence.get()
     @Volatile private var desiredForeground = false
     private var sentForeground: Boolean? = null
     private var after = 0L
@@ -165,6 +169,7 @@ internal class AndroidAccountAdapter(
             val reply = native.platform(envelope().setForeground(foreground).build())
             if (!reply.hasErrorCode()) sentForeground = foreground
         }
+        val observationSequence = pollSequence.updateAndGet { if (it == Long.MAX_VALUE) it else it + 1 }
         val reply = native.poll(AccountPollRequest.newBuilder().setVersion(1).setRequester(REQUESTER)
             .setAfterSequence(after).setIncludePlatform(true).build())
         if (!reply.hasStatus()) {
@@ -174,7 +179,7 @@ internal class AndroidAccountAdapter(
         clearFailure("account_adapter_unavailable")
         if (reply.hasStatus()) {
             val worker = reply.status
-            mutableStatus.value = mutableStatus.value.copy(worker = AccountDiagnostics.from(worker),
+            mutableStatus.value = mutableStatus.value.copy(worker = AccountDiagnostics.from(worker), pollSequence = observationSequence,
                 generation = worker.generation, signInAgain = worker.stage == "signed_out",
                 resultsLost = reply.errorCode == "account_result_gap", capability = worker.capability, queueDepth = worker.queueDepth,
                 requesterActive = worker.requesterActive.takeIf { worker.hasRequesterActive() },

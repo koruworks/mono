@@ -37,11 +37,12 @@ class CloudCopyPresentationTest {
         var admission: CompletableDeferred<Unit>? = null
         var cancellation: CompletableDeferred<Unit>? = null
         var refresh: CompletableDeferred<Unit>? = null
+        var boundary = 0L
     }
     private fun TestScope.presenter(calls: Calls) = CloudCopyPresentation(backgroundScope,
         command = { _, _, node -> calls.nodes += node; calls.admission?.await(); AccountCommandReply.newBuilder().setGeneration(calls.next++).build() },
         cancel = { owner, generation -> calls.cancellations += owner to generation; calls.cancellation?.await() },
-        refreshUsage = { calls.refreshes++; calls.refresh?.await() })
+        refreshUsage = { calls.refreshes++; calls.refresh?.await() }, pollBoundary = { calls.boundary })
     private suspend fun TestScope.enter(state: CloudCopyPresentation) { state.foreground(true, status()); state.open(selection, status()); runCurrent() }
     private fun result(sequence: Long, generation: Long, removal: Boolean = false,
                        selected: CloudCopySelection = selection, owner: Long = 1, failure: String? = null,
@@ -127,6 +128,24 @@ class CloudCopyPresentationTest {
         state.close(); state.observe(status(2, id(20)), emptyList())
         assertNull(state.state.value.key)
         calls.refresh!!.complete(Unit)
+    }
+    @Test fun onlyPollStartedAfterAdmissionAndCancellationCanRecoverLostTerminalResult() = runTest {
+        val calls = Calls(); calls.boundary = 5; calls.cancellation = CompletableDeferred()
+        val state = presenter(calls); enter(state); state.close(); runCurrent()
+        fun observed(serial: Long, active: List<Long> = emptyList(), account: String = id(1), requesterActive: Boolean? = false) = status().copy(
+            pollSequence = serial, resultsLost = true, heldAccounts = listOf(
+                HeldAccount(1, account, null, "signed_in", true, null, active, requesterActive)))
+        calls.boundary = 7
+        calls.cancellation!!.complete(Unit); runCurrent()
+        for (snapshot in listOf(observed(5), observed(6), observed(7), observed(8, listOf(10)),
+                observed(9, account = id(20)), observed(9, requesterActive = true), observed(9, requesterActive = null))) {
+            state.observe(snapshot, emptyList())
+            state.open(selection, status()); state.close(); runCurrent()
+            assertEquals(1, calls.nodes.size)
+        }
+        state.observe(observed(10), emptyList())
+        state.open(selection, status()); runCurrent()
+        assertEquals(2, calls.nodes.size)
     }
     @Test fun sameAccountLogoutAndLoginDiscardVerifiedContent() = runTest {
         val calls = Calls(); val state = presenter(calls); enter(state)
