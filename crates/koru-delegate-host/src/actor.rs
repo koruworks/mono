@@ -175,6 +175,7 @@ pub enum Command {
 }
 
 mod bots;
+mod decision_resume;
 mod publication;
 mod routine;
 #[cfg(test)]
@@ -245,6 +246,12 @@ pub struct Actor {
     publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
     /// The last Run a physical publication workflow was started for.
     publication_cursor: Option<RunId>,
+    /// The last Run offered to the decision resume driver (O123 rotation).
+    decision_resume_cursor: Option<RunId>,
+    /// Whether the last resume turn found an open decision wait (or none has
+    /// run yet, or a Bot command may have opened one): keeps the maintenance
+    /// tick alive so the next Run is offered.
+    decision_resume_pending: bool,
 }
 
 impl Actor {
@@ -275,6 +282,9 @@ impl Actor {
             publication_worker: None,
             publication_ack: None,
             publication_cursor: None,
+            decision_resume_cursor: None,
+            // A restart may find waits a previous process left open.
+            decision_resume_pending: true,
         }
     }
 
@@ -517,7 +527,13 @@ impl Actor {
                 if let Err(error) = self.orchestrator.retry_publications(64) {
                     tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
                 }
-                publication_at = self.publications_pending().then(|| Instant::now() + TICK);
+                // One Run's decision wait per turn; a step taken offers the
+                // next turn now rather than a tick later.
+                publication_at = if self.advance_decision_resume() {
+                    Some(Instant::now())
+                } else {
+                    self.publications_pending().then(|| Instant::now() + TICK)
+                };
             }
 
             if bot_budget_at.is_some_and(|deadline| deadline <= now) {
@@ -634,6 +650,8 @@ impl Actor {
                     Err(failure) => Response::Failure(failure),
                 };
                 let _ = reply.send(response);
+                // A decision command may have opened or answered a wait.
+                self.decision_resume_pending = true;
                 if queue_changed {
                     self.wake_bots();
                 }
@@ -1095,7 +1113,9 @@ impl Actor {
     fn publications_pending(&self) -> bool {
         // Exclusive Runs keep the existing coalesced maintenance tick alive so
         // owed projections, observations and producer reconnects progress.
-        if self.publication_ack.is_some() || !self.orchestrator.publication_candidates().is_empty()
+        if self.publication_ack.is_some()
+            || self.decision_resume_pending
+            || !self.orchestrator.publication_candidates().is_empty()
         {
             return true;
         }

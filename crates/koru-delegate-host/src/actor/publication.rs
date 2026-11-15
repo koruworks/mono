@@ -5,10 +5,58 @@
 //! the physical ticket. There is no caller-provided target or publication body.
 
 use super::*;
-use crate::publication::{Completion, PublicationWorker};
+use crate::publication::{Completion, EnrollmentClient, PublicationWorker};
 use koru_delegate_runtime::SourceProgress;
 
 impl Actor {
+    /// Start the one fixed worker now, carrying the host's decision
+    /// enrollment client onto its thread. Enrollment then runs there, only
+    /// while no Run's document handle is out, under the worker's single
+    /// ticket. Called once at composition, before the loop runs.
+    pub(crate) fn attach_decision_bridge(
+        &mut self,
+        client: EnrollmentClient,
+    ) -> std::io::Result<()> {
+        if self.publication_worker.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "the publication worker already started",
+            ));
+        }
+        self.publication_worker = Some(PublicationWorker::start_with_enrollment(
+            Self::publication_wake(self.commands.clone()),
+            client,
+        )?);
+        Ok(())
+    }
+
+    /// Owned sender in, so the wake borrows nothing of the actor.
+    fn publication_wake(commands: mpsc::Sender<Command>) -> impl Fn() + Send + 'static {
+        move || {
+            let _ = commands.send(Command::PublicationWake);
+        }
+    }
+
+    /// The composed host attaches its worker eagerly. An actor without an
+    /// enrollment client (no decision bridge composed) gets a worker on first
+    /// use whose enrollment answers `decision_enrollment_unavailable`.
+    pub(super) fn ensure_publication_worker(&mut self) -> Result<(), RunError> {
+        if self.publication_worker.is_none() {
+            self.publication_worker = Some(
+                PublicationWorker::start(Self::publication_wake(self.commands.clone())).map_err(
+                    |_| {
+                        PortError::new(
+                            koru_delegate_runtime::Port::Documents,
+                            "publication_worker_unavailable",
+                            "the publication worker could not start",
+                        )
+                    },
+                )?,
+            );
+        }
+        Ok(())
+    }
+
     fn start_run_publication(&mut self, run: RunId) -> Result<bool, RunError> {
         if self.publication_ack.is_some()
             || self
@@ -18,21 +66,7 @@ impl Actor {
         {
             return Err(koru_delegate_runtime::publication_pending().into());
         }
-        if self.publication_worker.is_none() {
-            let commands = self.commands.clone();
-            self.publication_worker = Some(
-                PublicationWorker::start(move || {
-                    let _ = commands.send(Command::PublicationWake);
-                })
-                .map_err(|_| {
-                    PortError::new(
-                        koru_delegate_runtime::Port::Documents,
-                        "publication_worker_unavailable",
-                        "the publication worker could not start",
-                    )
-                })?,
-            );
-        }
+        self.ensure_publication_worker()?;
         let Some(start) = self.orchestrator.next_run_publication(run)? else {
             return Ok(false);
         };
@@ -61,6 +95,9 @@ impl Actor {
             self.publication_completed(completion, false);
         }
         self.drive_publication();
+        // After the drain (an enrollment reply also wakes the actor here):
+        // one Run's decision wait per turn, rotating.
+        self.advance_decision_resume();
     }
 
     /// One maintenance step: start at most one physical workflow, then offer

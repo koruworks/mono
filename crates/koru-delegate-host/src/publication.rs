@@ -38,7 +38,6 @@ enum Request {
     Return {
         ticket: RunPublicationTicket,
     },
-    #[cfg_attr(not(test), allow(dead_code))] // sent once the actor composes the mailbox
     Enroll {
         request: EnrollBotWaitCleanup,
     },
@@ -139,7 +138,6 @@ impl PublicationWorker {
     }
 
     /// A worker that runs enrollment through the host's client on its thread.
-    #[cfg_attr(not(test), allow(dead_code))] // composed by the actor's per-turn call
     pub(crate) fn start_with_enrollment(
         wake: impl Fn() + Send + 'static,
         client: EnrollmentClient,
@@ -254,7 +252,6 @@ impl PublicationWorker {
     /// this request's key if one came back; otherwise start this request when
     /// the single ticket is idle (no handle out, nothing in flight) and answer
     /// pending. Never blocks the caller and never invents a reply.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn enrollment(
         &mut self,
         request: &EnrollBotWaitCleanup,
@@ -338,7 +335,6 @@ impl Drop for PublicationWorker {
 }
 
 /// What a driver turn hears while enrollment is not finished.
-#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn enrollment_pending() -> PortError {
     PortError::new(
         Port::Documents,
@@ -357,12 +353,10 @@ fn enrollment_lost() -> PortError {
 
 /// Through this the per-turn resume driver reaches the worker's enrollment
 /// slot; it never runs the HTTP call itself.
-#[cfg_attr(not(test), allow(dead_code))] // composed by the actor's per-turn call
 pub(crate) struct EnrollmentMailbox<'a> {
     worker: &'a mut PublicationWorker,
 }
 impl<'a> EnrollmentMailbox<'a> {
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new(worker: &'a mut PublicationWorker) -> Self {
         Self { worker }
     }
