@@ -378,3 +378,23 @@ fn koru_card_settles_once_allow_answered_and_deny_denied() {
     assert!(settled_koru_card(allowed, DecisionAuthorization::Denied, at).is_none());
     assert!(settled_koru_card(open, DecisionAuthorization::Pending, at).is_none());
 }
+
+#[test]
+fn decision_card_without_its_receipt_is_no_longer_active_and_sends_nothing() {
+    // After an AI restart the in-memory receipt is gone: the card refuses in
+    // the existing "no longer active" words before any job or delegate call.
+    let waits = crate::worker::bots::decision_wait::DecisionWaitDriver::new(None);
+    let card = BotDecisionCard {
+        decision: DecisionId::mint(),
+        run: d::RunId::mint(),
+        ai_attempt: InferenceAttemptId::new(),
+        invocation: ToolInvocationId::new(),
+        revision: DecisionRevision::new(2).unwrap(),
+    };
+    let refused = card_receipt(&waits, &card).unwrap_err();
+    let inactive = tool_not_resumable();
+    assert_eq!(
+        (refused.code, refused.message, refused.retryable),
+        (inactive.code, inactive.message, false)
+    );
+}

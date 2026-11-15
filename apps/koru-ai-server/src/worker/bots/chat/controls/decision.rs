@@ -154,6 +154,16 @@ pub(in crate::worker) fn native_choice(
     Ok(pick.clone())
 }
 
+/// The receipt a card's answer must name. Gone (an AI restart, or never
+/// handed over) means the card is no longer active: refused before any job
+/// is built, so no answer is ever sent without it.
+pub(in crate::worker) fn card_receipt<'a>(
+    waits: &'a crate::worker::bots::decision_wait::DecisionWaitDriver,
+    card: &BotDecisionCard,
+) -> ApiResult<&'a koru_delegate_api::bots::DecisionReceiptView> {
+    waits.receipt(card.decision).ok_or_else(tool_not_resumable)
+}
+
 /// Digest of the off-writer human proof the answer was authorized under.
 fn human_proof_digest(
     answer: &DecisionAnswerRequest,
@@ -276,10 +286,7 @@ impl WorkerState {
         if card.ai_attempt != row.attempt_id {
             return Err(tool_decision_conflict());
         }
-        let view = self
-            .decision_waits
-            .receipt(card.decision)
-            .ok_or_else(tool_not_resumable)?;
+        let view = card_receipt(&self.decision_waits, &card)?;
         let receipt = &view.receipt;
         let (owner, bot_id, run, human, routine, koru) = match &receipt.binding {
             DecisionBindingV1::KoruEdit(v) => (
