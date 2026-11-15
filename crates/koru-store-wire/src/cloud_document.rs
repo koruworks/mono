@@ -3,7 +3,7 @@
 //! Bounded, immutable native inspection of one exact Cloud copy. These values
 //! never grant read/write authority or identify a global editor/cache entry.
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub const MAX_INSPECTION_BYTES: usize = 1024 * 1024;
 pub const MAX_INSPECTION_BLOCKS: usize = 2000;
@@ -78,7 +78,7 @@ pub struct CloudDocumentInspectionV1 {
     pub document: DocumentProjection,
     /// Presentation hint only; the worker rechecks current write permission.
     pub can_request_removal: bool,
-    /// Exact eligible File/Image leaves. Never a note/page or subtree purge.
+    /// Exact eligible File/Image/Canvas leaves. Never a note/page or subtree purge.
     pub removable_files: Vec<FileRemovalControl>,
 }
 impl std::fmt::Debug for CloudDocumentInspectionV1 {
@@ -110,6 +110,7 @@ impl CloudDocumentInspectionV1 {
             || self.document.revision > i64::MAX as u64
             || self.document.blocks.len() > MAX_INSPECTION_BLOCKS
             || self.removable_files.len() > MAX_INSPECTION_BLOCKS
+            || (!self.can_request_removal && !self.removable_files.is_empty())
         {
             return Err("invalid inspection scope");
         }
@@ -117,7 +118,7 @@ impl CloudDocumentInspectionV1 {
         text.add(&self.document.title)?;
         let mut ids = HashSet::new();
         let mut parents = HashSet::new();
-        let mut eligible = HashSet::new();
+        let mut eligible = HashMap::new();
         let mut marks = 0usize;
         for block in &self.document.blocks {
             if !id(&block.id)
@@ -133,7 +134,7 @@ impl CloudDocumentInspectionV1 {
                 parents.insert(parent.as_str());
             }
             if matches!(block.kind.as_str(), "file" | "image" | "canvas") && block.blob.is_some() {
-                eligible.insert(block.id.as_str());
+                eligible.insert(block.id.as_str(), block.in_trash);
             }
             text.add(&block.kind)?;
             let p = &block.properties;
@@ -189,7 +190,7 @@ impl CloudDocumentInspectionV1 {
         for file in &self.removable_files {
             if !controls.insert(file.node_id.as_str())
                 || parents.contains(file.node_id.as_str())
-                || !eligible.contains(file.node_id.as_str())
+                || eligible.get(file.node_id.as_str()) != Some(&file.in_trash)
             {
                 return Err("invalid inspection removal target");
             }
