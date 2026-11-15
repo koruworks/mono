@@ -190,10 +190,40 @@ fn enrollment_changed_duplicate_and_foreign_owner_refuse() {
         Err(BotError::Forbidden)
     );
     assert_eq!(
-        repo.read_bot_wait_cleanup(foreign, &ReadBotWaitCleanup { key: request.key }),
+        repo.read_bot_wait_cleanup(
+            foreign,
+            &ReadBotWaitCleanup {
+                key: request.key.clone()
+            }
+        ),
         Err(BotError::Forbidden)
     );
     assert_eq!(count(&repo), 1);
+    let mut second = request.clone();
+    second.cleanup_intent.wait_id = BotWaitId::mint();
+    second.cleanup_intent.decision_id = DecisionId::mint();
+    second.key = second.cleanup_intent.key().unwrap();
+    let mut second_qualified = qualified.clone();
+    second_qualified.key = second.key.clone();
+    second_qualified.cleanup_intent = second.cleanup_intent.clone();
+    enroll(&mut repo, owner, &second, &second_qualified).unwrap();
+    let mut crosswired = request.clone();
+    crosswired.cleanup_intent.decision_id = second.key.decision_id;
+    crosswired.key = crosswired.cleanup_intent.key().unwrap();
+    assert_eq!(
+        enroll(&mut repo, owner, &crosswired, &qualified),
+        Err(BotError::Conflict)
+    );
+    assert_eq!(
+        repo.read_bot_wait_cleanup(
+            owner,
+            &ReadBotWaitCleanup {
+                key: crosswired.key
+            }
+        ),
+        Err(BotError::Conflict)
+    );
+    assert_eq!(count(&repo), 2);
 }
 
 #[test]

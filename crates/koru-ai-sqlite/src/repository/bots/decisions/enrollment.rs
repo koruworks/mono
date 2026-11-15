@@ -32,7 +32,15 @@ fn retained_on(
     if count == 0 {
         return Ok(None);
     }
-    if count != 1 || bounded != Some(true) {
+    if bounded != Some(true) {
+        return Err(BotError::Storage);
+    }
+    // Each key is unique. Crosswiring two existing keys is a changed request,
+    // while malformed SQL storage above still fails closed as corruption.
+    if count == 2 {
+        return Err(BotError::Conflict);
+    }
+    if count != 1 {
         return Err(BotError::Storage);
     }
     let json: String = conn.query_row(
