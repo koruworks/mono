@@ -64,7 +64,7 @@ fn state(
                             && request.key.decision_revision <= state.revision,
                     )?;
                 }
-                Ok(state)
+                Ok::<_, BotLedgerError>(state)
             })())
         },
     )
