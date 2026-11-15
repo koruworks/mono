@@ -70,6 +70,8 @@ uuid.workspace = true
 windows-sys.workspace = true
 
 [dev-dependencies]
+# Reuse the actual in-memory AI owner and Store fixture for Run-tool composition.
+koru-ai-server = { path = "../../apps/koru-ai-server", features = ["fixtures"] }
 # The SDK's client, driven against the in-process router through a
 # transport of its own: the protocol test of the run endpoint.
 rmcp = { version = "=3.9.0", default-features = false, features = ["client", "server"] }

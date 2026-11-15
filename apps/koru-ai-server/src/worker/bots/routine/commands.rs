@@ -65,6 +65,71 @@ pub(in crate::worker) fn retained_create(
 }
 
 impl WorkerState {
+    /// Same owner Retry semantics for the vouched facade and trusted Run caller.
+    /// This is not the optional model read hint: every failure is authoritative.
+    pub(in crate::worker) fn retry_routine_creation_intent(
+        &mut self,
+        owner: BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+        observed: BotRoutineCreationObserved,
+    ) -> ApiResult<()> {
+        let creation = self
+            .repository
+            .bot_routine_creation_by_request(owner, bot, request)
+            .map_err(bot_failure)?
+            .ok_or_else(not_found)?;
+        if creation.observed() != observed {
+            return Err(bot_failure(BotError::Conflict));
+        }
+        match creation.state {
+            BotRoutineCreationState::Prepared | BotRoutineCreationState::Unconfirmed => {
+                self.repository
+                    .bot_routine_recovery_candidate(
+                        owner,
+                        &BotRoutineRecoveryIdentity {
+                            bot,
+                            schedule: creation.identity.schedule,
+                            observed,
+                        },
+                    )
+                    .map_err(bot_failure)?;
+                self.routine_recovery.observe(owner);
+                self.routine_recovery.wake();
+            }
+            BotRoutineCreationState::Bound => {}
+            BotRoutineCreationState::Conflict => return Err(bot_failure(BotError::Conflict)),
+        }
+        Ok(())
+    }
+
+    /// New model observation only (O96). Validate the retained record separately
+    /// before this helper; inability to establish current eligibility is a false
+    /// hint, never a swallowed retained-row error or a new Retry permission.
+    pub(in crate::worker) fn routine_tool_status(
+        &self,
+        metadata: &BotPolicyMetadata,
+        creation: &BotRoutineCreation,
+    ) -> BotRoutineCreationStatus {
+        let can_retry = metadata.lifecycle == BotLifecycle::Active
+            && matches!(
+                creation.state,
+                BotRoutineCreationState::Prepared | BotRoutineCreationState::Unconfirmed
+            )
+            && self
+                .repository
+                .bot_routine_recovery_candidate(
+                    metadata.owner,
+                    &BotRoutineRecoveryIdentity {
+                        bot: metadata.id,
+                        schedule: creation.identity.schedule,
+                        observed: creation.observed(),
+                    },
+                )
+                .is_ok();
+        creation_status(creation, can_retry)
+    }
+
     pub(in crate::worker) fn prepare_routine_creation_intent(
         &mut self,
         owner: BotOwner,
@@ -140,35 +205,12 @@ impl WorkerState {
                     observed_token,
                     ..
                 } => {
-                    let creation = self
-                        .repository
-                        .bot_routine_creation_by_request(owner, id, *original_request_id)
-                        .map_err(bot_failure)?
-                        .ok_or_else(not_found)?;
-                    if creation.observed() != *observed_token {
-                        return Err(bot_failure(BotError::Conflict));
-                    }
-                    match creation.state {
-                        BotRoutineCreationState::Prepared
-                        | BotRoutineCreationState::Unconfirmed => {
-                            self.repository
-                                .bot_routine_recovery_candidate(
-                                    owner,
-                                    &BotRoutineRecoveryIdentity {
-                                        bot: id,
-                                        schedule: creation.identity.schedule,
-                                        observed: *observed_token,
-                                    },
-                                )
-                                .map_err(bot_failure)?;
-                            self.routine_recovery.observe(owner);
-                            self.routine_recovery.wake();
-                        }
-                        BotRoutineCreationState::Bound => {}
-                        BotRoutineCreationState::Conflict => {
-                            return Err(bot_failure(BotError::Conflict));
-                        }
-                    }
+                    self.retry_routine_creation_intent(
+                        owner,
+                        id,
+                        *original_request_id,
+                        *observed_token,
+                    )?;
                     self.routine_creation_status(owner, &bot, *original_request_id)
                         .map(|creation| BotResponse::RoutineCreation { creation })
                 }
@@ -213,15 +255,19 @@ impl WorkerState {
         } else {
             false
         };
-        Ok(BotRoutineCreationStatus {
-            request_id: request,
-            bot_id: bot.id,
-            schedule_id: creation.identity.schedule,
-            observed_token: creation.observed(),
-            refusal: creation.refusal,
-            can_retry,
-            source_bot_policy_revision: creation.identity.grant.source_bot_policy_revision,
-            grant_revision: creation.identity.grant.grant_revision,
-        })
+        Ok(creation_status(&creation, can_retry))
+    }
+}
+
+fn creation_status(creation: &BotRoutineCreation, can_retry: bool) -> BotRoutineCreationStatus {
+    BotRoutineCreationStatus {
+        request_id: creation.identity.creation_request,
+        bot_id: creation.identity.bot,
+        schedule_id: creation.identity.schedule,
+        observed_token: creation.observed(),
+        refusal: creation.refusal,
+        can_retry,
+        source_bot_policy_revision: creation.identity.grant.source_bot_policy_revision,
+        grant_revision: creation.identity.grant.grant_revision,
     }
 }
