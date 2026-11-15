@@ -57,6 +57,32 @@ pub struct ReconcileReport {
 }
 
 impl ScopeClaims {
+    /// Reconcile known scopes while preserving only already-held exact claims
+    /// for Runs whose retained scope could not be read. This creates no claim
+    /// and grants no admission; a healthy newly resolved claim takes precedence.
+    pub fn reconcile_preserving<D: DurableClaims + ?Sized>(
+        durable: &D,
+        roots: &dyn ScopeRoots,
+        liveness: impl FnMut(RunAttemptId) -> Liveness,
+        previous: &Self,
+        unresolved_scopes: &[RunId],
+    ) -> Result<(Self, ReconcileReport), D::Error> {
+        let (mut claims, mut report) = Self::reconcile(durable, roots, liveness)?;
+        for old in previous
+            .claims()
+            .filter(|old| unresolved_scopes.contains(&old.run))
+        {
+            if !claims
+                .claims()
+                .any(|current| current.attempt == old.attempt)
+            {
+                claims.insert(old.clone());
+                report.kept.push((old.run, old.attempt));
+            }
+        }
+        Ok((claims, report))
+    }
+
     /// Rebuild the registry from what `runs.db` recorded, keeping every
     /// claim whose attempt `liveness` calls live or unknown and dropping
     /// the ones it calls ended.

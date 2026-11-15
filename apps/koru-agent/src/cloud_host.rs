@@ -101,6 +101,8 @@ pub struct DesktopCloudHost {
     /// stream; this lease keeps its QUIC connection alive between passes.
     sessions: Mutex<BTreeMap<Uuid, dial::Connection>>,
 }
+mod inspection;
+pub use inspection::DesktopCloudDocumentPort;
 
 impl DesktopCloudHost {
     #[allow(clippy::too_many_arguments)]

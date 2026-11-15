@@ -40,30 +40,18 @@ impl Orchestrator {
         turn: AgentTurnId,
         usage: AgentUsage,
     ) -> Result<(), RunError> {
+        // A rejected exclusive-window event must not advance UsageIdentity or
+        // its model cache before the durable source target accepts it.
+        if self.run_publication_pending(run) {
+            return Err(crate::publication_pending().into());
+        }
         let Some((attempt, _)) = self.open(run)?.attempt_ids() else {
             // A report for a run this device never drove names nothing it
             // can account under; the observable metrics still stand.
             return Ok(());
         };
         let model = self.model_ref(run, usage.model.as_ref().map(|name| name.as_str()))?;
-        let completeness = match usage.cached_input {
-            CachedInputRelationship::Undeclared
-                if usage.cached_input_tokens.is_some() || usage.input_tokens.is_some() =>
-            {
-                Completeness::Incomplete {
-                    reason: IncompleteReason::CachedInputRelationshipUndeclared,
-                }
-            }
-            _ if usage.input_tokens.is_none()
-                && usage.output_tokens.is_none()
-                && usage.cached_input_tokens.is_none() =>
-            {
-                Completeness::Incomplete {
-                    reason: IncompleteReason::NoUsageReported,
-                }
-            }
-            _ => Completeness::Complete,
-        };
+        let completeness = completeness_of(&usage);
         let totals = (
             usage.input_tokens,
             usage.output_tokens,
@@ -113,7 +101,7 @@ impl Orchestrator {
                 document.record_usage(&fact)?;
                 document.refresh_economics(now).map(|_| ())
             })?;
-            let index = state.doc.document().timeline_len() as u64;
+            let index = state.doc.document()?.timeline_len() as u64;
             self.ports
                 .store
                 .advance_cursor(run, Projection::HeaderSummary, index)?;
@@ -166,15 +154,11 @@ impl Orchestrator {
             return Ok(*existing);
         }
         let id = ModelRef::mint();
-        let report = |name: Option<&str>| match name.and_then(|name| ModelName::new(name).ok()) {
-            Some(name) => ModelReport::Named { name },
-            None => ModelReport::Unknown,
-        };
         let identity = ModelIdentity {
             id,
             provider,
-            requested: report(requested.as_deref()),
-            reported: report(reported),
+            requested: model_report(requested.as_deref()),
+            reported: model_report(reported),
         };
         state
             .doc
@@ -182,4 +166,50 @@ impl Orchestrator {
         state.models.insert(key, id);
         Ok(id)
     }
+}
+
+/// Declared, never assumed. Shared by the ordinary writer and the decision
+/// source owner so both describe one report identically.
+pub(crate) fn completeness_of(usage: &AgentUsage) -> Completeness {
+    match usage.cached_input {
+        CachedInputRelationship::Undeclared
+            if usage.cached_input_tokens.is_some() || usage.input_tokens.is_some() =>
+        {
+            Completeness::Incomplete {
+                reason: IncompleteReason::CachedInputRelationshipUndeclared,
+            }
+        }
+        _ if usage.input_tokens.is_none()
+            && usage.output_tokens.is_none()
+            && usage.cached_input_tokens.is_none() =>
+        {
+            Completeness::Incomplete {
+                reason: IncompleteReason::NoUsageReported,
+            }
+        }
+        _ => Completeness::Complete,
+    }
+}
+
+/// A provider's model name as retained metadata; an invalid or absent name is
+/// the explicit unknown, exactly as the ordinary model writer records it.
+pub(crate) fn model_report(name: Option<&str>) -> ModelReport {
+    match name.and_then(|name| ModelName::new(name).ok()) {
+        Some(name) => ModelReport::Named { name },
+        None => ModelReport::Unknown,
+    }
+}
+
+/// The key the ordinary model cache uses for the same three values. The
+/// decision owner reads and fills that cache with the identical key.
+pub(crate) fn model_key(
+    provider: &str,
+    requested: Option<&str>,
+    reported: Option<&str>,
+) -> (String, Option<String>, Option<String>) {
+    (
+        provider.to_owned(),
+        requested.map(str::to_owned),
+        reported.map(str::to_owned),
+    )
 }

@@ -67,6 +67,20 @@ pub(super) fn read_wait(
     )?;
     Ok(record)
 }
+pub(in crate::decisions) fn by_wait(
+    conn: &Connection,
+    run: RunId,
+    wait: BotWaitId,
+) -> Result<Option<DecisionWaitRecord>, BotLedgerError> {
+    conn.query_row(
+        &query("bot_wait_runtime", FIELDS, "run_id=?1 AND wait_id=?2"),
+        params![run.to_storage(), wait.to_storage()],
+        |r| Ok(decode(r)),
+    )
+    .optional()
+    .map_err(sql)?
+    .transpose()
+}
 fn decode(row: &Row<'_>) -> Result<DecisionWaitRecord, BotLedgerError> {
     let c = Cells {
         row,
@@ -169,46 +183,8 @@ pub(super) fn correlate(
     if resume.is_some() && matches!(wait.phase, BotWaitPhase::Held | BotWaitPhase::Retired) {
         return Err(bad());
     }
+    correlate_release(conn, wait)?;
     let original = authority::attempt(conn, &wait.origin)?;
-    if let Some(release) = &wait.release {
-        let OriginWaitStop::Confirmed {
-            origin_fence,
-            wait_id,
-            intent_digest,
-            enrollment_digest,
-            creation_retirement,
-            native_drain,
-            ..
-        } = release
-        else {
-            return Err(bad());
-        };
-        let request = wait.enrollment_request.as_ref().ok_or_else(bad)?;
-        let target = DecisionCleanupTarget::Origin {
-            fence: wait.origin,
-            creation_key: original.provider_session.ok_or_else(bad)?.idempotency,
-        };
-        valid(native_drain).map_err(|_| bad())?;
-        if *origin_fence != wait.origin
-            || *wait_id != wait.wait
-            || *intent_digest != request.key.receipt_digest
-            || *enrollment_digest != request.key.receipt_digest
-            || wait.enrollment.is_none()
-            || !original.retired
-            || original.host_instance != Some(creation_retirement.host)
-            || !creation_retirement.matches_target(&target)
-            || native_drain.run != wait.origin.run
-            || native_drain.attempt != wait.origin.attempt
-            || native_drain.generation != wait.origin.generation
-            || native_drain
-                .effects
-                .as_slice()
-                .iter()
-                .any(|e| e.binding.user_scope != wait.origin.owner.user_scope)
-        {
-            return Err(bad());
-        }
-    }
     if let Some(cleanup) = &wait.cleanup {
         valid(cleanup).map_err(|_| bad())?;
         let ConsumerCleanup::Confirmed {
@@ -243,6 +219,59 @@ pub(super) fn correlate(
         {
             return Err(bad());
         }
+    }
+    Ok(())
+}
+
+/// Exact retained origin release correlation, shared with the bounded capacity
+/// projection. No complete decision payload or current execution grant is read.
+pub(in crate::decisions) fn correlate_release(
+    conn: &Connection,
+    wait: &DecisionWaitRecord,
+) -> Result<(), BotLedgerError> {
+    let bad = || corrupt("bot_wait_runtime", "release_evidence");
+    let original = authority::attempt(conn, &wait.origin)?;
+    if let Some(release) = &wait.release {
+        let OriginWaitStop::Confirmed {
+            origin_fence,
+            wait_id,
+            intent_digest,
+            enrollment_digest,
+            creation_retirement,
+            native_drain,
+            ..
+        } = release
+        else {
+            return Err(bad());
+        };
+        let request = wait.enrollment_request.as_ref().ok_or_else(bad)?;
+        let target = DecisionCleanupTarget::Origin {
+            fence: wait.origin,
+            creation_key: original.provider_session.ok_or_else(bad)?.idempotency,
+        };
+        valid(native_drain).map_err(|_| bad())?;
+        if *origin_fence != wait.origin
+            || *wait_id != wait.wait
+            || *intent_digest != request.key.receipt_digest
+            || *enrollment_digest != request.key.receipt_digest
+            || wait.enrollment.is_none()
+            || !original.retired
+            || !original.phase.is_terminal()
+            || original.provider_session.and_then(|p| p.session) != Some(wait.origin.session)
+            || original.host_instance != Some(creation_retirement.host)
+            || !creation_retirement.matches_target(&target)
+            || native_drain.run != wait.origin.run
+            || native_drain.attempt != wait.origin.attempt
+            || native_drain.generation != wait.origin.generation
+            || native_drain
+                .effects
+                .as_slice()
+                .iter()
+                .any(|e| e.binding.user_scope != wait.origin.owner.user_scope)
+        {
+            return Err(bad());
+        }
+        super::super::drain::correlate(conn, wait.origin.owner, wait.origin.bot, native_drain)?;
     }
     Ok(())
 }

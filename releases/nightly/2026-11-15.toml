@@ -1,0 +1,50 @@
+title = "Cloud storage and smoother workspace navigation"
+
+summary = [
+  "Browse Cloud storage by workspace and document, inspect retained copies, and remove selected file references with confirmation.",
+  "Workspace and Profile menus have clearer spacing and simpler settings and sync controls.",
+  "Ctrl+1 through Ctrl+9 switch workspaces, and the tab strip's plus button opens its list and submenus again.",
+  "Release history stays available when GitHub's API cannot answer, and opening Help clears unread release notes."
+]
+
+body = """
+## Cloud storage
+
+On desktop and Android, Cloud storage shows your plan, exact usage and when
+the information was checked. View files browses workspaces and documents,
+including retained items whose names or placement are unavailable.
+
+Open a retained Cloud copy to inspect it without importing it into your local
+workspace. Removing a selected file reference requires confirmation. Removing
+a retained attachment keeps the note's body, and usage refreshes after the
+removal is acknowledged. If a copy changes or becomes unavailable, Koru says
+so instead of presenting the old copy as current.
+
+A Profile already removed from this computer no longer repeatedly announces
+that another device deleted it. Selecting an owned Profile no longer requires
+it to have a member workspace first.
+
+## Desktop navigation
+
+- Workspace and Profile menus have balanced side margins, padded rows and
+  smaller gaps. Settings icons replace the management labels in their headings.
+- Profiles has one Sync row with a cloud icon. Create Profiles from their
+  management page; the extra Add new profile row is gone.
+- Ctrl+1 through Ctrl+9 switch workspaces in rail order. Ctrl+Tab still switches
+  tabs, and the Search and Profile shortcuts keep their existing bindings.
+- The tab strip's plus button opens its list and submenus again. Ctrl+N keeps
+  the creation launcher, now with the same dimmed background as Search and
+  clearer Alt and Shift hints.
+- Settings search says Search, with its icon and text aligned. Resize hints
+  keep the number and px together.
+
+## Releases and Help
+
+Help opens directly on the release list, without the extra heading. Opening
+it clears the unread release-note indicator; an available update can still
+have its own indicator. Nightly entries show their release date without the
+overflowing description.
+
+Published releases remain visible through a public feed when GitHub's API is
+unavailable or rate limited. Feedback, GitHub and X links now have icons.
+"""

@@ -7,6 +7,7 @@
 
 pub mod app_connections;
 mod catalog;
+pub mod cloud_plan;
 pub mod cloud_sync;
 mod openapi;
 pub mod regional_bootstrap;

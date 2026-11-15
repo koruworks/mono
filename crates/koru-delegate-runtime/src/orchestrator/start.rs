@@ -43,6 +43,7 @@ pub const CONTEXT_FOLDER: &str = ".koru/context";
 impl Orchestrator {
     /// Start a run that exists and has not started (`Created`).
     pub fn start(&mut self, run: RunId, origin: StartOrigin) -> Result<Started, RunError> {
+        self.ensure_scope_recovery()?;
         match self.status(run)? {
             RunStatus::Created => {}
             other => {
@@ -71,6 +72,7 @@ impl Orchestrator {
         mut scope: ResolvedScope,
         origin: StartOrigin,
     ) -> Result<Started, RunError> {
+        self.ensure_scope_recovery()?;
         match self.status(run)? {
             RunStatus::Created => {}
             other => {
@@ -102,6 +104,7 @@ impl Orchestrator {
         mut scope: ResolvedScope,
         origin: StartOrigin,
     ) -> Result<Started, RunError> {
+        self.ensure_scope_recovery()?;
         match self.status(run)? {
             RunStatus::Created => {}
             other => {
@@ -184,6 +187,7 @@ impl Orchestrator {
         resume: Option<ResumePlan>,
         resolved_scope: Option<ResolvedScope>,
     ) -> Result<Started, RunError> {
+        self.ensure_scope_recovery()?;
         let header = self.header(run)?;
         match (&header.bot, origin) {
             (Some(bot), StartOrigin::Bot { bot: expected }) if bot.bot == expected => {
@@ -266,7 +270,7 @@ impl Orchestrator {
             )?;
         }
 
-        let header = self.open(run)?.doc.document().header()?;
+        let header = self.open(run)?.doc.document()?.header()?;
 
         // Admission (P1.5, D34).
         let (admission, resolved_directory) = match resolved_scope {

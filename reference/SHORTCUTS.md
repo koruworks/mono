@@ -56,6 +56,15 @@ Chords are shown as this platform writes them.
 | `Ctrl+,` | Settings |
 | `Ctrl+Shift+O` | Manage workspaces |
 | `Ctrl+Alt+W` | Switch workspace |
+| `Ctrl+1` | Workspace 1 |
+| `Ctrl+2` | Workspace 2 |
+| `Ctrl+3` | Workspace 3 |
+| `Ctrl+4` | Workspace 4 |
+| `Ctrl+5` | Workspace 5 |
+| `Ctrl+6` | Workspace 6 |
+| `Ctrl+7` | Workspace 7 |
+| `Ctrl+8` | Workspace 8 |
+| `Ctrl+9` | Workspace 9 |
 | `Ctrl+Alt+P` | Switch profile |
 | `Ctrl+Alt+J` | Next context section |
 | `Ctrl+Alt+K` | Copy Cloud sync details |

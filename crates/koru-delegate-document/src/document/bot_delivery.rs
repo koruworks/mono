@@ -50,6 +50,14 @@ impl RunDocument {
     }
     fn validated_bot_delivery(&self, receipt: &BotDeliveryReceipt) -> Result<RunHeader> {
         self.writable()?;
+        self.checked_bot_delivery_identity(receipt)
+    }
+    /// Same receipt identity validation for the specialized Run5 projection.
+    /// This is not a generic write capability or native completion proof.
+    pub(super) fn checked_bot_delivery_identity(
+        &self,
+        receipt: &BotDeliveryReceipt,
+    ) -> Result<RunHeader> {
         let mut header = self.header()?;
         if header
             .chat_delivery

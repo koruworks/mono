@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_inventory_title">Archivos en la nube</string>
+    <string name="cloud_inventory_view">Ver archivos</string>
+    <string name="cloud_inventory_loading">Cargando archivos en la nube…</string>
+    <string name="cloud_inventory_unavailable">Los archivos en la nube no están disponibles</string>
+    <string name="cloud_inventory_restarted">La nube ha cambiado. Se ha reiniciado la lista.</string>
+    <string name="cloud_inventory_empty">No hay entradas en esta página.</string>
+    <string name="cloud_inventory_profile">Perfil</string>
+    <string name="cloud_inventory_unassigned">Espacios de trabajo sin asignar</string>
+    <string name="cloud_inventory_placement_unknown">Ubicación no disponible</string>
+    <string name="cloud_inventory_profile_total">Archivos del perfil: %1$s bytes</string>
+    <string name="cloud_inventory_unfiled">Documentos sin archivar</string>
+    <string name="cloud_inventory_trash">Papelera</string>
+    <string name="cloud_inventory_structure">Estructura del espacio de trabajo</string>
+    <string name="cloud_inventory_documents_unavailable">Documentos no disponibles</string>
+    <string name="cloud_inventory_non_additive">Los archivos pueden aparecer en varios documentos. Estos tamaños no son el total de la cuenta.</string>
+    <string name="cloud_inventory_recovery">Los documentos recuperables conservan sus archivos en la nube.</string>
+    <string name="cloud_inventory_previous">Página anterior</string>
+    <string name="cloud_inventory_next">Página siguiente</string>
+    <string name="cloud_inventory_first">Primera página</string>
+    <string name="cloud_inventory_identifier">Identificador: %1$s</string>
+</resources>

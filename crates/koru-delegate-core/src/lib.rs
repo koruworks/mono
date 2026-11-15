@@ -39,6 +39,7 @@ mod context;
 pub mod decisions;
 mod deletion;
 mod economics;
+mod facts;
 mod failure;
 mod header;
 mod ids;
@@ -86,6 +87,7 @@ pub use economics::{
     ModelIdentity, ModelName, ModelReport, TokenTotal, TurnKey, UsageFact, elapsed_ms,
     interventions, replay,
 };
+pub use facts::{RunFact, UsageReport};
 pub use failure::RunFailureReason;
 pub use header::{DelegatedRun, Rating, ResultReference, RunHeader, RunRating};
 pub use ids::{

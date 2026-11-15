@@ -112,6 +112,30 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_START_APPLE = 17;</code>
    */
   ACCOUNT_ACTION_START_APPLE(17),
+  /**
+   * <pre>
+   * Read the exact current account Cloud plan and storage count.
+   * </pre>
+   *
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_PLAN(18),
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES(19),
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS(20),
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT = 21;</code>
+   */
+  ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT(21),
+  /**
+   * <code>ACCOUNT_ACTION_REMOVE_CLOUD_FILE = 22;</code>
+   */
+  ACCOUNT_ACTION_REMOVE_CLOUD_FILE(22),
   UNRECOGNIZED(-1),
   ;
 
@@ -210,6 +234,30 @@ public enum AccountAction
    * <code>ACCOUNT_ACTION_START_APPLE = 17;</code>
    */
   public static final int ACCOUNT_ACTION_START_APPLE_VALUE = 17;
+  /**
+   * <pre>
+   * Read the exact current account Cloud plan and storage count.
+   * </pre>
+   *
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_PLAN_VALUE = 18;
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES_VALUE = 19;
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS_VALUE = 20;
+  /**
+   * <code>ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT = 21;</code>
+   */
+  public static final int ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT_VALUE = 21;
+  /**
+   * <code>ACCOUNT_ACTION_REMOVE_CLOUD_FILE = 22;</code>
+   */
+  public static final int ACCOUNT_ACTION_REMOVE_CLOUD_FILE_VALUE = 22;
 
 
   @java.lang.Override
@@ -249,6 +297,11 @@ public enum AccountAction
       case 15: return ACCOUNT_ACTION_INSPECT_CLOUD_SYNC;
       case 16: return ACCOUNT_ACTION_START_EMAIL;
       case 17: return ACCOUNT_ACTION_START_APPLE;
+      case 18: return ACCOUNT_ACTION_INSPECT_CLOUD_PLAN;
+      case 19: return ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES;
+      case 20: return ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS;
+      case 21: return ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT;
+      case 22: return ACCOUNT_ACTION_REMOVE_CLOUD_FILE;
       default: return null;
     }
   }

@@ -219,6 +219,62 @@ fn validate_execution(
         _ => Err(BotLedgerError::Fenced),
     }
 }
+
+/// Same execution decoder, but guard every projected scalar before allocating
+/// strings. The 53rd row is an impossible-population sentinel, not a page.
+pub(crate) fn bounded_owned_executions(
+    conn: &Connection,
+    device: DeviceId,
+) -> Result<Vec<BotExecutionRecord>, BotLedgerError> {
+    let mut guards = Vec::new();
+    for column in ["run_id", "user_scope", "device_id", "bot_id", "request_id"] {
+        guards.push(format!(
+            "typeof({column})='text' AND length(CAST({column} AS BLOB))=36"
+        ));
+    }
+    for column in [
+        "initial_send_key",
+        "initial_send_attempt_id",
+        "initial_send_turn_id",
+    ] {
+        guards.push(format!(
+            "({column} IS NULL OR (typeof({column})='text' AND length(CAST({column} AS BLOB))=36))"
+        ));
+    }
+    for column in [
+        "submission_version",
+        "config_revision",
+        "policy_revision",
+        "queue_sequence",
+        "active_elapsed_ms",
+    ] {
+        guards.push(format!("typeof({column})='integer'"));
+    }
+    for column in ["active_since_ms", "initial_send_generation"] {
+        guards.push(format!("({column} IS NULL OR typeof({column})='integer')"));
+    }
+    guards.push("(initial_send_fingerprint IS NULL OR (typeof(initial_send_fingerprint)='blob' AND length(initial_send_fingerprint)=32))".into());
+    guards.push("typeof(state)='text' AND state IN ('reserved','executing')".into());
+    let query = format!(
+        "SELECT ({}) AS bounds_ok,{EXECUTION_COLUMNS} FROM bot_admissions INDEXED BY bot_admissions_execution WHERE device_id=?1 AND state IN ('reserved','executing') ORDER BY queue_sequence LIMIT 53",
+        guards.join(" AND ")
+    );
+    let mut statement = conn.prepare(&query).map_err(sql)?;
+    let mut rows = statement.query([device.to_storage()]).map_err(sql)?;
+    let mut result = Vec::new();
+    while let Some(row) = rows.next().map_err(sql)? {
+        if !row.get::<_, bool>("bounds_ok").map_err(sql)? {
+            return Err(corrupt("bounded_execution").into());
+        }
+        let record = decode_execution(row)?;
+        validate_execution(conn, &record)?;
+        result.push(record);
+    }
+    if result.len() > 52 {
+        return Err(corrupt("owned_capacity").into());
+    }
+    Ok(result)
+}
 fn execution_projection(
     conn: &Connection,
     run: RunId,
@@ -295,7 +351,8 @@ fn current(
     let row = attempts::latest(conn, run)?.ok_or(BotLedgerError::Fenced)?;
     if row.attempt != attempt
         || row.generation != g
-        || g != AttemptGeneration::FIRST
+        || (g != AttemptGeneration::FIRST
+            && !crate::decisions::retained_consumer_on(conn, run, &row)?)
         || (live && (row.retired || row.phase.is_terminal()))
     {
         return Err(BotLedgerError::Fenced);
@@ -307,6 +364,276 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn begin_bot_wait_cleanup(
+        &mut self,
+        fence: &DecisionFence,
+        reason: BotWaitReason,
+        observed: koru_delegate_core::StreamSequence,
+        transition: DecisionTransitionId,
+        base: &DecisionPublicationBase,
+    ) -> Result<crate::DecisionWaitRecord, BotLedgerError> {
+        RunsDb::begin_bot_wait_cleanup(self, fence, reason, observed, transition, base)
+    }
+    fn record_nondecision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        cleanup_projection: DecisionTransitionId,
+        transition: DecisionTransitionId,
+        cleanup: &ConsumerCleanup,
+    ) -> Result<crate::DecisionWaitRecord, BotLedgerError> {
+        RunsDb::record_nondecision_cleanup(self, expected, cleanup_projection, transition, cleanup)
+    }
+    fn settle_decision_wait(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        ack: &DecisionProjectionAcknowledgment,
+    ) -> Result<crate::DecisionWaitRecord, BotLedgerError> {
+        RunsDb::settle_decision_wait(self, expected, ack)
+    }
+    fn consume_decision_edit(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        request: &koru_delegate_core::PrepareNativeResult,
+        payload: &[u8],
+        fence: &koru_delegate_core::BotExecutionFence,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<crate::NativeLeaseOutcome, BotLedgerError> {
+        RunsDb::consume_decision_edit(
+            self, expected, transition, request, payload, fence, proof, boot,
+        )
+    }
+    fn settle_decision_effect(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        outcome: &DecisionRetainedEffect,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::settle_decision_effect(self, expected, transition, outcome)
+    }
+    fn decision_cleanup_ownership(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionCleanupOwnership>, BotLedgerError> {
+        RunsDb::decision_cleanup_ownership(self, owner, run)
+    }
+    fn answer_bot_decision(
+        &mut self,
+        input: &crate::AnswerDecision,
+        transition: DecisionTransitionId,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::answer_bot_decision(self, input, transition, proof, boot)
+    }
+    fn record_decision_native_answer(
+        &mut self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+        response: &DecisionNativeResponse,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::record_decision_native_answer(self, owner, run, transition, response)
+    }
+    fn record_decision_consumer_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        cleanup_projection: DecisionTransitionId,
+        transition: DecisionTransitionId,
+        observation: &ConsumerCleanup,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::record_decision_consumer_cleanup(
+            self,
+            expected,
+            cleanup_projection,
+            transition,
+            observation,
+        )
+    }
+    fn enroll_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::enroll_decision_cleanup(self, expected, transition)
+    }
+    fn record_decision_enrollment(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        reply: &BotWaitEnrollmentReply,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::record_decision_enrollment(self, expected, transition, reply)
+    }
+    fn record_decision_origin_stop(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        release: &OriginWaitStop,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::record_decision_origin_stop(self, expected, transition, release)
+    }
+    fn reserve_decision_successor(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        host: koru_delegate_core::HostInstanceId,
+        fingerprint: [u8; 32],
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::reserve_decision_successor(
+            self,
+            expected,
+            transition,
+            host,
+            fingerprint,
+            proof,
+            boot,
+        )
+    }
+    fn bind_decision_successor(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        creation: IdempotencyKey,
+        host: koru_delegate_core::HostInstanceId,
+        session: koru_delegate_core::SessionId,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::bind_decision_successor(self, expected, transition, creation, host, session)
+    }
+    fn record_decision_resume_input(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        input: IdempotencyKey,
+        fingerprint: [u8; 32],
+        acknowledgment: Option<&DecisionInputAcknowledgment>,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::record_decision_resume_input(
+            self,
+            expected,
+            transition,
+            input,
+            fingerprint,
+            acknowledgment,
+        )
+    }
+    fn prepare_bot_decision(
+        &mut self,
+        binding: &DecisionBindingV1,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<crate::DecisionRecord, BotLedgerError> {
+        RunsDb::prepare_bot_decision(self, binding, proof, boot, base)
+    }
+    fn request_decision_cleanup(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        cause: DecisionClosureReason,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::request_decision_cleanup(self, expected, transition, cause)
+    }
+    fn decision_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError> {
+        RunsDb::decision_wait_execution(self, owner, run)
+    }
+    fn read_bot_decision_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_core::decisions::BotDecisionWaitObservation>, BotLedgerError>
+    {
+        RunsDb::read_bot_decision_wait(self, owner, bot, run, wait, decision)
+    }
+    fn decision_native_drain(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        attempt: RunAttemptId,
+        generation: AttemptGeneration,
+        observed_at_ms: i64,
+    ) -> Result<koru_delegate_core::decisions::DecisionNativeDrain, BotLedgerError> {
+        RunsDb::decision_native_drain(self, owner, run, attempt, generation, observed_at_ms)
+    }
+    fn decision_retained_effect(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError> {
+        RunsDb::decision_retained_effect(self, owner, run, decision)
+    }
+    fn record_decision_source(
+        &mut self,
+        owner: BotOwner,
+        transition: DecisionTransitionId,
+        wait: BotWaitId,
+        base: &DecisionPublicationBase,
+        target: &RunProjectionTargetV1,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::record_decision_source(self, owner, transition, wait, base, target)
+    }
+    fn decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::decision_projection(self, owner, run, transition)
+    }
+    fn next_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::next_decision_projection(self, owner, run)
+    }
+    fn decision_projection_prefix(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Vec<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::decision_projection_prefix(self, owner, run)
+    }
+    fn latest_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::latest_decision_projection(self, owner, run)
+    }
+    fn latest_applied_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        RunsDb::latest_applied_decision_projection(self, owner, run)
+    }
+    fn record_decision_preparation(
+        &mut self,
+        owner: BotOwner,
+        prepared: &DecisionPreparedProjection,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::record_decision_preparation(self, owner, prepared)
+    }
+    fn acknowledge_decision_projection(
+        &mut self,
+        owner: BotOwner,
+        acknowledgment: &DecisionProjectionAcknowledgment,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        RunsDb::acknowledge_decision_projection(self, owner, acknowledgment)
+    }
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,
@@ -351,19 +678,27 @@ impl BotLedger for RunsDb {
         &self,
         device: koru_delegate_core::DeviceId,
     ) -> Result<Vec<BotExecutionRecord>, BotLedgerError> {
-        let query = format!(
-            "SELECT {EXECUTION_COLUMNS} FROM bot_admissions WHERE device_id=?1 AND state IN ('reserved','executing') ORDER BY queue_sequence LIMIT 3"
-        );
-        let mut statement = self.conn().prepare(&query).map_err(sql)?;
-        let records = statement
-            .query_map([device.to_storage()], |row| Ok(decode_execution(row)))
-            .map_err(sql)?
-            .map(|row| row.map_err(sql)?.map_err(BotLedgerError::from))
-            .collect::<Result<Vec<_>, _>>()?;
-        if records.len() > BOT_HOST_EXECUTION_LIMIT {
-            return Err(corrupt("host_capacity").into());
-        }
-        Ok(records)
+        // Compatibility ownership view. Its length is NOT host occupancy.
+        // Dispatch uses bot_execution_inventory; boot uses its existing page.
+        Ok(RunsDb::bot_execution_inventory(self, device)?
+            .owned
+            .into_iter()
+            .map(|r| r.execution)
+            .collect())
+    }
+    fn bot_execution_inventory(
+        &self,
+        device: DeviceId,
+    ) -> Result<BotExecutionInventory, BotLedgerError> {
+        RunsDb::bot_execution_inventory(self, device)
+    }
+    fn owned_bot_execution_page(
+        &self,
+        device: DeviceId,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError> {
+        boot::owned_page(self, device, after, through)
     }
     fn admit_bot(
         &mut self,
@@ -573,8 +908,8 @@ impl BotLedger for RunsDb {
             let busy:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state IN ('reserved','executing'))",
                 params![p.owner.user_scope.to_storage(),p.owner.device.to_storage(),p.bot.to_storage()],|r|r.get(0)).map_err(sql)?;
             if busy {return Ok(BotReservation::BotBusy)}
-            let hosts:i64=tx.query_row("SELECT count(*) FROM bot_admissions WHERE device_id=?1 AND state IN ('reserved','executing')",[p.owner.device.to_storage()],|r|r.get(0)).map_err(sql)?;
-            if hosts>=BOT_HOST_EXECUTION_LIMIT as i64 {return Ok(BotReservation::HostBusy)}
+            let hosts=crate::decisions::execution_inventory_on(tx,p.owner.device)?.occupied;
+            if hosts>=BOT_HOST_EXECUTION_LIMIT {return Ok(BotReservation::HostBusy)}
             tx.execute("UPDATE bot_admissions SET state='reserved',updated_at_ms=?2 WHERE run_id=?1",params![run.to_storage(),now]).map_err(sql)?;
             Ok(BotReservation::Acquired)
         })
@@ -606,7 +941,10 @@ impl BotLedger for RunsDb {
         self.write_with_error(WriteOp::ActivateBot,|tx,now| {
             let record=super::routines::native_admission(tx,run)?;
             super::routines::execution::fresh(tx,&record,proof,true)?;
+            let inventory=crate::decisions::execution_inventory_on(tx,record.submission.provenance.owner.device)?;
+            if !inventory.owned.iter().any(|r|r.execution.run==run && r.capacity==BotExecutionCapacity::Occupied) {return Err(BotLedgerError::Fenced)}
             current(tx,run,attempt,g,true)?;
+            crate::decisions::fresh_activity_on(tx,&record,attempt,g,proof,now)?;
             if record.state==BotAdmissionState::Executing {return Ok(())}
             if record.state!=BotAdmissionState::Reserved || record.active_elapsed_at(now)>=BOT_ACTIVE_BUDGET_MS {return Err(BotLedgerError::Fenced)}
             tx.execute("UPDATE bot_admissions SET state='executing',active_since_ms=?2,updated_at_ms=?2 WHERE run_id=?1",params![run.to_storage(),now]).map_err(sql)?;
@@ -628,7 +966,10 @@ impl BotLedger for RunsDb {
             if projection.active_since_ms.is_some()==active {return Ok(())}
             let record=super::routines::native_admission(tx,run)?;
             super::routines::execution::retained(tx,&record)?;
-            if active { super::routines::execution::fresh(tx,&record,proof,false)?; }
+            if active {
+                super::routines::execution::fresh(tx,&record,proof,false)?;
+                crate::decisions::fresh_activity_on(tx,&record,attempt,g,proof,now)?;
+            }
             let elapsed=charge(&record,now);
             if active && elapsed>=BOT_ACTIVE_BUDGET_MS as i64 {return Err(BotLedgerError::Fenced)}
             tx.execute("UPDATE bot_admissions SET active_elapsed_ms=?2,active_since_ms=?3,updated_at_ms=?4 WHERE run_id=?1",
@@ -638,6 +979,8 @@ impl BotLedger for RunsDb {
     }
     fn settle_bot(&mut self, run: RunId, outcome: BotSettlement) -> Result<(), BotLedgerError> {
         self.write_with_error(WriteOp::SettleBot,|tx,now| {
+            let wait:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_wait_runtime WHERE run_id=?1 AND phase<>'settled')",[run.to_storage()],|r|r.get(0)).map_err(sql)?;
+            if wait {return Err(BotLedgerError::Fenced)}
             let record=required(tx,run)?;
             let target=match outcome {BotSettlement::Settled=>BotAdmissionState::Settled,BotSettlement::Refused=>BotAdmissionState::Refused};
             super::routines::settle_link(tx,&record,now)?;
@@ -670,7 +1013,7 @@ impl BotLedger for RunsDb {
             }
             super::routines::execution::fresh(tx,&record,proof,false)?;
             current(tx,run,send.attempt,send.generation,true)?;
-            if record.state!=BotAdmissionState::Executing || record.active_elapsed_at(now)>=BOT_ACTIVE_BUDGET_MS {return Err(BotLedgerError::Fenced)}
+            if send.generation!=AttemptGeneration::FIRST || record.state!=BotAdmissionState::Executing || record.active_elapsed_at(now)>=BOT_ACTIVE_BUDGET_MS {return Err(BotLedgerError::Fenced)}
             tx.execute("UPDATE bot_admissions SET initial_send_key=?2,initial_send_fingerprint=?3,initial_send_attempt_id=?4,initial_send_generation=?5,updated_at_ms=?6 WHERE run_id=?1",
                 params![run.to_storage(),send.key.to_string(),send.fingerprint.as_slice(),send.attempt.to_storage(),send.generation.get(),now]).map_err(sql)?;
             Ok(send.clone())
@@ -726,9 +1069,18 @@ impl BotLedger for RunsDb {
             }
             current(tx, receipt.run, receipt.attempt, receipt.generation, false)?;
             let send = record.initial_send.ok_or(BotLedgerError::Fenced)?;
-            if send.attempt != receipt.attempt || send.generation != receipt.generation
-                || send.turn.is_none() || record.state == BotAdmissionState::Refused {
+            if send.turn.is_none() || record.state == BotAdmissionState::Refused {
                 return Err(BotLedgerError::Fenced);
+            }
+            // The immutable original send, or the exact recorded successor whose
+            // continuation input was acknowledged. The original InitialSend is
+            // never rewritten and a newer generation alone never qualifies.
+            let original = send.attempt == receipt.attempt && send.generation == receipt.generation;
+            if !original {
+                let latest = attempts::latest(tx, receipt.run)?.ok_or(BotLedgerError::Fenced)?;
+                if !crate::decisions::acknowledged_continuation_on(tx, receipt.run, &latest)? {
+                    return Err(BotLedgerError::Fenced);
+                }
             }
             let event = koru_delegate_core::EventId::mint();
             tx.execute("UPDATE bot_admissions SET delivery_outcome='confirmed',delivery_attempt_id=?2,delivery_generation=?3,delivery_chat_id=?4,delivery_ai_attempt_id=?5,delivery_assistant_message_id=?6,delivery_confirmed_at_ms=?7,delivery_publication_event_id=?8,updated_at_ms=?9 WHERE run_id=?1",

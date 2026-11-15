@@ -3785,13 +3785,6 @@ impl ExploreView {
                 use popover_elements::profiles::MenuAction;
                 let mut out = vec![PopoverRow::ProfilesHeading];
                 out.extend((0..self.profiles.len()).map(PopoverRow::Profile));
-                out.push(PopoverRow::ProfileAction(MenuAction::New));
-                out.extend(
-                    self.sync_channels()
-                        .controls()
-                        .into_iter()
-                        .map(|(action, _)| PopoverRow::WorkspaceAction(action)),
-                );
                 out.push(PopoverRow::ProfileAction(MenuAction::Sync));
                 out
             }

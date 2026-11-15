@@ -63,8 +63,8 @@ fn alt_digits_are_the_rails_eight_slots() {
     );
     assert_eq!(
         resolve(&ch("1"), Some("1"), PRIMARY),
-        Some(Chord::SelectTab(0)),
-        "and Ctrl+1 the first tab"
+        Some(Chord::SelectWorkspace(0)),
+        "and Ctrl+1 the first workspace"
     );
 }
 
@@ -161,19 +161,19 @@ fn a_control_code_resolves_the_same_as_the_letter() {
 }
 
 #[test]
-fn the_digits_select_by_position() {
+fn the_digits_select_workspaces_by_position() {
     assert_eq!(
         resolve(&ch("1"), Some("1"), PRIMARY),
-        Some(Chord::SelectTab(0))
+        Some(Chord::SelectWorkspace(0))
     );
     assert_eq!(
         resolve(&ch("9"), Some("9"), PRIMARY),
-        Some(Chord::SelectTab(8))
+        Some(Chord::SelectWorkspace(8))
     );
     assert_eq!(
         resolve(&ch("0"), Some("0"), PRIMARY),
         None,
-        "there is no tab zero"
+        "there is no workspace zero"
     );
 }
 
@@ -417,7 +417,10 @@ fn the_container_binds_nothing_the_registry_has_not_recorded() {
     // see it. Adding one means minting a `ShortcutId`, which is stable storage
     // the moment bindings are customisable — a decision, not a repair. Written
     // up in `docs/contributing/techdebt/README.md`; found by Plan 2.2 while adding `r`.
-    let candidates = ['t', 'w', 'j', 'e', 'o', 'p', 's', 'a', 'r', ','];
+    let candidates = [
+        't', 'w', 'j', 'e', 'o', 'p', 's', 'a', 'r', ',', '1', '2', '3', '4', '5', '6', '7', '8',
+        '9',
+    ];
     for c in candidates {
         for mods in [
             koru_keys::PRIMARY,

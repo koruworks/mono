@@ -173,6 +173,8 @@ pub(crate) struct LedgerScript {
     pub arm_failure_after: Option<(&'static str, &'static str)>,
     /// Corrupt both retained/current policy read results after real SQL install.
     pub corrupt_native_policy_digest: bool,
+    pub unavailable_decision_run: Option<RunId>,
+    pub unavailable_admission_run: Option<RunId>,
 }
 
 #[derive(Clone)]
@@ -203,6 +205,39 @@ impl RecordingStore {
 }
 
 impl RunStore for RecordingStore {
+    fn decision_projection_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<RunId>, LedgerError> {
+        self.inner.lock().unwrap().decision_projection_runs(after, limit)
+    }
+    fn pending_publication_run_anchor(
+        &self,
+    ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {
+        self.inner.lock().unwrap().pending_publication_run_anchor()
+    }
+    fn next_pending_publication_run(
+        &self,
+        after: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+        through: koru_delegate_sqlite::PendingPublicationRunCursor,
+        before_or_at: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+    ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .next_pending_publication_run(after, through, before_or_at)
+    }
+    fn decision_open_publications_for(
+        &self,
+        run: RunId,
+        limit: usize,
+    ) -> Result<Vec<OpenPublication>, LedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_open_publications_for(run, limit)
+    }
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
         Some(self)
     }
@@ -591,6 +626,19 @@ impl RunDocumentHandle for MemoryHandle {
 }
 
 impl RunDocuments for MemoryDocuments {
+    fn publication_open(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> PortResult<Box<dyn crate::RunDocumentOpen>> {
+        Ok(Box::new(MemoryPublicationOpen {
+            documents: MemoryDocuments {
+                script: Arc::clone(&self.script),
+            },
+            workspace,
+            document,
+        }))
+    }
     fn create(&mut self, _workspace: WorkspaceId, header: &RunHeader) -> PortResult<DocumentId> {
         let mut script = self.script.lock().unwrap();
         if script.fail_create {
@@ -642,6 +690,17 @@ impl RunDocuments for MemoryDocuments {
             });
         }
         Ok(out)
+    }
+}
+
+struct MemoryPublicationOpen {
+    documents: MemoryDocuments,
+    workspace: WorkspaceId,
+    document: DocumentId,
+}
+impl crate::RunDocumentOpen for MemoryPublicationOpen {
+    fn open(mut self: Box<Self>) -> PortResult<Box<dyn RunDocumentHandle>> {
+        self.documents.open(self.workspace, self.document)
     }
 }
 

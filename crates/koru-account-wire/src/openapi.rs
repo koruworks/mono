@@ -78,7 +78,18 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                     operation["requestBody"] = serde_json::json!({"required": true, "content": {"application/json": {"schema": request}}})
                 }
                 RequestLocation::Query => {
-                    operation["parameters"] = if route.id == RouteId::OAuthConsentRead {
+                    operation["parameters"] = if route.id == RouteId::ReadCloudUsageDocuments {
+                        serde_json::json!([
+                            {"name":"incarnation_id","in":"query","required":true,"schema":{"type":"string","pattern":"^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$"}},
+                            {"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":100,"default":100}},
+                            {"name":"cursor","in":"query","required":false,"schema":{"type":"string","minLength":1,"maxLength":2048,"pattern":"^[A-Za-z0-9_-]+$"}}
+                        ])
+                    } else if route.id == RouteId::ReadCloudUsageWorkspaces {
+                        serde_json::json!([
+                            {"name":"limit","in":"query","required":false,"schema":{"type":"integer","minimum":1,"maximum":100,"default":100}},
+                            {"name":"cursor","in":"query","required":false,"schema":{"type":"string","minLength":1,"maxLength":2048,"pattern":"^[A-Za-z0-9_-]+$"}}
+                        ])
+                    } else if route.id == RouteId::OAuthConsentRead {
                         serde_json::json!([
                             {"name": "request", "in": "query", "required": true, "description": "The signed pending authorization request the consent page keeps in its cookie.", "schema": {"type": "string", "maxLength": MAX_QUERY_BYTES}}
                         ])
@@ -109,6 +120,28 @@ pub fn extend_openapi(document: &mut serde_json::Value) {
                     }}}})
                 }
                 RequestLocation::None => {}
+            }
+            if matches!(
+                route.id,
+                RouteId::ReadCloudPlan
+                    | RouteId::ReadCloudUsageWorkspaces
+                    | RouteId::ReadCloudUsageDocuments
+            ) {
+                operation["responses"]["200"]["headers"] = serde_json::json!({
+                    "Cache-Control":{"schema":{"type":"string","const":"private, no-store"}}
+                });
+                operation["responses"]["401"] = serde_json::json!({"description":"A live account session is required","content":{"application/json":{"schema":error}}});
+                if matches!(
+                    route.id,
+                    RouteId::ReadCloudUsageWorkspaces | RouteId::ReadCloudUsageDocuments
+                ) {
+                    operation["responses"]["409"] = serde_json::json!({"description":"usage_revision_changed: restart pagination","content":{"application/json":{"schema":error}}});
+                    operation["responses"]["400"]["description"] =
+                        serde_json::json!("Invalid query or invalid_usage_cursor");
+                }
+                if route.id == RouteId::ReadCloudUsageDocuments {
+                    operation["responses"]["404"] = serde_json::json!({"description":"workspace_not_found: no current retained owned Workspace","content":{"application/json":{"schema":error}}});
+                }
             }
             let mut parameters = operation["parameters"]
                 .as_array()

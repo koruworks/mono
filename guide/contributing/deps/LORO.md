@@ -52,6 +52,29 @@ LoroDoc
 `crates/koru-core/src/schema.rs` is the *only* file that knows any of this.
 Everything above it speaks `Node` and `NodeId`.
 
+### Complete file-reference inspection
+
+The forgiving display reader is not a completeness proof. Its node index can
+collapse duplicate IDs, its attribute reader skips unfamiliar records, and its
+embed precedence can hide a second blob slot. `schema::file_references` inspects
+the raw typed containers before any such projection. It walks the `nodes` tree
+and retained legacy `library`/`outline` trees, including Trash and descendants.
+Malformed or duplicate identities, unknown fields or types, unsupported schema
+versions and exhausted traversal budgets produce an unknown result.
+
+Loro 1.13.9's `children()` and `children_num()` return `None` for a valid leaf
+or an empty root: the child index has no entry. Check the parent's existence
+separately before interpreting that absence as zero children. These calls do
+not distinguish a missing parent from a leaf by themselves.
+
+`RestoredContent::strict_blob_references` validates every raw blob slot, feeds
+the canonical reference walker, and returns distinct canonical hashes bound to
+the restored unit and exact head. Structural units only return an empty set
+after their supported shape has been validated. Inspection does not mutate or
+repair the document, confer authority, or prove a durable receipt. Its explicit
+node, field, depth and value-byte budgets bound inspection; they do not bound
+Loro decoding or expanded memory during causal replay.
+
 ## The movable tree
 
 This is the feature that decided the library. Two people dragging the same

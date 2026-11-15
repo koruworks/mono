@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn request(h: &mut Harness, id: DecisionId) -> DecisionRecord {
+pub(super) fn request(h: &mut Harness, id: DecisionId) -> DecisionRecord {
     let old = h.read(id).unwrap();
     let f = h.origin();
     let tx = h.db.conn().unchecked_transaction().unwrap();
@@ -19,7 +19,7 @@ fn request(h: &mut Harness, id: DecisionId) -> DecisionRecord {
     tx.commit().unwrap();
     result.record
 }
-fn ack(h: &mut Harness, id: DecisionId) -> DecisionRecord {
+pub(super) fn ack(h: &mut Harness, id: DecisionId) -> DecisionRecord {
     let old = h.read(id).unwrap();
     let key = old.wait.enrollment_request.as_ref().unwrap().key.clone();
     let reply = BotWaitEnrollmentReply::Enrolled {

@@ -4,6 +4,74 @@
 use super::*;
 use koru_delegate_core::{BOT_BOOT_PAGE_LIMIT, BotBootIdentity, BotBootPage};
 
+pub(super) fn owned_page(
+    db: &RunsDb,
+    device: DeviceId,
+    after: u64,
+    through: Option<u64>,
+) -> Result<BotBootPage, BotLedgerError> {
+    let conn = db.conn();
+    let through = match through {
+        Some(value) => value,
+        None => {
+            let mut value = 0;
+            for state in ["reserved", "executing"] {
+                value = value.max(conn.query_row("SELECT COALESCE(MAX(queue_sequence),0) FROM bot_admissions INDEXED BY bot_admissions_queue WHERE state=?1 AND device_id=?2",
+                    params![state,device.to_storage()], |r| r.get::<_,u64>(0)).map_err(sql)?);
+            }
+            value
+        }
+    };
+    if after > through || through > i64::MAX as u64 {
+        return Err(BotLedgerError::Invalid);
+    }
+    let mut entries = Vec::new();
+    for state in ["reserved", "executing"] {
+        let mut statement=conn.prepare("SELECT
+            CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
+            CASE WHEN typeof(bot_id)='text' AND length(CAST(bot_id AS BLOB))=36 THEN bot_id END,
+            CASE WHEN typeof(user_scope)='text' AND length(CAST(user_scope AS BLOB))=36 THEN user_scope END,
+            CASE WHEN typeof(queue_sequence)='integer' AND queue_sequence>0 THEN queue_sequence END
+            FROM bot_admissions INDEXED BY bot_admissions_queue WHERE state=?1 AND device_id=?2 AND queue_sequence>?3 AND queue_sequence<=?4 ORDER BY queue_sequence LIMIT ?5").map_err(sql)?;
+        let mut rows = statement
+            .query(params![
+                state,
+                device.to_storage(),
+                after,
+                through,
+                BOT_BOOT_PAGE_LIMIT + 1
+            ])
+            .map_err(sql)?;
+        while let Some(row) = rows.next().map_err(sql)? {
+            let owner = BotOwner {
+                device,
+                user_scope: serde_json::from_value(row.get::<_, String>(2).map_err(sql)?.into())
+                    .map_err(|_| corrupt("user_scope"))?,
+            };
+            entries.push(BotBootIdentity {
+                owner,
+                run: id(&row.get::<_, String>(0).map_err(sql)?, "run_id")?,
+                bot: id(&row.get::<_, String>(1).map_err(sql)?, "bot_id")?,
+                sequence: row.get(3).map_err(sql)?,
+            });
+        }
+    }
+    entries.sort_unstable_by_key(|entry| entry.sequence);
+    let more = entries.len() > usize::from(BOT_BOOT_PAGE_LIMIT);
+    entries.truncate(usize::from(BOT_BOOT_PAGE_LIMIT));
+    let scanned_through = if more {
+        entries.last().expect("full page").sequence
+    } else {
+        through
+    };
+    Ok(BotBootPage {
+        through,
+        scanned_through,
+        entries,
+        more,
+    })
+}
+
 pub(super) fn inventory(
     db: &RunsDb,
     owner: BotOwner,
@@ -123,6 +191,7 @@ pub(super) fn recover(db: &mut RunsDb, key: &BotRunKey) -> Result<bool, BotLedge
              AND delivery_confirmed_at_ms IS NULL
              AND NOT EXISTS(SELECT 1 FROM run_attempts WHERE run_id=?1)
              AND NOT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1)
+             AND NOT EXISTS(SELECT 1 FROM bot_wait_runtime WHERE run_id=?1 AND phase<>'settled')
              AND NOT EXISTS(SELECT 1 FROM bot_memory_edit_allocations WHERE run_id=?1)",
             params![key.run.to_storage(), key.owner.user_scope.to_storage(), key.owner.device.to_storage(), key.bot.to_storage(), now],
         ).map_err(sql)?;

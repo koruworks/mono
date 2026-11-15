@@ -67,6 +67,7 @@ use crate::reminders::{
 use crate::text::Locale;
 
 mod availability;
+mod inspection;
 pub use availability::{
     EnsuredWorkspace, VerifiedWorkspaceManifest, WorkspaceAuthority, WorkspaceAuthorityRead,
     WorkspaceAuthorityState, WorkspaceAvailabilityIssue, WorkspaceManifestInspection,
@@ -74,6 +75,7 @@ pub use availability::{
 mod creation;
 mod native;
 pub use creation::ProvenSeededCreation;
+pub use inspection::{DetachedDocument, DocumentInspection, DocumentInspectionBudget};
 pub use native::NativeUpdateError;
 mod pins;
 mod preparation;
@@ -175,6 +177,17 @@ pub trait Backend {
 
     /// Open (or create) one workspace's storage.
     fn open_workspace(&self, id: WorkspaceId) -> Result<Self::Workspace>;
+
+    /// Pin only existing committed content; never create, migrate, repair,
+    /// adopt an unfiled document, or substitute a live cached document.
+    fn prepare_document_inspection(
+        &self,
+        _workspace: WorkspaceId,
+        _document: DocumentId,
+        _budget: DocumentInspectionBudget,
+    ) -> DocumentInspection {
+        Box::new(|| Err(Error::bare(Code::VersionUnavailable)))
+    }
 
     /// Inspect only existing, committed bytes. This must never create storage,
     /// migrate a schema, or substitute a live document with queued imports.

@@ -312,6 +312,7 @@ impl Orchestrator {
         device: DeviceId,
         reserved: &[koru_delegate_scope::ScopeIdentity],
     ) -> Result<Option<Started>, RunError> {
+        self.ensure_scope_recovery()?;
         let record = self.bot_record(key, device)?;
         if !matches!(
             record.state,
@@ -337,12 +338,12 @@ impl Orchestrator {
         {
             return Ok(None);
         }
-        let active = self.bot_ledger()?.active_bot_executions(device)?;
+        let active = self.bot_ledger()?.bot_execution_inventory(device)?;
         if record.state == BotAdmissionState::Queued
-            && (active.len() >= koru_delegate_sqlite::BOT_HOST_EXECUTION_LIMIT
-                || active
-                    .iter()
-                    .any(|other| other.owner == key.owner && other.bot == key.bot))
+            && (active.occupied >= koru_delegate_sqlite::BOT_HOST_EXECUTION_LIMIT
+                || active.owned.iter().any(|other| {
+                    other.execution.owner == key.owner && other.execution.bot == key.bot
+                }))
         {
             return Ok(None);
         }
@@ -454,7 +455,7 @@ impl Orchestrator {
         Ok(self
             .open_in(run, workspace)?
             .doc
-            .document()
+            .document()?
             .header()?
             .bot
             .is_some())
@@ -475,6 +476,12 @@ impl Orchestrator {
     /// whose session host restarted is therefore not running.
     pub(crate) fn bot_prove_end(&mut self, run: RunId, terminate: bool) -> Result<bool, RunError> {
         use koru_session_protocol::{CreationLookup, ProcessState};
+        self.restore_publication_owner(run)?;
+        if self.run_publication_pending(run) {
+            // An old retired origin cannot prove a resumed consumer absent.
+            // Only the exact current retained cleanup target may be retired.
+            return Ok(self.observe_decision_cleanup(run)?.is_some());
+        }
         let Some(row) = self.ports.store.current_attempt(run)? else {
             return Ok(true);
         };
@@ -566,7 +573,9 @@ impl Orchestrator {
         fence: Option<&BotExecutionFence>,
     ) -> Result<(), RunError> {
         self.bot_record(key, device)?;
+        self.restore_publication_owner(key.run)?;
         let row = self.ports.store.current_attempt(key.run)?;
+        let already_retired = row.as_ref().is_some_and(|row| row.retired);
         match row {
             Some(row)
                 if !row.retired
@@ -592,19 +601,28 @@ impl Orchestrator {
                     return Err(refused("bot_fenced"));
                 }
             }
-            Some(_) => {
-                return self.bot_end_attempt(
-                    key.run,
-                    koru_delegate_sqlite::AttemptPhase::Ended,
-                    false,
-                );
-            }
+            Some(_) => {}
             None if fence.is_some() => return Err(refused("bot_fenced")),
             None => {
                 if self.bot_ledger()?.stop_unstarted_routine(key)?.is_some() {
                     return Ok(());
                 }
             }
+        }
+        let request = self.request_publication_cleanup(
+            key.run,
+            koru_delegate_core::decisions::DecisionClosureReason::Canceled,
+        );
+        if !matches!(request, Ok(false)) {
+            // SQL receipt loss does not suppress physical cleanup. The exact
+            // retained current consumer is independently re-read by this path.
+            let observed = self.stop_decision_consumer(key.run);
+            request?;
+            observed?;
+            return Err(crate::publication_pending().into());
+        }
+        if already_retired {
+            return self.bot_end_attempt(key.run, koru_delegate_sqlite::AttemptPhase::Ended, false);
         }
         // cancel specializes Bot retirement below; it never needs a human lease.
         self.cancel(key.run)?;
@@ -660,16 +678,38 @@ impl Orchestrator {
         self.runs
             .iter()
             .filter_map(|(run, state)| {
-                state
-                    .attempt
-                    .as_ref()
-                    .filter(|attempt| attempt.is_bot)
-                    .map(|_| *run)
+                (state.attempt.as_ref().is_some_and(|attempt| attempt.is_bot)
+                    || state.doc.exclusive()
+                    || state.decision_cleanup.is_some())
+                .then_some(*run)
             })
             .collect()
     }
 
     pub fn bot_budget_tick(&mut self, run: RunId) -> Result<bool, RunError> {
+        if let Some(released) = self.publication_cleanup_tick(run)? {
+            return Ok(released);
+        }
+        if self.run_publication_pending(run) {
+            let Some(record) = self.bot_ledger()?.bot_execution(run)? else {
+                return Ok(false);
+            };
+            if record.active_elapsed_at(self.ports.clock.now_ms())
+                < koru_delegate_sqlite::BOT_ACTIVE_BUDGET_MS
+            {
+                return Ok(false);
+            }
+            let requested = self.request_publication_cleanup(
+                run,
+                // This is the execution budget, not the decision deadline. A
+                // consumed/settled native answer still has a stoppable Run.
+                koru_delegate_core::decisions::DecisionClosureReason::Canceled,
+            );
+            let observed = self.stop_decision_consumer(run);
+            requested?;
+            observed?;
+            return Ok(false);
+        }
         if let Some(released) = self.bot_cleanup_tick(run)? {
             return Ok(released);
         }
@@ -699,28 +739,47 @@ impl Orchestrator {
         let now = self.ports.clock.now_ms();
         let mut nearest = None;
         for run in self.bot_budget_runs() {
-            if let Some(retry) = self
-                .open(run)?
-                .attempt
+            let state = &self.runs[&run];
+            let due = state
+                .decision_cleanup
                 .as_ref()
-                .and_then(|attempt| attempt.bot_cleanup.as_ref())
-            {
+                .map(|retry| retry.due)
+                .into_iter()
+                .chain(
+                    state
+                        .attempt
+                        .as_ref()
+                        .and_then(|attempt| attempt.bot_cleanup.as_ref())
+                        .map(|retry| retry.due),
+                )
+                .min();
+            if let Some(due) = due {
                 let delay = u64::try_from(
-                    retry
-                        .due
-                        .saturating_duration_since(std::time::Instant::now())
+                    due.saturating_duration_since(std::time::Instant::now())
                         .as_millis(),
                 )
                 .unwrap_or(u64::MAX)
                 .max(1);
                 nearest = Some(nearest.map_or(delay, |old: u64| old.min(delay)));
             }
-            if let Some(record) = self.bot_ledger()?.bot_execution(run)? {
-                if record.active_since_ms.is_some() {
-                    let delay = koru_delegate_sqlite::BOT_ACTIVE_BUDGET_MS
-                        .saturating_sub(record.active_elapsed_at(now))
-                        .max(1000);
-                    nearest = Some(nearest.map_or(delay, |old: u64| old.min(delay)));
+            match self
+                .bot_ledger()
+                .and_then(|ledger| ledger.bot_execution(run).map_err(Into::into))
+            {
+                Ok(Some(record)) => {
+                    if record.active_since_ms.is_some() {
+                        let delay = koru_delegate_sqlite::BOT_ACTIVE_BUDGET_MS
+                            .saturating_sub(record.active_elapsed_at(now))
+                            .max(1000);
+                        nearest = Some(nearest.map_or(delay, |old: u64| old.min(delay)));
+                    }
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    // One unknown Run must neither erase other deadlines nor
+                    // disappear from retry scheduling until another event.
+                    self.trace(run, "bot_budget_unavailable", format_args!("{error}"));
+                    nearest = Some(nearest.map_or(1000, |old: u64| old.min(1000)));
                 }
             }
         }

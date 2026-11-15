@@ -1,0 +1,439 @@
+{
+  "status": "proposed",
+  "fixtures": [
+    {
+      "name": "finite_plus",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": "1797119999000",
+        "policy": {
+          "tier": "plus",
+          "allowance": {
+            "state": "finite",
+            "base_bytes": "100000000000",
+            "effective_bytes": "100000000000"
+          },
+          "access": {
+            "state": "read_write",
+            "reason": "plus_active",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": true,
+          "purchase": {
+            "state": "known",
+            "reason": null,
+            "manageable": true,
+            "status": "active",
+            "interval": "month",
+            "available_intervals": [
+              "month",
+              "year"
+            ]
+          }
+        },
+        "usage": {
+          "state": "known",
+          "reason": null,
+          "algorithm": "files-plain-v0",
+          "generation": "11111111-1111-4111-8111-111111111111",
+          "used_bytes": "400000000",
+          "files_bytes": "400000000",
+          "total_bytes": "100000000000",
+          "available_bytes": "99600000000",
+          "reserved_bytes": "100000000",
+          "upload_headroom_bytes": "99500000000"
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "unbounded",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": null,
+        "policy": {
+          "tier": "unbilled",
+          "allowance": {
+            "state": "unbounded"
+          },
+          "access": {
+            "state": "read_write",
+            "reason": "unbilled",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": true,
+          "purchase": {
+            "state": "known",
+            "reason": null,
+            "manageable": false,
+            "status": null,
+            "interval": null,
+            "available_intervals": []
+          }
+        },
+        "usage": {
+          "state": "known",
+          "reason": null,
+          "algorithm": "files-plain-v0",
+          "generation": "11111111-1111-4111-8111-111111111111",
+          "used_bytes": "400000000",
+          "files_bytes": "400000000",
+          "total_bytes": null,
+          "available_bytes": null,
+          "reserved_bytes": "100000000",
+          "upload_headroom_bytes": null
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "building_before_reservation_reconciliation",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": "1797119999000",
+        "policy": {
+          "tier": "plus",
+          "allowance": {
+            "state": "finite",
+            "base_bytes": "100000000000",
+            "effective_bytes": "100000000000"
+          },
+          "access": {
+            "state": "read_write",
+            "reason": "plus_active",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": true,
+          "purchase": {
+            "state": "known",
+            "reason": null,
+            "manageable": true,
+            "status": "active",
+            "interval": "month",
+            "available_intervals": [
+              "month",
+              "year"
+            ]
+          }
+        },
+        "usage": {
+          "state": "building",
+          "reason": null,
+          "algorithm": "files-plain-v0",
+          "generation": null,
+          "used_bytes": null,
+          "files_bytes": null,
+          "total_bytes": "100000000000",
+          "available_bytes": null,
+          "reserved_bytes": null,
+          "upload_headroom_bytes": null
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "unknown_usage",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": "1797119999000",
+        "policy": {
+          "tier": "plus",
+          "allowance": {
+            "state": "finite",
+            "base_bytes": "100000000000",
+            "effective_bytes": "100000000000"
+          },
+          "access": {
+            "state": "read_write",
+            "reason": "plus_active",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": true,
+          "purchase": {
+            "state": "known",
+            "reason": null,
+            "manageable": true,
+            "status": "active",
+            "interval": "month",
+            "available_intervals": [
+              "month",
+              "year"
+            ]
+          }
+        },
+        "usage": {
+          "state": "unknown",
+          "reason": "cloud_schema_update_required",
+          "algorithm": "files-plain-v0",
+          "generation": "11111111-1111-4111-8111-111111111111",
+          "used_bytes": null,
+          "files_bytes": null,
+          "total_bytes": "100000000000",
+          "available_bytes": null,
+          "reserved_bytes": "100000000",
+          "upload_headroom_bytes": null
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "policy_unavailable_usage_known",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": null,
+        "policy": {
+          "tier": "unknown",
+          "allowance": {
+            "state": "unavailable",
+            "reason": "policy_unavailable"
+          },
+          "access": {
+            "state": "unavailable",
+            "reason": "policy_unavailable",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": null,
+          "purchase": {
+            "state": "unavailable",
+            "reason": "purchase_unavailable",
+            "manageable": null,
+            "status": null,
+            "interval": null,
+            "available_intervals": null
+          }
+        },
+        "usage": {
+          "state": "known",
+          "reason": null,
+          "algorithm": "files-plain-v0",
+          "generation": "11111111-1111-4111-8111-111111111111",
+          "used_bytes": "400000000",
+          "files_bytes": "400000000",
+          "total_bytes": null,
+          "available_bytes": null,
+          "reserved_bytes": "100000000",
+          "upload_headroom_bytes": null
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "known_local_no_cloud",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": null,
+        "policy": {
+          "tier": "local",
+          "allowance": {
+            "state": "finite",
+            "base_bytes": "0",
+            "effective_bytes": "0"
+          },
+          "access": {
+            "state": "none",
+            "reason": "cloud_not_enabled",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": false,
+          "purchase": {
+            "state": "known",
+            "reason": null,
+            "manageable": false,
+            "status": null,
+            "interval": null,
+            "available_intervals": [
+              "month",
+              "year"
+            ]
+          }
+        },
+        "usage": {
+          "state": "known",
+          "reason": null,
+          "algorithm": "files-plain-v0",
+          "generation": "11111111-1111-4111-8111-111111111111",
+          "used_bytes": "0",
+          "files_bytes": "0",
+          "total_bytes": "0",
+          "available_bytes": "0",
+          "reserved_bytes": "0",
+          "upload_headroom_bytes": "0"
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "known_over_limit",
+      "response": {
+        "contract": "cloud-plan-v1",
+        "revision": "42",
+        "policy_revision": "3",
+        "evaluated_at_millis": "1794528000000",
+        "valid_until_millis": "1797119999000",
+        "policy": {
+          "tier": "plus",
+          "allowance": {
+            "state": "finite",
+            "base_bytes": "100000000000",
+            "effective_bytes": "100000000000"
+          },
+          "access": {
+            "state": "read_write",
+            "reason": "plus_active",
+            "download_until_millis": null,
+            "removal_at_millis": null
+          },
+          "mcp_allowed": true,
+          "purchase": {
+            "state": "known",
+            "reason": null,
+            "manageable": true,
+            "status": "active",
+            "interval": "month",
+            "available_intervals": [
+              "month",
+              "year"
+            ]
+          }
+        },
+        "usage": {
+          "state": "known",
+          "reason": null,
+          "algorithm": "files-plain-v0",
+          "generation": "11111111-1111-4111-8111-111111111111",
+          "used_bytes": "120000000000",
+          "files_bytes": "120000000000",
+          "total_bytes": "100000000000",
+          "available_bytes": "0",
+          "reserved_bytes": "0",
+          "upload_headroom_bytes": "0"
+        },
+        "free_availability": {
+          "state": "not_implemented"
+        },
+        "feedback": {
+          "state": "not_implemented"
+        }
+      }
+    },
+    {
+      "name": "workspace_page",
+      "response": {
+        "contract": "cloud-usage-workspaces-v1",
+        "revision": "42",
+        "generation": "11111111-1111-4111-8111-111111111111",
+        "catalog_revision_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "items": [
+          {
+            "workspace_id": "00000002-1111-4111-8111-111111111111",
+            "incarnation_id": "aaaaaaaa-1111-4111-8111-111111111111",
+            "source_revision": "2",
+            "display_name": "Workspace 2",
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "25",
+              "last_known": null
+            },
+            "placement": {
+              "state": "assigned",
+              "profile_id": "bbbbbbbb-1111-4111-8111-111111111111"
+            }
+          },
+          {
+            "workspace_id": "00000003-1111-4111-8111-111111111111",
+            "incarnation_id": "aaaaaaaa-1111-4111-8111-111111111111",
+            "source_revision": "3",
+            "display_name": "Workspace 3",
+            "usage": {
+              "state": "known",
+              "reason": null,
+              "files_bytes": "25",
+              "last_known": null
+            },
+            "placement": {
+              "state": "unassigned",
+              "profile_id": null
+            }
+          },
+          {
+            "workspace_id": "00000004-1111-4111-8111-111111111111",
+            "incarnation_id": "aaaaaaaa-1111-4111-8111-111111111111",
+            "source_revision": "4",
+            "display_name": null,
+            "usage": {
+              "state": "unknown",
+              "reason": "usage_unknown",
+              "files_bytes": null,
+              "last_known": {
+                "files_bytes": "40",
+                "revision": "31",
+                "captured_at_millis": "1794520000000",
+                "stale": true
+              }
+            },
+            "placement": {
+              "state": "unknown",
+              "profile_id": null
+            }
+          }
+        ],
+        "next_cursor": null
+      }
+    }
+  ]
+}

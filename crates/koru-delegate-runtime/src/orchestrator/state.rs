@@ -22,7 +22,7 @@ use crate::{CapturedContext, RunDocumentHandle};
 pub struct RunState {
     pub workspace: WorkspaceId,
     pub document: DocumentId,
-    pub doc: Box<dyn RunDocumentHandle>,
+    pub(crate) doc: super::publication::RunDocumentOwner,
     /// The attempt this device is driving, if any.
     pub attempt: Option<Attempt>,
     /// The last attempt this device drove — so a late usage report (§17.2)
@@ -37,6 +37,22 @@ pub struct RunState {
     pub models: HashMap<(String, Option<String>, Option<String>), ModelRef>,
     /// Usage identities by turn, kept past the attempt for late reports.
     pub usage: HashMap<(RunAttemptId, AgentTurnId), UsageIdentity>,
+    /// Exact accepted source positions, kept separately for the two streams.
+    /// A noncontiguous sequence is legal; only an explicit gap invalidates it.
+    pub source_frontiers: koru_delegate_core::decisions::DecisionSourceFrontiers,
+    pub source_gap: bool,
+    pub(crate) source_identity: Option<(RunAttemptId, AttemptGeneration, SessionId)>,
+    pub(crate) source_epoch: Option<uuid::Uuid>,
+    pub(crate) decision_source: Option<super::publication::source::DecisionSourceRetry>,
+    /// At most one reobserve-owed identity. While present the producer stays
+    /// disconnected; nothing beyond the accepted frontiers is marked consumed.
+    pub(crate) source_obligation: Option<super::publication::source::SourceObligation>,
+    /// Bounded exact-key usage/model evidence for this exclusive window only.
+    pub(crate) source_usage: super::publication::source::SourceUsageCache,
+    pub(crate) publication_returned: Option<super::publication::ReturnedRunProjection>,
+    /// Bounded volatile retry identity for the retained decision cleanup CAS.
+    /// Unknown SQL outcomes reuse this exact request; restart reads its row.
+    pub(crate) decision_cleanup: Option<DecisionCleanupRetry>,
 }
 
 impl RunState {
@@ -44,6 +60,18 @@ impl RunState {
         workspace: WorkspaceId,
         document: DocumentId,
         doc: Box<dyn RunDocumentHandle>,
+    ) -> Self {
+        Self::with_document_owner(
+            workspace,
+            document,
+            super::publication::RunDocumentOwner::attached(doc),
+        )
+    }
+
+    pub(super) fn with_document_owner(
+        workspace: WorkspaceId,
+        document: DocumentId,
+        doc: super::publication::RunDocumentOwner,
     ) -> Self {
         Self {
             workspace,
@@ -55,6 +83,18 @@ impl RunState {
             requested_model: None,
             models: HashMap::new(),
             usage: HashMap::new(),
+            source_frontiers: koru_delegate_core::decisions::DecisionSourceFrontiers {
+                agent_after: None,
+                session_after: None,
+            },
+            source_gap: false,
+            source_identity: None,
+            source_epoch: None,
+            decision_source: None,
+            source_obligation: None,
+            source_usage: Default::default(),
+            publication_returned: None,
+            decision_cleanup: None,
         }
     }
 
@@ -148,6 +188,25 @@ impl Attempt {
 pub struct BotCleanupRetry {
     pub due: std::time::Instant,
     pub round: u8,
+}
+
+pub(crate) struct DecisionCleanupRetry {
+    pub request: Option<DecisionCleanupRequest>,
+    /// One exact final cleanup record (transition and complete positive
+    /// evidence). An unknown writer result retries these same values.
+    pub confirm: Option<(
+        koru_delegate_core::decisions::DecisionTransitionId,
+        koru_delegate_core::decisions::ConsumerCleanup,
+    )>,
+    pub due: std::time::Instant,
+    pub round: u8,
+}
+
+#[derive(Clone)]
+pub(crate) struct DecisionCleanupRequest {
+    pub expected: koru_delegate_core::decisions::DecisionWaitExpected,
+    pub transition: koru_delegate_core::decisions::DecisionTransitionId,
+    pub cause: koru_delegate_core::decisions::DecisionClosureReason,
 }
 
 /// One turn's running tally: who asked, and the tool completions not yet

@@ -117,20 +117,51 @@ fn a_failed_fact_holds_later_facts_for_that_run_only() {
     h.orchestrator.settle(run).unwrap();
     h.orchestrator.settle(other).unwrap();
     h.bus.lock().unwrap().fail_next = Some(PublishFailure { retryable: true });
+    // One Run per maintenance turn (the approved rotating selection, lowest
+    // key first). The first turn serves `run`; its failed head holds its
+    // later fact, and nothing is published out of order.
     h.orchestrator.retry_publications(8).unwrap();
-    assert!(matches!(h.facts().as_slice(), [RunFact::Created { .. }]));
+    assert!(
+        h.facts().is_empty(),
+        "a failed head holds that Run's later facts"
+    );
     let open = h.orchestrator.ports().store.open_publications(8).unwrap();
-    assert_eq!(open.len(), 2);
-    assert!(open.iter().all(|publication| publication.run == run));
-    h.orchestrator.retry_publications(8).unwrap();
+    assert_eq!(open.len(), 3);
+    // Bounded progress, never an unbounded loop: the unrelated Run publishes
+    // on the very next turn. A full pass then spends one turn closing at its
+    // frozen anchor before the next pass wraps to the held Run, which drains
+    // in FIFO order. Two Runs with open work therefore need three turns.
+    const TURNS: usize = 3;
+    let mut other_published_at = None;
+    for turn in 1..=TURNS {
+        h.orchestrator.retry_publications(8).unwrap();
+        if other_published_at.is_none() && h.facts().iter().any(|fact| fact.run() == other) {
+            other_published_at = Some(turn);
+        }
+    }
+    assert_eq!(
+        other_published_at,
+        Some(1),
+        "another Run's failure delays an unrelated Run by at most one turn"
+    );
+    assert!(
+        h.orchestrator
+            .ports()
+            .store
+            .open_publications(8)
+            .unwrap()
+            .is_empty()
+    );
+    let held: Vec<_> = h
+        .facts()
+        .into_iter()
+        .filter(|fact| fact.run() == run)
+        .collect();
     assert!(matches!(
-        h.facts().as_slice(),
-        [
-            RunFact::Created { .. },
-            RunFact::Created { .. },
-            RunFact::Cancelled { .. }
-        ]
+        held.as_slice(),
+        [RunFact::Created { .. }, RunFact::Cancelled { .. }]
     ));
+    assert_eq!(h.facts().len(), 3);
 }
 
 #[test]

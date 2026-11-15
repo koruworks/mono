@@ -131,4 +131,4 @@ fn covers(actual: &VersionVector, expected: &VersionVector) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

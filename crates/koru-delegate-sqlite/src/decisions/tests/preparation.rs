@@ -214,3 +214,46 @@ fn decision_prepare_cap_refuses_impossible_nondecision_cleanup_population() {
         Err(BotLedgerError::Capacity)
     ));
 }
+
+#[test]
+fn decision_prepare_settled_answer_retains_wait_slot_until_publication_cleanup() {
+    let mut h = Harness::new();
+    h.native();
+    let first = h.prepare();
+    h.published(first.receipt.decision, true);
+    let answer = h.answer_input(&h.read(first.receipt.decision).unwrap(), false);
+    let accepted = h.answer(&answer, 1001).unwrap().record;
+    let DecisionNativeResponse::Prepared { key } = accepted.native_response.unwrap() else {
+        panic!("prepared native answer");
+    };
+    let f = h.origin();
+    let tx = h.db.conn().unchecked_transaction().unwrap();
+    let settled = record_native_answer_on(
+        &tx,
+        f.owner,
+        f.run,
+        &DecisionNativeResponse::Acknowledged {
+            acknowledgment: key.clone(),
+            key,
+            observed_at_ms: 1002,
+        },
+        1002,
+    )
+    .unwrap()
+    .record;
+    tx.commit().unwrap();
+    assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+    assert_ne!(settled.wait.phase, BotWaitPhase::Settled);
+    fill_waits(&h, 49, false);
+    let tx = h.db.conn().unchecked_transaction().unwrap();
+    assert!(matches!(
+        write::cap(&tx, f.owner),
+        Err(BotLedgerError::Capacity)
+    ));
+    drop(tx);
+    // Handwritten final-publication/handle-return fixture; the public C3
+    // settlement owner must prove these prerequisites, not infer them here.
+    h.db.conn().execute("UPDATE bot_wait_runtime SET phase='settled',settled_at_ms=1003,updated_at_ms=1003 WHERE wait_id=?1",[settled.wait.wait.to_storage()]).unwrap();
+    let tx = h.db.conn().unchecked_transaction().unwrap();
+    assert!(write::cap(&tx, f.owner).is_ok());
+}

@@ -16,6 +16,7 @@ mod create;
 mod deletion;
 mod events;
 mod native_results;
+pub(crate) mod publication;
 mod record;
 mod restart;
 mod resume;
@@ -38,6 +39,7 @@ use crate::{CaptureFailure, PortError, Ports, SessionEvents, SourceRefusal};
 pub use create::CreateIntentStatus;
 pub use deletion::{Purged, RunPlace};
 pub use events::TOOL_STEP_BOUND;
+pub use publication::source::{SourceProducer, SourceProgress};
 pub use state::RunState;
 
 /// How the orchestrator behaves at its edges. Everything a host may want
@@ -139,6 +141,9 @@ pub enum RunError {
 }
 
 impl RunError {
+    pub fn publication_pending(&self) -> bool {
+        matches!(self, Self::Port(error) if error.port == crate::Port::Documents && error.code == "publication_pending")
+    }
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnknownRun => "unknown_run",
@@ -350,11 +355,16 @@ pub struct Orchestrator {
     pub(crate) ports: Ports,
     pub(crate) options: Options,
     pub(crate) claims: ScopeClaims,
+    /// A retained live Run had neither a readable scope nor a prior exact claim.
+    /// Only a later complete reconciliation may clear this fresh-work fence.
+    scope_recovery_incomplete: bool,
     pub(crate) runs: HashMap<RunId, RunState>,
     // Bounded transient current-policy proofs; never reconstructed from ledger hashes.
     native_policies: Vec<CachedNativePolicy>,
     native_routine_policies: Vec<koru_delegate_core::RoutinePolicyBarrier>,
     bot_boot: bot_boot::BootCoordination,
+    publication_ticket: Option<crate::RunPublicationTicket>,
+    publication_retry: record::PublicationRetry,
 }
 
 impl Orchestrator {
@@ -367,6 +377,9 @@ impl Orchestrator {
             native_policies: Vec::new(),
             native_routine_policies: Vec::new(),
             bot_boot: bot_boot::BootCoordination::new(),
+            publication_ticket: None,
+            scope_recovery_incomplete: false,
+            publication_retry: record::PublicationRetry::default(),
         }
     }
 
@@ -429,10 +442,25 @@ impl Orchestrator {
         run: RunId,
         scope: &koru_delegate_core::WorkspaceScope,
     ) -> Result<koru_delegate_scope::ResolvedScope, ScopeRefusal> {
+        if self.scope_recovery_incomplete {
+            return Err(ScopeRefusal::Busy);
+        }
         if matches!(scope, koru_delegate_core::WorkspaceScope::Temporary) {
             return self.ports.roots.planned_temporary(run);
         }
         koru_delegate_scope::ResolvedScope::resolve(scope, run, self.ports.roots.as_ref())
+    }
+
+    pub(crate) fn ensure_scope_recovery(&self) -> Result<(), RunError> {
+        if self.scope_recovery_incomplete {
+            return Err(crate::PortError::new(
+                crate::Port::Scope,
+                "scope_recovery_pending",
+                "a retained working scope has not been recovered",
+            )
+            .into());
+        }
+        Ok(())
     }
 
     /// The runs open on this device — every run with a live attempt, plus
@@ -444,7 +472,7 @@ impl Orchestrator {
     /// The header as the Run document holds it.
     pub fn header(&mut self, run: RunId) -> Result<RunHeader, RunError> {
         let state = self.open(run)?;
-        Ok(state.doc.document().header()?)
+        Ok(state.doc.document()?.header()?)
     }
 
     /// The header and a window of the history, oldest first from `from`.
@@ -471,7 +499,7 @@ impl Orchestrator {
             .as_ref()
             .map(|attempt| attempt.run_workspace.clone())
             .filter(|path| !path.as_os_str().is_empty());
-        let document = state.doc.document();
+        let document = state.doc.document()?;
         let header = document.header()?;
         let all = document.timeline_all();
         let total = all.len() as u64;
@@ -621,6 +649,7 @@ impl Orchestrator {
         run: RunId,
         workspace: Option<WorkspaceId>,
     ) -> Result<&mut RunState, RunError> {
+        self.restore_publication_owner(run)?;
         if !self.runs.contains_key(&run) {
             let placed = self
                 .ports
@@ -659,7 +688,11 @@ impl Orchestrator {
     /// Whether any open run has a commit the Store has not yet called
     /// durable — the actor's reason to keep polling for acknowledgements.
     pub fn has_unsettled(&self) -> bool {
-        self.runs.values().any(|state| !state.doc.durable())
+        // In-flight publication completion wakes the actor itself. It must not
+        // create a recurring Store polling timer while the handle is away.
+        self.runs
+            .values()
+            .any(|state| state.doc.attached_unsettled())
     }
 
     /// Take in the acknowledgements that have already arrived, without
@@ -667,7 +700,7 @@ impl Orchestrator {
     /// that cannot be read is left for its next commit to report.
     pub fn absorb_acks(&mut self) -> bool {
         for state in self.runs.values_mut() {
-            if !state.doc.durable() {
+            if state.doc.attached_unsettled() {
                 let _ = state.doc.absorb();
             }
         }

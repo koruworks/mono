@@ -63,6 +63,8 @@ const WATCH_POLL: Duration = Duration::from_secs(1);
 
 pub enum Command {
     BotDrain,
+    /// Wake only; the bounded worker completion channel owns the value.
+    PublicationWake,
     Bot {
         command: koru_delegate_api::bots::BotCommand,
         reply: mpsc::SyncSender<Response>,
@@ -162,15 +164,18 @@ pub enum Command {
     /// One update from a run's session, pumped in.
     Update {
         run: RunId,
+        epoch: uuid::Uuid,
         update: SessionUpdate,
     },
     /// A run's pump ended.
     PumpEnded {
         run: RunId,
+        epoch: uuid::Uuid,
     },
 }
 
 mod bots;
+mod publication;
 mod routine;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -186,6 +191,9 @@ struct Watcher {
 
 struct Pump {
     stop: Arc<AtomicBool>,
+    epoch: uuid::Uuid,
+    /// Present only for a decision producer: its single delivery permit.
+    permit: Option<mpsc::SyncSender<()>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +241,10 @@ pub struct Actor {
     pumps: HashMap<RunId, Pump>,
     watchers: HashMap<RunId, Vec<Watcher>>,
     active: Arc<AtomicU32>,
+    publication_worker: Option<crate::publication::PublicationWorker>,
+    publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
+    /// The last Run a physical publication workflow was started for.
+    publication_cursor: Option<RunId>,
 }
 
 impl Actor {
@@ -260,6 +272,9 @@ impl Actor {
             pumps: HashMap::new(),
             watchers: HashMap::new(),
             active: Arc::new(AtomicU32::new(0)),
+            publication_worker: None,
+            publication_ack: None,
+            publication_cursor: None,
         }
     }
 
@@ -497,6 +512,8 @@ impl Actor {
                 settle_at = (!durable).then(|| Instant::now() + SETTLE_POLL);
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
+                self.retry_publication_ack();
+                self.drive_publication();
                 if let Err(error) = self.orchestrator.retry_publications(64) {
                     tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
                 }
@@ -517,8 +534,7 @@ impl Actor {
                 bot_budget_at = self
                     .orchestrator
                     .bot_budget_delay_ms()
-                    .ok()
-                    .flatten()
+                    .unwrap_or(Some(1000))
                     .map(|delay| Instant::now() + Duration::from_millis(delay));
             }
             let wait = [
@@ -583,6 +599,7 @@ impl Actor {
         for pump in self.pumps.values() {
             pump.stop.store(true, Ordering::Release);
         }
+        self.shutdown_publication();
         // What was sent is acknowledged before this process is gone.
         self.orchestrator.settle_all();
     }
@@ -603,6 +620,7 @@ impl Actor {
         }
         match command {
             Command::BotDrain => self.drain_one_bot(),
+            Command::PublicationWake => self.drain_publication_completions(),
             Command::Bot { command, reply } => {
                 let queue_changed = matches!(
                     command,
@@ -1020,7 +1038,25 @@ impl Actor {
                 });
                 self.notify(run);
             }
-            Command::Update { run, update } => {
+            Command::Update { run, epoch, update } => {
+                // Already queued old-pump updates cannot enter a replacement
+                // decision producer or mutate its retained source frontier.
+                if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
+                    return;
+                }
+                if self
+                    .pumps
+                    .get(&run)
+                    .is_some_and(|pump| pump.permit.is_some())
+                {
+                    let was_active = self.orchestrator.bot_budget_runs().contains(&run);
+                    self.decision_update(run, epoch, update);
+                    self.notify(run);
+                    if was_active && !self.orchestrator.bot_budget_runs().contains(&run) {
+                        self.wake_bots();
+                    }
+                    return;
+                }
                 let was_active = self.orchestrator.bot_budget_runs().contains(&run);
                 match self.orchestrator.handle(run, update) {
                     Ok(HandleOutcome::Continue) => {}
@@ -1045,7 +1081,10 @@ impl Actor {
                     self.wake_bots();
                 }
             }
-            Command::PumpEnded { run } => {
+            Command::PumpEnded { run, epoch } => {
+                if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
+                    return;
+                }
                 self.pumps.remove(&run);
                 self.count_active();
                 self.wake_bots();
@@ -1054,11 +1093,24 @@ impl Actor {
     }
 
     fn publications_pending(&self) -> bool {
-        self.orchestrator
+        // Exclusive Runs keep the existing coalesced maintenance tick alive so
+        // owed projections, observations and producer reconnects progress.
+        if self.publication_ack.is_some() || !self.orchestrator.publication_candidates().is_empty()
+        {
+            return true;
+        }
+        match self
+            .orchestrator
             .ports()
             .store
-            .open_publications(1)
-            .is_ok_and(|pending| !pending.is_empty())
+            .pending_publication_run_anchor()
+        {
+            Ok(anchor) => anchor.is_some(),
+            Err(error) => {
+                tracing::warn!(target: "koru::delegate", %error, "publication debt could not be observed");
+                true
+            }
+        }
     }
 
     fn drain_deferred_starts(&mut self) {
@@ -1320,6 +1372,7 @@ impl Actor {
         self.stop_pump(run);
         let stop = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&stop);
+        let epoch = uuid::Uuid::new_v4();
         let commands = self.commands.clone();
         let spawned = std::thread::Builder::new()
             .name("koru-delegate pump".into())
@@ -1330,15 +1383,26 @@ impl Actor {
                         continue;
                     };
                     let closed = matches!(update, SessionUpdate::Closed { .. });
-                    if commands.send(Command::Update { run, update }).is_err() || closed {
+                    if commands
+                        .send(Command::Update { run, epoch, update })
+                        .is_err()
+                        || closed
+                    {
                         break;
                     }
                 }
-                let _ = commands.send(Command::PumpEnded { run });
+                let _ = commands.send(Command::PumpEnded { run, epoch });
             });
         match spawned {
             Ok(_) => {
-                self.pumps.insert(run, Pump { stop });
+                self.pumps.insert(
+                    run,
+                    Pump {
+                        stop,
+                        epoch,
+                        permit: None,
+                    },
+                );
             }
             Err(error) => {
                 tracing::error!(target: "koru::delegate", run = ?run, %error, "the run's stream could not be pumped");
@@ -1426,6 +1490,12 @@ impl Actor {
         };
         let header = match self.orchestrator.header(run) {
             Ok(header) => header,
+            Err(error) if error.publication_pending() => {
+                // Temporary ownership transfer is not a closed Run. Keep each
+                // watcher's exact delivery cursor for the returned handle.
+                self.watchers.insert(run, watchers);
+                return;
+            }
             Err(_) => {
                 for watcher in watchers {
                     let _ = watcher.sink.try_send(RunStreamItem::Closed);
@@ -1518,6 +1588,13 @@ fn wire_item(item: WindowItem) -> TimelineItem {
 }
 
 pub fn failure_of(error: &RunError) -> Failure {
+    if error.publication_pending() {
+        return Failure::new(
+            "publication_pending",
+            "The Run publication is still in progress.",
+            true,
+        );
+    }
     if let RunError::Port(port) = error {
         if matches!(
             port.code.as_str(),
