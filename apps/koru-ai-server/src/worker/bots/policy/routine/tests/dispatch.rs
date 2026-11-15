@@ -48,10 +48,14 @@ struct SyncPort {
     moved: Arc<AtomicBool>,
 }
 impl BotDelegatePort for SyncPort {
-    fn execute(&self, _: DelegateCommand) -> ApiResult<BotReply> {
+    fn execute(&self, _: DelegateCommand) -> Result<BotReply, koru_delegate_api::Failure> {
         panic!("finite owner calls only")
     }
-    fn execute_within(&self, command: DelegateCommand, within: Duration) -> ApiResult<BotReply> {
+    fn execute_within(
+        &self,
+        command: DelegateCommand,
+        within: Duration,
+    ) -> Result<BotReply, koru_delegate_api::Failure> {
         assert!(!within.is_zero() && within <= Duration::from_secs(5));
         Ok(match command {
             DelegateCommand::ReadRoutineClaim { slot } => {

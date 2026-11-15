@@ -634,7 +634,12 @@ fn failed_routine_snapshot_preserves_successful_global_boot_receipt() {
             admission: snapshot.admission,
             policy: policy::barrier(&bot).unwrap(),
             bot,
-            routine: Err(unavailable()),
+            routine: Err(koru_ai_wire::Failure {
+                code: "bot_unavailable".into(),
+                message: "fixture unavailable".into(),
+                retryable: true,
+                details: Default::default(),
+            }),
         },
         authority,
         delegate: port.clone(),

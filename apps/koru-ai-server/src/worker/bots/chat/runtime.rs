@@ -134,16 +134,26 @@ pub(in crate::worker) struct StepResult {
     result: Result<BotReply, koru_delegate_api::Failure>,
     routine: Option<policy::dispatch::RoutineDispatch>,
 }
+fn routine_step_failure(error: koru_ai_wire::Failure) -> koru_delegate_api::Failure {
+    koru_delegate_api::Failure {
+        code: error.code,
+        message: error.message,
+        retryable: error.retryable,
+        details: error.details,
+    }
+}
 impl StepJob {
     pub(in crate::worker) fn run(self) -> StepResult {
         let (port, ingest, command) = (self.port, self.ingest, self.command);
         let result = catch_unwind(AssertUnwindSafe(|| {
             if let Some((routine, authority)) = &self.routine {
-                routine.synchronize(
-                    authority.as_ref(),
-                    port.as_ref(),
-                    Instant::now() + Duration::from_secs(5),
-                )?;
+                routine
+                    .synchronize(
+                        authority.as_ref(),
+                        port.as_ref(),
+                        Instant::now() + Duration::from_secs(5),
+                    )
+                    .map_err(routine_step_failure)?;
                 return Ok(BotReply::Applied);
             }
             let command = match ingest {
@@ -460,7 +470,7 @@ impl WorkerState {
         if step.result.is_ok() {
             if let Some(routine) = &step.routine {
                 if let Err(error) = routine.recheck(&self.repository) {
-                    step.result = Err(error);
+                    step.result = Err(routine_step_failure(error));
                 }
             }
         }
