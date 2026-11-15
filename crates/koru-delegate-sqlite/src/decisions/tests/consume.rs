@@ -10,87 +10,26 @@ pub(super) fn ready() -> (
     Vec<u8>,
 ) {
     let (mut h, record, _clock) = lifecycle::koru_enrollment_ready();
-    let record = lifecycle::enrolled(&mut h, &record);
-    let release = lifecycle::origin_release(&mut h, &record, 1000);
-    let record = h
-        .db
-        .record_decision_origin_stop(&expected(&record), DecisionTransitionId::mint(), &release)
-        .unwrap();
-    let input = h.answer_input(&record, true);
-    let record =
-        h.db.answer_bot_decision(&input, DecisionTransitionId::mint(), &h.proof, h.boot)
-            .unwrap();
+    let record = crate::test_support::record_enrollment(&mut h.db, &record).unwrap();
+    let record = crate::test_support::stop_origin(&mut h.db, &record, 1000).unwrap();
     let host = HostInstanceId::from_uuid(uuid::Uuid::new_v4());
-    let record =
-        h.db.reserve_decision_successor(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            host,
-            [42; 32],
-            &h.proof,
-            h.boot,
-        )
-        .unwrap();
-    let resume = record.resume.as_ref().unwrap();
-    let (attempt, generation, _, creation) = resume.consumer_identity();
-    let session = SessionId::mint();
-    let record =
-        h.db.bind_decision_successor(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            creation,
-            host,
-            session,
-        )
-        .unwrap();
-    // The attempt ladder is walked one rung at a time.
-    h.db.advance(h.origin().run, generation, crate::AttemptPhase::Starting)
-        .unwrap();
-    h.db.advance(h.origin().run, generation, crate::AttemptPhase::Running)
-        .unwrap();
-    let resume = record.resume.as_ref().unwrap();
-    let turn = AgentTurnId::mint();
-    let record =
-        h.db.record_decision_resume_input(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            resume.input_key,
-            resume.input_fingerprint,
-            Some(&DecisionInputAcknowledgment {
-                turn,
-                receipt_digest: DecisionDigest::from_bytes([43; 32]),
-            }),
-        )
-        .unwrap();
+    let record = crate::test_support::bind_successor(
+        &mut h.db,
+        &record,
+        host,
+        SessionId::mint(),
+        &h.proof,
+        h.boot,
+    )
+    .unwrap();
+    let (record, fence) =
+        crate::test_support::acknowledge_successor(&mut h.db, &record, AgentTurnId::mint())
+            .unwrap();
+    let mut request = crate::test_support::consume_request(&record, &fence).unwrap();
+    // Different map order, same semantic revision as the retained binding.
+    request.expected_revision = Some(vec![2, 2, 4, 1, 2]);
     let DecisionBindingV1::KoruEdit(edit) = &record.receipt.binding else {
         panic!("edit")
-    };
-    let request = PrepareNativeResult {
-        key: NativeResultKey {
-            run: edit.run,
-            attempt,
-            generation,
-            turn,
-            operation_id: edit.operation_id,
-        },
-        kind: NativeResultOperation::EditPage,
-        destination: edit.workspace,
-        target: Some(edit.target),
-        request_fingerprint: edit.edit_fingerprint,
-        // Different map order, same semantic revision as the retained binding.
-        expected_revision: Some(vec![2, 2, 4, 1, 2]),
-        config_revision: edit.global_policy.config_revision.get(),
-        policy_revision: edit.global_policy.policy_revision.get(),
-        title: "Original edit".into(),
-    };
-    let fence = BotExecutionFence {
-        owner: edit.owner,
-        bot: edit.bot,
-        run: edit.run,
-        attempt,
-        generation,
-        session,
-        turn: Some(turn),
     };
     let payload = edit.payload.as_slice().to_vec();
     (h, record, request, fence, payload)

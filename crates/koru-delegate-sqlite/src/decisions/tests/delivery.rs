@@ -3,7 +3,6 @@
 //! The atomic delivery receipt + Delivery Control writer used while the Run
 //! handle is held exclusively.
 use super::*;
-use lifecycle::expected;
 
 fn receipt(
     h: &Harness,
@@ -213,41 +212,13 @@ fn decision_delivery_successor_requires_the_acknowledged_continuation() {
     let f = h.origin();
     let record = lifecycle::enrolled(&mut h, &record);
     clock.store(1001, std::sync::atomic::Ordering::Relaxed);
-    let release = lifecycle::origin_release(&mut h, &record, 1001);
-    let record = h
-        .db
-        .record_decision_origin_stop(&expected(&record), DecisionTransitionId::mint(), &release)
-        .unwrap();
-    let input = h.answer_input(&record, true);
-    let record =
-        h.db.answer_bot_decision(&input, DecisionTransitionId::mint(), &h.proof, h.boot)
-            .unwrap();
+    let record = crate::test_support::stop_origin(&mut h.db, &record, 1001).unwrap();
     let host = HostInstanceId::from_uuid(uuid::Uuid::new_v4());
-    let record =
-        h.db.reserve_decision_successor(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            host,
-            [42; 32],
-            &h.proof,
-            h.boot,
-        )
-        .unwrap();
-    let (attempt, generation, _, creation) = record.resume.as_ref().unwrap().consumer_identity();
     let session = SessionId::mint();
     let record =
-        h.db.bind_decision_successor(
-            &expected(&record),
-            DecisionTransitionId::mint(),
-            creation,
-            host,
-            session,
-        )
-        .unwrap();
-    h.db.advance(f.run, generation, crate::AttemptPhase::Starting)
-        .unwrap();
-    h.db.advance(f.run, generation, crate::AttemptPhase::Running)
-        .unwrap();
+        crate::test_support::bind_successor(&mut h.db, &record, host, session, &h.proof, h.boot)
+            .unwrap();
+    let (attempt, generation, _, _) = record.resume.as_ref().unwrap().consumer_identity();
     let initial = h.db.bot_admission(f.run).unwrap().unwrap().initial_send;
     let delivered = receipt(&h, attempt, generation);
     let transition = DecisionTransitionId::mint();
@@ -278,19 +249,8 @@ fn decision_delivery_successor_requires_the_acknowledged_continuation() {
             .unwrap()
             .is_none()
     );
-    let resume = record.resume.as_ref().unwrap();
     let turn = AgentTurnId::mint();
-    h.db.record_decision_resume_input(
-        &expected(&record),
-        DecisionTransitionId::mint(),
-        resume.input_key,
-        resume.input_fingerprint,
-        Some(&DecisionInputAcknowledgment {
-            turn,
-            receipt_digest: DecisionDigest::from_bytes([43; 32]),
-        }),
-    )
-    .unwrap();
+    crate::test_support::acknowledge_successor(&mut h.db, &record, turn).unwrap();
     let ticket = completion::ticket(&h);
     assert!(
         h.db.record_decision_delivery(

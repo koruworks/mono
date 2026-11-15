@@ -20,6 +20,12 @@ default = []
 # `cfg(test)`, and the orchestrator's process tests (P1.6, P1.9) enable the
 # feature in their dev-dependencies. Nothing shipped turns it on.
 crash-points = []
+# Shared decision-ledger state builders (`test_support`) for dependents'
+# tests, the same way `crash-points` reaches the orchestrator's process tests:
+# a dependent turns it on only in its `[dev-dependencies]`, because a
+# `cfg(test)` guard here never reaches the crates above (AGENTS.md, Testing).
+# The builders call public `RunsDb` methods only. Nothing shipped enables it.
+test-support = []
 
 [dependencies]
 # `delegate_root_beside` — the one rule for where `runs.db` lives.
