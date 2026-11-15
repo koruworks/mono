@@ -80,7 +80,7 @@ fn corrupt() -> LedgerError {
 fn parse<T: std::str::FromStr>(value: String) -> Result<T, LedgerError> {
     value.parse().map_err(|_| corrupt())
 }
-fn read(
+pub(crate) fn read(
     conn: &Connection,
     schedule: ScheduleId,
 ) -> Result<Option<RoutineRouteIdentity>, LedgerError> {

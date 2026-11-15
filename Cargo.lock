@@ -5904,6 +5904,7 @@ dependencies = [
  "koru-delegate-core",
  "koru-sqlite",
  "rusqlite",
+ "serde",
  "serde_json",
  "tempfile",
  "tracing",

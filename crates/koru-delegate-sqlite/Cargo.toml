@@ -32,6 +32,8 @@ koru-sqlite = { path = "../koru-sqlite" }
 rusqlite.workspace = true
 # The intent payload and the publication body are stored as JSON.
 serde_json.workspace = true
+# Generic bounded retained-record codecs use the existing serde owner traits.
+serde.workspace = true
 # Digest the bounded typed current-policy snapshot; never persist its body.
 blake3.workspace = true
 tracing.workspace = true

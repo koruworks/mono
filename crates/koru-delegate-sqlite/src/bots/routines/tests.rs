@@ -212,6 +212,8 @@ fn retained_routine_route_denies_every_ordinary_claim_and_preserves_reads() {
 fn routine_admission_version_decoder_rejects_mixed_or_unknown_identity() {
     let mut db = memory();
     let mut s = crate::bots::tests::submission(1);
+    // Ordinary fixtures may share UUIDs; Routine's six retained IDs cannot.
+    s.provenance.submission = koru_delegate_core::BotRequestId::mint();
     assert_eq!(db.admit_bot(&s).unwrap().submission_version, 1);
     let r = convert(&mut db, &mut s, false);
     assert_eq!(

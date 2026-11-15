@@ -73,7 +73,7 @@ pub(super) fn policy(row: &Row<'_>) -> Result<NativePolicyRecord, BotLedgerError
         },
     })
 }
-pub(super) fn read_policy(
+pub(crate) fn read_policy(
     conn: &Connection,
     key: &BotPolicyBarrierKey,
 ) -> Result<Option<NativePolicyRecord>, BotLedgerError> {
@@ -381,7 +381,7 @@ pub(super) fn required(
 ) -> Result<NativeIntentRecord, BotLedgerError> {
     read(conn, key)?.ok_or(BotLedgerError::Invalid)
 }
-pub(super) fn created(
+pub(crate) fn created(
     conn: &Connection,
     admitted: &crate::BotAdmissionRecord,
     workspace: WorkspaceId,

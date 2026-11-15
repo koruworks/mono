@@ -11,6 +11,25 @@ mod drain;
 mod memory;
 mod routine;
 
+/// Reuse the actual admission/attempt/policy setup for decision transaction
+/// tests, without a production authority bypass or a second fixture parser.
+pub(crate) fn decision_base() -> (RunsDb, BotExecutionFence, BotPolicyBarrier) {
+    let h = Harness::new();
+    let mut admission = h.db.bot_admission(h.fence.run).unwrap().unwrap().submission;
+    admission.provenance.ai_attempt_id = Some(fixtures::v4(210));
+    admission.provenance.assistant_message_id = Some(fixtures::v4(211));
+    h.db.conn()
+        .execute(
+            "UPDATE bot_admissions SET payload_json=?1 WHERE run_id=?2",
+            rusqlite::params![
+                serde_json::to_string(&admission).unwrap(),
+                h.fence.run.to_storage()
+            ],
+        )
+        .unwrap();
+    (h.db, h.fence, h.policy)
+}
+
 struct Harness {
     db: RunsDb,
     fence: BotExecutionFence,

@@ -89,5 +89,18 @@ pub fn encode_decision_frame<T: Serialize + DecisionValidate>(
     bounded::encode(value, DECISION_FRAME_BYTES)
 }
 
+/// Storage owners have narrower column bounds than the outer frame. This
+/// only bounds serialization; the owning record validator remains mandatory.
+#[doc(hidden)]
+pub fn encode_decision_value<T: Serialize>(
+    value: &T,
+    limit: usize,
+) -> Result<Vec<u8>, DecisionError> {
+    if limit > DECISION_FRAME_BYTES {
+        return Err(DecisionError::TooLarge);
+    }
+    bounded::encode(value, limit)
+}
+
 #[cfg(test)]
 mod tests;

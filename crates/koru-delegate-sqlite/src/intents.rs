@@ -84,11 +84,7 @@ impl RunsDb {
         let Some((stored_workspace, stored_payload)) = row else {
             return Ok(None);
         };
-        let stored: DelegationRequest =
-            serde_json::from_str(&stored_payload).map_err(|_| LedgerError::Corrupt {
-                table: "run_intents",
-                column: "payload_json",
-            })?;
+        let stored = decode_payload(&stored_payload)?;
         if stored_workspace != workspace.to_storage() || stored != *request {
             return Err(LedgerError::IntentConflict);
         }
@@ -118,11 +114,7 @@ impl RunsDb {
                 .optional()
                 .map_err(|error| LedgerError::sql("read an intent", error))?;
             if let Some((stored_workspace, stored_payload)) = existing {
-                let stored: DelegationRequest =
-                    serde_json::from_str(&stored_payload).map_err(|_| LedgerError::Corrupt {
-                        table: "run_intents",
-                        column: "payload_json",
-                    })?;
+                let stored = decode_payload(&stored_payload)?;
                 return if stored_workspace == workspace.to_storage() && stored == *request {
                     Ok(WriteOutcome::AlreadyApplied)
                 } else {
@@ -364,6 +356,57 @@ fn read_state(
         IntentState::parse(&state)?,
         document.as_deref().map(parse_document).transpose()?,
     ))
+}
+
+/// Exact retained intent for decision ownership. The scalar/byte probe runs
+/// before the payload reaches Rust; this is not a current execution guard.
+/// Keep materialized Run header time separate from this request's journal time.
+pub(crate) fn retained_bounded(
+    conn: &rusqlite::Connection,
+    run: RunId,
+) -> Result<(IntentRecord, DelegationRequest), LedgerError> {
+    let bad = || LedgerError::Corrupt {
+        table: "run_intents",
+        column: "bounded_identity",
+    };
+    conn.query_row(
+        "SELECT typeof(workspace_id)='text' AND length(CAST(workspace_id AS BLOB))=36
+            AND typeof(payload_json)='text' AND length(CAST(payload_json AS BLOB))<=?2
+            AND typeof(state)='text' AND length(CAST(state AS BLOB))<=16
+            AND (run_document_id IS NULL OR (typeof(run_document_id)='text' AND length(CAST(run_document_id AS BLOB))=36))
+            AND typeof(created_at_ms)='integer' AND typeof(updated_at_ms)='integer',
+            workspace_id,payload_json,state,run_document_id,created_at_ms,updated_at_ms
+         FROM run_intents WHERE run_id=?1",
+        params![run.to_storage(), koru_delegate_core::decisions::DECISION_FRAME_BYTES],
+        |row| Ok((|| {
+            if !row.get::<_, bool>(0).map_err(|_| bad())? { return Err(bad()); }
+            let get = |i: usize| row.get::<_, String>(i).map_err(|_| bad());
+            let payload = get(2)?;
+            let request = decode_payload(&payload)?;
+            let state = IntentState::parse(&get(3)?)?;
+            let document: Option<String> = row.get(4).map_err(|_| bad())?;
+            let record = IntentRecord {
+                run,
+                workspace: parse_workspace(&get(1)?)?,
+                state,
+                run_document: document.as_deref().map(parse_document).transpose()?,
+                created_at_ms: row.get(5).map_err(|_| bad())?,
+                updated_at_ms: row.get(6).map_err(|_| bad())?,
+            };
+            if request.run != run || record.updated_at_ms < record.created_at_ms
+                || (state == IntentState::Satisfied) != record.run_document.is_some()
+            { return Err(bad()); }
+            Ok((record, request))
+        })()),
+    ).optional().map_err(|e| LedgerError::sql("read retained decision intent", e))?
+        .ok_or(LedgerError::UnknownRun)?
+}
+
+fn decode_payload(payload: &str) -> Result<DelegationRequest, LedgerError> {
+    serde_json::from_str(payload).map_err(|_| LedgerError::Corrupt {
+        table: "run_intents",
+        column: "payload_json",
+    })
 }
 
 pub(crate) fn parse_run(value: &str) -> Result<RunId, LedgerError> {
