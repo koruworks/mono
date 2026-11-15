@@ -290,7 +290,7 @@ fn routine_route_decoder_bounds_malformed_cells_without_erasing_denial() {
 }
 
 #[test]
-fn routine_linked_fixture_never_enables_dispatch_but_replay_and_settlement_survive() {
+fn routine_linked_fixture_without_current_proof_refuses_dispatch_but_history_survives() {
     let mut db = memory();
     let mut s = crate::bots::tests::submission(1);
     // The older ordinary fixture reused its Run UUID for request correlation;
@@ -305,9 +305,12 @@ fn routine_linked_fixture_never_enables_dispatch_but_replay_and_settlement_survi
     convert(&mut db, &mut s, true);
     let retained = db.bot_admission(s.request.run).unwrap().unwrap();
     assert_eq!(db.admit_bot(&s).unwrap(), retained);
-    assert!(db.queued_bots(0, 10).unwrap().is_empty());
+    assert_eq!(db.queued_bots(0, 10).unwrap().len(), 1);
     assert!(db.pending_intents().unwrap().is_empty());
-    assert_eq!(db.reserve_bot(s.request.run), Err(BotLedgerError::Fenced));
+    assert_eq!(
+        db.reserve_bot(s.request.run, None),
+        Err(BotLedgerError::Fenced)
+    );
     db.satisfy_intent(s.request.run, fixtures::document(0xd0))
         .unwrap();
     assert_eq!(
@@ -318,14 +321,21 @@ fn routine_linked_fixture_never_enables_dispatch_but_replay_and_settlement_survi
         .execute("UPDATE bot_admissions SET state='reserved'", [])
         .unwrap();
     assert!(
-        !db.recover_bot_reservation(&koru_delegate_core::BotRunKey {
+        db.recover_bot_reservation(&koru_delegate_core::BotRunKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
             run: s.request.run
         })
         .unwrap()
     );
-    assert_eq!(db.reserve_bot(s.request.run), Err(BotLedgerError::Fenced));
+    assert_eq!(
+        db.bot_admission(s.request.run).unwrap().unwrap().state,
+        koru_delegate_core::BotAdmissionState::Queued
+    );
+    assert_eq!(
+        db.reserve_bot(s.request.run, None),
+        Err(BotLedgerError::Fenced)
+    );
     db.settle_bot(s.request.run, BotSettlement::Refused)
         .unwrap();
     assert!(db.bot_admission(s.request.run).unwrap().is_some());

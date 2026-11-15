@@ -318,6 +318,7 @@ pub(super) fn observation_with_admission(
         && document
             .as_ref()
             .and_then(|d| DocumentId::parse(d))
+            .filter(|id| !id.as_uuid().is_nil())
             .is_none())
         || (state == "satisfied" && document_null)
         || !match record.link_state {
@@ -334,6 +335,13 @@ pub(super) fn observation_with_admission(
         serde_json::from_str(&payload).map_err(|_| bad("intent_payload"))?;
     if request != record.submission.request || workspace != route.workspace.to_storage() {
         return Err(bad("intent_identity"));
+    }
+    if outcome == "fired" {
+        let send = admission
+            .initial_send
+            .as_ref()
+            .ok_or_else(|| bad("firing_send"))?;
+        super::execution::launch_evidence(conn, admission, send)?;
     }
     Ok(RoutineClaimObservation::Claimed { record })
 }

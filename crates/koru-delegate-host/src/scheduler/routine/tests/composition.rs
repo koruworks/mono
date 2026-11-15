@@ -327,7 +327,7 @@ fn routine_composition_real_host_actor_bridge_and_shared_sql_keep_launch_closed(
     assert_eq!(record.claim.ids, f.prepared.ids);
     assert!(ScheduleLedger::unsettled(&ledger).unwrap().is_empty());
     assert!(
-        koru_delegate_sqlite::BotLedger::reserve_bot(&mut ledger.clone(), f.prepared.ids.run)
+        koru_delegate_sqlite::BotLedger::reserve_bot(&mut ledger.clone(), f.prepared.ids.run, None)
             .is_err()
     );
 }

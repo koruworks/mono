@@ -13,7 +13,7 @@ mod repository;
 mod routine;
 mod rows;
 pub(crate) use drain::held_routine;
-pub(crate) use repository::policy_digest;
+pub(crate) use repository::{current_composite, policy_digest};
 pub(crate) use rows::current_policy;
 #[cfg(test)]
 mod tests;

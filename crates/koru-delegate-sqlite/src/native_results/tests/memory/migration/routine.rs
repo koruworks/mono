@@ -63,7 +63,7 @@ fn populated_eight() -> Connection {
         match cohort {
             1 => {
                 assert_eq!(
-                    h.db.reserve_bot(submission.request.run).unwrap(),
+                    h.db.reserve_bot(submission.request.run, None).unwrap(),
                     BotReservation::Acquired
                 );
             }

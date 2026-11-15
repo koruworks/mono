@@ -15,7 +15,7 @@ mod tests;
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
     BotDeliveryReceipt, BotId, BotOwner, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey,
-    IdempotencyKey, RunAttemptId, RunId,
+    FreshBotPolicyProof, IdempotencyKey, RunAttemptId, RunId,
 };
 
 pub const BOT_ACTIVE_BUDGET_MS: u64 = 600_000;
@@ -60,6 +60,8 @@ pub struct BotAdmissionRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BotExecutionRecord {
     pub run: RunId,
+    /// Decoder selection only; never positive execution authority.
+    pub submission_version: u8,
     pub owner: BotOwner,
     pub bot: BotId,
     pub request: BotRequestId,
@@ -81,6 +83,7 @@ impl BotAdmissionRecord {
         let p = &self.submission.provenance;
         BotExecutionRecord {
             run: self.submission.request.run,
+            submission_version: self.submission_version,
             owner: p.owner,
             bot: p.bot,
             request: p.submission,
@@ -261,7 +264,17 @@ pub trait BotLedger {
     /// Atomic one/Bot and two/device reservation. Unknown executions retain
     /// their reserved/executing row; an old queued revision may dispatch
     /// after resume without widening its captured policy.
-    fn reserve_bot(&mut self, run: RunId) -> Result<BotReservation, BotLedgerError>;
+    fn reserve_bot(
+        &mut self,
+        run: RunId,
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<BotReservation, BotLedgerError>;
+    /// Bot-owned first attempt; generic open_attempt never admits Routine work.
+    fn open_bot_attempt(
+        &mut self,
+        run: RunId,
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<crate::AttemptRow, BotLedgerError>;
     /// Require the journal's current attempt/generation. Starts accounting
     /// before provider work; waiting for initial AI input is bounded too.
     fn activate_bot(
@@ -269,6 +282,7 @@ pub trait BotLedger {
         run: RunId,
         attempt: RunAttemptId,
         generation: AttemptGeneration,
+        proof: Option<&FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError>;
     /// Charge the previous open interval before changing it. Native approval
     /// wait passes false; resume passes true. Restart never zeros elapsed.
@@ -278,6 +292,7 @@ pub trait BotLedger {
         attempt: RunAttemptId,
         generation: AttemptGeneration,
         active: bool,
+        proof: Option<&FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError>;
     /// Release only after the journal proves the latest attempt retired, or
     /// no attempt was ever opened. Unknown/merely-stopping cannot release.
@@ -293,6 +308,7 @@ pub trait BotLedger {
         &mut self,
         run: RunId,
         send: &BotInitialSend,
+        proof: Option<&FreshBotPolicyProof>,
     ) -> Result<BotInitialSend, BotLedgerError>;
     fn acknowledge_bot_initial_send(
         &mut self,

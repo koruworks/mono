@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-mod boot;
 mod admission_read;
+mod boot;
 use crate::{AttemptPhase, CrashPoint, LedgerError, Moment, RunsDb, WriteOp, fixtures};
 use koru_delegate_core::{
     BotAccess, BotProvenance, BotWorkingFolder, CapturedBotPolicy, PendingInput, WorkspaceScope,
@@ -92,11 +92,12 @@ fn running(db: &mut RunsDb, s: &BotSubmission) -> crate::AttemptRow {
     db.satisfy_intent(s.request.run, fixtures::document(0xd0))
         .unwrap();
     assert_eq!(
-        db.reserve_bot(s.request.run).unwrap(),
+        db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     let a = fixtures::running_attempt(db, s.request.run, 1);
-    db.activate_bot(a.run, a.attempt, a.generation).unwrap();
+    db.activate_bot(a.run, a.attempt, a.generation, None)
+        .unwrap();
     a
 }
 fn send(a: &crate::AttemptRow) -> BotInitialSend {
@@ -263,7 +264,7 @@ fn pause_is_monotonic_and_existing_queued_capture_survives_resume() {
         Err(BotLedgerError::Stale)
     );
     assert_eq!(
-        db.reserve_bot(s.request.run).unwrap(),
+        db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Paused
     );
     assert_eq!(db.admit_bot(&submission(2)), Err(BotLedgerError::Stale));
@@ -274,7 +275,7 @@ fn pause_is_monotonic_and_existing_queued_capture_survives_resume() {
     assert_eq!(db.bot_barrier(p.owner, p.bot).unwrap(), Some(p));
     db.apply_bot_barrier(&pause(&s, 3, false)).unwrap();
     assert_eq!(
-        db.reserve_bot(s.request.run).unwrap(),
+        db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     assert_eq!(
@@ -300,27 +301,27 @@ fn reservations_enforce_one_per_bot_two_per_device_and_hold_unknown_work() {
         db.admit_bot(s).unwrap();
     }
     assert_eq!(
-        db.reserve_bot(a.request.run).unwrap(),
+        db.reserve_bot(a.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     assert_eq!(
-        db.reserve_bot(a.request.run).unwrap(),
+        db.reserve_bot(a.request.run, None).unwrap(),
         BotReservation::AlreadyOwned
     );
     assert_eq!(
-        db.reserve_bot(b.request.run).unwrap(),
+        db.reserve_bot(b.request.run, None).unwrap(),
         BotReservation::BotBusy
     );
     assert_eq!(
-        db.reserve_bot(c.request.run).unwrap(),
+        db.reserve_bot(c.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     assert_eq!(
-        db.reserve_bot(d.request.run).unwrap(),
+        db.reserve_bot(d.request.run, None).unwrap(),
         BotReservation::HostBusy
     );
     assert_eq!(
-        db.reserve_bot(e.request.run).unwrap(),
+        db.reserve_bot(e.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     db.satisfy_intent(a.request.run, fixtures::document(8))
@@ -332,7 +333,7 @@ fn reservations_enforce_one_per_bot_two_per_device_and_hold_unknown_work() {
     );
     db.restart_in_memory();
     assert_eq!(
-        db.reserve_bot(b.request.run).unwrap(),
+        db.reserve_bot(b.request.run, None).unwrap(),
         BotReservation::BotBusy
     );
     db.advance(opened.run, opened.generation, AttemptPhase::Interrupted)
@@ -345,7 +346,7 @@ fn reservations_enforce_one_per_bot_two_per_device_and_hold_unknown_work() {
     db.settle_bot(a.request.run, BotSettlement::Settled)
         .unwrap();
     assert_eq!(
-        db.reserve_bot(b.request.run).unwrap(),
+        db.reserve_bot(b.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     db.settle_bot(b.request.run, BotSettlement::Refused)
@@ -362,23 +363,24 @@ fn active_clock_excludes_wait_preserves_restart_and_never_resets_budget() {
     let s = submission(1);
     let a = running(&mut db, &s);
     time.set(1100);
-    db.activate_bot(a.run, a.attempt, a.generation).unwrap();
+    db.activate_bot(a.run, a.attempt, a.generation, None)
+        .unwrap();
     assert_eq!(
         db.bot_admission(a.run).unwrap().unwrap().active_since_ms,
         Some(1000)
     );
     time.set(1500);
-    db.set_bot_active(a.run, a.attempt, a.generation, false)
+    db.set_bot_active(a.run, a.attempt, a.generation, false, None)
         .unwrap();
     time.set(900000);
-    db.set_bot_active(a.run, a.attempt, a.generation, false)
+    db.set_bot_active(a.run, a.attempt, a.generation, false, None)
         .unwrap();
     assert_eq!(
         db.bot_admission(a.run).unwrap().unwrap().active_elapsed_ms,
         500
     );
     db.restart_in_memory();
-    db.set_bot_active(a.run, a.attempt, a.generation, true)
+    db.set_bot_active(a.run, a.attempt, a.generation, true, None)
         .unwrap();
     time.set(900200);
     assert_eq!(
@@ -389,11 +391,11 @@ fn active_clock_excludes_wait_preserves_restart_and_never_resets_budget() {
         700
     );
     time.set(899999);
-    db.set_bot_active(a.run, a.attempt, a.generation, false)
+    db.set_bot_active(a.run, a.attempt, a.generation, false, None)
         .unwrap();
     assert!(db.bot_admission(a.run).unwrap().unwrap().active_elapsed_ms >= BOT_ACTIVE_BUDGET_MS);
     assert_eq!(
-        db.set_bot_active(a.run, a.attempt, a.generation, true),
+        db.set_bot_active(a.run, a.attempt, a.generation, true, None),
         Err(BotLedgerError::Fenced)
     );
     assert_eq!(
@@ -403,7 +405,7 @@ fn active_clock_excludes_wait_preserves_restart_and_never_resets_budget() {
     retired(&mut db, &a);
     db.settle_bot(a.run, BotSettlement::Settled).unwrap();
     assert_eq!(
-        db.activate_bot(a.run, a.attempt, a.generation),
+        db.activate_bot(a.run, a.attempt, a.generation, None),
         Err(BotLedgerError::Fenced)
     );
 }
@@ -423,7 +425,7 @@ fn unknown_attempt_keeps_capacity_until_the_execution_owner_proves_retirement() 
         Err(BotLedgerError::Fenced)
     );
     assert_eq!(
-        db.reserve_bot(queued.request.run).unwrap(),
+        db.reserve_bot(queued.request.run, None).unwrap(),
         BotReservation::BotBusy
     );
     // Retirement is the execution owner's explicit fencing fact, never an
@@ -431,7 +433,7 @@ fn unknown_attempt_keeps_capacity_until_the_execution_owner_proves_retirement() 
     db.retire(a.run, a.generation).unwrap();
     db.settle_bot(a.run, BotSettlement::Settled).unwrap();
     assert_eq!(
-        db.reserve_bot(queued.request.run).unwrap(),
+        db.reserve_bot(queued.request.run, None).unwrap(),
         BotReservation::Acquired
     );
 }
@@ -455,23 +457,26 @@ fn initial_send_is_immutable_and_delivery_requires_exact_ai_and_attempt_binding(
         db.record_bot_delivery(&receipt),
         Err(BotLedgerError::Fenced)
     );
-    db.prepare_bot_initial_send(a.run, &initial).unwrap();
+    db.prepare_bot_initial_send(a.run, &initial, None).unwrap();
     let mut changed = initial.clone();
     changed.fingerprint[0] ^= 1;
     assert_eq!(
-        db.prepare_bot_initial_send(a.run, &changed),
+        db.prepare_bot_initial_send(a.run, &changed, None),
         Err(BotLedgerError::Fenced)
     );
     changed = initial.clone();
     changed.attempt = RunAttemptId::mint();
     assert_eq!(
-        db.prepare_bot_initial_send(a.run, &changed),
+        db.prepare_bot_initial_send(a.run, &changed, None),
         Err(BotLedgerError::Fenced)
     );
     let mut ack = initial.clone();
     ack.turn = Some(fixtures::v4(0xc2).to_string().parse().unwrap());
     db.acknowledge_bot_initial_send(a.run, &ack).unwrap();
-    assert_eq!(db.prepare_bot_initial_send(a.run, &initial).unwrap(), ack);
+    assert_eq!(
+        db.prepare_bot_initial_send(a.run, &initial, None).unwrap(),
+        ack
+    );
     assert_eq!(db.acknowledge_bot_initial_send(a.run, &ack).unwrap(), ack);
     let mut wrong = receipt.clone();
     wrong.assistant_message_id = Uuid::new_v4();
@@ -488,7 +493,7 @@ fn initial_send_is_immutable_and_delivery_requires_exact_ai_and_attempt_binding(
     // An ordinary caller must not be able to reset this Bot task's first send.
     let fresh = db.open_attempt(a.run).unwrap();
     assert_eq!(
-        db.activate_bot(a.run, fresh.attempt, fresh.generation),
+        db.activate_bot(a.run, fresh.attempt, fresh.generation, None),
         Err(BotLedgerError::Fenced)
     );
 }
@@ -516,7 +521,7 @@ fn every_bot_write_keeps_the_existing_crash_commit_boundary() {
                 op,
                 WriteOp::AcknowledgeBotInitialSend | WriteOp::RecordBotDelivery
             ) {
-                db.prepare_bot_initial_send(a.run, &initial).unwrap();
+                db.prepare_bot_initial_send(a.run, &initial, None).unwrap();
             }
             if op == WriteOp::RecordBotDelivery {
                 db.acknowledge_bot_initial_send(a.run, &ack).unwrap();
@@ -536,7 +541,7 @@ fn every_bot_write_keeps_the_existing_crash_commit_boundary() {
                 db.settle_bot(a.run, BotSettlement::Settled).unwrap();
                 db.satisfy_intent(queued.request.run, fixtures::document(9))
                     .unwrap();
-                db.reserve_bot(queued.request.run).unwrap();
+                db.reserve_bot(queued.request.run, None).unwrap();
                 Some(db.open_attempt(queued.request.run).unwrap())
             } else {
                 None
@@ -554,18 +559,18 @@ fn every_bot_write_keeps_the_existing_crash_commit_boundary() {
             let action = |db: &mut RunsDb| -> Result<(), BotLedgerError> {
                 match op {
                     WriteOp::ApplyBotBarrier => db.apply_bot_barrier(&barrier).map(|_| ()),
-                    WriteOp::ReserveBot => db.reserve_bot(queued.request.run).map(|_| ()),
+                    WriteOp::ReserveBot => db.reserve_bot(queued.request.run, None).map(|_| ()),
                     WriteOp::ActivateBot => {
                         let a = activate.unwrap();
-                        db.activate_bot(a.run, a.attempt, a.generation)
+                        db.activate_bot(a.run, a.attempt, a.generation, None)
                     }
                     WriteOp::SetBotActive => {
-                        db.set_bot_active(a.run, a.attempt, a.generation, false)
+                        db.set_bot_active(a.run, a.attempt, a.generation, false, None)
                     }
                     WriteOp::SettleBot => db.settle_bot(a.run, BotSettlement::Settled),
-                    WriteOp::PrepareBotInitialSend => {
-                        db.prepare_bot_initial_send(a.run, &initial).map(|_| ())
-                    }
+                    WriteOp::PrepareBotInitialSend => db
+                        .prepare_bot_initial_send(a.run, &initial, None)
+                        .map(|_| ()),
                     WriteOp::AcknowledgeBotInitialSend => {
                         db.acknowledge_bot_initial_send(a.run, &ack).map(|_| ())
                     }
@@ -615,7 +620,7 @@ fn execution_projection_and_reserved_candidates_keep_recovery_identity_without_p
         Some(projection.clone())
     );
     assert_eq!(
-        db.reserve_bot(s.request.run).unwrap(),
+        db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     let active = db.active_bot_executions(s.provenance.owner.device).unwrap();
@@ -632,7 +637,7 @@ fn delivered(db: &mut RunsDb) -> (BotSubmission, BotDeliveryReceipt) {
     let s = submission(1);
     let a = running(db, &s);
     let mut initial = send(&a);
-    db.prepare_bot_initial_send(a.run, &initial).unwrap();
+    db.prepare_bot_initial_send(a.run, &initial, None).unwrap();
     initial.turn = Some(fixtures::v4(0xc2).to_string().parse().unwrap());
     db.acknowledge_bot_initial_send(a.run, &initial).unwrap();
     let receipt = BotDeliveryReceipt {

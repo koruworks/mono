@@ -38,24 +38,29 @@ fn boot_inventory_uses_state_sequence_seeks_without_full_queue_sort() {
 fn reservation_recovery_retains_each_independent_evidence_guard() {
     // These deliberately isolate evidence that a damaged/interrupted ledger
     // could retain. Production never disables its constraints.
-    for evidence in [
+    for (index, evidence) in [
         "UPDATE bot_admissions SET state='executing'",
         "UPDATE bot_admissions SET active_elapsed_ms=1",
         "PRAGMA ignore_check_constraints=ON; UPDATE bot_admissions SET active_since_ms=1; PRAGMA ignore_check_constraints=OFF",
         "UPDATE bot_admissions SET initial_send_key='11111111-1111-4111-8111-111111111111',initial_send_fingerprint=zeroblob(32),initial_send_attempt_id='22222222-2222-4222-8222-222222222222',initial_send_generation=1",
         "UPDATE bot_admissions SET delivery_outcome='confirmed',delivery_attempt_id='11111111-1111-4111-8111-111111111111',delivery_generation=1,delivery_chat_id='11111111-1111-4111-8111-111111111111',delivery_ai_attempt_id='11111111-1111-4111-8111-111111111111',delivery_assistant_message_id='11111111-1111-4111-8111-111111111111',delivery_confirmed_at_ms=1",
-    ] {
+    ].into_iter().enumerate() {
         let (mut db, _) = memory();
         let s = submission(1);
         db.admit_bot(&s).unwrap();
-        db.reserve_bot(s.request.run).unwrap();
+        db.reserve_bot(s.request.run, None).unwrap();
         let key = BotRunKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
             run: s.request.run,
         };
         db.conn().execute_batch(evidence).unwrap();
-        assert!(!db.recover_bot_reservation(&key).unwrap(), "{evidence}");
+        let result = db.recover_bot_reservation(&key);
+        match index {
+            2 => assert!(matches!(result, Err(BotLedgerError::Ledger(LedgerError::Corrupt { table: "bot_admissions", column: "state" })))),
+            4 => assert!(matches!(result, Err(BotLedgerError::Ledger(LedgerError::Corrupt { table: "bot_admissions", column: "delivery_outcome" })))),
+            _ => assert!(!result.unwrap(), "{evidence}"),
+        }
         let state: String = db
             .conn()
             .query_row("SELECT state FROM bot_admissions", [], |r| r.get(0))
@@ -65,7 +70,7 @@ fn reservation_recovery_retains_each_independent_evidence_guard() {
     let (mut db, _) = memory();
     let s = submission(1);
     db.admit_bot(&s).unwrap();
-    db.reserve_bot(s.request.run).unwrap();
+    db.reserve_bot(s.request.run, None).unwrap();
     let key = BotRunKey {
         owner: s.provenance.owner,
         bot: s.provenance.bot,
@@ -155,7 +160,7 @@ fn restart_requeues_only_proven_never_started_reservations() {
     let s = submission(1);
     db.admit_bot(&s).unwrap();
     assert_eq!(
-        db.reserve_bot(s.request.run).unwrap(),
+        db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     let key = BotRunKey {
@@ -174,7 +179,7 @@ fn restart_requeues_only_proven_never_started_reservations() {
             .unwrap()
             .is_empty()
     );
-    db.reserve_bot(key.run).unwrap();
+    db.reserve_bot(key.run, None).unwrap();
     db.satisfy_intent(key.run, fixtures::document(0xd0))
         .unwrap();
     db.open_attempt(key.run).unwrap();
@@ -193,7 +198,7 @@ fn reservation_recovery_reply_loss_is_idempotent_and_failed_read_retains_claim()
         let (mut db, _) = memory();
         let s = submission(1);
         db.admit_bot(&s).unwrap();
-        db.reserve_bot(s.request.run).unwrap();
+        db.reserve_bot(s.request.run, None).unwrap();
         let key = BotRunKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
@@ -222,7 +227,7 @@ fn reservation_recovery_reply_loss_is_idempotent_and_failed_read_retains_claim()
     let (mut db, _) = memory();
     let s = submission(1);
     db.admit_bot(&s).unwrap();
-    db.reserve_bot(s.request.run).unwrap();
+    db.reserve_bot(s.request.run, None).unwrap();
     let key = BotRunKey {
         owner: s.provenance.owner,
         bot: s.provenance.bot,

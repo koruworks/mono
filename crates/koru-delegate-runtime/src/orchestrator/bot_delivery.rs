@@ -112,7 +112,12 @@ impl Orchestrator {
             session,
             turn: Some(turn),
         };
-        if self.bot_live_fence(&fence, device, true, true).is_err()
+        // This reconciles an acknowledged initial turn and exact AI receipt.
+        // Preserve live identity/controller checks without asking current policy
+        // to reauthorize historical delivery; no new input or effect is sent.
+        if self
+            .bot_live_fence_inner(&fence, device, true, true, false)
+            .is_err()
             || header.status.control() != Some(ControlState::Orchestrator)
             || self.native_effects_pending(key.run)?
         {

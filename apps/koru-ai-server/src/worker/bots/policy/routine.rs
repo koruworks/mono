@@ -34,6 +34,18 @@ pub(in crate::worker) fn initial_barrier(
 }
 
 impl RoutineLookup {
+    pub(in crate::worker::bots) fn execution_profile(
+        &self,
+        submission: &koru_delegate_core::BotSubmission,
+    ) -> ApiResult<koru_ai_core::ProfileId> {
+        if self.occurrence.prepared.submission != *submission {
+            return Err(bot_failure(BotError::Forbidden));
+        }
+        match submission.request.requested_by {
+            koru_delegate_core::ActorRef::Person { profile } => Ok(profile),
+            _ => Err(bot_failure(BotError::Forbidden)),
+        }
+    }
     pub(in crate::worker::bots) fn barrier(&self) -> RoutinePolicyBarrier {
         super::initial_routine_barrier(&self.creation.identity)
     }

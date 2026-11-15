@@ -112,12 +112,14 @@ impl Actor {
                     .map_err(bot_failure)?,
             },
             BotCommand::AcknowledgeRoutineLink { acknowledgement } => {
-                BotReply::RoutineLinkAcknowledged {
-                    record: self
-                        .orchestrator
-                        .acknowledge_routine_link(&acknowledgement, device)
-                        .map_err(bot_failure)?,
+                let record = self
+                    .orchestrator
+                    .acknowledge_routine_link(&acknowledgement, device)
+                    .map_err(bot_failure)?;
+                if record.link_state == (koru_delegate_core::RoutineLinkState::Linked {}) {
+                    self.wake_bots_after_replay();
                 }
+                BotReply::RoutineLinkAcknowledged { record }
             }
             BotCommand::RegisterRoutineRoute { identity } => BotReply::RoutineRoute {
                 identity: self
@@ -194,6 +196,7 @@ impl Actor {
                     .orchestrator
                     .synchronize_routine_policy(barrier.clone(), device)
                     .map_err(bot_failure)?;
+                self.wake_bots_after_replay();
                 BotReply::RoutinePolicyBarrier { barrier, state }
             }
             BotCommand::PrepareNativeResult { request } => BotReply::NativeResult {

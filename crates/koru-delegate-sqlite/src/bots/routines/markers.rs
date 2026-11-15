@@ -8,7 +8,9 @@ fn bad(table: &'static str, column: &'static str) -> LedgerError {
     LedgerError::Corrupt { table, column }
 }
 
-pub(crate) fn deny_run_metadata(conn: &Connection, run: RunId) -> Result<(), LedgerError> {
+/// Indexed deny-only marker projection; no JSON bodies are parsed. This is
+/// sufficient for nonauthorizing control/history scalar projections only.
+pub(crate) fn deny_run_columns(conn: &Connection, run: RunId) -> Result<(), LedgerError> {
     let version: Option<Option<i64>> = conn
         .query_row(
             "SELECT CASE WHEN typeof(submission_version)='integer' AND submission_version IN (1,2)
@@ -27,6 +29,19 @@ pub(crate) fn deny_run_metadata(conn: &Connection, run: RunId) -> Result<(), Led
     if version == Some(Some(2)) || marked {
         return Err(LedgerError::InvalidScheduleAuthority);
     }
+    Ok(())
+}
+
+pub(crate) fn deny_run_metadata(conn: &Connection, run: RunId) -> Result<(), LedgerError> {
+    deny_run_columns(conn, run)?;
+    let version: Option<i64> = conn
+        .query_row(
+            "SELECT submission_version FROM bot_admissions WHERE run_id=?1",
+            [run.to_storage()],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(sql)?;
     if version.is_none() {
         return Ok(());
     }

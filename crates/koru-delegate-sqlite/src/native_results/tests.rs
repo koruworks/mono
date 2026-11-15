@@ -67,11 +67,12 @@ impl Harness {
         db.satisfy_intent(submission.request.run, fixtures::document(0xd0))
             .unwrap();
         assert_eq!(
-            db.reserve_bot(submission.request.run).unwrap(),
+            db.reserve_bot(submission.request.run, None).unwrap(),
             BotReservation::Acquired
         );
         let a = fixtures::running_attempt(&mut db, submission.request.run, 1);
-        db.activate_bot(a.run, a.attempt, a.generation).unwrap();
+        db.activate_bot(a.run, a.attempt, a.generation, None)
+            .unwrap();
         let mut send = BotInitialSend {
             attempt: a.attempt,
             generation: a.generation,
@@ -79,7 +80,7 @@ impl Harness {
             fingerprint: [2; 32],
             turn: None,
         };
-        db.prepare_bot_initial_send(a.run, &send).unwrap();
+        db.prepare_bot_initial_send(a.run, &send, None).unwrap();
         let turn = AgentTurnId::mint();
         send.turn = Some(turn);
         db.acknowledge_bot_initial_send(a.run, &send).unwrap();
