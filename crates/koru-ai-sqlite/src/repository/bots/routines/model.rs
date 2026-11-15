@@ -47,50 +47,10 @@ impl Repository {
             [metadata.main_chat.to_storage()], |r| r.get(0),
         ).map_err(bad)?;
         let profile = ProfileId::parse(&profile).ok_or(BotError::Storage)?;
-        // The ordinary decoder owns syntax/identity. Bound its raw allocations
-        // before calling it here, including malformed rows beyond SQL CHECKs.
-        let (count, bounded): (i64, Option<bool>) = self.connection.query_row(
-            "SELECT count(*),min(typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36
-             AND typeof(fingerprint)='text' AND length(CAST(fingerprint AS BLOB))=64
-             AND typeof(command_kind)='text' AND length(CAST(command_kind AS BLOB))<=32
-             AND typeof(stage)='text' AND length(CAST(stage AS BLOB))<=16
-             AND typeof(submission_json)='text' AND length(CAST(submission_json AS BLOB)) BETWEEN 1 AND 4194304
-             AND (outcome_json IS NULL OR (typeof(outcome_json)='text' AND length(CAST(outcome_json AS BLOB))<=1048576))
-             AND (pause_ack_stage IS NULL OR (typeof(pause_ack_stage)='text' AND length(CAST(pause_ack_stage AS BLOB))<=16)))
-             FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND planned_run_id=?3",
-            params![owner.user_scope.to_storage(),bot.to_storage(),run.to_storage()],
-            |r| Ok((r.get(0)?,r.get(1)?)),
-        ).map_err(bad)?;
-        if count == 0 {
-            return Err(BotError::NotFound);
-        }
-        if count != 1 || bounded != Some(true) {
-            return Err(BotError::Storage);
-        }
-        let receipt = admission::readable_submission_for_run_on(&self.connection, owner, bot, run)?
-            .ok_or(BotError::NotFound)?;
-        let submission = &receipt.intent.submission;
-        if submission.workspace != metadata.home_workspace {
+        let (receipt, occurrence) = retained_run_subject_on(&self.connection, owner, bot, run)?;
+        if receipt.intent.submission.workspace != metadata.home_workspace {
             return Err(BotError::Forbidden);
         }
-        if let Some(id) = submission.provenance.ai_attempt_id {
-            let attempt = InferenceAttemptId::parse(&id.to_string()).ok_or(BotError::Storage)?;
-            crate::repository::bot_replay::validate_link(&self.connection, attempt, submission)
-                .map_err(|_| BotError::Storage)?;
-        }
-        let occurrence = if let Some(subject) = submission.provenance.routine {
-            let row = occurrence::for_run_on(&self.connection, owner, bot, run)?
-                .ok_or(BotError::NotFound)?;
-            if row.prepared.submission != *submission
-                || row.prepared.slot.schedule != subject.schedule
-                || row.capture.canonical.home != metadata.home_workspace
-            {
-                return Err(BotError::Storage);
-            }
-            Some(row)
-        } else {
-            None
-        };
         Ok(RoutineToolSubject {
             metadata,
             profile,
@@ -117,4 +77,55 @@ impl Repository {
         }
         Ok(Some((creation, receipt.outcome)))
     }
+}
+
+/// Full retained identity only; callers own current metadata/policy checks.
+/// SQL preflight bounds the sole admission and Linked decoders before allocation.
+pub(in crate::repository::bots) fn retained_run_subject_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    run: koru_delegate_core::RunId,
+) -> Result<(BotSubmissionReceipt, Option<BotRoutineStoredPreparation>), BotError> {
+    // The ordinary decoder owns syntax/identity. Bound its raw allocations
+    // before calling it here, including malformed rows beyond SQL CHECKs.
+    let (count, bounded): (i64, Option<bool>) = conn.query_row(
+            "SELECT count(*),min(typeof(request_id)='text' AND length(CAST(request_id AS BLOB))=36
+             AND typeof(fingerprint)='text' AND length(CAST(fingerprint AS BLOB))=64
+             AND typeof(command_kind)='text' AND length(CAST(command_kind AS BLOB))<=32
+             AND typeof(stage)='text' AND length(CAST(stage AS BLOB))<=16
+             AND typeof(submission_json)='text' AND length(CAST(submission_json AS BLOB)) BETWEEN 1 AND 4194304
+             AND (outcome_json IS NULL OR (typeof(outcome_json)='text' AND length(CAST(outcome_json AS BLOB))<=1048576))
+             AND (pause_ack_stage IS NULL OR (typeof(pause_ack_stage)='text' AND length(CAST(pause_ack_stage AS BLOB))<=16)))
+             FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND planned_run_id=?3",
+            params![owner.user_scope.to_storage(),bot.to_storage(),run.to_storage()],
+            |r| Ok((r.get(0)?,r.get(1)?)),
+        ).map_err(bad)?;
+    if count == 0 {
+        return Err(BotError::NotFound);
+    }
+    if count != 1 || bounded != Some(true) {
+        return Err(BotError::Storage);
+    }
+    let receipt = admission::readable_submission_for_run_on(conn, owner, bot, run)?
+        .ok_or(BotError::NotFound)?;
+    let submission = &receipt.intent.submission;
+    if let Some(id) = submission.provenance.ai_attempt_id {
+        let attempt = InferenceAttemptId::parse(&id.to_string()).ok_or(BotError::Storage)?;
+        crate::repository::bot_replay::validate_link(conn, attempt, submission)
+            .map_err(|_| BotError::Storage)?;
+    }
+    let occurrence = if let Some(subject) = submission.provenance.routine {
+        let row = occurrence::for_run_on(conn, owner, bot, run)?.ok_or(BotError::NotFound)?;
+        if row.prepared.submission != *submission
+            || row.prepared.slot.schedule != subject.schedule
+            || row.capture.canonical.home != submission.workspace
+        {
+            return Err(BotError::Storage);
+        }
+        Some(row)
+    } else {
+        None
+    };
+    Ok((receipt, occurrence))
 }

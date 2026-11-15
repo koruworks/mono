@@ -19,6 +19,7 @@ mod creation;
 pub use creation::BotCreationScan;
 pub(crate) mod library;
 mod reads;
+mod decisions;
 mod routines;
 pub use routines::{
     RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
