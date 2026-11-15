@@ -373,13 +373,15 @@ impl Orchestrator {
         decision: koru_delegate_core::ApprovalDecision,
         choice: Option<koru_delegate_core::ApprovalChoiceId>,
     ) -> Result<(), RunError> {
-        // A decision-owned native prompt is answered only through the decision
-        // owner with its journaled key; this route cannot bypass it.
+        // Identity, owner device and controller first; then a decision-owned
+        // native prompt is answered only through the decision owner with its
+        // journaled key, so this route refuses rather than bypass it.
+        self.bot_live_fence_inner(fence, device, true, true, false)?;
         self.restore_publication_owner(fence.run)?;
         if self.run_publication_pending(fence.run) {
             return Err(refused("bot_decision_owned"));
         }
-        self.bot_live_fence(fence, device, true, true)?;
+        self.bot_execution_policy(fence.run)?;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
         if self
             .open(fence.run)?

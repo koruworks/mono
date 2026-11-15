@@ -26,8 +26,9 @@ const CONTINUATION_DOMAIN: &str = "koru.bot.decision.continuation.v1";
 /// Domain of the digest of one observed continuation acknowledgment.
 const ACKNOWLEDGMENT_DOMAIN: &str = "koru.bot.decision.continuation.ack.v1";
 
-/// Provider payload: the successor learns why a new session continues the
-/// task. It names the decision by id only; it carries no human text.
+/// Provider payload, never logged: the person's original captured task input
+/// and why a new session continues it. The decision is named by id only; no
+/// answer text, edit payload or earlier conversation is added.
 fn continuation_body(task: &str, decision: DecisionId) -> String {
     format!(
         "{task}\n\nKoru resumed this run in a new session after the person allowed decision `{decision}`. The earlier session's conversation is not available here; results it already saved remain. Do not repeat a write that already succeeded."
