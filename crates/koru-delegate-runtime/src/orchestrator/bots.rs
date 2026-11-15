@@ -337,12 +337,12 @@ impl Orchestrator {
         {
             return Ok(None);
         }
-        let active = self.bot_ledger()?.active_bot_executions(device)?;
+        let active = self.bot_ledger()?.bot_execution_inventory(device)?;
         if record.state == BotAdmissionState::Queued
-            && (active.len() >= koru_delegate_sqlite::BOT_HOST_EXECUTION_LIMIT
-                || active
-                    .iter()
-                    .any(|other| other.owner == key.owner && other.bot == key.bot))
+            && (active.occupied >= koru_delegate_sqlite::BOT_HOST_EXECUTION_LIMIT
+                || active.owned.iter().any(|other| {
+                    other.execution.owner == key.owner && other.execution.bot == key.bot
+                }))
         {
             return Ok(None);
         }
@@ -700,7 +700,9 @@ impl Orchestrator {
             }
             let requested = self.request_publication_cleanup(
                 run,
-                koru_delegate_core::decisions::DecisionClosureReason::Expired,
+                // This is the execution budget, not the decision deadline. A
+                // consumed/settled native answer still has a stoppable Run.
+                koru_delegate_core::decisions::DecisionClosureReason::Canceled,
             );
             let observed = self.stop_decision_consumer(run);
             requested?;

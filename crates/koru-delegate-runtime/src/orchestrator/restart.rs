@@ -122,6 +122,31 @@ impl Orchestrator {
         }
         for row in restart_rows {
             let run = row.run;
+            self.restore_publication_owner(run)?;
+            if self.run_publication_pending(run) {
+                // Canonical status is deliberately unavailable during cold
+                // publication. Recover the immutable scope from its retained
+                // admission and keep the claim, including a retired origin
+                // whose decision/cleanup publication is not yet drained.
+                let admission = self
+                    .bot_ledger()?
+                    .bot_admission(run)?
+                    .ok_or_else(crate::publication_pending)?;
+                let state = self.runs.get(&run).ok_or_else(crate::publication_pending)?;
+                if admission.submission.request.run != run
+                    || admission.submission.workspace != state.workspace
+                {
+                    return Err(crate::publication_pending().into());
+                }
+                recorded.push(DurableClaim {
+                    run,
+                    attempt: row.attempt,
+                    scope: admission.submission.request.scope,
+                });
+                liveness.insert(row.attempt, Liveness::Unknown);
+                report.unresolved.push(run);
+                continue;
+            }
             let header = match self.header(run) {
                 Ok(header) => header,
                 Err(error) => {

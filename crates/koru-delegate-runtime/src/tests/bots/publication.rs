@@ -168,7 +168,7 @@ fn decision_stop_cold_retries_retained_cleanup_without_second_mutation() {
 }
 
 #[test]
-fn decision_cleanup_unknown_write_keeps_exact_transition_and_stops_independently() {
+fn decision_cleanup_failed_write_keeps_exact_retry_without_retiring_unfenced_consumer() {
     let (mut h, submission, fence) = waiting();
     h.ledger.lock().unwrap().fail = Some("decision_cleanup_before");
     assert!(
@@ -186,7 +186,7 @@ fn decision_cleanup_unknown_write_keeps_exact_transition_and_stops_independently
         .transition;
     let creation = h.attempt(fence.run).provider_session.unwrap().idempotency;
     assert!(
-        h.sessions
+        !h.sessions
             .lock()
             .unwrap()
             .calls
@@ -198,6 +198,13 @@ fn decision_cleanup_unknown_write_keeps_exact_transition_and_stops_independently
             .is_err()
     );
     assert_eq!(latest(&h, &fence).identity.transition, transition);
+    assert!(
+        h.sessions
+            .lock()
+            .unwrap()
+            .calls
+            .contains(&Call::Retire(creation))
+    );
 }
 
 #[test]
@@ -210,6 +217,14 @@ fn decision_cleanup_lost_commit_reply_recovers_same_transition_after_restart() {
             .is_err()
     );
     let first = latest(&h, &fence);
+    let creation = h.attempt(fence.run).provider_session.unwrap().idempotency;
+    assert!(
+        h.sessions
+            .lock()
+            .unwrap()
+            .calls
+            .contains(&Call::Retire(creation))
+    );
     h.orchestrator.runs.remove(&fence.run);
     assert!(
         h.orchestrator
@@ -225,4 +240,29 @@ fn decision_cleanup_lost_commit_reply_recovers_same_transition_after_restart() {
             .request
             .is_none()
     );
+}
+
+#[test]
+fn decision_cold_restart_keeps_claim_without_ordinary_status_reconciliation() {
+    let (mut h, _, fence) = waiting();
+    h.documents.lock().unwrap().snapshots.clear();
+    let report = h.orchestrator.restart().unwrap();
+    assert!(report.unresolved.contains(&fence.run));
+    assert!(report.claims.kept.contains(&(fence.run, fence.attempt)));
+    assert!(h.orchestrator.run_publication_pending(fence.run));
+    assert!(!h.attempt(fence.run).retired);
+}
+
+#[test]
+fn decision_cleanup_deadline_read_failure_retains_retry_scheduling() {
+    let (mut h, submission, fence) = waiting();
+    assert!(
+        h.orchestrator
+            .bot_stop(&key(&submission), fence.owner.device, Some(&fence))
+            .is_err()
+    );
+    h.ledger.lock().unwrap().fail = Some("bot_execution_read");
+    assert!(h.orchestrator.bot_budget_delay_ms().unwrap().is_some());
+    assert!(h.ledger.lock().unwrap().fail.is_none());
+    assert!(h.orchestrator.bot_budget_runs().contains(&fence.run));
 }

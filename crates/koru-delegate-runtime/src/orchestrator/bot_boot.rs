@@ -248,14 +248,20 @@ impl Orchestrator {
         Ok(())
     }
 
-    /// Before queue draining, release only the at-most-two unused reservations
-    /// proven safe by the writer. Any attempt/unknown evidence retains capacity.
+    /// Recover every retained owner, including released decision waits, before
+    /// queue draining. Only unused reservations proven safe by the writer may
+    /// be released. Held waits remain owned and never enter ordinary cleanup.
     pub fn recover_unused_bot_reservations(&mut self, device: DeviceId) -> Result<(), RunError> {
         if device.as_uuid().is_nil() {
             return Err(refused("bot_owner_mismatch"));
         }
-        let records = self.bot_ledger()?.active_bot_executions(device)?;
-        for record in records {
+        let inventory = self.bot_ledger()?.bot_execution_inventory(device)?;
+        for owned in inventory.owned {
+            let record = owned.execution;
+            self.restore_publication_owner(record.run)?;
+            if self.run_publication_pending(record.run) {
+                continue;
+            }
             if record.state == BotAdmissionState::Reserved {
                 self.bot_ledger()?.recover_bot_reservation(&BotRunKey {
                     owner: record.owner,

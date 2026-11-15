@@ -296,18 +296,14 @@ impl Orchestrator {
         self.retire_decision_consumer(run, owner, execution)
     }
 
-    /// A person-authorized Stop or expired budget may stop the exact retained
-    /// consumer even when its publication request could not fit or its writer
-    /// reply was lost. The observation is not a committed cleanup receipt.
+    /// A lost writer reply cannot suppress a committed cleanup fence. Re-read
+    /// CleanupPending before physical Stop; a rolled-back request is not a
+    /// durable fence against successor admission, input or consumption.
     pub(crate) fn stop_decision_consumer(
         &mut self,
         run: RunId,
     ) -> Result<Option<ObservedCreationRetirement>, RunError> {
-        let owner = self.publication_owner(run)?;
-        let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
-            return Ok(None);
-        };
-        self.retire_decision_consumer(run, owner, execution)
+        self.observe_decision_cleanup(run)
     }
 
     fn retire_decision_consumer(

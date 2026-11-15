@@ -528,8 +528,7 @@ impl Actor {
                 bot_budget_at = self
                     .orchestrator
                     .bot_budget_delay_ms()
-                    .ok()
-                    .flatten()
+                    .unwrap_or(Some(1000))
                     .map(|delay| Instant::now() + Duration::from_millis(delay));
             }
             let wait = [
