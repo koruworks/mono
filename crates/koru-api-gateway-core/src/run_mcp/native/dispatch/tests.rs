@@ -10,6 +10,9 @@ use std::sync::{
 struct Policy {
     evidence: NativePolicyEvidence,
     wakes: AtomicUsize,
+    /// Every decision receipt handed to the AI for its card, in order.
+    recorded: Mutex<Vec<koru_delegate_api::bots::DecisionReceiptView>>,
+    refuse_record: AtomicBool,
 }
 impl PolicySource for Policy {
     fn current(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
@@ -21,6 +24,16 @@ impl PolicySource for Policy {
     }
     fn settled(&self) {
         self.wakes.fetch_add(1, Ordering::SeqCst);
+    }
+    fn record_decision(
+        &self,
+        view: &koru_delegate_api::bots::DecisionReceiptView,
+    ) -> Result<(), ToolFailure> {
+        self.recorded.lock().unwrap().push(view.clone());
+        if self.refuse_record.load(Ordering::SeqCst) {
+            return Err(failure("decision_record_unavailable"));
+        }
+        Ok(())
     }
 }
 #[derive(Default)]
@@ -241,6 +254,8 @@ impl Fixture {
                     },
                 },
                 wakes: AtomicUsize::new(0),
+                recorded: Mutex::new(Vec::new()),
+                refuse_record: AtomicBool::new(false),
             },
             owner: Owner {
                 fence,

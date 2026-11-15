@@ -744,6 +744,9 @@ impl PolicySource for Unavailable {
         Err(failure("native_policy_unavailable"))
     }
     fn settled(&self) {}
+    fn record_decision(&self, _: &DecisionReceiptView) -> Result<(), ToolFailure> {
+        panic!("no decision without a current proof")
+    }
 }
 
 #[test]
@@ -965,4 +968,109 @@ fn creation_and_routine_tools_never_enter_the_edit_decision_path() {
     assert!(created.is_err());
     assert!(!owner.script().log.contains(&"prepare_decision"));
     assert!(!owner.script().log.contains(&"hello"));
+}
+
+fn recorded(f: &Fixture) -> Vec<DecisionReceiptView> {
+    f.policy.recorded.lock().unwrap().clone()
+}
+
+#[test]
+fn a_positive_prepare_records_each_exact_receipt_and_a_replay_records_the_same_one() {
+    let f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    owner.script().acknowledge_after = 2;
+    assert_eq!(
+        edit(&f, &owner, arguments.clone()).unwrap_err().code,
+        "permission_pending"
+    );
+    // The fresh reply and both replays each passed the point once.
+    let first = recorded(&f);
+    assert_eq!(first.len(), 3);
+    let current = owner.script().view.clone().unwrap();
+    assert!(
+        first
+            .iter()
+            .all(|view| view.receipt.decision == current.receipt.decision
+                && view.receipt.binding == current.receipt.binding)
+    );
+    assert_eq!(first[0].receipt.state.phase, DecisionPhase::Publishing);
+    assert_eq!(first.last(), Some(&current), "the exact receipt answered");
+    // The exact retry's replay records the same receipt again.
+    owner.script().publication_pending = true;
+    assert_eq!(
+        edit(&f, &owner, arguments).unwrap_err().code,
+        "permission_pending"
+    );
+    let after = recorded(&f);
+    assert_eq!(after.len(), 4);
+    assert_eq!(after[3], owner.script().view.clone().unwrap());
+}
+
+#[test]
+fn a_refused_or_unknown_prepare_records_nothing() {
+    // A typed refusal: the ordinary path answers; nothing positive existed.
+    let f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    {
+        let mut s = owner.script();
+        s.refuse_fresh = Some("bot_fenced");
+        s.ordinary_refusal = true;
+    }
+    assert!(edit(&f, &owner, arguments).is_err());
+    assert!(recorded(&f).is_empty());
+    // A lost reply after commit: unknown, and no receipt was seen.
+    let f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    owner.script().lose_created_reply = true;
+    assert_eq!(
+        edit(&f, &owner, arguments.clone()).unwrap_err().code,
+        "decision_status_unknown"
+    );
+    assert!(recorded(&f).is_empty());
+    // Another operation while that decision owns the Run: in progress.
+    owner.script().publication_pending = true;
+    let before = {
+        assert_eq!(
+            edit(&f, &owner, arguments.clone()).unwrap_err().code,
+            "permission_pending"
+        );
+        recorded(&f).len()
+    };
+    let mut other = arguments;
+    other["operation_id"] = json!(Uuid::new_v4());
+    other["operations"][0]["text"] = json!("Other work");
+    assert_eq!(
+        edit(&f, &owner, other).unwrap_err().code,
+        "decision_in_progress"
+    );
+    assert_eq!(recorded(&f).len(), before);
+}
+
+#[test]
+fn a_failed_record_never_changes_the_decision_answer_and_the_next_replay_records_again() {
+    let f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    f.policy.refuse_record.store(true, Ordering::SeqCst);
+    let answer = edit(&f, &owner, arguments.clone()).unwrap_err();
+    assert_eq!(
+        answer.code, "permission_pending",
+        "still the positive answer"
+    );
+    let attempts = recorded(&f).len();
+    assert!(attempts > 0, "the record was attempted");
+    // The AI can take it now: the exact retry's replay records it.
+    f.policy.refuse_record.store(false, Ordering::SeqCst);
+    owner.script().publication_pending = true;
+    assert_eq!(
+        edit(&f, &owner, arguments).unwrap_err().code,
+        "permission_pending"
+    );
+    let after = recorded(&f);
+    assert_eq!(after.len(), attempts + 1);
+    assert_eq!(after.last(), owner.script().view.as_ref());
+    assert_eq!(owner.script().created, 1);
 }

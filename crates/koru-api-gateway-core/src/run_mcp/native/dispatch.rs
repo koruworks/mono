@@ -30,6 +30,13 @@ trait PolicySource {
     ) -> Result<(), ToolFailure> {
         Ok(())
     }
+    /// Hand the AI the exact positive decision receipt the owner answered,
+    /// so its card can name the binding, human and revision. History only:
+    /// it grants nothing, and a failure never changes the tool's answer.
+    fn record_decision(
+        &self,
+        view: &koru_delegate_api::bots::DecisionReceiptView,
+    ) -> Result<(), ToolFailure>;
 }
 impl PolicySource for AiWorkerClient {
     fn current(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
@@ -48,6 +55,13 @@ impl PolicySource for AiWorkerClient {
         self.reconcile_native_operation(owner, bot, key)
             .map(|_| ())
             .map_err(|_| failure("native_recovery_pending"))
+    }
+    fn record_decision(
+        &self,
+        view: &koru_delegate_api::bots::DecisionReceiptView,
+    ) -> Result<(), ToolFailure> {
+        self.record_bot_decision(view.clone())
+            .map_err(|_| failure("decision_record_unavailable"))
     }
 }
 pub(super) fn failure(code: &'static str) -> ToolFailure {
@@ -309,6 +323,7 @@ fn invoke(
             &edit,
             &current.proof,
             pacing,
+            &|view| policy.record_decision(view),
             || {
                 synchronized = true;
                 fresh_fence(port, &current.proof, &fence, &captured)

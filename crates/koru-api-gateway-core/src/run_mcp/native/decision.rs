@@ -176,6 +176,7 @@ pub(super) fn decide(
     edit: &DeniedEdit<'_>,
     proof: &FreshBotPolicyProof,
     pacing: DecisionPacing,
+    record: &dyn Fn(&DecisionReceiptView) -> Result<(), ToolFailure>,
     fresh: impl FnOnce() -> Result<(), ToolFailure>,
 ) -> Result<DecisionOutcome, ToolFailure> {
     let Some(boot) = probe_boot(port, owner) else {
@@ -190,7 +191,7 @@ pub(super) fn decide(
         other => other,
     };
     match first {
-        Sent::Decision(view) => answer(port, edit, proof, boot, pacing, view),
+        Sent::Decision(view) => answer(port, edit, proof, boot, pacing, record, view),
         Sent::Refused => Ok(DecisionOutcome::Ordinary),
         Sent::Owned => Err(in_progress(edit.key)),
         Sent::Conflict => Err(failure("native_operation_conflict")),
@@ -251,6 +252,7 @@ fn answer(
     proof: &FreshBotPolicyProof,
     boot: DelegateBootId,
     pacing: DecisionPacing,
+    record: &dyn Fn(&DecisionReceiptView) -> Result<(), ToolFailure>,
     mut view: Box<DecisionReceiptView>,
 ) -> Result<DecisionOutcome, ToolFailure> {
     let mut delay = pacing.first;
@@ -258,10 +260,17 @@ fn answer(
         if !same_edit(&view, edit) {
             return Err(failure("native_operation_conflict"));
         }
-        // Every positive, validated receipt of this exact edit passes here
-        // (the fresh reply on the first pass, each replay after). INTEGRATION
-        // (AI owner's `AiWorkerClient::record_bot_decision`, not on this
-        // base): hand `(*view).clone()` to the AI here, before any answer.
+        // Every positive, validated receipt of this exact edit (the fresh
+        // reply on the first pass, each replay after) goes to the AI for its
+        // card before any answer. A failure is history the next replay
+        // records again; it never turns a positive decision into a refusal
+        // or an unknown (the card answers "no longer active" meanwhile).
+        if let Err(error) = record(&view) {
+            tracing::warn!(
+                code = %error.code,
+                "the decision receipt was not recorded for its card; continuing"
+            );
+        }
         if consumer(&view, edit.fence) {
             return Ok(DecisionOutcome::Consume { view, boot });
         }
