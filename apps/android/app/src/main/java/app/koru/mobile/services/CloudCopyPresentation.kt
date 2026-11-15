@@ -7,6 +7,7 @@ import app.koru.mobile.domain.BlockId
 import app.koru.mobile.ui.editor.CloudCopyPhase
 import app.koru.mobile.ui.editor.CloudCopyViewKey
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
@@ -35,18 +36,47 @@ internal class CloudCopyPresentation(
     private var foreground = false
     private var sequence = 0L
     private var epoch = 0L
-    private data class Pending(val key: CloudCopyViewKey, val generation: Long, val node: BlockId?)
-    private var pending: Pending? = null
-    private var timeout: Job? = null
-
-    private suspend fun retire() {
-        timeout?.cancel(); timeout = null
-        val old = pending; pending = null
-        if (old != null) try { cancel(old.key.ownerScope, old.generation) }
-        catch (error: CancellationException) { throw error }
-        catch (_: Exception) { /* Native owns its bounded cancellation and retention. */ }
+    // This lease survives view retirement and late admission. At most one
+    // transport admission/cancellation can exist, even if JNI never returns.
+    private class Operation(val key: CloudCopyViewKey, val node: BlockId?) {
+        var generation: Long? = null
+        var retired = false
+        var cancelling = false
+        var cancellationFinished = false
+        var drained = false
     }
-    private suspend fun align(next: AndroidAccountStatus) {
+    private var pending: Operation? = null
+    private var timeout: Job? = null
+    private val refreshes = Channel<Unit>(Channel.CONFLATED)
+    init {
+        scope.launch {
+            for (ignored in refreshes) try { refreshUsage() }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { /* Authoritative presenters retain unavailable state. */ }
+        }
+    }
+
+    private fun retire() {
+        timeout?.cancel(); timeout = null
+        pending?.let { it.retired = true; cancelRetired(it) }
+    }
+    private fun cancelRetired(operation: Operation) {
+        val generation = operation.generation ?: return
+        if (!operation.retired || operation.cancelling) return
+        operation.cancelling = true
+        scope.launch {
+            try { cancel(operation.key.ownerScope, generation) }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { /* The terminal operation result can still establish drainage. */ }
+            lock.withLock {
+                operation.cancellationFinished = true
+                // A Cancel acknowledgement alone does not prove the original
+                // operation drained. Keep one lease until its terminal result.
+                if (operation.drained && pending === operation) pending = null
+            }
+        }
+    }
+    private fun align(next: AndroidAccountStatus) {
         if (status.activeScope != next.activeScope || status.activeAccountId != next.activeAccountId ||
             next.worker.stage != "signed_in") {
             retire(); mutableState.value = CloudCopyState()
@@ -60,6 +90,7 @@ internal class CloudCopyPresentation(
         retire()
         epoch += 1
         val key = CloudCopyViewKey(next.activeScope, epoch, selection)
+        if (pending != null) { mutableState.value = CloudCopyState(key); return@withLock }
         mutableState.value = CloudCopyState(key, CloudCopyPhase.Loading)
         request(key, null)
     }
@@ -81,17 +112,38 @@ internal class CloudCopyPresentation(
         mutableState.value = current.copy(phase = CloudCopyPhase.Removing)
         request(key, node)
     }
-    private suspend fun request(key: CloudCopyViewKey, node: BlockId?) {
-        val reply = try { command(key.ownerScope, key.selection, node) }
-        catch (error: CancellationException) { throw error }
-        catch (_: Exception) { fail(node); return }
-        if (reply.hasErrorCode() || reply.generation == 0L) { fail(node); return }
-        val operation = Pending(key, reply.generation, node)
+    private fun request(key: CloudCopyViewKey, node: BlockId?) {
+        check(pending == null)
+        val operation = Operation(key, node)
         pending = operation
+        scope.launch {
+            val reply = try { command(key.ownerScope, key.selection, node) }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { null }
+            lock.withLock {
+                if (pending !== operation) return@withLock
+                if (reply == null) {
+                    // Admission may have reached native without a reply. Keep
+                    // the lease quarantined rather than guessing it vanished.
+                    operation.retired = true
+                    timeout?.cancel(); timeout = null
+                    if (mutableState.value.key == key) fail(node)
+                } else if (reply.hasErrorCode() || reply.generation == 0L) {
+                    pending = null; timeout?.cancel(); timeout = null
+                    if (!operation.retired && mutableState.value.key == key) fail(node)
+                } else {
+                    operation.generation = reply.generation
+                    cancelRetired(operation)
+                }
+            }
+        }
         timeout = scope.launch {
             delay(30_000)
             lock.withLock {
-                if (pending == operation) { timeout = null; retire(); fail(node) }
+                if (pending === operation) {
+                    timeout = null; retire()
+                    if (mutableState.value.key == key) fail(node)
+                }
             }
         }
     }
@@ -113,7 +165,13 @@ internal class CloudCopyPresentation(
                 result.generation != operation.generation) continue
             val removal = operation.node != null
             if (result.kind != if (removal) "cloud_file_removal" else "cloud_document_inspection") continue
-            timeout?.cancel(); timeout = null; pending = null
+            timeout?.cancel(); timeout = null
+            if (operation.retired) {
+                operation.drained = true
+                if (!operation.cancelling || operation.cancellationFinished) pending = null
+                continue
+            }
+            pending = null
             val selection = result.cloudDocumentSelectionJson.takeIf { result.hasCloudDocumentSelectionJson() }
             if (selection == null || CloudCopySelection.decode(selection) != operation.key.selection ||
                 (removal && (!result.hasCloudFileNodeId() || result.cloudFileNodeId != operation.node?.value))) {
@@ -129,7 +187,7 @@ internal class CloudCopyPresentation(
                     fail(operation.node); continue
                 }
                 mutableState.value = CloudCopyState(operation.key, CloudCopyPhase.Acknowledged)
-                refreshUsage()
+                refreshes.trySend(Unit)
             } else {
                 val copy = if (!result.cloudFileRemoved && !result.hasCloudFileNodeId() && result.hasCloudDocumentInspectionJson())
                     CloudDocumentCopyDecoder.decode(result.cloudDocumentInspectionJson, operation.key.selection) else null

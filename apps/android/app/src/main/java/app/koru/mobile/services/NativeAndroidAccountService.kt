@@ -65,7 +65,10 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         command = { owner, selection, node -> adapter.command(
             if (node == null) AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT else AccountAction.ACCOUNT_ACTION_REMOVE_CLOUD_FILE,
             expectedOwnerScope = owner, cloudDocumentSelection = selection, cloudFileNodeId = node?.value) },
-        cancel = { owner, generation -> adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation, expectedOwnerScope = owner) },
+        cancel = { owner, generation ->
+            val reply = adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation, expectedOwnerScope = owner)
+            check(!reply.hasErrorCode())
+        },
         refreshUsage = {
             cloudStorage.usageChanged(adapter.status.value)
             cloudInventory.workspaces(adapter.status.value.activeScope)

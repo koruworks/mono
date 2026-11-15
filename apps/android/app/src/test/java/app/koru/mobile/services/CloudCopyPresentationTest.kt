@@ -35,11 +35,14 @@ class CloudCopyPresentationTest {
         val cancellations = mutableListOf<Pair<Long, Long>>()
         var refreshes = 0
         var admission: CompletableDeferred<Unit>? = null
+        var cancellation: CompletableDeferred<Unit>? = null
+        var refresh: CompletableDeferred<Unit>? = null
     }
     private fun TestScope.presenter(calls: Calls) = CloudCopyPresentation(backgroundScope,
         command = { _, _, node -> calls.nodes += node; calls.admission?.await(); AccountCommandReply.newBuilder().setGeneration(calls.next++).build() },
-        cancel = { owner, generation -> calls.cancellations += owner to generation }, refreshUsage = { calls.refreshes++ })
-    private suspend fun CloudCopyPresentation.enter() { foreground(true, status()); open(selection, status()) }
+        cancel = { owner, generation -> calls.cancellations += owner to generation; calls.cancellation?.await() },
+        refreshUsage = { calls.refreshes++; calls.refresh?.await() })
+    private suspend fun TestScope.enter(state: CloudCopyPresentation) { state.foreground(true, status()); state.open(selection, status()); runCurrent() }
     private fun result(sequence: Long, generation: Long, removal: Boolean = false,
                        selected: CloudCopySelection = selection, owner: Long = 1, failure: String? = null,
                        removed: Boolean = true) = MobileAccountResult.newBuilder()
@@ -52,25 +55,25 @@ class CloudCopyPresentationTest {
         }.build()
 
     @Test fun onlyExactInspectionEnablesOneConfirmedFileCommandAndOnlyAckRefreshesUsage() = runTest {
-        val calls = Calls(); val state = presenter(calls); state.enter()
+        val calls = Calls(); val state = presenter(calls); enter(state)
         val key = state.state.value.key!!
         state.observe(status().copy(generation = 10), listOf(result(1, 10)))
         assertEquals(CloudCopyPhase.Verified, state.state.value.phase)
         state.remove(key, BlockId(id(99)))
         assertEquals(1, calls.nodes.size)
-        state.remove(key, node); state.remove(key, node)
+        state.remove(key, node); state.remove(key, node); runCurrent()
         assertEquals(listOf(null, node), calls.nodes)
         assertEquals(0, calls.refreshes)
-        state.observe(status(), listOf(result(2, 11, removal = true)))
+        state.observe(status(), listOf(result(2, 11, removal = true))); runCurrent()
         assertEquals(CloudCopyPhase.Acknowledged, state.state.value.phase)
         assertNull(state.state.value.copy)
         assertEquals(1, calls.refreshes)
-        state.observe(status(), listOf(result(2, 11, removal = true)))
+        state.observe(status(), listOf(result(2, 11, removal = true))); runCurrent()
         assertEquals(1, calls.refreshes)
     }
     @Test fun accountSwitchCancelsOriginalOwnerAndLateContentCannotReappear() = runTest {
-        val calls = Calls(); val state = presenter(calls); state.enter()
-        state.observe(status(2, id(20)), listOf(result(1, 10)))
+        val calls = Calls(); val state = presenter(calls); enter(state)
+        state.observe(status(2, id(20)), listOf(result(1, 10))); runCurrent()
         assertEquals(listOf(1L to 10L), calls.cancellations)
         assertNull(state.state.value.key)
         assertNull(state.state.value.forAccount(1, id(1)).copy)
@@ -83,12 +86,50 @@ class CloudCopyPresentationTest {
         state.foreground(true, status())
         val opening = launch { state.open(selection, status()) }; runCurrent()
         val switching = launch { state.observe(status(2, id(20)), emptyList()) }; runCurrent()
-        calls.admission!!.complete(Unit); opening.join(); switching.join()
+        assertTrue(opening.isCompleted)
+        assertTrue(switching.isCompleted)
+        assertNull(state.state.value.key)
+        calls.admission!!.complete(Unit); runCurrent(); opening.join(); switching.join()
         assertEquals(listOf(1L to 10L), calls.cancellations)
         assertNull(state.state.value.key)
     }
+    @Test fun closeAndBackgroundAreImmediateWhileAdmissionAndCancellationRemainBounded() = runTest {
+        val calls = Calls(); calls.admission = CompletableDeferred(); calls.cancellation = CompletableDeferred()
+        val state = presenter(calls); enter(state)
+        state.close()
+        assertNull(state.state.value.key)
+        repeat(100) { state.open(selection, status()); state.close() }
+        state.foreground(false, status())
+        state.observe(status(2, id(20)), emptyList())
+        assertNull(state.state.value.key)
+        assertEquals(1, calls.nodes.size)
+        calls.admission!!.complete(Unit); runCurrent()
+        assertEquals(listOf(1L to 10L), calls.cancellations)
+        state.foreground(true, status())
+        repeat(100) { state.open(selection, status()); state.close() }
+        runCurrent()
+        assertEquals(1, calls.nodes.size)
+        calls.cancellation!!.complete(Unit); runCurrent()
+        state.open(selection, status()); runCurrent()
+        assertEquals(1, calls.nodes.size)
+        state.observe(status(), listOf(result(1, 10, failure = "cloud_document_unavailable")))
+        state.open(selection, status()); runCurrent()
+        assertEquals(2, calls.nodes.size)
+        assertEquals(CloudCopyPhase.Loading, state.state.value.phase)
+    }
+    @Test fun acknowledgementRefreshCannotBlockClosingOrAccountInvalidation() = runTest {
+        val calls = Calls(); calls.refresh = CompletableDeferred()
+        val state = presenter(calls); enter(state)
+        state.observe(status(), listOf(result(1, 10)))
+        state.remove(state.state.value.key!!, node); runCurrent()
+        state.observe(status(), listOf(result(2, 11, removal = true))); runCurrent()
+        assertEquals(1, calls.refreshes)
+        state.close(); state.observe(status(2, id(20)), emptyList())
+        assertNull(state.state.value.key)
+        calls.refresh!!.complete(Unit)
+    }
     @Test fun sameAccountLogoutAndLoginDiscardVerifiedContent() = runTest {
-        val calls = Calls(); val state = presenter(calls); state.enter()
+        val calls = Calls(); val state = presenter(calls); enter(state)
         state.observe(status(), listOf(result(1, 10)))
         val old = state.state.value.key!!
         state.observe(status().copy(worker = AccountDiagnostics(stage = "signed_out")), emptyList())
@@ -100,29 +141,30 @@ class CloudCopyPresentationTest {
         assertNotEquals(old, state.state.value.key)
     }
     @Test fun timeoutBackgroundAndResultLossNeverAutomaticallyRetryRemoval() = runTest {
-        val calls = Calls(); val state = presenter(calls); state.enter()
+        val calls = Calls(); val state = presenter(calls); enter(state)
         state.observe(status(), listOf(result(1, 10)))
-        state.remove(state.state.value.key!!, node)
+        state.remove(state.state.value.key!!, node); runCurrent()
         advanceTimeBy(30_001); runCurrent()
         assertEquals(CloudCopyPhase.OutcomeUnknown, state.state.value.phase)
         assertEquals(listOf(1L to 11L), calls.cancellations)
-        state.remove(state.state.value.key!!, node)
+        state.remove(state.state.value.key!!, node); runCurrent()
         state.foreground(false, status()); state.foreground(true, status())
         advanceTimeBy(60_000); runCurrent()
         assertEquals(2, calls.nodes.size)
         assertEquals(0, calls.refreshes)
-        state.open(selection, status()); state.observe(status(), listOf(result(2, 12)))
-        state.remove(state.state.value.key!!, node)
-        state.observe(status().copy(resultsLost = true), emptyList())
+        state.observe(status(), listOf(result(2, 11, removal = true, failure = "cloud_edit_outcome_unknown")))
+        state.open(selection, status()); runCurrent(); state.observe(status(), listOf(result(3, 12)))
+        state.remove(state.state.value.key!!, node); runCurrent()
+        state.observe(status().copy(resultsLost = true), emptyList()); runCurrent()
         assertEquals(CloudCopyPhase.OutcomeUnknown, state.state.value.phase)
         assertNull(state.state.value.copy)
     }
     @Test fun wrongSelectorAndMixedSuccessNeverCountAsAcknowledgement() = runTest {
-        val calls = Calls(); val state = presenter(calls); state.enter()
+        val calls = Calls(); val state = presenter(calls); enter(state)
         state.observe(status(), listOf(result(1, 10, selected = selection.copy(cloudUnitId = id(99)))))
         assertEquals(CloudCopyPhase.Unavailable, state.state.value.phase)
-        state.open(selection, status()); state.observe(status(), listOf(result(2, 11)))
-        state.remove(state.state.value.key!!, node)
+        state.open(selection, status()); runCurrent(); state.observe(status(), listOf(result(2, 11)))
+        state.remove(state.state.value.key!!, node); runCurrent()
         val mixed = result(3, 12, removal = true).toBuilder().setErrorCode("cloud_document_unavailable").build()
         state.observe(status(), listOf(mixed))
         assertEquals(CloudCopyPhase.OutcomeUnknown, state.state.value.phase)
