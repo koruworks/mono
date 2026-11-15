@@ -68,6 +68,7 @@ fn routine_detail_fixed_next_refuses_extreme_horizon() {
         .unwrap();
     // The owning cron explorer starts its year domain at1970. Preserve that
     // horizon rather than inventing a pre-epoch occurrence in this wrapper.
+    assert_eq!(next.instant_ms(), 0);
     assert_eq!(
         next,
         zoned("*/1 * * * *", "UTC")
