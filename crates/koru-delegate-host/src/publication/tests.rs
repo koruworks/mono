@@ -633,3 +633,106 @@ fn enrollment_without_a_client_is_unavailable_never_a_reply() {
     assert!(matches!(&answer, Err(error) if error.code == "decision_enrollment_unavailable"));
     assert!(shutdown_bounded(worker).is_empty());
 }
+
+/// Scripted host client that answers every request for its own key.
+struct Echo {
+    calls: Arc<AtomicUsize>,
+}
+impl DecisionEnrollmentBridge for Echo {
+    fn enroll(&mut self, request: &EnrollBotWaitCleanup) -> PortResult<BotWaitEnrollmentReply> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        Ok(enrolled(request))
+    }
+}
+
+/// One actor maintenance turn for one Run: ask the mailbox; when that turn
+/// started a job, wait (bounded) for its physical completion before the next
+/// turn so the schedule is deterministic.
+fn turn(
+    worker: &mut PublicationWorker,
+    wake: &Receiver<()>,
+    request: &EnrollBotWaitCleanup,
+) -> Option<BotWaitEnrollmentReply> {
+    let started = worker.enrollment.active.is_none();
+    let answer = EnrollmentMailbox::new(worker).enroll(request);
+    if started && worker.enrollment.active.is_some() {
+        wake.recv_timeout(Duration::from_secs(5))
+            .expect("bounded enrollment completion");
+    }
+    match answer {
+        Ok(reply) => Some(reply),
+        Err(error) => {
+            assert_eq!(error.code, "decision_enrollment_pending");
+            None
+        }
+    }
+}
+
+fn echo_worker() -> (PublicationWorker, Receiver<()>, Arc<AtomicUsize>) {
+    let (send, wake) = mpsc::channel();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let worker = PublicationWorker::start_with_enrollment(
+        move || {
+            let _ = send.send(());
+        },
+        Box::new(Echo {
+            calls: calls.clone(),
+        }),
+    )
+    .unwrap();
+    (worker, wake, calls)
+}
+
+#[test]
+fn three_runs_waiting_at_once_all_enroll_under_one_run_per_turn_rotation() {
+    let (mut worker, wake, calls) = echo_worker();
+    let runs = [
+        enrollment_request(),
+        enrollment_request(),
+        enrollment_request(),
+    ];
+    let mut enrolled_at = [None; 3];
+    // The actor visits one Run per turn in rotation; an enrolled Run's driver
+    // no longer asks the mailbox.
+    for step in 0..12 {
+        let index = step % runs.len();
+        if enrolled_at[index].is_some() {
+            continue;
+        }
+        if let Some(reply) = turn(&mut worker, &wake, &runs[index]) {
+            assert_eq!(reply, enrolled(&runs[index]), "only its own reply");
+            enrolled_at[index] = Some(step);
+        }
+    }
+    assert!(enrolled_at.iter().all(Option::is_some), "{enrolled_at:?}");
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "each request sent once");
+    assert!(shutdown_bounded(worker).is_empty());
+}
+
+#[test]
+fn a_reply_whose_owner_never_returns_is_discarded_after_one_rotation() {
+    let (mut worker, wake, calls) = echo_worker();
+    let gone = enrollment_request();
+    let runs = [enrollment_request(), enrollment_request()];
+    // The first Run sends, then its wait disappears from the rotation.
+    assert!(turn(&mut worker, &wake, &gone).is_none());
+    let mut enrolled_at = [None; 2];
+    for step in 0..8 {
+        let index = step % runs.len();
+        if enrolled_at[index].is_some() {
+            continue;
+        }
+        if let Some(reply) = turn(&mut worker, &wake, &runs[index]) {
+            assert_eq!(reply, enrolled(&runs[index]));
+            enrolled_at[index] = Some(step);
+        }
+    }
+    assert!(enrolled_at.iter().all(Option::is_some), "{enrolled_at:?}");
+    // The abandoned reply was discarded, never handed to anyone else.
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert!(
+        turn(&mut worker, &wake, &gone).is_none(),
+        "it must ask again"
+    );
+    assert!(shutdown_bounded(worker).is_empty());
+}

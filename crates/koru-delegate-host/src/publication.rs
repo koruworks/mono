@@ -107,25 +107,38 @@ pub(crate) struct PublicationWorker {
     enrollment: EnrollmentSlot,
 }
 
-/// The enrollment half of the single ticket. `active` is the key of the one
-/// job physically in flight: only its reply frees it, never a caller's
-/// timeout. `returned` holds a finished reply until its own key claims it.
+/// The enrollment half of the single ticket.
+///
+/// Invariant (liveness under one-Run-per-turn rotation): at most one job is
+/// in flight (`active`, freed only by its physical reply, never a caller's
+/// timeout) and at most one finished reply is retained (`returned`). While a
+/// reply is retained no new job starts, and it is handed only to its own key.
+/// It is discarded only when a key that already missed it asks again, i.e.
+/// after every other waiting Run has had its turn since the reply came back
+/// (a full rotation), or after `MAX_MISSED_KEYS` distinct keys missed it. Its
+/// owner is therefore served whenever it is still waiting, and a reply whose
+/// owner never returns blocks the others for at most one rotation; the
+/// discarding key's own job then starts. A discarded owner resends the same
+/// request and C replays the exact retained enrollment.
 pub(crate) struct EnrollmentSlot {
     replies: Receiver<EnrollmentReply>,
     active: Option<BotWaitEnrollmentKey>,
     returned: Option<EnrollmentReply>,
-    /// Claims by another key since `returned` arrived. A reply nobody claims
-    /// within one further attempt is discarded; its owner resends the same
-    /// request and C replays the exact retained enrollment.
-    misses: u8,
+    /// The other keys that asked since `returned` came back, in order.
+    missed: Vec<BotWaitEnrollmentKey>,
 }
+
+/// Bounds the miss record. It exceeds the most open decision waits a device
+/// can hold (50 released plus 2 occupied), so it never cuts a rotation short.
+const MAX_MISSED_KEYS: usize = 64;
+
 impl EnrollmentSlot {
     fn new(replies: Receiver<EnrollmentReply>) -> Self {
         Self {
             replies,
             active: None,
             returned: None,
-            misses: 0,
+            missed: Vec::new(),
         }
     }
 }
@@ -234,7 +247,7 @@ impl PublicationWorker {
             Ok(reply) => {
                 self.enrollment.active = None;
                 self.enrollment.returned = Some(reply);
-                self.enrollment.misses = 0;
+                self.enrollment.missed.clear();
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
@@ -242,7 +255,7 @@ impl PublicationWorker {
                 // unknown, never a reply.
                 if let Some(key) = self.enrollment.active.take() {
                     self.enrollment.returned = Some((key, Err(enrollment_lost())));
-                    self.enrollment.misses = 0;
+                    self.enrollment.missed.clear();
                 }
             }
         }
@@ -260,14 +273,20 @@ impl PublicationWorker {
         if let Some((key, _)) = &self.enrollment.returned {
             if *key == request.key {
                 let (_, result) = self.enrollment.returned.take().expect("matched above");
+                self.enrollment.missed.clear();
                 return result;
             }
-            if self.enrollment.misses == 0 {
-                self.enrollment.misses = 1;
+            let rotated = self.enrollment.missed.contains(&request.key)
+                || self.enrollment.missed.len() >= MAX_MISSED_KEYS;
+            if !rotated {
+                // Held for its owner: no new job starts meanwhile.
+                self.enrollment.missed.push(request.key.clone());
                 return Err(enrollment_pending());
             }
+            // A full rotation passed without its owner: discard it and serve
+            // this key below.
             self.enrollment.returned = None;
-            self.enrollment.misses = 0;
+            self.enrollment.missed.clear();
         }
         if self.enrollment.active.is_some() || self.ticket.is_some() || self.waiting {
             return Err(enrollment_pending());
