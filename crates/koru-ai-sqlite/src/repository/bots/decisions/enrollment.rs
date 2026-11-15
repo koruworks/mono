@@ -108,7 +108,8 @@ fn subject_on(
     if !bounded {
         return Err(BotError::Storage);
     }
-    let replay = crate::repository::bot_replay::replay_on(conn, attempt).map_err(bad)?;
+    let replay =
+        crate::repository::bot_replay::replay_on(conn, attempt).map_err(|_| BotError::Storage)?;
     let fence = replay.fence.as_ref().ok_or(BotError::Storage)?;
     if fence.owner != key.owner || fence.bot != key.bot || fence.run != key.run {
         return Err(BotError::Conflict);

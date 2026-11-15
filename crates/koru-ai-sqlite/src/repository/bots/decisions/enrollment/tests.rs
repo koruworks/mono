@@ -273,7 +273,7 @@ fn enrollment_fresh_fence_ordinary_stop_and_ineligible_observation_refuse_atomic
 
 #[test]
 fn enrollment_missing_requires_validated_retained_subject() {
-    let (mut repo, owner, request, _, attempt) = fixture();
+    let (repo, owner, request, _, attempt) = fixture();
     let read = ReadBotWaitCleanup {
         key: request.key.clone(),
     };
