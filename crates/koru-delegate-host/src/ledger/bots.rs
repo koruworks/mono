@@ -7,6 +7,20 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn read_bot_decision_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: koru_delegate_core::decisions::BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_core::decisions::BotDecisionWaitObservation>, BotLedgerError>
+    {
+        self.0
+            .lock()
+            .unwrap()
+            .read_bot_decision_wait(owner, bot, run, wait, decision)
+    }
     fn decision_cleanup_ownership(
         &self,
         owner: BotOwner,

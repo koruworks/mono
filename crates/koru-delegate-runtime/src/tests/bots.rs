@@ -12,6 +12,20 @@ use koru_delegate_core::decisions::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn read_bot_decision_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: koru_delegate_core::decisions::BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_core::decisions::BotDecisionWaitObservation>, BotLedgerError>
+    {
+        self.inner
+            .lock()
+            .unwrap()
+            .read_bot_decision_wait(owner, bot, run, wait, decision)
+    }
     fn decision_cleanup_ownership(
         &self,
         owner: BotOwner,
