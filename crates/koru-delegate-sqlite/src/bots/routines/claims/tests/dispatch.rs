@@ -375,6 +375,11 @@ fn routine_dispatch_scalar_projection_is_not_json_downgrade_authority() {
             .unwrap();
         let route = super::super::super::tests::route(&s);
         super::super::super::tests::routine(&mut s, &route);
+        if malformed {
+            f.db.conn()
+                .execute_batch("PRAGMA ignore_check_constraints=ON")
+                .unwrap();
+        }
         let payload = if malformed {
             "not JSON".to_owned()
         } else {
