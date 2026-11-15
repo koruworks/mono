@@ -3839,7 +3839,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2586] = [
+    pub const ALL: [Key; 2597] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
