@@ -89,9 +89,6 @@ impl Orchestrator {
             return Err(refused("bot_turn_stale"));
         }
         if controls {
-            if !initial_replay {
-                self.bot_execution_policy(fence.run)?;
-            }
             if !attempt.holds_lease
                 || attempt.release_owed
                 || (attempt.recovered_unowned_turn.is_some()
@@ -105,6 +102,9 @@ impl Orchestrator {
                     && status.control() != Some(ControlState::Orchestrator))
             {
                 return Err(refused("bot_controller_required"));
+            }
+            if !initial_replay {
+                self.bot_execution_policy(fence.run)?;
             }
             if record.active_elapsed_at(self.ports.clock.now_ms()) >= BOT_ACTIVE_BUDGET_MS {
                 return Err(refused("bot_budget_exhausted"));
