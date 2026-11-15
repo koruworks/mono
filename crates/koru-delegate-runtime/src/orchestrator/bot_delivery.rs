@@ -55,7 +55,8 @@ impl Orchestrator {
         let turn = if send.attempt == row.attempt && send.generation == row.generation {
             send.turn.ok_or_else(|| refused("bot_fenced"))?
         } else {
-            self.runs
+            let mirrored = self
+                .runs
                 .get(&key.run)
                 .and_then(|state| state.attempt.as_ref())
                 .filter(|attempt| {
@@ -63,8 +64,14 @@ impl Orchestrator {
                         && attempt.generation == row.generation
                         && attempt.session == Some(session)
                 })
-                .and_then(|attempt| attempt.resume_turn)
-                .ok_or_else(|| refused("bot_fenced"))?
+                .and_then(|attempt| attempt.resume_turn);
+            match mirrored {
+                Some(turn) => turn,
+                // After a restart or settlement: the durable acknowledgment.
+                None => self
+                    .decision_resume_turn(key.run, row.attempt, row.generation, session)?
+                    .ok_or_else(|| refused("bot_fenced"))?,
+            }
         };
         let header = self.header(key.run)?;
         let bot = header.bot.as_ref().ok_or_else(|| refused("bot_fenced"))?;

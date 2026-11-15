@@ -109,12 +109,30 @@ impl Orchestrator {
         {
             return Err(refused("bot_fenced"));
         }
-        let current = attempt
+        let mut current = attempt
             .orchestrator_turn
             .or_else(|| recorded_input_turn(record.initial_send.as_ref(), attempt));
+        let successor = record
+            .initial_send
+            .as_ref()
+            .is_some_and(|send| send.attempt != fence.attempt || send.generation != fence.generation);
+        if current.is_none() && successor {
+            // Working memory lost the successor's turn (a restart): only C's
+            // durable acknowledgment for this exact consumer restores it.
+            current =
+                self.decision_resume_turn(fence.run, fence.attempt, fence.generation, fence.session)?;
+            if let Some(memory) = self.open(fence.run)?.attempt.as_mut() {
+                memory.resume_turn = current;
+            }
+        }
         if exact_turn && fence.turn != current {
             return Err(refused("bot_turn_stale"));
         }
+        let attempt = self
+            .open(fence.run)?
+            .attempt
+            .as_ref()
+            .ok_or_else(|| refused("bot_fenced"))?;
         if controls {
             if !attempt.holds_lease
                 || attempt.release_owed
