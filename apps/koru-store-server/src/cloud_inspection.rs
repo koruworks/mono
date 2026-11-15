@@ -187,7 +187,7 @@ fn models(
         }
         for (id, _) in walk {
             actual.push(id);
-            let node = model.read(id).map_err(|_| bad)?;
+            let node = model.attachment_context(id).map_err(|_| bad)?;
             koru_core::Node::new(node.kind, node.content.clone()).map_err(|_| bad)?;
         }
         models.push(model);
@@ -212,13 +212,16 @@ fn hashes(model: &WorkspaceDoc) -> Result<BTreeSet<String>, CloudDocumentFailure
         })
         .collect()
 }
-fn eligible(model: &WorkspaceDoc, id: NodeId) -> bool {
-    model.read(id).is_ok_and(|node| {
-        matches!(node.kind, Kind::File | Kind::Image | Kind::Canvas)
-            && model.retained_blob(id).is_ok_and(|slot| slot.is_some())
-    }) && model
-        .children(Parent::Node(id))
-        .is_ok_and(|children| children.is_empty())
+fn removal_mode(model: &WorkspaceDoc, id: NodeId) -> Option<FileRemovalMode> {
+    let node = model.attachment_context(id).ok()?;
+    model.retained_blob(id).ok()??;
+    match node.kind.shape() {
+        koru_core::Shape::Text => Some(FileRemovalMode::RetainedSlot),
+        koru_core::Shape::Blob if model.children(Parent::Node(id)).ok()?.is_empty() => {
+            Some(FileRemovalMode::AttachmentLeaf)
+        }
+        _ => None,
+    }
 }
 fn remove_file(
     doc: loro::LoroDoc,
@@ -232,28 +235,32 @@ fn remove_file(
         .into_iter()
         .find(|model| model.read(target).is_ok())
         .ok_or(bad)?;
-    if !eligible(&model, target) {
-        return Err(bad);
-    }
+    let mode = removal_mode(&model, target).ok_or(bad)?;
     let before = model.version();
     let before_refs = hashes(&model)?;
-    if model.in_trash(target) && !model.is_trashed(target) {
-        // Only this strict-validated leaf moves under its existing bin. The
-        // containing note, its descendants, and its recovery stamps stay put.
-        let trash = model
-            .ancestors(target)
-            .map_err(|_| bad)?
-            .into_iter()
-            .find(|id| model.kind_of(*id) == Some(Kind::Trash))
-            .ok_or(bad)?;
-        let end = model.children(Parent::Node(trash)).map_err(|_| bad)?.len();
+    if mode == FileRemovalMode::RetainedSlot {
         model
-            .move_node(target, Parent::Node(trash), end)
+            .remove_retained_blob_slot(target, budget())
             .map_err(|_| bad)?;
-    } else if !model.is_trashed(target) {
-        model.trash(target, at_ms, None).map_err(|_| bad)?;
+    } else {
+        if model.in_trash(target) && !model.is_trashed(target) {
+            // Only this strict-validated leaf moves under its existing bin. The
+            // containing note, its descendants, and its recovery stamps stay put.
+            let trash = model
+                .ancestors(target)
+                .map_err(|_| bad)?
+                .into_iter()
+                .find(|id| model.kind_of(*id) == Some(Kind::Trash))
+                .ok_or(bad)?;
+            let end = model.children(Parent::Node(trash)).map_err(|_| bad)?.len();
+            model
+                .move_node(target, Parent::Node(trash), end)
+                .map_err(|_| bad)?;
+        } else if !model.is_trashed(target) {
+            model.trash(target, at_ms, None).map_err(|_| bad)?;
+        }
+        model.delete_permanently(target).map_err(|_| bad)?;
     }
-    model.delete_permanently(target).map_err(|_| bad)?;
     let after_refs = hashes(&model)?;
     if !after_refs.is_subset(&before_refs) {
         return Err(bad);
@@ -281,22 +288,23 @@ fn project(
             .unwrap_or_else(|| NodeId::from_uuid(document.as_uuid()));
         if title.is_none() {
             title = model
-                .read(root)
+                .attachment_context(root)
                 .ok()
                 .and_then(|n| n.content.as_text().map(str::to_owned))
                 .filter(|s| !s.is_empty())
                 .or_else(|| model.name());
         }
         for (id, _) in order {
-            let node = model.read(id).map_err(|_| bad)?;
+            let node = model.attachment_context(id).map_err(|_| bad)?;
             let parent = match model.parent(id).map_err(|_| bad)? {
                 Parent::Node(parent) => Some(parent.to_storage()),
                 Parent::Root => None,
             };
             blocks.push(view_block(&model, &node, parent, root, document).map_err(|_| bad)?);
-            if eligible(&model, id) {
+            if let Some(mode) = removal_mode(&model, id) {
                 removable_files.push(FileRemovalControl {
                     node_id: id.to_storage(),
+                    mode,
                     in_trash: model.in_trash(id),
                 });
             }
@@ -327,7 +335,7 @@ fn view_block(
 ) -> Result<ViewBlock, String> {
     use koru_core::Content;
 
-    let (rich_text, mut blob, reference, mut kind) = match &node.content {
+    let (rich_text, mut blob, mut reference, mut kind) = match &node.content {
         Content::Text { .. } => {
             let rich = Some(view_rich_text(model, node, root, document)?);
             (rich, None, None, node.kind.as_str().to_owned())
@@ -358,6 +366,13 @@ fn view_block(
         ),
     };
 
+    if let Content::Embed { target } = model
+        .read(node.id)
+        .map_err(|_| "invalid embed context")?
+        .content
+    {
+        reference = Some(view_reference(target, "embed", root, document));
+    }
     if let Some(Content::Blob {
         hash,
         mime,
@@ -416,7 +431,7 @@ fn view_rich_text(
     use koru_core::AttrValue;
 
     let runs = model
-        .runs(node.id)
+        .existing_runs(node.id)
         .map_err(|_| "invalid_document_text".to_owned())?;
     let text = runs.iter().map(|run| run.text.as_str()).collect();
     let mut marks = Vec::new();

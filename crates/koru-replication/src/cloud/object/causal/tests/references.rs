@@ -261,3 +261,19 @@ fn manifest_scope_is_bound_by_restore_and_listing_kind_remains_an_open_string() 
         .unwrap();
     assert!(matches!(check(&doc), Err(Error::Scope)));
 }
+
+#[test]
+fn strict_helper_reference_proof_refuses_blob_parent_with_children() {
+    let doc = LoroDoc::new();
+    let (file, _) = node(
+        &doc,
+        TreeParentId::Root,
+        "file",
+        Some(&format!("b3:{}", "ab".repeat(32))),
+    );
+    node(&doc, TreeParentId::Node(file), "paragraph", None);
+    assert_eq!(
+        restored(&doc).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Shape
+    );
+}
