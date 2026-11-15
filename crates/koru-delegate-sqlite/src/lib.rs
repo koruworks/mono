@@ -69,8 +69,8 @@ pub use crash::WriteOp;
 pub use crash::{CrashPoint, Moment};
 pub use db::{DATABASE_NAME, OpenError, RUNS_SCHEMA_VERSION, runs_db_path};
 pub use decisions::{
-    AnswerDecision, DecisionCleanupOrigin, DecisionCleanupOwnership, DecisionRecord,
-    DecisionWaitExecution, DecisionWaitRecord,
+    AnswerDecision, DecisionAcknowledgedContinuation, DecisionCleanupOrigin,
+    DecisionCleanupOwnership, DecisionRecord, DecisionWaitExecution, DecisionWaitRecord,
 };
 pub use deletions::DeletionRecord;
 pub use domains::{AttemptPhase, IntentState, Projection, SlotOutcome, SlotState};
