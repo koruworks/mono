@@ -9,6 +9,7 @@ use write::*;
 mod answers;
 mod corruption;
 mod enrollment;
+mod native_completion;
 mod preparation;
 
 struct Harness {

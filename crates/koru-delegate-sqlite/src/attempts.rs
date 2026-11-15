@@ -116,55 +116,7 @@ impl RunsDb {
         host: HostInstanceId,
     ) -> Result<AttemptRow, LedgerError> {
         self.write(WriteOp::BindSession, |tx, now| {
-            let attempt = writable(tx, run, generation)?;
-            if attempt.phase.is_terminal() {
-                return Err(LedgerError::AttemptEnded {
-                    phase: attempt.phase,
-                });
-            }
-            if let Some(bound) = attempt.provider_session {
-                let same_key = bound.idempotency == session.idempotency;
-                let same_session = match (bound.session, session.session) {
-                    (Some(stored), Some(offered)) => stored == offered,
-                    _ => true,
-                };
-                if !same_key || !same_session || attempt.host_instance != Some(host) {
-                    return Err(LedgerError::SessionKeyConflict);
-                }
-            }
-            let held_elsewhere: i64 = tx
-                .query_row(
-                    "SELECT count(*) FROM run_attempts
-                      WHERE session_key = ?1 AND NOT (run_id = ?2 AND generation = ?3)",
-                    params![
-                        session.idempotency.to_string(),
-                        run.to_storage(),
-                        generation.get()
-                    ],
-                    |row| row.get(0),
-                )
-                .map_err(|error| LedgerError::sql("check a session key", error))?;
-            if held_elsewhere > 0 {
-                return Err(LedgerError::SessionKeyConflict);
-            }
-            tx.execute(
-                "UPDATE run_attempts
-                    SET session_key = ?3,
-                        session_id = COALESCE(?4, session_id),
-                        host_instance_id = ?5,
-                        updated_at_ms = ?6
-                  WHERE run_id = ?1 AND generation = ?2",
-                params![
-                    run.to_storage(),
-                    generation.get(),
-                    session.idempotency.to_string(),
-                    session.session.map(|id| id.to_string()),
-                    host.as_uuid().to_string(),
-                    now
-                ],
-            )
-            .map_err(|error| LedgerError::sql("bind a session", error))?;
-            current(tx, run)
+            bind_on(tx, run, generation, session, host, now)
         })
     }
 
@@ -285,6 +237,56 @@ pub(crate) fn open_on(
     current(conn, run)
 }
 
+/// One owning bind transaction body, shared by ordinary starts and an exact
+/// retained decision successor. Callers provide their admission/decision guard.
+pub(crate) fn bind_on(
+    tx: &rusqlite::Connection,
+    run: RunId,
+    generation: AttemptGeneration,
+    session: ProviderSessionKey,
+    host: HostInstanceId,
+    now: i64,
+) -> Result<AttemptRow, LedgerError> {
+    let attempt = writable(tx, run, generation)?;
+    if attempt.phase.is_terminal() {
+        return Err(LedgerError::AttemptEnded {
+            phase: attempt.phase,
+        });
+    }
+    if let Some(bound) = attempt.provider_session {
+        let same_key = bound.idempotency == session.idempotency;
+        let same_session = match (bound.session, session.session) {
+            (Some(stored), Some(offered)) => stored == offered,
+            _ => true,
+        };
+        if !same_key || !same_session || attempt.host_instance != Some(host) {
+            return Err(LedgerError::SessionKeyConflict);
+        }
+    }
+    let held_elsewhere: i64 = tx
+        .query_row(
+            "SELECT count(*) FROM run_attempts
+         WHERE session_key=?1 AND NOT (run_id=?2 AND generation=?3)",
+            params![
+                session.idempotency.to_string(),
+                run.to_storage(),
+                generation.get()
+            ],
+            |row| row.get(0),
+        )
+        .map_err(|error| LedgerError::sql("check a session key", error))?;
+    if held_elsewhere > 0 {
+        return Err(LedgerError::SessionKeyConflict);
+    }
+    tx.execute(
+        "UPDATE run_attempts SET session_key=?3,session_id=COALESCE(?4,session_id),host_instance_id=?5,updated_at_ms=?6
+         WHERE run_id=?1 AND generation=?2",
+        params![run.to_storage(),generation.get(),session.idempotency.to_string(),
+            session.session.map(|id| id.to_string()),host.as_uuid().to_string(),now],
+    ).map_err(|error| LedgerError::sql("bind a session", error))?;
+    current(tx, run)
+}
+
 /// The current attempt, admitting only `generation` and only unretired.
 fn writable(
     tx: &rusqlite::Connection,
@@ -324,9 +326,11 @@ pub(crate) fn latest(
 
 /// Exact historical attempt through the same decoder, with raw cells bounded
 /// before allocation. Decision origin evidence must not read the newest row.
-pub(crate) fn retained_bounded(conn:&rusqlite::Connection,run:RunId,generation:AttemptGeneration)
-    ->Result<Option<AttemptRow>,LedgerError>
-{
+pub(crate) fn retained_bounded(
+    conn: &rusqlite::Connection,
+    run: RunId,
+    generation: AttemptGeneration,
+) -> Result<Option<AttemptRow>, LedgerError> {
     conn.query_row("SELECT
         CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
         CASE WHEN typeof(generation)='integer' THEN generation END,

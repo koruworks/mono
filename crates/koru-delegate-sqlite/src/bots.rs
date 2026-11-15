@@ -12,6 +12,10 @@ pub use routines::{
 };
 #[cfg(test)]
 mod tests;
+use koru_delegate_core::decisions::{
+    DecisionPreparedProjection, DecisionProjectionAcknowledgment, DecisionProjectionRecord,
+    DecisionTransitionId,
+};
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
     BotDeliveryReceipt, BotId, BotOwner, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey,
@@ -171,6 +175,42 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn next_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn decision_projection_prefix(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Vec<DecisionProjectionRecord>, BotLedgerError>;
+    fn latest_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn latest_applied_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError>;
+    fn record_decision_preparation(
+        &mut self,
+        owner: BotOwner,
+        prepared: &DecisionPreparedProjection,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
+    fn acknowledge_decision_projection(
+        &mut self,
+        owner: BotOwner,
+        acknowledgment: &DecisionProjectionAcknowledgment,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,

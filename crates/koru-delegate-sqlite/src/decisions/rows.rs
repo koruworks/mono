@@ -5,6 +5,7 @@ use rusqlite::{Row, types::FromSql};
 mod native;
 mod resume;
 mod wait;
+pub(super) use wait::by_wait;
 use wait::read_wait;
 
 /// Fixed source-owned column descriptions, never caller SQL. SQLite checks
