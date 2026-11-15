@@ -136,3 +136,17 @@ fn decision_schema_reports_uuid_revision_and_byte_array_domains() {
     assert_eq!(bytes["maxItems"], 4);
     assert_eq!(bytes["items"]["maximum"], 255);
 }
+
+#[test]
+fn decision_storage_encoder_checks_narrow_utf8_byte_bound_before_growth() {
+    let value = "é";
+    assert_eq!(encode_decision_value(&value, 4).unwrap(), b"\"\xc3\xa9\"");
+    assert_eq!(
+        encode_decision_value(&value, 3),
+        Err(DecisionError::TooLarge)
+    );
+    assert_eq!(
+        encode_decision_value(&value, DECISION_FRAME_BYTES + 1),
+        Err(DecisionError::TooLarge)
+    );
+}
