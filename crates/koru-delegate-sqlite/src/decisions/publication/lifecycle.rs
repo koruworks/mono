@@ -43,11 +43,38 @@ fn commit_control(
         }
     }
     let context = control::context(tx, owner, run, record.wait.wait)?;
+    let target = build_target(
+        context.clone(),
+        &record.wait,
+        Some(&record.receipt),
+        action,
+        now,
+    )?;
+    insert::insert_on(
+        tx,
+        owner,
+        transition,
+        record.wait.wait,
+        &context.base,
+        &target,
+        now,
+    )?;
+    Ok(record)
+}
+
+pub(super) fn build_target(
+    context: control::ControlContext,
+    wait: &DecisionWaitRecord,
+    receipt: Option<&DecisionReceipt>,
+    action: DecisionControlAction,
+    now: i64,
+) -> Result<RunProjectionTargetV1, BotLedgerError> {
+    let run = wait.origin.run;
     let fence = context
         .bookkeeping
         .as_ref()
         .map(|b| b.boundary.fence)
-        .unwrap_or(record.wait.origin);
+        .unwrap_or(wait.origin);
     let mut event = None;
     let mut steps = Vec::new();
     let mut publications = Vec::new();
@@ -56,35 +83,40 @@ fn commit_control(
             DecisionControlAction::Preserve {} | DecisionControlAction::CleanupRequested { .. } => {
             }
             DecisionControlAction::DecisionResolved { outcome } => {
-                let DecisionBindingV1::NativeApproval(binding) = &record.receipt.binding else {
-                    return Err(BotLedgerError::Invalid);
-                };
                 event = Some(RunEvent::ApprovalResolved);
-                let step = TimelineEntry::new(
-                    StepKind::ApprovalResolved { outcome },
-                    TimelineRefs::new([
-                        TimelineRef::Turn {
+                // Koru has no native prompt/ApprovalId to invent. Its exact
+                // disposition resolves attention without a native answer fact.
+                if let Some(DecisionReceipt {
+                    binding: DecisionBindingV1::NativeApproval(binding),
+                    ..
+                }) = receipt
+                {
+                    let step = TimelineEntry::new(
+                        StepKind::ApprovalResolved { outcome },
+                        TimelineRefs::new([
+                            TimelineRef::Turn {
+                                turn: binding.origin_turn,
+                            },
+                            TimelineRef::Approval {
+                                approval: binding.prompt.clone(),
+                            },
+                        ])
+                        .map_err(|_| BotLedgerError::Invalid)?,
+                        now,
+                    );
+                    publications.push(DecisionProjectionPublication {
+                        event: EventId::mint(),
+                        step: Some(step.id),
+                        fact: RunFact::ApprovalResolved {
+                            run,
+                            attempt: binding.origin_attempt,
                             turn: binding.origin_turn,
-                        },
-                        TimelineRef::Approval {
                             approval: binding.prompt.clone(),
+                            outcome,
                         },
-                    ])
-                    .map_err(|_| BotLedgerError::Invalid)?,
-                    now,
-                );
-                publications.push(DecisionProjectionPublication {
-                    event: EventId::mint(),
-                    step: Some(step.id),
-                    fact: RunFact::ApprovalResolved {
-                        run,
-                        attempt: binding.origin_attempt,
-                        turn: binding.origin_turn,
-                        approval: binding.prompt.clone(),
-                        outcome,
-                    },
-                });
-                steps.push(step);
+                    });
+                    steps.push(step);
+                }
             }
             DecisionControlAction::Stop {} => {
                 event = Some(RunEvent::Cancel);
@@ -187,27 +219,60 @@ fn commit_control(
             publications: DecisionList::new(publications).map_err(|_| BotLedgerError::Invalid)?,
         },
         fence,
-        disposition: Some(control::disposition(&record.receipt)?),
-        wait_phase: record.wait.phase,
-        reason: record.wait.reason,
+        disposition: receipt.map(control::disposition).transpose()?,
+        wait_phase: wait.phase,
+        reason: wait.reason,
         action,
         retained_bookkeeping: context.bookkeeping,
         flush: DecisionList::new(flush).map_err(|_| BotLedgerError::Invalid)?,
         delivery: None,
     };
-    insert::insert_on(
-        tx,
-        owner,
-        transition,
-        record.wait.wait,
-        &context.base,
-        &target,
-        now,
-    )?;
-    Ok(record)
+    Ok(target)
 }
 
 impl RunsDb {
+    pub fn consume_decision_edit(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        request: &PrepareNativeResult,
+        payload: &[u8],
+        fence: &BotExecutionFence,
+        proof: &FreshBotPolicyProof,
+        boot: DelegateBootId,
+    ) -> Result<crate::NativeLeaseOutcome, BotLedgerError> {
+        self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
+            let (mutation, outcome) =
+                mutation::consume_on(tx, expected, request, payload, fence, proof, boot, now)?;
+            commit_control(
+                tx,
+                transition,
+                mutation,
+                DecisionControlAction::Preserve {},
+                now,
+            )?;
+            Ok(outcome)
+        })
+    }
+    pub fn settle_decision_effect(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        outcome: &DecisionRetainedEffect,
+    ) -> Result<DecisionRecord, BotLedgerError> {
+        self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
+            let result = mutation::settle_effect_on(tx, expected, outcome, now)?;
+            commit_control(
+                tx,
+                transition,
+                result,
+                DecisionControlAction::DecisionResolved {
+                    outcome: ApprovalOutcome::Approved,
+                },
+                now,
+            )
+        })
+    }
     pub fn record_decision_consumer_cleanup(
         &mut self,
         expected: &DecisionWaitExpected,

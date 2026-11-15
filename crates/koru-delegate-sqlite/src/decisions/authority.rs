@@ -92,11 +92,24 @@ pub(super) fn retained(
     }
     let origin = attempt(conn, &f)?;
     require(origin.provider_session.and_then(|p| p.session) == Some(f.session))?;
-    // Original first input is immutable. C2 adds the separately acknowledged
-    // decision continuation owner; a newer attempt/turn alone is never enough.
-    require(admitted.initial_send.as_ref().is_some_and(|s| {
+    // Original first input stays immutable. A separately acknowledged settled
+    // continuation is the other owner; a newer attempt/turn alone is not enough.
+    let initial = admitted.initial_send.as_ref().is_some_and(|s| {
         s.attempt == f.attempt && s.generation == f.generation && s.turn == Some(f.turn)
-    }))?;
+    });
+    require(
+        initial
+            || rows::accepted_input(
+                conn,
+                f.owner,
+                f.bot,
+                f.run,
+                f.attempt,
+                f.generation,
+                f.session,
+                f.turn,
+            )?,
+    )?;
     Ok(admitted)
 }
 pub(super) fn attempt(

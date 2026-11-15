@@ -372,6 +372,7 @@ pub(super) fn read_admitted(
         }
         routine::validate_record(conn, record, admitted)?;
         memory::validate_record(conn, record)?;
+        crate::decisions::validate_native_on(conn, record)?;
     }
     Ok(record)
 }

@@ -64,7 +64,8 @@ pub(super) fn launch_evidence(
 ) -> Result<(), BotLedgerError> {
     use koru_delegate_core::AttemptGeneration;
     let run = admitted.submission.request.run;
-    let attempt = crate::attempts::latest(conn, run)?.ok_or(BotLedgerError::Fenced)?;
+    let attempt = crate::attempts::retained_bounded(conn, run, send.generation)?
+        .ok_or(BotLedgerError::Fenced)?;
     let materialized: bool = conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1 AND state='satisfied' AND typeof(run_document_id)='text' AND length(CAST(run_document_id AS BLOB))=36)",
         [run.to_storage()], |r| r.get(0),

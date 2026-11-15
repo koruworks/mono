@@ -16,6 +16,8 @@ mod lifecycle;
 mod preparation;
 mod projection;
 mod resume;
+mod consume;
+mod completion;
 
 struct Harness {
     db: RunsDb,
@@ -54,7 +56,8 @@ impl Harness {
             action: DecisionEditAction::EditDocument,
             operation_id: uuid::Uuid::new_v4(),
             edit_fingerprint: [3; 32],
-            expected_revision: DecisionBytes::new(vec![1]).unwrap(),
+            // A real semantic VV, also used by the consume owner's comparison.
+            expected_revision: DecisionBytes::new(vec![2,1,2,2,4]).unwrap(),
             payload_version: DecisionVersionV1,
             payload: DecisionBytes::new(b"PRIVATE-EDIT".to_vec()).unwrap(),
             captured_policy: admission.submission.policy,

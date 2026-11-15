@@ -4,6 +4,7 @@ use super::*;
 use rusqlite::{Row, types::FromSql};
 mod native;
 mod resume;
+pub(super) use resume::accepted_input;
 mod wait;
 pub(super) use wait::by_wait;
 pub(super) use wait::correlate_release;
@@ -17,12 +18,21 @@ pub(super) fn query(table: &str, fields: &[(&str, &str, usize, bool)], predicate
 
 /// A scalar/evidence projection intentionally excludes large binding bodies.
 /// It shares the owning type/byte guards with full row decoding.
-pub(super) fn projection(table: &str, fields: &[(&str, &str, usize, bool)], predicate: &str) -> String {
+pub(super) fn projection(
+    table: &str,
+    fields: &[(&str, &str, usize, bool)],
+    predicate: &str,
+) -> String {
     let columns = fields.iter().map(|f| f.0).collect::<Vec<_>>().join(",");
     select(table, fields, predicate, &columns)
 }
 
-fn select(table: &str, fields: &[(&str, &str, usize, bool)], predicate: &str, columns: &str) -> String {
+fn select(
+    table: &str,
+    fields: &[(&str, &str, usize, bool)],
+    predicate: &str,
+    columns: &str,
+) -> String {
     let guards = fields
         .iter()
         .map(|(name, kind, max, optional)| {
@@ -196,6 +206,7 @@ pub(super) fn read(
         admission.submission.provenance.ai_attempt_id,
     )?;
     companions(&receipt, &wait, resume.as_ref(), native_response.as_ref())?;
+    super::effect::retained_key(conn, &receipt, resume.as_ref())?;
     Ok(Some(DecisionRecord {
         receipt,
         wait,

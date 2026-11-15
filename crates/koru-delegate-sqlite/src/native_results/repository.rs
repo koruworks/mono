@@ -51,10 +51,10 @@ pub(super) fn current_attempt(
         || latest.generation != key.generation
         || latest.retired
         || latest.phase != AttemptPhase::Running
-        || admission.initial_send.as_ref().and_then(|s| s.turn) != Some(key.turn)
     {
         return Err(BotLedgerError::Fenced);
     }
+    crate::decisions::fresh_native_input_on(conn, key, admission, &latest)?;
     Ok(latest)
 }
 pub(super) fn same_request(record: &NativeIntentRecord, request: &PrepareNativeResult) -> bool {
@@ -148,6 +148,50 @@ fn evidence_matches(record: &NativeIntentRecord, evidence: &NativeResultReferenc
                 NativeResultOperation::CreatePage => NativeResultKind::CreatedPage,
                 NativeResultOperation::EditPage => NativeResultKind::EditedPage,
             }
+}
+
+/// SQL primitives shared with the one-use decision owner. The caller owns the
+/// full authority check and transaction; neither primitive returns execution
+/// permission before all required companions and its Control have committed.
+pub(crate) fn insert_prepared_on(
+    tx: &Connection,
+    request: &PrepareNativeResult,
+    now: i64,
+) -> Result<(), BotLedgerError> {
+    if !request.valid() {
+        return Err(BotLedgerError::Invalid);
+    }
+    let target = request
+        .target
+        .unwrap_or_else(|| DocumentId::from_uuid(Uuid::new_v4()));
+    let kind = match request.kind {
+        NativeResultOperation::CreatePage => "create_page",
+        NativeResultOperation::EditPage => "edit_page",
+    };
+    tx.execute("INSERT INTO native_result_intents(run_id,operation_id,attempt_id,generation,turn_id,kind,request_fingerprint,destination_workspace_id,target_document_id,store_request_id,expected_revision,requested_title,stage,lease_state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'prepared','none',?13,?13)",params![request.key.run.to_storage(),request.key.operation_id.to_string(),request.key.attempt.to_storage(),request.key.generation.get(),request.key.turn.to_string(),kind,request.request_fingerprint.as_slice(),request.destination.to_storage(),target.to_storage(),Uuid::new_v4().to_string(),request.expected_revision,request.title,now]).map_err(sql)?;
+    Ok(())
+}
+
+pub(crate) fn hold_lease_on(
+    tx: &Connection,
+    key: &NativeResultKey,
+    current: NativePolicyRecord,
+    companion: Option<crate::RoutinePolicyRecord>,
+    now: i64,
+) -> Result<NativeEffectLease, BotLedgerError> {
+    let id = Uuid::new_v4();
+    if let Some(companion) = &companion {
+        routine::insert(tx, key, companion)?;
+    }
+    let changed=tx.execute("UPDATE native_result_intents SET lease_id=?3,lease_user_scope=?4,lease_device_id=?5,lease_bot_id=?6,lease_barrier_request_id=?7,lease_config_revision=?8,lease_policy_revision=?9,lease_payload_digest=?10,lease_state='held',updated_at_ms=?11 WHERE run_id=?1 AND operation_id=?2 AND stage='prepared' AND lease_state='none'",params![key.run.to_storage(),key.operation_id.to_string(),id.to_string(),current.key.owner.user_scope.to_storage(),current.key.owner.device.to_storage(),current.key.bot.to_storage(),current.key.request.to_storage(),current.config_revision,current.policy_revision,current.payload_digest.as_slice(),now]).map_err(sql)?;
+    if changed != 1 {
+        return Err(BotLedgerError::Conflict);
+    }
+    Ok(NativeEffectLease {
+        id,
+        policy: current,
+        routine: companion,
+    })
 }
 
 impl NativeResultLedger for RunsDb {
@@ -288,15 +332,25 @@ impl NativeResultLedger for RunsDb {
         // Immutable capture, decoded through its existing owner; no callback or
         // scheduling point intervenes before this exclusive writer transaction.
         let admitted = admission(self, request.key.run)?;
-        self.write_with_error(WriteOp::PrepareNativeResult,|tx,now|{
-            if memory::exists(tx,request.key.run,request.key.operation_id)? {return Err(BotLedgerError::Conflict);}
-            if let Some(old)=read(tx,&request.key)? {return if matches!(old.purpose,NativeEffectPurpose::Result {}) && same_request(&old,request){Ok(old)}else{Err(BotLedgerError::Conflict)};}
-            current_attempt(tx,&request.key,&admitted)?;
-            if request.destination!=admitted.submission.policy.destination {return Err(BotLedgerError::Fenced);}
-            let target=request.target.unwrap_or_else(||DocumentId::from_uuid(Uuid::new_v4()));
-            let kind=match request.kind {NativeResultOperation::CreatePage=>"create_page",NativeResultOperation::EditPage=>"edit_page"};
-            tx.execute("INSERT INTO native_result_intents(run_id,operation_id,attempt_id,generation,turn_id,kind,request_fingerprint,destination_workspace_id,target_document_id,store_request_id,expected_revision,requested_title,stage,lease_state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'prepared','none',?13,?13)",params![request.key.run.to_storage(),request.key.operation_id.to_string(),request.key.attempt.to_storage(),request.key.generation.get(),request.key.turn.to_string(),kind,request.request_fingerprint.as_slice(),request.destination.to_storage(),target.to_storage(),Uuid::new_v4().to_string(),request.expected_revision,request.title,now]).map_err(sql)?;
-            required(tx,&request.key)
+        self.write_with_error(WriteOp::PrepareNativeResult, |tx, now| {
+            if memory::exists(tx, request.key.run, request.key.operation_id)? {
+                return Err(BotLedgerError::Conflict);
+            }
+            if let Some(old) = read(tx, &request.key)? {
+                return if matches!(old.purpose, NativeEffectPurpose::Result {})
+                    && same_request(&old, request)
+                {
+                    Ok(old)
+                } else {
+                    Err(BotLedgerError::Conflict)
+                };
+            }
+            current_attempt(tx, &request.key, &admitted)?;
+            if request.destination != admitted.submission.policy.destination {
+                return Err(BotLedgerError::Fenced);
+            }
+            insert_prepared_on(tx, request, now)?;
+            required(tx, &request.key)
         })
     }
     fn lease_native_result(
@@ -307,33 +361,63 @@ impl NativeResultLedger for RunsDb {
         fresh: &FreshBotPolicyProof,
     ) -> Result<NativeLeaseOutcome, BotLedgerError> {
         let admitted = admission(self, key.run)?;
-        self.write_with_error(WriteOp::LeaseNativeResult,|tx,now|{
-            let record=read_admitted(tx,key,Some(&admitted))?.ok_or(BotLedgerError::Invalid)?;
-            if record.fingerprint!=fingerprint {return Err(BotLedgerError::Conflict);}
-            let provenance=&admitted.submission.provenance;
-            if fence.owner!=provenance.owner || fence.bot!=provenance.bot || fence.run!=key.run || fence.attempt!=key.attempt || fence.generation!=key.generation || fence.turn!=Some(key.turn) {return Err(BotLedgerError::Fenced);}
-            if record.stage!=NativeResultStage::Prepared || record.lease_state!=NativeLeaseState::None {return Ok(NativeLeaseOutcome {intent:record,execute:None});}
-            let (current,companion)=fresh_policy(tx,key,&admitted,fence,fresh)?;
-            let permissions=routine::current_permissions(fresh);
+        self.write_with_error(WriteOp::LeaseNativeResult, |tx, now| {
+            let record = read_admitted(tx, key, Some(&admitted))?.ok_or(BotLedgerError::Invalid)?;
+            if record.fingerprint != fingerprint {
+                return Err(BotLedgerError::Conflict);
+            }
+            let provenance = &admitted.submission.provenance;
+            if fence.owner != provenance.owner
+                || fence.bot != provenance.bot
+                || fence.run != key.run
+                || fence.attempt != key.attempt
+                || fence.generation != key.generation
+                || fence.turn != Some(key.turn)
+            {
+                return Err(BotLedgerError::Fenced);
+            }
+            if record.stage != NativeResultStage::Prepared
+                || record.lease_state != NativeLeaseState::None
+            {
+                return Ok(NativeLeaseOutcome {
+                    intent: record,
+                    execute: None,
+                });
+            }
+            let (current, companion) = fresh_policy(tx, key, &admitted, fence, fresh)?;
+            let permissions = routine::current_permissions(fresh);
             match &record.purpose {
                 NativeEffectPurpose::Result {} => {
-                    let owned=if record.kind==NativeResultOperation::EditPage {created(tx,&admitted,record.destination,record.target)?}else{false};
-                    if !permits(&admitted.submission.policy,&record,owned) || !permits(permissions,&record,owned) {return Err(BotLedgerError::Fenced);}
+                    let owned = if record.kind == NativeResultOperation::EditPage {
+                        created(tx, &admitted, record.destination, record.target)?
+                    } else {
+                        false
+                    };
+                    if !permits(&admitted.submission.policy, &record, owned)
+                        || !permits(permissions, &record, owned)
+                    {
+                        return Err(BotLedgerError::Fenced);
+                    }
                 }
                 NativeEffectPurpose::Memory { authority } => {
-                    if !authority.subject().matches(provenance) || authority.workspace!=record.destination
-                        || authority.memory_document!=record.target
-                        || !admitted.submission.policy.valid() || !permissions.valid()
-                        || admitted.submission.policy.workspace!=authority.workspace
-                        || permissions.workspace!=authority.workspace
-                    {return Err(BotLedgerError::Fenced);}
+                    if !authority.subject().matches(provenance)
+                        || authority.workspace != record.destination
+                        || authority.memory_document != record.target
+                        || !admitted.submission.policy.valid()
+                        || !permissions.valid()
+                        || admitted.submission.policy.workspace != authority.workspace
+                        || permissions.workspace != authority.workspace
+                    {
+                        return Err(BotLedgerError::Fenced);
+                    }
                 }
             }
-            let id=Uuid::new_v4();
-            if let Some(companion)=&companion { routine::insert(tx,key,companion)?; }
-            tx.execute("UPDATE native_result_intents SET lease_id=?3,lease_user_scope=?4,lease_device_id=?5,lease_bot_id=?6,lease_barrier_request_id=?7,lease_config_revision=?8,lease_policy_revision=?9,lease_payload_digest=?10,lease_state='held',updated_at_ms=?11 WHERE run_id=?1 AND operation_id=?2",params![key.run.to_storage(),key.operation_id.to_string(),id.to_string(),current.key.owner.user_scope.to_storage(),current.key.owner.device.to_storage(),current.key.bot.to_storage(),current.key.request.to_storage(),current.config_revision,current.policy_revision,current.payload_digest.as_slice(),now]).map_err(sql)?;
-            let intent=required(tx,key)?;
-            Ok(NativeLeaseOutcome {intent,execute:Some(NativeEffectLease{id,policy:current,routine:companion})})
+            let lease = hold_lease_on(tx, key, current, companion, now)?;
+            let intent = required(tx, key)?;
+            Ok(NativeLeaseOutcome {
+                intent,
+                execute: Some(lease),
+            })
         })
     }
     fn native_result(

@@ -101,28 +101,14 @@ pub(crate) fn consumer_cleanup_on(
     let observed =
         observation::execution(tx, expected.owner, expected.run)?.ok_or(BotLedgerError::Stale)?;
     require(observed.expected == *expected && old.wait.phase == BotWaitPhase::CleanupPending)?;
+    validate_cleanup_on(tx, &observed, cleanup, now)?;
     let ConsumerCleanup::Confirmed {
-        cleanup_revision,
-        target,
-        creation_retirement,
-        attempt_retirement,
-        native_drain,
         retained_effect_outcome,
+        ..
     } = cleanup
     else {
         return Err(BotLedgerError::Invalid);
     };
-    require(
-        *cleanup_revision == expected.revision
-            && *target == observed.cleanup_target
-            && observed.current_attempt.retired
-            && observed.current_attempt.phase.is_terminal()
-            && observed.current_attempt.host_instance == Some(creation_retirement.host)
-            && attempt_retirement.retired_at_ms == observed.current_attempt.updated_at_ms
-            && creation_retirement.observed_at_ms <= now
-            && native_drain.observed_at_ms <= now,
-    )?;
-    drain::correlate(tx, expected.owner, old.wait.origin.bot, native_drain)?;
     effect_outcome(tx, &old, retained_effect_outcome.as_ref())?;
     let admitted = authority::retained(tx, &old.receipt.binding)?;
     let elapsed = admitted.active_elapsed_at(now).min(i64::MAX as u64) as i64;
@@ -138,7 +124,44 @@ pub(crate) fn consumer_cleanup_on(
     )
 }
 
-fn effect_outcome(
+pub(crate) fn validate_cleanup_on(
+    tx: &Connection,
+    observed: &DecisionWaitExecution,
+    cleanup: &ConsumerCleanup,
+    now: i64,
+) -> Result<(), BotLedgerError> {
+    valid(cleanup)?;
+    let ConsumerCleanup::Confirmed {
+        cleanup_revision,
+        target,
+        creation_retirement,
+        attempt_retirement,
+        native_drain,
+        ..
+    } = cleanup
+    else {
+        return Err(BotLedgerError::Invalid);
+    };
+    require(
+        observed.wait.phase == BotWaitPhase::CleanupPending
+            && *cleanup_revision == observed.expected.revision
+            && *target == observed.cleanup_target
+            && observed.current_attempt.retired
+            && observed.current_attempt.phase.is_terminal()
+            && observed.current_attempt.host_instance == Some(creation_retirement.host)
+            && attempt_retirement.retired_at_ms == observed.current_attempt.updated_at_ms
+            && creation_retirement.observed_at_ms <= now
+            && native_drain.observed_at_ms <= now,
+    )?;
+    drain::correlate(
+        tx,
+        observed.expected.owner,
+        observed.wait.origin.bot,
+        native_drain,
+    )
+}
+
+pub(super) fn effect_outcome(
     conn: &Connection,
     record: &DecisionRecord,
     outcome: Option<&DecisionRetainedEffect>,
@@ -173,9 +196,10 @@ fn effect_outcome(
             && key.turn == acknowledgment.turn
             && key.operation_id == binding.operation_id,
     )?;
-    let companion:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM native_decision_leases WHERE run_id=?1 AND operation_id=?2 AND decision_id=?3 AND consumer_attempt_id=?4 AND consumer_generation=?5 AND consumer_turn_id=?6 AND consumed_at_ms=?7)",
-        params![key.run.to_storage(),key.operation_id.to_string(),record.receipt.decision.to_storage(),key.attempt.to_storage(),key.generation.get(),key.turn.to_string(),record.receipt.consumed_at_ms],|r|r.get(0)).map_err(sql)?;
-    require(companion)?;
+    require(
+        super::super::effect::retained_key(conn, &record.receipt, record.resume.as_ref())?.as_ref()
+            == Some(key),
+    )?;
     let retained =
         crate::native_results::retained_result_on(conn, key)?.ok_or(BotLedgerError::Fenced)?;
     require(

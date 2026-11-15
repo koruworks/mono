@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
-fn expected(record: &DecisionRecord) -> DecisionExpected {
+pub(super) fn expected(record: &DecisionRecord) -> DecisionExpected {
     DecisionExpected {
         owner: record.wait.origin.owner,
         run: record.wait.origin.run,
@@ -11,7 +11,7 @@ fn expected(record: &DecisionRecord) -> DecisionExpected {
     }
 }
 
-fn confirmed_cleanup(h: &mut Harness, now: i64) -> (DecisionWaitExpected, ConsumerCleanup) {
+pub(super) fn confirmed_cleanup(h: &mut Harness, now: i64) -> (DecisionWaitExpected, ConsumerCleanup) {
     let f = h.origin();
     let mut attempt = h.db.current_attempt(f.run).unwrap().unwrap();
     if !attempt.retired {
@@ -53,7 +53,7 @@ fn confirmed_cleanup(h: &mut Harness, now: i64) -> (DecisionWaitExpected, Consum
     (observed.expected, cleanup)
 }
 
-fn koru_enrollment_ready() -> (
+pub(super) fn koru_enrollment_ready() -> (
     Harness,
     DecisionRecord,
     std::sync::Arc<std::sync::atomic::AtomicI64>,
@@ -84,7 +84,7 @@ fn koru_enrollment_ready() -> (
     (h, record, clock)
 }
 
-fn enrolled(h: &mut Harness, record: &DecisionRecord) -> DecisionRecord {
+pub(super) fn enrolled(h: &mut Harness, record: &DecisionRecord) -> DecisionRecord {
     let key = record.wait.enrollment_request.as_ref().unwrap().key.clone();
     h.db.record_decision_enrollment(
         &expected(record),
@@ -98,7 +98,7 @@ fn enrolled(h: &mut Harness, record: &DecisionRecord) -> DecisionRecord {
     .unwrap()
 }
 
-fn origin_release(h: &mut Harness, record: &DecisionRecord, now: i64) -> OriginWaitStop {
+pub(super) fn origin_release(h: &mut Harness, record: &DecisionRecord, now: i64) -> OriginWaitStop {
     let f = h.origin();
     let mut attempt = h.db.current_attempt(f.run).unwrap().unwrap();
     if !attempt.retired {
@@ -129,7 +129,7 @@ fn origin_release(h: &mut Harness, record: &DecisionRecord, now: i64) -> OriginW
     }
 }
 
-fn native_ready() -> (Harness, DecisionRecord) {
+pub(super) fn native_ready() -> (Harness, DecisionRecord) {
     let mut h = Harness::new();
     h.native();
     let record =
