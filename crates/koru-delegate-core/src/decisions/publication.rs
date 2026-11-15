@@ -8,6 +8,8 @@ use crate::{
 
 mod target;
 pub use target::*;
+mod record;
+pub use record::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
