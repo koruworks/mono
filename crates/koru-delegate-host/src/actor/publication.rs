@@ -200,7 +200,10 @@ impl Actor {
                 if let Some(worker) = self.publication_worker.as_mut() {
                     let result = match retained {
                         Some(prepared) => worker.apply(ticket, prepared),
-                        None => worker.return_handle(ticket),
+                        // The unrecorded candidate must not stay staged on
+                        // the handle: the re-read may select another
+                        // transition, which a stale candidate would refuse.
+                        None => worker.return_unrecorded(ticket, prepared.identity.transition),
                     };
                     if let Err(error) = result {
                         tracing::warn!(target: "koru::delegate", code = error.code, "publication ownership remains unresolved");

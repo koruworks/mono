@@ -535,7 +535,15 @@ fn publish_one(
     let prepared = match operation {
         RunPublicationOperation::Prepare(intent) => {
             let candidate = handle.prepare_decision_projection(&intent)?;
-            orchestrator.record_run_preparation(ticket, &candidate)?
+            match orchestrator.record_run_preparation(ticket, &candidate) {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    // An unrecorded candidate is discarded before the handle
+                    // goes back, as the host's worker does.
+                    let _ = handle.discard_prepared_projection(candidate.identity.transition);
+                    return Err(error);
+                }
+            }
         }
         RunPublicationOperation::Apply(prepared) => prepared,
         RunPublicationOperation::ObserveSource(_) => {

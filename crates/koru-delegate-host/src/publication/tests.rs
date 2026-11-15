@@ -140,6 +140,76 @@ fn publication_worker_holds_one_handle_until_exact_writer_receipt() {
     assert!(shutdown_bounded(worker).is_empty());
 }
 
+/// The SQL owner refused the receipt for a preparation (the ledger moved on
+/// while the handle was out). A plain return keeps the candidate staged, so
+/// the re-read's next, different transition is refused on that handle for as
+/// long as it lives ("malformed", retried forever). Returning it as
+/// unrecorded discards the candidate first, and the next transition prepares.
+#[test]
+fn an_unrecorded_preparation_is_discarded_so_the_next_transition_prepares_on_the_same_handle() {
+    let (send, wake) = mpsc::channel();
+    let mut worker = PublicationWorker::start(move || {
+        let _ = send.send(());
+    })
+    .unwrap();
+    let (document, intent) = crate::documents::projection_fixture();
+    let mut next = intent.clone();
+    next.identity.transition = DecisionTransitionId::mint();
+    let start =
+        |handle: Box<dyn RunDocumentHandle>, intent: &RunProjectionIntent| RunPublicationStart {
+            ticket: RunPublicationTicket {
+                run: intent.identity.run,
+                epoch: uuid::Uuid::new_v4(),
+            },
+            document: RunPublicationDocument::Attached(handle),
+            operation: RunPublicationOperation::Prepare(intent.clone()),
+        };
+    let prepared = |worker: &mut PublicationWorker| match completion(worker, &wake) {
+        Completion::Prepared { ticket, prepared } => (ticket, prepared),
+        _ => panic!("prepared"),
+    };
+    let returned = |worker: &mut PublicationWorker| match completion(worker, &wake) {
+        Completion::Returned { handle, error, .. } => (handle, error),
+        _ => panic!("returned"),
+    };
+    let handle: Box<dyn RunDocumentHandle> = Box::new(Handle {
+        document,
+        staging: RunProjectionStaging::default(),
+        applies: Arc::new(AtomicUsize::new(0)),
+        dropped: Arc::new(AtomicUsize::new(0)),
+    });
+
+    // The first transition prepares; its receipt is refused and the handle
+    // goes back with a plain return: the candidate stays staged.
+    assert!(worker.begin(start(handle, &intent)).is_ok());
+    let (ticket, first) = prepared(&mut worker);
+    worker.return_handle(ticket).unwrap();
+    let (handle, error) = returned(&mut worker);
+    assert!(error.is_none());
+    // The re-read selects another transition: the stale candidate refuses it.
+    assert!(worker.begin(start(handle, &next)).is_ok());
+    let (handle, error) = returned(&mut worker);
+    assert_eq!(error.map(|error| error.code), Some("malformed".to_owned()));
+    // The same transition again is the retained warm candidate, unchanged.
+    assert!(worker.begin(start(handle, &intent)).is_ok());
+    let (ticket, again) = prepared(&mut worker);
+    assert_eq!(again, first);
+
+    // Returned as unrecorded, the candidate is discarded on the worker
+    // thread, and the next transition prepares on the same handle.
+    worker
+        .return_unrecorded(ticket, first.identity.transition)
+        .unwrap();
+    let (handle, error) = returned(&mut worker);
+    assert!(error.is_none(), "{error:?}");
+    assert!(worker.begin(start(handle, &next)).is_ok());
+    let (ticket, prepared_next) = prepared(&mut worker);
+    assert_eq!(prepared_next.identity, next.identity);
+    worker.return_handle(ticket).unwrap();
+    drop(returned(&mut worker));
+    assert!(shutdown_bounded(worker).is_empty());
+}
+
 #[test]
 fn publication_worker_shutdown_with_queued_request_returns_handle() {
     let (send, requests) = mpsc::sync_channel(1);

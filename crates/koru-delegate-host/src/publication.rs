@@ -15,7 +15,8 @@ use std::{
 };
 
 use koru_delegate_core::decisions::{
-    BotWaitEnrollmentKey, BotWaitEnrollmentReply, DecisionPreparedProjection, EnrollBotWaitCleanup,
+    BotWaitEnrollmentKey, BotWaitEnrollmentReply, DecisionPreparedProjection, DecisionTransitionId,
+    EnrollBotWaitCleanup,
 };
 use koru_delegate_runtime::{
     AppliedRunProjection, DecisionEnrollmentBridge, DecisionUsageObservation, Port, PortError,
@@ -37,6 +38,9 @@ enum Request {
     },
     Return {
         ticket: RunPublicationTicket,
+        /// The handle-local candidate of a preparation the SQL owner did not
+        /// record, discarded before the handle goes back.
+        discard: Option<DecisionTransitionId>,
     },
     Enroll {
         request: EnrollBotWaitCleanup,
@@ -213,7 +217,32 @@ impl PublicationWorker {
     /// Returns ownership while preserving handle-local staging. It is not a
     /// discard/SQL rollback or proof that exclusive publication may end.
     pub(crate) fn return_handle(&mut self, ticket: RunPublicationTicket) -> PortResult<()> {
-        self.submit(ticket, Request::Return { ticket })
+        self.submit(
+            ticket,
+            Request::Return {
+                ticket,
+                discard: None,
+            },
+        )
+    }
+    /// Return the handle after the SQL owner refused (or could not confirm)
+    /// the receipt for the preparation `transition`: the handle-local
+    /// candidate is discarded first. It was never applied, and an unrecorded
+    /// candidate left staged refuses every later, different preparation on
+    /// this handle. If the receipt did commit after all, the retained bytes
+    /// apply through the same cold path a reopened handle uses.
+    pub(crate) fn return_unrecorded(
+        &mut self,
+        ticket: RunPublicationTicket,
+        transition: DecisionTransitionId,
+    ) -> PortResult<()> {
+        self.submit(
+            ticket,
+            Request::Return {
+                ticket,
+                discard: Some(transition),
+            },
+        )
     }
     fn submit(&mut self, ticket: RunPublicationTicket, request: Request) -> PortResult<()> {
         if self.ticket != Some(ticket) || self.waiting {
@@ -463,7 +492,7 @@ fn run_with(
         }
         let ticket = match &request {
             Request::Start(start) => start.ticket,
-            Request::Apply { ticket, .. } | Request::Return { ticket } => *ticket,
+            Request::Apply { ticket, .. } | Request::Return { ticket, .. } => *ticket,
             Request::Enroll { .. } | Request::Shutdown => unreachable!(),
         };
         let completion = match catch_unwind(AssertUnwindSafe(|| execute(&mut active, request))) {
@@ -543,9 +572,14 @@ fn execute(active: &mut Option<Active>, request: Request) -> Completion {
             }
         }
         Request::Apply { ticket, prepared } => apply(active, ticket, &prepared),
-        Request::Return { ticket } => {
-            if active.as_ref().is_some_and(|a| a.ticket == ticket) {
-                returned(active, None)
+        Request::Return { ticket, discard } => {
+            if let Some(current) = active.as_mut().filter(|a| a.ticket == ticket) {
+                // A refused discard (the candidate was applied, or another
+                // transition is staged) goes back with the handle, unchanged.
+                let error = discard.and_then(|transition| {
+                    current.handle.discard_prepared_projection(transition).err()
+                });
+                returned(active, error)
             } else {
                 Completion::Pending {
                     ticket,
