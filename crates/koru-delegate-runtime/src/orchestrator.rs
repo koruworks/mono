@@ -16,7 +16,7 @@ mod create;
 mod deletion;
 mod events;
 mod native_results;
-mod publication;
+pub(crate) mod publication;
 mod record;
 mod restart;
 mod resume;
@@ -39,6 +39,7 @@ use crate::{CaptureFailure, PortError, Ports, SessionEvents, SourceRefusal};
 pub use create::CreateIntentStatus;
 pub use deletion::{Purged, RunPlace};
 pub use events::TOOL_STEP_BOUND;
+pub use publication::source::{SourceProducer, SourceProgress};
 pub use state::RunState;
 
 /// How the orchestrator behaves at its edges. Everything a host may want

@@ -7,6 +7,10 @@ use super::*;
 use koru_delegate_core::decisions::*;
 
 const K_PROJECTION: &str = "decision_projection";
+/// The Bot5 format written only by a committed decision projection. The
+/// reader gate (`RUN_DOCUMENT_SCHEMA_VERSION`, still 4) is raised with the
+/// coherent reader integration; until then a projected Run reads as TooNew
+/// and every ordinary write on it refuses ReadOnly.
 const BOT_PROJECTION_SCHEMA: i64 = 5;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

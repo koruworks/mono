@@ -4,6 +4,8 @@
 //! is opened by these cold cleanup and authority recovery scenarios.
 use super::*;
 
+mod source;
+
 fn waiting() -> (Harness, BotSubmission, BotExecutionFence) {
     waiting_with_memory(false)
 }
@@ -86,10 +88,17 @@ fn waiting_with_memory(keep_memory: bool) -> (Harness, BotSubmission, BotExecuti
         use crate::orchestrator::publication::RunDocumentOwner;
         let state = h.orchestrator.runs.get_mut(&fence.run).unwrap();
         let RunDocumentOwner::Attached { handle, .. } =
-            std::mem::replace(&mut state.doc, RunDocumentOwner::Unopened) else { panic!("attached") };
-        state.doc = RunDocumentOwner::Attached { exclusive: true,
-            handle: Box::new(ProjectionHandle { inner: handle,
-                staging: koru_delegate_document::RunProjectionStaging::default() }) };
+            std::mem::replace(&mut state.doc, RunDocumentOwner::Unopened)
+        else {
+            panic!("attached")
+        };
+        state.doc = RunDocumentOwner::Attached {
+            exclusive: true,
+            handle: Box::new(ProjectionHandle {
+                inner: handle,
+                staging: koru_delegate_document::RunProjectionStaging::default(),
+            }),
+        };
     } else {
         // Simulate a cold actor without opening a replacement handle.
         h.orchestrator.runs.remove(&fence.run);
@@ -104,53 +113,93 @@ struct ProjectionHandle {
     staging: koru_delegate_document::RunProjectionStaging,
 }
 impl RunDocumentHandle for ProjectionHandle {
-    fn document(&self) -> &RunDocument { self.inner.document() }
-    fn commit(&mut self, write: &mut dyn FnMut(&RunDocument) -> Result<(), RunDocumentError>) -> PortResult<()> {
+    fn document(&self) -> &RunDocument {
+        self.inner.document()
+    }
+    fn commit(
+        &mut self,
+        write: &mut dyn FnMut(&RunDocument) -> Result<(), RunDocumentError>,
+    ) -> PortResult<()> {
         self.inner.commit(write)
     }
-    fn prepare_decision_projection(&mut self, intent: &koru_delegate_document::RunProjectionIntent)
-        -> PortResult<DecisionPreparedProjection> {
+    fn prepare_decision_projection(
+        &mut self,
+        intent: &koru_delegate_document::RunProjectionIntent,
+    ) -> PortResult<DecisionPreparedProjection> {
         self.inner.settle()?;
-        self.staging.prepare(self.inner.document(), intent).map_err(Into::into)
+        self.staging
+            .prepare(self.inner.document(), intent)
+            .map_err(Into::into)
     }
-    fn apply_prepared_projection(&mut self, prepared: &DecisionPreparedProjection)
-        -> PortResult<koru_delegate_document::AppliedRunProjection> {
+    fn apply_prepared_projection(
+        &mut self,
+        prepared: &DecisionPreparedProjection,
+    ) -> PortResult<koru_delegate_document::AppliedRunProjection> {
         self.staging.apply(self.inner.document(), prepared)?;
         self.inner.commit(&mut |_| Ok(()))?;
         self.inner.settle()?;
-        if !self.inner.durable() { return Err(crate::publication_pending()); }
-        self.staging.acknowledge(self.inner.document(), prepared, &self.inner.document().version())
+        if !self.inner.durable() {
+            return Err(crate::publication_pending());
+        }
+        self.staging
+            .acknowledge(
+                self.inner.document(),
+                prepared,
+                &self.inner.document().version(),
+            )
             .map_err(Into::into)
     }
     fn discard_prepared_projection(&mut self, transition: DecisionTransitionId) -> PortResult<()> {
         self.staging.discard(transition).map_err(Into::into)
     }
-    fn durable(&self) -> bool { self.inner.durable() }
-    fn settle(&mut self) -> PortResult<()> { self.inner.settle() }
+    fn durable(&self) -> bool {
+        self.inner.durable()
+    }
+    fn settle(&mut self) -> PortResult<()> {
+        self.inner.settle()
+    }
 }
 
 fn apply_next(h: &mut Harness, run: RunId) {
     let start = h.orchestrator.next_run_publication(run).unwrap().unwrap();
-    let crate::RunPublicationDocument::Attached(mut handle) = start.document else { panic!("warm") };
+    let crate::RunPublicationDocument::Attached(mut handle) = start.document else {
+        panic!("warm")
+    };
     let prepared = match start.operation {
         crate::RunPublicationOperation::Prepare(intent) => {
             let candidate = handle.prepare_decision_projection(&intent).unwrap();
-            h.orchestrator.record_run_preparation(start.ticket, &candidate).unwrap()
+            h.orchestrator
+                .record_run_preparation(start.ticket, &candidate)
+                .unwrap()
         }
         crate::RunPublicationOperation::Apply(prepared) => prepared,
     };
     let proof = handle.apply_prepared_projection(&prepared).unwrap();
-    assert!(h.orchestrator.acknowledge_run_projection(&proof).is_err(),
-        "durable bytes alone do not prove the worker returned its handle");
-    assert!(h.orchestrator.return_run_publication(start.ticket, handle).is_ok());
+    assert!(
+        h.orchestrator.acknowledge_run_projection(&proof).is_err(),
+        "durable bytes alone do not prove the worker returned its handle"
+    );
+    assert!(
+        h.orchestrator
+            .return_run_publication(start.ticket, handle)
+            .is_ok()
+    );
     h.orchestrator.acknowledge_run_projection(&proof).unwrap();
 }
 
 fn source_tool(turn: AgentTurnId, sequence: u64) -> SessionUpdate {
     SessionUpdate::Agent(SequencedAgentEvent {
+        session_id: session(1),
         sequence: StreamSequence::new(sequence).unwrap(),
-        event: AgentEvent::ToolCompleted { turn_id: turn, tool_call_id: ToolCallId::mint(),
-            succeeded: true, tool: None, failure: None, detail: None, output: None },
+        event: AgentEvent::ToolCompleted {
+            turn_id: turn,
+            tool_call_id: ToolCallId::mint(),
+            succeeded: true,
+            tool: None,
+            failure: None,
+            detail: None,
+            output: None,
+        },
     })
 }
 
@@ -162,14 +211,42 @@ fn decision_source_sql_acceptance_keeps_caches_until_applied_and_physical_return
     h.orchestrator.register_source_producer(fence.run, epoch);
     let turn = fence.turn.unwrap();
     let before = h.orchestrator.runs[&fence.run].source_frontiers.clone();
-    h.orchestrator.handle_from_producer(fence.run, epoch, source_tool(turn, 8)).unwrap();
-    assert!(matches!(latest(&h, &fence).state, DecisionProjectionState::Pending));
-    assert_eq!(h.orchestrator.runs[&fence.run].attempt.as_ref().unwrap().turns[&turn].tool_calls, 0);
+    h.orchestrator
+        .handle_from_producer(fence.run, epoch, source_tool(turn, 8))
+        .unwrap();
+    assert!(matches!(
+        latest(&h, &fence).state,
+        DecisionProjectionState::Pending
+    ));
+    assert_eq!(
+        h.orchestrator.runs[&fence.run]
+            .attempt
+            .as_ref()
+            .unwrap()
+            .turns[&turn]
+            .tool_calls,
+        0
+    );
     assert_eq!(h.orchestrator.runs[&fence.run].source_frontiers, before);
-    assert!(h.orchestrator.handle_from_producer(fence.run, epoch, source_tool(turn, 9)).is_err());
+    assert!(
+        h.orchestrator
+            .handle_from_producer(fence.run, epoch, source_tool(turn, 9))
+            .is_err()
+    );
     apply_next(&mut h, fence.run);
-    assert_eq!(h.orchestrator.runs[&fence.run].attempt.as_ref().unwrap().turns[&turn].tool_calls, 1);
-    assert_eq!(h.orchestrator.runs[&fence.run].source_frontiers.agent_after, Some(StreamSequence::new(8).unwrap()));
+    assert_eq!(
+        h.orchestrator.runs[&fence.run]
+            .attempt
+            .as_ref()
+            .unwrap()
+            .turns[&turn]
+            .tool_calls,
+        1
+    );
+    assert_eq!(
+        h.orchestrator.runs[&fence.run].source_frontiers.agent_after,
+        Some(StreamSequence::new(8).unwrap())
+    );
     assert!(h.orchestrator.runs[&fence.run].decision_source.is_none());
 }
 
@@ -180,14 +257,32 @@ fn decision_source_unknown_commit_reuses_exact_target_and_applies_tally_once() {
     let epoch = Uuid::new_v4();
     h.orchestrator.register_source_producer(fence.run, epoch);
     h.ledger.lock().unwrap().fail = Some("decision_source_after");
-    h.orchestrator.handle_from_producer(fence.run, epoch, source_tool(fence.turn.unwrap(), 8)).unwrap();
+    h.orchestrator
+        .handle_from_producer(fence.run, epoch, source_tool(fence.turn.unwrap(), 8))
+        .unwrap();
     let retained = latest(&h, &fence);
     h.orchestrator.retry_decision_source(fence.run).unwrap();
     assert_eq!(latest(&h, &fence), retained);
-    assert_eq!(h.orchestrator.runs[&fence.run].attempt.as_ref().unwrap().turns[&fence.turn.unwrap()].tool_calls, 0);
+    assert_eq!(
+        h.orchestrator.runs[&fence.run]
+            .attempt
+            .as_ref()
+            .unwrap()
+            .turns[&fence.turn.unwrap()]
+            .tool_calls,
+        0
+    );
     apply_next(&mut h, fence.run);
     h.orchestrator.retry_decision_source(fence.run).unwrap();
-    assert_eq!(h.orchestrator.runs[&fence.run].attempt.as_ref().unwrap().turns[&fence.turn.unwrap()].tool_calls, 1);
+    assert_eq!(
+        h.orchestrator.runs[&fence.run]
+            .attempt
+            .as_ref()
+            .unwrap()
+            .turns[&fence.turn.unwrap()]
+            .tool_calls,
+        1
+    );
 }
 
 #[test]
@@ -197,17 +292,36 @@ fn decision_source_reconnect_discards_only_positively_missing_old_epoch_candidat
     let epoch = Uuid::new_v4();
     h.orchestrator.register_source_producer(fence.run, epoch);
     h.ledger.lock().unwrap().fail = Some("decision_source_before");
-    assert!(h.orchestrator.handle_from_producer(fence.run, epoch, source_tool(fence.turn.unwrap(), 8)).is_err());
+    assert!(
+        h.orchestrator
+            .handle_from_producer(fence.run, epoch, source_tool(fence.turn.unwrap(), 8))
+            .is_err()
+    );
     let latest_before = latest(&h, &fence);
     let replacement = Uuid::new_v4();
-    h.orchestrator.register_source_producer(fence.run, replacement);
+    h.orchestrator
+        .register_source_producer(fence.run, replacement);
     assert!(h.orchestrator.retry_decision_source(fence.run).is_err());
     assert!(h.orchestrator.runs[&fence.run].decision_source.is_none());
     assert_eq!(latest(&h, &fence), latest_before);
-    assert!(h.orchestrator.handle_from_producer(fence.run, epoch, source_tool(fence.turn.unwrap(), 8)).is_err());
-    h.orchestrator.handle_from_producer(fence.run, replacement, source_tool(fence.turn.unwrap(), 8)).unwrap();
+    assert!(
+        h.orchestrator
+            .handle_from_producer(fence.run, epoch, source_tool(fence.turn.unwrap(), 8))
+            .is_err()
+    );
+    h.orchestrator
+        .handle_from_producer(fence.run, replacement, source_tool(fence.turn.unwrap(), 8))
+        .unwrap();
     apply_next(&mut h, fence.run);
-    assert_eq!(h.orchestrator.runs[&fence.run].attempt.as_ref().unwrap().turns[&fence.turn.unwrap()].tool_calls, 1);
+    assert_eq!(
+        h.orchestrator.runs[&fence.run]
+            .attempt
+            .as_ref()
+            .unwrap()
+            .turns[&fence.turn.unwrap()]
+            .tool_calls,
+        1
+    );
 }
 
 fn latest(h: &Harness, fence: &BotExecutionFence) -> DecisionProjectionRecord {

@@ -347,10 +347,9 @@ fn projection_cold_preflight_rejects_changed_marker_effects_before_connected_imp
     assert_eq!(doc.timeline_len(), 0);
 }
 
-#[test]
-fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
-    let doc = bot(false);
-    let mut source = intent(&doc);
+/// One Source carrying a complete usage envelope (model 48) on `doc`.
+fn usage_source(doc: &RunDocument) -> (RunProjectionIntent, DecisionSourceBookkeeping) {
+    let mut source = intent(doc);
     let bookkeeping = DecisionSourceBookkeeping {
         boundary: DecisionSourceBoundary {
             fence: *source.target.fence(),
@@ -446,6 +445,13 @@ fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
     };
     source.identity.kind = DecisionProjectionKind::Source;
     source.identity.target_digest = source.target.digest().unwrap();
+    (source, bookkeeping)
+}
+
+#[test]
+fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
+    let doc = bot(false);
+    let (source, bookkeeping) = usage_source(&doc);
     let mut stage = RunProjectionStaging::default();
     let p = stage.prepare(&doc, &source).unwrap();
     applied(&mut stage, &doc, &p);
@@ -764,4 +770,170 @@ fn projection_marker_has_independent_64k_and_depth_bounds() {
     doc.doc().commit();
     let control = next(&doc, &original, RunEvent::Cancel);
     assert!(stage.prepare(&doc, &control).is_err());
+}
+
+// ---------------------------------------------- cold usage recovery (O111)
+
+fn usage_lookup(fact: &UsageFact, model: &ModelIdentity) -> DecisionUsageLookup {
+    DecisionUsageLookup {
+        attempt: fact.attempt,
+        turn: fact.turn,
+        provider: model.provider.clone(),
+        requested: model.requested.clone(),
+        reported: model.reported.clone(),
+    }
+}
+
+/// Ordinary facts first (schema 3 is writable), then one applied marker.
+fn marked_after(
+    facts: &[UsageFact],
+    models: &[ModelIdentity],
+) -> (RunDocument, RunProjectionIntent) {
+    let doc = bot(false);
+    for model in models {
+        doc.record_model(model).unwrap();
+    }
+    for fact in facts {
+        doc.record_usage(fact).unwrap();
+    }
+    let control = intent(&doc);
+    let mut stage = RunProjectionStaging::default();
+    let prepared = stage.prepare(&doc, &control).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    (doc, control)
+}
+
+#[test]
+fn decision_usage_cold_lookup_keeps_highest_amendment_and_legal_duplicates() {
+    let first = usage(5, 0, 100);
+    let amended = usage(5, 1, 120);
+    let (doc, control) = marked_after(
+        &[first, amended.clone(), amended.clone(), usage(6, 0, 1)],
+        &[identity(0x30)],
+    );
+    let observed = doc
+        .observe_decision_usage(&control.identity, &usage_lookup(&amended, &identity(0x30)))
+        .unwrap();
+    // A stored fact has no EventId or cached relationship: AppliedFact only.
+    assert_eq!(
+        observed.usage,
+        RecoveredDecisionUsage::AppliedFact(amended.clone())
+    );
+    assert_eq!(observed.model, Some(identity(0x30)));
+    let mut other_key = usage(7, 0, 1);
+    other_key.identity = UsageFactId::from_uuid(v4(0x77));
+    let absent = doc
+        .observe_decision_usage(
+            &control.identity,
+            &usage_lookup(&other_key, &identity(0x30)),
+        )
+        .unwrap();
+    assert_eq!(absent.usage, RecoveredDecisionUsage::Absent);
+    // A tuple nobody retained is positive model absence, not a guess.
+    let mut unseen = identity(0x31);
+    unseen.reported = ModelReport::Named {
+        name: ModelName::new("never-reported").unwrap(),
+    };
+    let unseen = doc
+        .observe_decision_usage(&control.identity, &usage_lookup(&amended, &unseen))
+        .unwrap();
+    assert_eq!(unseen.model, None);
+}
+
+#[test]
+fn decision_usage_cold_lookup_refuses_conflicts_and_stale_markers() {
+    let same_revision = {
+        let mut changed = usage(5, 1, 999);
+        changed.output = Some(11);
+        changed
+    };
+    let (doc, control) = marked_after(&[usage(5, 1, 120), same_revision.clone()], &[]);
+    assert!(
+        doc.observe_decision_usage(
+            &control.identity,
+            &usage_lookup(&same_revision, &identity(0x30))
+        )
+        .is_err(),
+        "conflicting facts at one revision refuse recovery"
+    );
+    let mut competing = usage(5, 2, 120);
+    competing.identity = UsageFactId::from_uuid(v4(0x7e));
+    let (doc, control) = marked_after(&[usage(5, 0, 120), competing.clone()], &[]);
+    assert!(
+        doc.observe_decision_usage(
+            &control.identity,
+            &usage_lookup(&competing, &identity(0x30))
+        )
+        .is_err(),
+        "two identities for one accounting key refuse recovery"
+    );
+    let (doc, control) = marked_after(&[usage(5, 0, 120)], &[]);
+    let mut stale = control.identity.clone();
+    stale.transition = id(73);
+    assert!(
+        doc.observe_decision_usage(&stale, &usage_lookup(&usage(5, 0, 120), &identity(0x30)))
+            .is_err(),
+        "only the current applied marker is a valid observation base"
+    );
+    let unmarked = bot(false);
+    assert!(
+        unmarked
+            .observe_decision_usage(
+                &control.identity,
+                &usage_lookup(&usage(5, 0, 1), &identity(0x30))
+            )
+            .is_err()
+    );
+}
+
+#[test]
+fn decision_usage_cold_lookup_prefers_the_facts_own_model_identity() {
+    let fact = usage(5, 0, 100);
+    let mut duplicate = identity(0x2f);
+    duplicate.id = model(0x2f);
+    // Two retained identities carry the same three values; the one the
+    // latest fact references wins even though the other sorts first.
+    let (doc, control) = marked_after(&[fact.clone()], &[duplicate, identity(0x30)]);
+    let observed = doc
+        .observe_decision_usage(&control.identity, &usage_lookup(&fact, &identity(0x30)))
+        .unwrap();
+    assert_eq!(observed.model.map(|model| model.id), Some(model(0x30)));
+}
+
+#[test]
+fn decision_usage_full_envelope_only_from_the_exact_applied_marker() {
+    let doc = bot(false);
+    let (source, bookkeeping) = usage_source(&doc);
+    let mut stage = RunProjectionStaging::default();
+    let prepared = stage.prepare(&doc, &source).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    let snapshot = bookkeeping.usage.clone().unwrap();
+    let fact = snapshot.fact();
+    let observed = doc
+        .observe_decision_usage(&source.identity, &usage_lookup(&fact, &identity(48)))
+        .unwrap();
+    assert_eq!(
+        observed.usage,
+        RecoveredDecisionUsage::FullEnvelope {
+            fact: fact.clone(),
+            snapshot: snapshot.clone()
+        }
+    );
+    assert_eq!(observed.model, Some(identity(48)));
+    // A later Control retains the same bookkeeping, so the envelope stays
+    // exact against the new marker identity; the old identity is stale.
+    let mut control = next(&doc, &source, RunEvent::Cancel);
+    control.identity.kind = DecisionProjectionKind::Control;
+    let prepared = stage.prepare(&doc, &control).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    assert!(
+        doc.observe_decision_usage(&source.identity, &usage_lookup(&fact, &identity(48)))
+            .is_err()
+    );
+    assert!(matches!(
+        doc.observe_decision_usage(&control.identity, &usage_lookup(&fact, &identity(48)))
+            .unwrap()
+            .usage,
+        RecoveredDecisionUsage::FullEnvelope { .. }
+    ));
 }

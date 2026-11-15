@@ -75,7 +75,8 @@ pub use facts::{RunFact, UsageReport};
 pub use orchestrator::{
     CreateError, CreateIntentStatus, Created, HandleOutcome, Options, Orchestrator, Purged,
     RestartReport, RunError, RunPlace, RunView, ScheduledScopeReservation,
-    ScopeReservationResolution, Started, TOOL_STEP_BOUND, TimelineWindow, WindowItem,
+    ScopeReservationResolution, SourceProducer, SourceProgress, Started, TOOL_STEP_BOUND,
+    TimelineWindow, WindowItem,
 };
 pub use ports::{
     AppliedRunProjection, ArtifactRegistrations, CaptureFailure, CaptureStage, CapturedContext,
@@ -84,8 +85,9 @@ pub use ports::{
     NoScheduleEvents, Port, PortError, PortResult, Ports, Preamble, PreparedScheduleEvent,
     PublishFailure, RoutineBridge, RoutineBridgeFailure, RoutineBridgeResult, RoutineCandidate,
     RoutineLedger, RoutinePreparationObservation, RoutinePreparedReply, RoutineWork,
-    RunDocumentHandle, RunDocumentOpen, RunDocuments, RunEvents, RunProjectionIntent,
-    RunPublicationDocument, RunPublicationOperation, RunPublicationStart, RunPublicationTicket,
+    DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage, RunDocumentHandle,
+    RunDocumentOpen, RunDocuments, RunEvents, RunProjectionIntent, RunPublicationDocument,
+    RunPublicationOperation, RunPublicationStart, RunPublicationTicket, RunSourceObservation,
     RunStore, ScheduleCatalog, ScheduleChangeWatch, ScheduleClock, ScheduleDefinitionEvent,
     ScheduleDocumentHandle, ScheduleDocuments, ScheduleEventMaintenance, ScheduleEventRef,
     ScheduleEvents, ScheduleLedger, ScheduleOccurrenceEvent, SchedulePhaseGate, SchedulePhaseGuard,

@@ -192,6 +192,8 @@ struct Watcher {
 struct Pump {
     stop: Arc<AtomicBool>,
     epoch: uuid::Uuid,
+    /// Present only for a decision producer: its single delivery permit.
+    permit: Option<mpsc::SyncSender<()>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,6 +243,8 @@ pub struct Actor {
     active: Arc<AtomicU32>,
     publication_worker: Option<crate::publication::PublicationWorker>,
     publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
+    /// The last Run a physical publication workflow was started for.
+    publication_cursor: Option<RunId>,
 }
 
 impl Actor {
@@ -270,6 +274,7 @@ impl Actor {
             active: Arc::new(AtomicU32::new(0)),
             publication_worker: None,
             publication_ack: None,
+            publication_cursor: None,
         }
     }
 
@@ -508,6 +513,7 @@ impl Actor {
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
                 self.retry_publication_ack();
+                self.drive_publication();
                 if let Err(error) = self.orchestrator.retry_publications(64) {
                     tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
                 }
@@ -1038,6 +1044,19 @@ impl Actor {
                 if self.pumps.get(&run).is_none_or(|pump| pump.epoch != epoch) {
                     return;
                 }
+                if self
+                    .pumps
+                    .get(&run)
+                    .is_some_and(|pump| pump.permit.is_some())
+                {
+                    let was_active = self.orchestrator.bot_budget_runs().contains(&run);
+                    self.decision_update(run, epoch, update);
+                    self.notify(run);
+                    if was_active && !self.orchestrator.bot_budget_runs().contains(&run) {
+                        self.wake_bots();
+                    }
+                    return;
+                }
                 let was_active = self.orchestrator.bot_budget_runs().contains(&run);
                 match self.orchestrator.handle(run, update) {
                     Ok(HandleOutcome::Continue) => {}
@@ -1074,7 +1093,10 @@ impl Actor {
     }
 
     fn publications_pending(&self) -> bool {
-        if self.publication_ack.is_some() {
+        // Exclusive Runs keep the existing coalesced maintenance tick alive so
+        // owed projections, observations and producer reconnects progress.
+        if self.publication_ack.is_some() || !self.orchestrator.publication_candidates().is_empty()
+        {
             return true;
         }
         match self
@@ -1373,7 +1395,14 @@ impl Actor {
             });
         match spawned {
             Ok(_) => {
-                self.pumps.insert(run, Pump { stop, epoch });
+                self.pumps.insert(
+                    run,
+                    Pump {
+                        stop,
+                        epoch,
+                        permit: None,
+                    },
+                );
             }
             Err(error) => {
                 tracing::error!(target: "koru::delegate", run = ?run, %error, "the run's stream could not be pumped");

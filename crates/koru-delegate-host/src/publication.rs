@@ -11,8 +11,8 @@ use std::{
 
 use koru_delegate_core::decisions::DecisionPreparedProjection;
 use koru_delegate_runtime::{
-    AppliedRunProjection, Port, PortError, PortResult, RunDocumentHandle, RunPublicationDocument,
-    RunPublicationOperation, RunPublicationStart, RunPublicationTicket,
+    AppliedRunProjection, DecisionUsageObservation, Port, PortError, PortResult, RunDocumentHandle,
+    RunPublicationDocument, RunPublicationOperation, RunPublicationStart, RunPublicationTicket,
 };
 
 enum Request {
@@ -48,6 +48,13 @@ pub(crate) enum Completion {
         ticket: RunPublicationTicket,
         error: PortError,
     },
+    /// A read-only source observation finished; the handle comes straight
+    /// back with it. Nothing was prepared, imported or written.
+    Observed {
+        ticket: RunPublicationTicket,
+        handle: Box<dyn RunDocumentHandle>,
+        observation: PortResult<DecisionUsageObservation>,
+    },
     /// Sent only after the panicking job's actual handle has been dropped.
     Lost { ticket: RunPublicationTicket },
 }
@@ -58,6 +65,7 @@ impl Completion {
             | Self::Applied { ticket, .. }
             | Self::Returned { ticket, .. }
             | Self::Pending { ticket, .. }
+            | Self::Observed { ticket, .. }
             | Self::Lost { ticket } => *ticket,
         }
     }
@@ -296,6 +304,16 @@ fn execute(active: &mut Option<Active>, request: Request) -> Completion {
                     }
                 }
                 RunPublicationOperation::Apply(prepared) => apply(active, start.ticket, &prepared),
+                RunPublicationOperation::ObserveSource(observation) => {
+                    // One bounded current-state read for one exact cold key.
+                    let current = active.take().expect("assigned above");
+                    let observed = observation.observe(current.handle.as_ref());
+                    Completion::Observed {
+                        ticket: current.ticket,
+                        handle: current.handle,
+                        observation: observed,
+                    }
+                }
             }
         }
         Request::Apply { ticket, prepared } => apply(active, ticket, &prepared),

@@ -32,7 +32,10 @@ use koru_delegate_core::{
     ResultReference, RunAttemptId, RunContextItem, RunHeader, RunId, SessionId, SessionProfileKey,
     WorkspaceId,
 };
-pub use koru_delegate_document::{AppliedRunProjection, RunProjectionIntent};
+pub use koru_delegate_document::{
+    AppliedRunProjection, DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage,
+    RunProjectionIntent,
+};
 use koru_delegate_document::{
     RunDocument, RunDocumentError, ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument,
     ScheduleDocumentError, ScheduleWrite,

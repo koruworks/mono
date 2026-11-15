@@ -8,8 +8,9 @@ use super::snapshot::SourceMemory;
 use koru_delegate_core::decisions::*;
 use koru_delegate_core::{
     AgentTurnId, ApprovalId, ApprovalOutcome, Attention, CancelReason, EventId, FailureStage,
-    RunEvent, RunFact, RunFailureReason, RunStatus, StepKind, TimelineEntry, TimelineRef,
-    TimelineRefs, ToolFailure, ToolFailures, ToolKind, TurnOriginator, transition_bot,
+    ModelIdentity, PriorAttempt, RunEvent, RunFact, RunFailureReason, RunStatus, StepKind,
+    TimelineEntry, TimelineRef, TimelineRefs, ToolFailure, ToolFailures, ToolKind, TurnOriginator,
+    UsageReport, transition_bot,
 };
 use koru_session_protocol::{AgentEvent, ApprovalDecision};
 
@@ -32,24 +33,130 @@ struct Fold {
     publications: Vec<DecisionProjectionPublication>,
     turns: Vec<DecisionTurnTally>,
     approvals: Vec<(ApprovalId, AgentTurnId)>,
+    usage: Option<DecisionUsageSnapshot>,
+    models: Vec<ModelIdentity>,
     now: i64,
 }
 
 impl SourceFold {
+    /// `child_terminated` is the already-requested termination answer for a
+    /// ChildSessionCreated event (request acceptance, never process death).
+    /// The caller asks the session host once, before staging; an exact retry
+    /// reuses this retained target and never asks again.
     pub(super) fn agent(
         memory: SourceMemory,
         boundary: DecisionSourceBoundary,
         predecessor: DecisionProjectionPredecessor,
         event: &AgentEvent,
+        child_terminated: Option<bool>,
+        now: i64,
+    ) -> Result<Self, DecisionError> {
+        let mut fold = Fold::new(memory, boundary, predecessor, now)?;
+        // Usage is accepted after terminal status by its own amendment owner.
+        // It must never be silently acknowledged by this non-usage fold.
+        if matches!(event, AgentEvent::Usage { .. }) {
+            return Err(DecisionError::Invalid);
+        }
+        // A terminal Run accepts no child detection and asks nothing; a live
+        // one must carry the answered termination request (checked below).
+        if child_terminated.is_some() && !matches!(event, AgentEvent::ChildSessionCreated { .. }) {
+            return Err(DecisionError::Invalid);
+        }
+        if !fold.status.is_terminal() {
+            fold.agent(event, child_terminated)?;
+        }
+        fold.finish()
+    }
+
+    /// One accepted usage report, including after terminal status (§17.2: a
+    /// completed Run's accounting is amended, never reopened). The snapshot is
+    /// the complete O111-qualified envelope; no status changes here.
+    pub(super) fn usage(
+        memory: SourceMemory,
+        boundary: DecisionSourceBoundary,
+        predecessor: DecisionProjectionPredecessor,
+        usage: DecisionUsageSnapshot,
+        model: Option<ModelIdentity>,
+        now: i64,
+    ) -> Result<Self, DecisionError> {
+        let mut fold = Fold::new(memory, boundary, predecessor, now)?;
+        if usage.attempt != fold.memory.attempt
+            || model
+                .as_ref()
+                .is_some_and(|identity| identity.id != usage.model)
+        {
+            return Err(DecisionError::Invalid);
+        }
+        let fact = usage.fact();
+        fold.publications.push(DecisionProjectionPublication {
+            event: usage.event,
+            step: None,
+            fact: RunFact::Usage {
+                run: fold.boundary.fence.run,
+                attempt: usage.attempt,
+                turn: usage.turn,
+                report: UsageReport {
+                    usage: usage.id,
+                    revision: usage.revision,
+                    input: usage.input,
+                    output: usage.output,
+                    cached_input: usage.cached_input,
+                    model: usage.model,
+                    completeness: fact.completeness,
+                    cached_relationship: usage.cached_input_relationship,
+                },
+            },
+        });
+        fold.models.extend(model);
+        fold.usage = Some(usage);
+        fold.finish()
+    }
+
+    /// Positive native process death on the Session stream. A live Run is
+    /// interrupted with the prior attempt Ended, exactly as the ordinary owner
+    /// records it; a terminal Run keeps its absorbing status. Retiring the
+    /// attempt is physical follow-through after Applied, never part of this.
+    pub(super) fn process_ended(
+        memory: SourceMemory,
+        boundary: DecisionSourceBoundary,
+        predecessor: DecisionProjectionPredecessor,
+        now: i64,
+    ) -> Result<Self, DecisionError> {
+        let mut fold = Fold::new(memory, boundary, predecessor, now)?;
+        if !fold.status.is_terminal() {
+            let prior_attempt = PriorAttempt::Ended;
+            let attempt = fold.memory.attempt;
+            fold.apply(RunEvent::Interrupt { prior_attempt })?;
+            fold.step(
+                StepKind::Interrupted { prior_attempt },
+                TimelineRefs::new([TimelineRef::Attempt { attempt }]).expect("one ref"),
+                RunFact::Interrupted {
+                    run: fold.boundary.fence.run,
+                    attempt,
+                    generation: fold.memory.generation,
+                    prior_attempt,
+                },
+            );
+        }
+        fold.finish()
+    }
+}
+
+impl Fold {
+    fn new(
+        memory: SourceMemory,
+        boundary: DecisionSourceBoundary,
+        predecessor: DecisionProjectionPredecessor,
         now: i64,
     ) -> Result<Self, DecisionError> {
         boundary.validate()?;
         if memory.attempt != boundary.fence.attempt
             || memory.generation != boundary.fence.generation
+            || memory.session != Some(boundary.fence.session)
         {
             return Err(DecisionError::Invalid);
         }
-        let mut fold = Fold {
+        Ok(Fold {
             status: predecessor.status.clone(),
             failure: predecessor.failure_reason,
             turns: memory.turns.as_slice().to_vec(),
@@ -60,22 +167,17 @@ impl SourceFold {
             transitions: Vec::new(),
             steps: Vec::new(),
             publications: Vec::new(),
+            usage: None,
+            models: Vec::new(),
             now,
-        };
-        // Usage is accepted after terminal status by its own amendment owner.
-        // It must never be silently acknowledged by this non-usage fold.
-        if matches!(event, AgentEvent::Usage { .. }) {
-            return Err(DecisionError::Invalid);
-        }
-        if !fold.status.is_terminal() {
-            fold.agent(event)?;
-        }
-        fold.finish()
+        })
     }
-}
 
-impl Fold {
-    fn agent(&mut self, event: &AgentEvent) -> Result<(), DecisionError> {
+    fn agent(
+        &mut self,
+        event: &AgentEvent,
+        child_terminated: Option<bool>,
+    ) -> Result<(), DecisionError> {
         let run = self.boundary.fence.run;
         let attempt = self.memory.attempt;
         match event {
@@ -325,8 +427,37 @@ impl Fold {
                         .collect(),
                 )?;
             }
-            // These need their own observed side-effect/amendment boundary.
-            AgentEvent::Usage { .. } | AgentEvent::ChildSessionCreated { .. } => {
+            AgentEvent::ChildSessionCreated {
+                turn_id,
+                child_session_id,
+            } => {
+                // §7.3: no unmanaged hierarchy. The detection and the already
+                // answered termination request are one accepted observation.
+                let terminated = child_terminated.ok_or(DecisionError::Invalid)?;
+                self.apply(RunEvent::ChildSessionDetected)?;
+                self.step(
+                    StepKind::ChildSessionDetected,
+                    TimelineRefs::new([
+                        TimelineRef::Turn { turn: *turn_id },
+                        TimelineRef::Session {
+                            session: *child_session_id,
+                        },
+                    ])
+                    .expect("two refs"),
+                    RunFact::ChildSessionDetected {
+                        run,
+                        attempt,
+                        turn: *turn_id,
+                        child: *child_session_id,
+                        terminated,
+                    },
+                );
+                if terminated {
+                    self.apply(RunEvent::ChildSessionTerminated)?;
+                }
+            }
+            // Usage has its own amendment owner (`SourceFold::usage`).
+            AgentEvent::Usage { .. } => {
                 return Err(DecisionError::Invalid);
             }
             AgentEvent::MessageDelta { .. }
@@ -501,6 +632,7 @@ impl Fold {
         self.memory.turns = DecisionList::new(self.turns)?;
         self.memory.approvals = DecisionList::new(self.approvals)?;
         encode_decision_value(&self.memory, DECISION_PAYLOAD_BYTES)?;
+        let economics_at_ms = self.usage.is_some().then_some(self.now);
         let target = RunProjectionTargetV1::Source {
             version: DecisionVersionV1,
             predecessor: self.predecessor,
@@ -508,7 +640,7 @@ impl Fold {
             bookkeeping: DecisionSourceBookkeeping {
                 boundary: self.boundary,
                 unflushed: self.memory.turns.clone(),
-                usage: None,
+                usage: self.usage,
                 allocated_steps: DecisionList::new(
                     self.steps.iter().map(|step| step.id).collect(),
                 )?,
@@ -517,9 +649,9 @@ impl Fold {
                 event: None,
                 status: self.status,
                 failure_reason: self.failure,
-                economics_at_ms: None,
+                economics_at_ms,
                 steps: DecisionList::new(self.steps)?,
-                models: DecisionList::new(Vec::new())?,
+                models: DecisionList::new(self.models)?,
                 publications: DecisionList::new(self.publications)?,
             },
         };

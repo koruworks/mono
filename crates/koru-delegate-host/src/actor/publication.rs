@@ -6,9 +6,10 @@
 
 use super::*;
 use crate::publication::{Completion, PublicationWorker};
+use koru_delegate_runtime::SourceProgress;
 
 impl Actor {
-    pub(super) fn start_run_publication(&mut self, run: RunId) -> Result<bool, RunError> {
+    fn start_run_publication(&mut self, run: RunId) -> Result<bool, RunError> {
         if self.publication_ack.is_some()
             || self
                 .publication_worker
@@ -58,6 +59,70 @@ impl Actor {
                 .and_then(|worker| worker.completion());
             let Some(completion) = completion else { break };
             self.publication_completed(completion, false);
+        }
+        self.drive_publication();
+    }
+
+    /// One maintenance step: start at most one physical workflow, then offer
+    /// producers to Runs whose journal has drained. A wake alone frees no
+    /// ticket; this only acts on what the orchestrator positively reports.
+    pub(super) fn drive_publication(&mut self) {
+        self.schedule_publication();
+        self.connect_source_producers();
+    }
+
+    /// Rotate through the retained exclusive inventory, at most one visit per
+    /// Run per step, starting after the last Run served so a failing or busy
+    /// Run cannot monopolize the single ticket.
+    fn schedule_publication(&mut self) {
+        if self.publication_ack.is_some()
+            || self
+                .publication_worker
+                .as_ref()
+                .is_some_and(|worker| worker.ticket().is_some())
+        {
+            return;
+        }
+        let candidates = self.orchestrator.publication_candidates();
+        let split = self
+            .publication_cursor
+            .map_or(0, |cursor| candidates.partition_point(|run| *run <= cursor));
+        let (before, after) = candidates.split_at(split);
+        for run in after.iter().chain(before).copied() {
+            match self.start_run_publication(run) {
+                Ok(true) => {
+                    self.publication_cursor = Some(run);
+                    return;
+                }
+                Ok(false) => {}
+                Err(error) => {
+                    tracing::debug!(target: "koru::delegate", run = ?run, %error, "publication remains owed");
+                }
+            }
+            if self
+                .publication_worker
+                .as_ref()
+                .is_some_and(|worker| worker.ticket().is_some())
+            {
+                return;
+            }
+        }
+    }
+
+    /// A drained exclusive Run reconnects from its exact accepted frontier
+    /// pair with a new epoch. Runs already pumped are left alone.
+    fn connect_source_producers(&mut self) {
+        for run in self.orchestrator.publication_candidates() {
+            if self.pumps.contains_key(&run) {
+                continue;
+            }
+            match self.orchestrator.subscribe_source_producer(run) {
+                Ok(Some((epoch, events))) => self.decision_pump(run, epoch, events),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(target: "koru::delegate", run = ?run, %error, "decision producer not connected");
+                }
+            }
         }
     }
 
@@ -120,8 +185,105 @@ impl Actor {
                     let _ = worker.return_handle(ticket);
                 }
             }
+            Completion::Observed {
+                ticket,
+                handle,
+                observation,
+            } => {
+                // The returned handle installs first; the bounded answer then
+                // fills only the one exact owed key, or retains a refusal.
+                if let Err(handle) =
+                    self.orchestrator
+                        .accept_source_observation(ticket, handle, observation)
+                {
+                    drop(handle);
+                }
+            }
             Completion::Lost { ticket } => {
                 self.orchestrator.lost_run_publication(ticket);
+            }
+        }
+    }
+
+    /// The decision producer: one outstanding frame per permit. The actor
+    /// grants the next permit only after it accepted a no-op frame; a retained
+    /// target or obligation drops the subscription instead.
+    fn decision_pump(
+        &mut self,
+        run: RunId,
+        epoch: uuid::Uuid,
+        mut events: Box<dyn koru_delegate_runtime::SessionEvents>,
+    ) {
+        self.stop_pump(run);
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let (grant, permits) = mpsc::sync_channel::<()>(1);
+        let commands = self.commands.clone();
+        let spawned = std::thread::Builder::new()
+            .name("koru-delegate decision producer".into())
+            .stack_size(256 * 1024)
+            .spawn(move || {
+                'frames: while !flag.load(Ordering::Acquire) {
+                    let Some(update) = events.next(PUMP_POLL) else {
+                        continue;
+                    };
+                    let closed = matches!(update, SessionUpdate::Closed { .. });
+                    if commands
+                        .send(Command::Update { run, epoch, update })
+                        .is_err()
+                        || closed
+                    {
+                        break;
+                    }
+                    loop {
+                        if flag.load(Ordering::Acquire) {
+                            break 'frames;
+                        }
+                        match permits.recv_timeout(PUMP_POLL) {
+                            Ok(()) => break,
+                            Err(mpsc::RecvTimeoutError::Timeout) => {}
+                            Err(mpsc::RecvTimeoutError::Disconnected) => break 'frames,
+                        }
+                    }
+                }
+                let _ = commands.send(Command::PumpEnded { run, epoch });
+            });
+        match spawned {
+            Ok(_) => {
+                self.pumps.insert(
+                    run,
+                    Pump {
+                        stop,
+                        epoch,
+                        permit: Some(grant),
+                    },
+                );
+            }
+            Err(error) => {
+                tracing::error!(target: "koru::delegate", run = ?run, %error, "the decision producer could not be started");
+            }
+        }
+        self.count_active();
+    }
+
+    /// One frame from the decision producer, already epoch-checked.
+    pub(super) fn decision_update(&mut self, run: RunId, epoch: uuid::Uuid, update: SessionUpdate) {
+        match self.orchestrator.handle_from_producer(run, epoch, update) {
+            Ok(SourceProgress::Continue | SourceProgress::Ordinary(HandleOutcome::Continue)) => {
+                if let Some(permit) = self.pumps.get(&run).and_then(|pump| pump.permit.as_ref()) {
+                    let _ = permit.try_send(());
+                }
+            }
+            Ok(SourceProgress::Ordinary(HandleOutcome::Ended)) => self.stop_pump(run),
+            Ok(SourceProgress::Paused) => {
+                self.stop_pump(run);
+                self.drive_publication();
+            }
+            Err(error) => {
+                // Nothing past the accepted frontier was consumed; reconnect
+                // happens only when the orchestrator offers a producer again.
+                tracing::debug!(target: "koru::delegate", run = ?run, %error, "a decision frame was not accepted");
+                self.stop_pump(run);
             }
         }
     }

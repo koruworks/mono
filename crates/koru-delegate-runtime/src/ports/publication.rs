@@ -34,6 +34,29 @@ pub enum RunPublicationOperation {
     Prepare(RunProjectionIntent),
     /// Cold recovery imports only the bytes retained by the sole SQL owner.
     Apply(DecisionPreparedProjection),
+    /// Read-only source recovery for one exact cold key on the same physical
+    /// ticket. It never prepares, imports, writes SQL or consumes events.
+    ObserveSource(RunSourceObservation),
+}
+
+/// One needed usage key, checked against the latest applied marker. The
+/// worker reads current timeline items one at a time and retains only this
+/// key's bounded evidence; the actor caches the answer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RunSourceObservation {
+    pub projection: koru_delegate_core::decisions::DecisionProjectionIdentity,
+    pub lookup: DecisionUsageLookup,
+}
+
+impl RunSourceObservation {
+    /// The only document access this operation is allowed: a bounded read of
+    /// the attached handle's local state. No settle, commit or staging use.
+    pub fn observe(&self, handle: &dyn RunDocumentHandle) -> PortResult<DecisionUsageObservation> {
+        handle
+            .document()
+            .observe_decision_usage(&self.projection, &self.lookup)
+            .map_err(Into::into)
+    }
 }
 
 /// Stable refusal used by full readers and fresh work while a handle is away.

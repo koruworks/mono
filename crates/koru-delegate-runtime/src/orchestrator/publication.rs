@@ -134,10 +134,24 @@ impl Orchestrator {
         if self.publication_ticket.is_some() {
             return Err(publication_pending().into());
         }
+        // An Applied Source installs its memory while its marker is current.
+        // A stale-producer discard is reported by the retry, not here.
+        let _ = self.retry_decision_source(run);
+        let retained = self.retained_source_transition(run);
         let owner = self.publication_owner(run)?;
         let Some(record) = self.bot_ledger()?.next_decision_projection(owner, run)? else {
-            return Ok(None);
+            if retained.is_some() {
+                // Applied but not yet installed: nothing may replace the marker.
+                return Err(publication_pending().into());
+            }
+            return match self.next_source_observation(run, owner)? {
+                Some(operation) => self.transfer_run_publication(run, operation).map(Some),
+                None => Ok(None),
+            };
         };
+        if retained.is_some_and(|transition| transition != record.identity.transition) {
+            return Err(publication_pending().into());
+        }
         let operation = match record.state {
             DecisionProjectionState::Pending => {
                 RunPublicationOperation::Prepare(crate::RunProjectionIntent {
@@ -251,6 +265,7 @@ impl Orchestrator {
                 &intent.identity
             }
             RunPublicationOperation::Apply(prepared) => &prepared.identity,
+            RunPublicationOperation::ObserveSource(observation) => &observation.projection,
         };
         if identity.run != run {
             return Err(PortError::new(
@@ -266,6 +281,18 @@ impl Orchestrator {
         };
         if let Some(state) = self.runs.get_mut(&run) {
             state.publication_returned = None;
+            // Usage evidence is exact only within one exclusive window: an
+            // ordinary writer may have amended facts while the handle was not
+            // exclusively ours, and a lost handle may or may not have applied.
+            if !matches!(
+                state.doc,
+                RunDocumentOwner::Attached {
+                    exclusive: true,
+                    ..
+                }
+            ) {
+                state.source_usage.clear();
+            }
         }
         if let Some(state) = self.runs.get(&run) {
             if identity.workspace != state.workspace || identity.document != state.document {
@@ -384,6 +411,21 @@ impl Orchestrator {
         state.doc = RunDocumentOwner::ReopenOwed { ticket };
         self.publication_ticket = None;
         true
+    }
+
+    /// Runs whose publication is owned exclusively here, in RunId order. This
+    /// is the retained in-memory inventory (bounded by the occupancy owner's
+    /// 50 waits plus 2 occupied Runs), not a history scan. The host rotates a
+    /// cursor through it so one failing Run cannot starve the others.
+    pub fn publication_candidates(&self) -> Vec<RunId> {
+        let mut runs: Vec<RunId> = self
+            .runs
+            .iter()
+            .filter(|(_, state)| state.doc.exclusive())
+            .map(|(run, _)| *run)
+            .collect();
+        runs.sort();
+        runs
     }
 
     pub fn run_publication_pending(&self, run: RunId) -> bool {

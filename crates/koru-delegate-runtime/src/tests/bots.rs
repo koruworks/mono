@@ -96,6 +96,7 @@ impl BotLedger for RecordingStore {
         run: RunId,
         transition: DecisionTransitionId,
     ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        self.check("decision_projection_read")?;
         self.inner
             .lock()
             .unwrap()
@@ -156,10 +157,13 @@ impl BotLedger for RecordingStore {
         owner: BotOwner,
         acknowledgment: &DecisionProjectionAcknowledgment,
     ) -> Result<DecisionProjectionRecord, BotLedgerError> {
-        self.inner
+        let record = self
+            .inner
             .lock()
             .unwrap()
-            .acknowledge_decision_projection(owner, acknowledgment)
+            .acknowledge_decision_projection(owner, acknowledgment)?;
+        self.check("decision_ack_after")?;
+        Ok(record)
     }
     fn read_routine_claim(
         &self,

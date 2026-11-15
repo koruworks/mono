@@ -44,6 +44,11 @@ pub struct RunState {
     pub(crate) source_identity: Option<(RunAttemptId, AttemptGeneration, SessionId)>,
     pub(crate) source_epoch: Option<uuid::Uuid>,
     pub(crate) decision_source: Option<super::publication::source::DecisionSourceRetry>,
+    /// At most one reobserve-owed identity. While present the producer stays
+    /// disconnected; nothing beyond the accepted frontiers is marked consumed.
+    pub(crate) source_obligation: Option<super::publication::source::SourceObligation>,
+    /// Bounded exact-key usage/model evidence for this exclusive window only.
+    pub(crate) source_usage: super::publication::source::SourceUsageCache,
     pub(crate) publication_returned: Option<super::publication::ReturnedRunProjection>,
     /// Bounded volatile retry identity for the retained decision cleanup CAS.
     /// Unknown SQL outcomes reuse this exact request; restart reads its row.
@@ -86,6 +91,8 @@ impl RunState {
             source_identity: None,
             source_epoch: None,
             decision_source: None,
+            source_obligation: None,
+            source_usage: Default::default(),
             publication_returned: None,
             decision_cleanup: None,
         }
