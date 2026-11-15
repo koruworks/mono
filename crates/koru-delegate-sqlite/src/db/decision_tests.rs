@@ -97,7 +97,7 @@ fn populated_nine() -> Connection {
     for generation in [1_i64, 2] {
         c.execute("INSERT INTO run_attempts(run_id,generation,attempt_id,state,retired,updated_at_ms) VALUES(?1,?2,?3,'running',0,-9)", rusqlite::params![id(1),generation,id(10+generation as u32)]).unwrap();
     }
-    c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,attempts,queued_at_ms) VALUES(?1,?2,'fixture','{ \"opaque\": 42 }',3,-8)",[id(8),id(1)]).unwrap();
+    c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,attempts,queued_at_ms) VALUES(?1,?2,'usage','{ \"opaque\": 42 }',3,-8)",[id(8),id(1)]).unwrap();
     c.execute("INSERT INTO native_result_intents(run_id,operation_id,attempt_id,generation,turn_id,kind,request_fingerprint,destination_workspace_id,target_document_id,store_request_id,requested_title,stage,lease_state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,1,?4,'create_page',zeroblob(32),?5,?6,?7,'Retained','prepared','none',-10,-9)",[id(1),id(14),id(11),id(13),id(2),id(9),id(30)]).unwrap();
     c
 }

@@ -269,11 +269,11 @@ fn decision_migration_runs10_pending_bus_index_seeks_skip_long_prefix_and_keep_r
     let eligible = "b".repeat(36);
     c.execute_batch("SAVEPOINT bus_fixture").unwrap();
     for n in 0..4096 {
-        c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,queued_at_ms,acknowledged_at_ms) VALUES(?1,?2,'fixture','{}',?3,?4)",rusqlite::params![format!("acked-{n}"),eligible,n,1]).unwrap();
-        c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,queued_at_ms) VALUES(?1,?2,'fixture','{}',?3)",rusqlite::params![format!("blocked-{n}"),unavailable,n]).unwrap();
+        c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,queued_at_ms,acknowledged_at_ms) VALUES(?1,?2,'usage','{}',?3,?4)",rusqlite::params![format!("acked-{n}"),eligible,n,1]).unwrap();
+        c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,queued_at_ms) VALUES(?1,?2,'usage','{}',?3)",rusqlite::params![format!("blocked-{n}"),unavailable,n]).unwrap();
     }
     for n in (0..128).rev() {
-        c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,queued_at_ms) VALUES(?1,?2,'fixture','{}',?3)",rusqlite::params![format!("eligible-{n}"),eligible,n]).unwrap();
+        c.execute("INSERT INTO pending_publications(event_id,run_id,kind,body_json,queued_at_ms) VALUES(?1,?2,'usage','{}',?3)",rusqlite::params![format!("eligible-{n}"),eligible,n]).unwrap();
     }
     const ANCHOR: &str = "SELECT max(run_id) FROM pending_publications INDEXED BY pending_publications_open_run WHERE acknowledged_at_ms IS NULL";
     const SEEK: &str = "SELECT min(run_id) FROM pending_publications INDEXED BY pending_publications_open_run WHERE acknowledged_at_ms IS NULL AND run_id>?1 AND run_id<=?2";
