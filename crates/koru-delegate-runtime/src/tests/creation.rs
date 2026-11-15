@@ -128,9 +128,10 @@ fn a_failed_fact_holds_later_facts_for_that_run_only() {
     let open = h.orchestrator.ports().store.open_publications(8).unwrap();
     assert_eq!(open.len(), 3);
     // Bounded progress, never an unbounded loop: the unrelated Run publishes
-    // on the very next turn, and the held Run drains in FIFO order on the
-    // turn after that. Two Runs with open work need at most two more turns.
-    const TURNS: usize = 2;
+    // on the very next turn. A full pass then spends one turn closing at its
+    // frozen anchor before the next pass wraps to the held Run, which drains
+    // in FIFO order. Two Runs with open work therefore need three turns.
+    const TURNS: usize = 3;
     let mut other_published_at = None;
     for turn in 1..=TURNS {
         h.orchestrator.retry_publications(8).unwrap();
