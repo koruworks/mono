@@ -3926,17 +3926,17 @@ window:
   below.
 
 The window first asks **When**. **Run once** is selected by default and keeps
-the ordinary delegation path below. **Repeat** creates a schedule instead of a
-run. Nothing runs at the moment the schedule is created. When Repeat began
-from a document or task, Koru leaves one schedule pill on that originating
+the ordinary delegation path below. **Repeat** creates a routine instead of a
+run. Nothing runs at the moment the routine is created. When Repeat began
+from a document or task, Koru leaves one routine pill on that originating
 row; the `+` menu has no document and therefore leaves none. Each later firing
-creates its own separately named run without adding another schedule pill.
+creates its own separately named run without adding another routine pill.
 
 For a repeating delegation, choose **Hourly**, **Daily**, **Weekly** or
 **Monthly**. Weekly rules offer Monday-through-Sunday chips, while daily,
 weekly and monthly rules take a time in the format this device normally uses.
 Monthly rules also take a day of the month. **This device’s local time** keeps
-the wall-clock time with whichever device owns the schedule; **Fixed time
+the wall-clock time with whichever device owns the routine; **Fixed time
 zone** keeps it in the named IANA zone. The sentence below the controls is the
 rule Koru will store.
 
@@ -3951,7 +3951,7 @@ unselected because none of them represents it. Choosing a chip deliberately
 returns to a simple rule. The advanced value is rewritten in canonical form
 when you leave the field. An
 invalid partial stays in the field so you can correct it, leaves the last valid
-rule intact, says what needs correcting, and disables **Create schedule**.
+rule intact, says what needs correcting, and disables **Create routine**.
 Invalid times, monthly days outside 1–31, and invalid IANA zone names behave
 the same way. Monthly days accept and display the current locale's digits.
 
@@ -4021,9 +4021,9 @@ and you can take any of it away with **Remove**. When the tab behind the window
 is showing a page that is not already in the list, **Attach the open document**
 adds it. For **Run once**, what is attached is captured the moment you press
 Delegate: editing the page afterwards does not change what the run was handed,
-and neither does deleting it. For **Repeat**, the schedule keeps live pointers
+and neither does deleting it. For **Repeat**, the routine keeps live pointers
 to those documents and rows. Each firing captures what they contain then; a
-source that no longer exists pauses the schedule visibly instead of silently
+source that no longer exists pauses the routine visibly instead of silently
 using an old copy.
 
 Below those, **What the agent may reach** says in one sentence what this run
@@ -4043,80 +4043,85 @@ you chose, it says so and names it — both will run, which is your call to make
 For **Repeat**, a required **Name** appears and is filled once from the first
 line of the current objective. Editing either field after that does not change
 the other. The name must be one non-empty line of at most 128 characters.
-Pressing **Create schedule** stores the named recurring intent and
-the window says **Schedule created**; there is no run yet to name or open. If
+Pressing **Create routine** stores the named recurring intent and
+the window says **Routine created**; there is no run yet to name or open. If
 Koru cannot create either one it says so with the reason. Close the window
 while it is still sending and the answer arrives as a notice instead. Until
 that answer arrives, starting another delegation shows the current progress
 instead of replacing the request that is still being created. A
-schedule error offers **Try again**, which replays the same request and
-Schedule identity so an answer lost after creation cannot turn one press into
-two schedules. A Run once error is Close-only: start it again from the form so
+routine error offers **Try again**, which replays the same request and
+Routine identity so an answer lost after creation cannot turn one press into
+two routines. A Run once error is Close-only: start it again from the form so
 its context is captured once, at that new press, under a new Run identity.
 
 While a create or Edit form is still being filled in, clicking the gray area
 outside the panel closes it without saving. The outside click is consumed and
 does not activate the document underneath.
 
-The schedule pill uses the schedule name and clock icon. Renaming the schedule
+The routine pill uses the routine name and clock icon. Renaming the routine
 updates its label; pausing it replaces the clock with a pause icon, and
 resuming restores the clock. Choose the pill to open the Agents column with
-that schedule selected; it remains selected even though the document is still
+that routine selected; it remains selected even though the document is still
 the active tab. Right-click it for the same Rename, Edit, Pause or Resume, and
-Delete menu as the schedule row. Rename edits the pill in place when the Agents
+Delete menu as the routine row. Rename edits the pill in place when the Agents
 column is not visible.
 
-### Finding scheduled work
+### Finding routines
 
-Open the **Agents** column (`Ctrl+4`) and look under **Schedules**, beside the
-Projects and Runs sections. Each schedule is labeled by the name you gave it.
+This section describes repeating delegations created with **Repeat**.
+Bot-created routines start paused and have separate read-only detail in the
+Bot’s **Routines** context. Their editing and activation controls are not
+available yet; the ordinary controls below do not change a Bot routine’s access.
+
+Open the **Agents** column (`Ctrl+4`) and look under **Routines**, beside the
+Projects and Runs sections. Each routine is labeled by the name you gave it.
 Open its fold to see its rule in ordinary words — for example, *Every weekday
 at 09:00* — when it will fire next, which device owns it, and whether
 it is active, paused, or waiting for an ownership handoff.
 
-Runs that a schedule actually started sit under that schedule. Choose one to
+Runs that a routine actually started sit under that routine. Choose one to
 open the same run view you would reach from the Runs section. A busy or missed
 occurrence is recorded as a skip and does not pretend that a run exists, so it
-adds no child row. A schedule with no firings simply has no run children.
+adds no child row. A routine with no firings simply has no run children.
 
-Point at a schedule or any of its rule/next/owner/state details and press `F2`,
+Point at a routine or any of its rule/next/owner/state details and press `F2`,
 or right-click and choose **Rename…**, to edit its name in place. `Enter`
 saves and `Esc` cancels. Empty names, names over 128 characters, and control
 characters are refused beside the field. A fired Run child remains a Run and
-the Schedules heading remains a heading; neither can rename its parent.
-Schedules owned by another device show where they must be managed instead of
+the Routines heading remains a heading; neither can rename its parent.
+Routines owned by another device show where they must be managed instead of
 pretending the action can work locally. Choose **Edit…** to reopen the same
-delegation form in fixed Repeat mode. It starts with the schedule's complete
+delegation form in fixed Repeat mode. It starts with the routine's complete
 stored request: name, objective, agent, model, working folder, context, reach,
 rule, and time-zone choice. Those exact choices stay selected and **Save
 changes** remains available if their provider, model catalog, or folder is
-temporarily unavailable; a schedule that cannot fire pauses visibly instead.
+temporarily unavailable; a routine that cannot fire pauses visibly instead.
 Saving affects only future firings; runs already made keep what they were
 given. Cancel or a refusal changes nothing.
 If another update made the form stale, Koru asks you to close it, review the
-current schedule, and try again instead of combining the two edits.
-An active schedule's menu offers **Pause**. This stops future firings but does
-not cancel a Run that was already started. Any paused schedule offers
+current routine, and try again instead of combining the two edits.
+An active routine's menu offers **Pause**. This stops future firings but does
+not cancel a Run that was already started. Any paused routine offers
 **Resume**, whether it was paused by you or because a provider, folder, or
 context was unavailable. Resume starts with the next future occurrence; it
 does not make up occurrences that passed while paused. If the unavailable
-thing is still unavailable, the next firing can pause the schedule again.
-Choose **Delete…** to stop the schedule permanently. The confirmation defaults
+thing is still unavailable, the next firing can pause the routine again.
+Choose **Delete…** to stop the routine permanently. The confirmation defaults
 to **Cancel** and explains that future Runs stop, existing Runs remain, and the
-schedule cannot be restored. Confirming removes the schedule row; its existing
+routine cannot be restored. Confirming removes the routine row; its existing
 Run children remain available under Runs with their original provenance. It
 does not put anything in Trash.
 
-Schedule parent rows can be selected together with Ctrl-click or a Shift
-range. Run and Schedule selections remain separate. A same-state local
-selection offers **Pause** when every schedule is active or **Resume** when
-every schedule is paused, plus **Delete…** for the complete set. Mixed active
+Routine parent rows can be selected together with Ctrl-click or a Shift
+range. Run and Routine selections remain separate. A same-state local
+selection offers **Pause** when every routine is active or **Resume** when
+every routine is paused, plus **Delete…** for the complete set. Mixed active
 and paused selections offer Delete only; Rename and Edit remain single-
-schedule actions. Bulk Delete asks once, defaults to Cancel, stops future Runs
-for every confirmed schedule, and preserves all Runs already made.
+routine actions. Bulk Delete asks once, defaults to Cancel, stops future Runs
+for every confirmed routine, and preserves all Runs already made.
 
 If only part of the
-catalog could be read, Koru keeps the schedules it did receive on screen and
+catalog could be read, Koru keeps the routines it did receive on screen and
 says that the list is incomplete. Loading, failure, and a genuinely empty list
 are also named separately.
 
@@ -4144,12 +4149,12 @@ Choose a run and it opens in a tab with three views:
   nothing reported reads *not reported* rather than nought.
 - **Activity** — everything it did, newest first, one sentence a step. You
   should be able to work out what happened without opening the terminal; if
-  you cannot, that is a bug worth reporting. A run started by a schedule has
-  one provenance line above those steps saying that it was a scheduled firing,
-  with the schedule's stable id, the exact occurrence time in your local date
-  and clock format, and the schedule revision that fired. That line remains
+  you cannot, that is a bug worth reporting. A run started by a routine has
+  one provenance line above those steps saying that it was a routine run,
+  with the routine's stable id, the exact occurrence time in your local date
+  and clock format, and the routine revision at that occurrence. That line remains
   when Activity is empty and when you load earlier steps. A direct **Run once**
-  has no schedule line. The line describes this historical firing; it does not
+  has no routine line. The line describes this historical firing; it does not
   reinterpret it through a recurrence rule you may have edited since.
   **A step where tool calls failed says which ones, and why.** Under
   *6 tool calls, 2 of them failed* there is a line per kind of failure —

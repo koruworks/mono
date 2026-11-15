@@ -76,10 +76,10 @@ fn schedule_menu_tracks_lifecycle_and_keeps_irreversible_delete_last() {
 fn remote_schedule_rows_name_the_device_that_can_manage_them() {
     use koru_ui::MenuItem as _;
 
-    set_schedule_manage_refusal(Some("Manage this schedule on Studio PC.".to_owned()));
+    set_schedule_manage_refusal(Some("Manage this routine on Studio PC.".to_owned()));
     assert_eq!(
         MenuAction::ScheduleEdit.disabled_reason().as_deref(),
-        Some("Manage this schedule on Studio PC.")
+        Some("Manage this routine on Studio PC.")
     );
     set_schedule_manage_refusal(None);
     assert_eq!(MenuAction::ScheduleEdit.disabled_reason(), None);
