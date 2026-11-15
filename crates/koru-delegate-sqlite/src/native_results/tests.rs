@@ -98,7 +98,8 @@ impl Harness {
             db.reserve_bot(submission.request.run, None).unwrap(),
             BotReservation::Acquired
         );
-        let a = fixtures::running_attempt(&mut db, submission.request.run, 1);
+        let attempt_seed = u8::try_from(db.bot_admission(submission.request.run).unwrap().unwrap().sequence).unwrap();
+        let a = fixtures::running_attempt(&mut db, submission.request.run, attempt_seed);
         db.activate_bot(a.run, a.attempt, a.generation, None)
             .unwrap();
         let mut send = BotInitialSend {

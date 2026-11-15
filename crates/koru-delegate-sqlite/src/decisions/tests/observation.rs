@@ -12,7 +12,7 @@ fn decision_wait_execution_absence_is_owner_checked_and_retired_origin_is_explic
             .is_none()
     );
     let mut foreign = f.owner;
-    foreign.user_scope = fixtures::v4(240).to_string().parse().unwrap();
+    foreign.user_scope = serde_json::from_value(fixtures::v4(240).to_string().into()).unwrap();
     assert!(h.db.decision_wait_execution(foreign, f.run).is_err());
     let decision = enrollment::retired(&mut h);
     let observed =

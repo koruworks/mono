@@ -43,7 +43,7 @@ fn state(
                 c.same(
                     c.id::<DecisionId>("decision_id")? == decision
                         && c.id::<RunId>("run_id")? == f.run
-                        && c.id::<UserScopeId>("user_scope")? == f.owner.user_scope
+                        && c.get::<String>("user_scope")? == f.owner.user_scope.to_storage()
                         && c.id::<DeviceId>("device_id")? == f.owner.device
                         && c.id::<BotId>("bot_id")? == f.bot
                         && c.id::<RunAttemptId>("origin_attempt_id")? == f.attempt
@@ -64,7 +64,7 @@ fn state(
                             && request.key.decision_revision <= state.revision,
                     )?;
                 }
-                Ok(state)
+                Ok::<_, BotLedgerError>(state)
             })())
         },
     )
