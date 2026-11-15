@@ -123,6 +123,7 @@ pub(super) fn recover(db: &mut RunsDb, key: &BotRunKey) -> Result<bool, BotLedge
              AND delivery_confirmed_at_ms IS NULL
              AND NOT EXISTS(SELECT 1 FROM run_attempts WHERE run_id=?1)
              AND NOT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1)
+             AND NOT EXISTS(SELECT 1 FROM bot_wait_runtime WHERE run_id=?1 AND phase<>'settled')
              AND NOT EXISTS(SELECT 1 FROM bot_memory_edit_allocations WHERE run_id=?1)",
             params![key.run.to_storage(), key.owner.user_scope.to_storage(), key.owner.device.to_storage(), key.bot.to_storage(), now],
         ).map_err(sql)?;

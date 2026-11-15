@@ -15,6 +15,7 @@ mod rows;
 pub(crate) use drain::held_routine;
 pub(crate) use repository::{current_composite, policy_digest};
 pub(crate) use rows::current_policy;
+pub(crate) use rows::held as held_for_bot;
 pub(crate) use rows::read_policy as retained_policy_on;
 pub(crate) use rows::created as created_page_on;
 #[cfg(test)]

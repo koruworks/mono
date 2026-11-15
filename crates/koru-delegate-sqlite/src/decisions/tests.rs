@@ -11,6 +11,7 @@ mod corruption;
 mod enrollment;
 mod native_completion;
 mod observation;
+mod occupancy;
 mod preparation;
 mod projection;
 mod resume;
@@ -24,6 +25,13 @@ struct Harness {
 impl Harness {
     fn new() -> Self {
         let (db, fence, global) = crate::native_results::tests::decision_base();
+        Self::subject(db,fence,global)
+    }
+    fn with_db(db:RunsDb)->Self{
+        let (db,fence,global)=crate::native_results::tests::decision_base_in(db,RunId::mint());
+        Self::subject(db,fence,global)
+    }
+    fn subject(db:RunsDb,fence:BotExecutionFence,global:BotPolicyBarrier)->Self{
         let admission = db.bot_admission(fence.run).unwrap().unwrap();
         let ActorRef::Person { profile } = admission.submission.request.requested_by else {
             panic!("fixture person")
