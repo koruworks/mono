@@ -141,19 +141,48 @@ pub struct PublishedRelease {
     pub version: Option<String>,
     /// Its GitHub page — always under [`RELEASES_URL`], checked when read.
     pub url: String,
-    /// The day a stable release was published, UTC. None for the nightly:
-    /// its release object keeps the day it was first made while the tag
-    /// moves every night, so that date would be wrong by weeks.
+    /// The publication day, UTC. For the moving nightly, use the newest
+    /// completed asset upload: the release's own date stays at its creation.
     pub published: Option<(i32, u8, u8)>,
 }
 
 /// The releases list as data. Unauthenticated, so 60 requests an hour per
 /// address — one per window, and only once its Help popover opens.
 const RELEASES_API: &str = "https://api.github.com/repos/koruworks/mono/releases?per_page=20";
+const RELEASES_FEED: &str = "https://github.com/koruworks/mono/releases.atom";
 
 /// How many stable releases follow the nightly. Older ones are a press away
 /// on *View all releases*.
 const STABLE_SHOWN: usize = 3;
+
+fn version_key(version: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = version.split('.');
+    let key = (
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+        parts.next()?.parse().ok()?,
+    );
+    parts.next().is_none().then_some(key)
+}
+
+fn release_day(stamp: &str) -> Option<(i32, u8, u8)> {
+    use chrono::Datelike;
+    let date = chrono::DateTime::parse_from_rfc3339(stamp).ok()?.to_utc();
+    Some((date.year(), date.month() as u8, date.day() as u8))
+}
+
+fn latest_releases(mut releases: Vec<PublishedRelease>) -> Vec<PublishedRelease> {
+    releases.sort_by_key(|release| {
+        (
+            release.version.is_some(),
+            std::cmp::Reverse(release.version.as_deref().and_then(version_key)),
+        )
+    });
+    releases.dedup_by(|a, b| a.version == b.version);
+    let has_nightly = releases.first().is_some_and(|r| r.version.is_none());
+    releases.truncate(STABLE_SHOWN + usize::from(has_nightly));
+    releases
+}
 
 /// **The actual releases** (the user, 2026-11-10): the nightly first — it
 /// is always the newest build and a different kind of thing — then stable
@@ -171,61 +200,108 @@ pub fn parse_releases(json: &str) -> Option<Vec<PublishedRelease>> {
         #[serde(default)]
         prerelease: bool,
         published_at: Option<String>,
+        #[serde(default)]
+        assets: Vec<Asset>,
     }
-    fn version_key(version: &str) -> Option<(u64, u64, u64)> {
-        let mut parts = version.split('.');
-        let key = (
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-        );
-        parts.next().is_none().then_some(key)
-    }
-    fn day(stamp: &str) -> Option<(i32, u8, u8)> {
-        let mut parts = stamp.get(..10)?.split('-');
-        Some((
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-            parts.next()?.parse().ok()?,
-        ))
+    #[derive(serde::Deserialize)]
+    struct Asset {
+        state: String,
+        created_at: Option<String>,
     }
     let raw: Vec<Raw> = serde_json::from_str(json).ok()?;
-    let mut nightly = None;
-    let mut stable = Vec::new();
+    let mut releases = Vec::new();
     for release in raw {
         if release.draft || release.html_url != format!("{RELEASES_URL}/tag/{}", release.tag_name) {
             continue;
         }
         if release.tag_name == "nightly" {
-            nightly = Some(PublishedRelease {
+            releases.push(PublishedRelease {
                 version: None,
                 url: release.html_url,
-                published: None,
+                published: release
+                    .assets
+                    .iter()
+                    .filter(|asset| asset.state == "uploaded")
+                    .filter_map(|asset| asset.created_at.as_deref().and_then(release_day))
+                    .max(),
             });
             continue;
         }
         let Some(version) = release.tag_name.strip_prefix('v') else {
             continue;
         };
-        let Some(key) = version_key(version).filter(|_| !release.prerelease) else {
+        if release.prerelease || version_key(version).is_none() {
             continue;
-        };
-        stable.push((
-            key,
-            PublishedRelease {
-                version: Some(version.to_owned()),
-                url: release.html_url.clone(),
-                published: release.published_at.as_deref().and_then(day),
-            },
-        ));
+        }
+        releases.push(PublishedRelease {
+            version: Some(version.to_owned()),
+            url: release.html_url.clone(),
+            published: release.published_at.as_deref().and_then(release_day),
+        });
     }
-    stable.sort_by(|a, b| b.0.cmp(&a.0));
-    Some(
-        nightly
-            .into_iter()
-            .chain(stable.into_iter().take(STABLE_SHOWN).map(|(_, r)| r))
-            .collect(),
-    )
+    Some(latest_releases(releases))
+}
+
+/// The public Atom feed is independent of the REST API's shared-IP quota.
+/// Nightly's publisher edits the release after uploading, so its `updated`
+/// date describes the current nightly. Stable entries have no publication
+/// timestamp here: leave that date unknown instead of calling an edit a release.
+fn parse_releases_feed(xml: &str) -> Option<Vec<PublishedRelease>> {
+    use quick_xml::{Reader, events::Event};
+    let mut reader = Reader::from_str(xml);
+    let mut releases = Vec::new();
+    let mut in_entry = false;
+    let mut url = String::new();
+    let mut updated = None;
+    loop {
+        match reader.read_event().ok()? {
+            Event::Start(e) if e.name().as_ref() == b"entry" => {
+                in_entry = true;
+                url.clear();
+                updated = None;
+            }
+            Event::Start(e) if in_entry && e.name().as_ref() == b"updated" => {
+                updated = release_day(&reader.read_text(e.name()).ok()?.decode().ok()?);
+            }
+            Event::Empty(e) if in_entry && e.name().as_ref() == b"link" => {
+                for attr in e.attributes() {
+                    let attr = attr.ok()?;
+                    if attr.key.as_ref() == b"href" {
+                        url = attr
+                            .decoded_and_normalized_value(
+                                quick_xml::XmlVersion::Implicit1_0,
+                                reader.decoder(),
+                            )
+                            .ok()?
+                            .into_owned();
+                    }
+                }
+            }
+            Event::End(e) if e.name().as_ref() == b"entry" => {
+                in_entry = false;
+                let Some(tag) = url.strip_prefix(&format!("{RELEASES_URL}/tag/")) else {
+                    continue;
+                };
+                let version = if tag == "nightly" {
+                    None
+                } else if let Some(version) =
+                    tag.strip_prefix('v').filter(|v| version_key(v).is_some())
+                {
+                    Some(version.to_owned())
+                } else {
+                    continue;
+                };
+                releases.push(PublishedRelease {
+                    published: if version.is_none() { updated } else { None },
+                    version,
+                    url: url.clone(),
+                });
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    (!releases.is_empty()).then(|| latest_releases(releases))
 }
 
 /// Read the releases list off the window's thread. **Nothing about the
@@ -234,6 +310,10 @@ pub fn parse_releases(json: &str) -> Option<Vec<PublishedRelease>> {
 /// and the popover keeps the row it had for this build.
 pub fn fetch_releases_async() -> std::sync::mpsc::Receiver<Option<Vec<PublishedRelease>>> {
     let (tx, rx) = std::sync::mpsc::channel();
+    if cfg!(test) {
+        // Menu tests inject responses; opening Help must not use a real quota.
+        return rx;
+    }
     std::thread::Builder::new()
         .name("koru-help-releases".into())
         .spawn(move || {
@@ -243,19 +323,38 @@ pub fn fetch_releases_async() -> std::sync::mpsc::Receiver<Option<Vec<PublishedR
                 .build()
                 .ok()
                 .and_then(|client| {
-                    client
-                        .get(RELEASES_API)
-                        .header("Accept", "application/vnd.github+json")
-                        .send()
-                        .ok()
-                })
-                .filter(|response| response.status().is_success())
-                .and_then(|response| response.text().ok())
-                .and_then(|body| parse_releases(&body));
+                    fetch_release_list(&client, RELEASES_API, parse_releases)
+                        .or_else(|| fetch_release_list(&client, RELEASES_FEED, parse_releases_feed))
+                });
             let _ = tx.send(answer);
         })
         .ok();
     rx
+}
+
+fn fetch_release_list(
+    client: &reqwest::blocking::Client,
+    url: &str,
+    parse: fn(&str) -> Option<Vec<PublishedRelease>>,
+) -> Option<Vec<PublishedRelease>> {
+    let result = client
+        .get(url)
+        .send()
+        .and_then(|response| response.error_for_status())
+        .and_then(|response| response.text());
+    match result {
+        Ok(body) => {
+            let releases = parse(&body).filter(|list| !list.is_empty());
+            if releases.is_none() {
+                tracing::warn!(url, "Help release list contained no usable releases");
+            }
+            releases
+        }
+        Err(error) => {
+            tracing::warn!(url, %error, "Could not load Help releases");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

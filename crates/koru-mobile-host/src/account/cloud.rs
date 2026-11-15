@@ -43,6 +43,7 @@ use koru_store_server::cloud_sync::{self, Progress};
 use uuid::Uuid;
 
 use crate::MobileHost;
+mod inspection;
 
 /// Shared carrier accounting across this phone's Cloud subscriptions. It is a
 /// cap over real allocations, not a preallocation: a peer record write
@@ -94,6 +95,7 @@ pub struct MobileCloudHost {
     /// means something if it outlives the pass that counted one.
     deferrals: cloud_sync::DeferralLedger,
     sessions: Mutex<BTreeMap<Uuid, Subscription>>,
+    inspections: Arc<koru_store_server::cloud_inspection_host::InspectionHub>,
 }
 
 struct Subscription {
@@ -152,7 +154,20 @@ impl Drop for Subscription {
 }
 
 impl MobileCloudHost {
+    pub(crate) fn inspection_port(
+        &self,
+    ) -> Arc<dyn koru_account_runtime::account::cloud_document::CloudDocumentPort> {
+        Arc::new(inspection::Port {
+            hub: self.inspections.clone(),
+            session: self.control_session_id,
+        })
+    }
     pub fn new(host: Weak<MobileHost>, region: Region, issuer: String, api_origin: String) -> Self {
+        let runtime = host
+            .upgrade()
+            .expect("composing a live mobile host")
+            .tokio()
+            .clone();
         Self {
             host,
             region,
@@ -164,6 +179,7 @@ impl MobileCloudHost {
             budget: transfer::MemoryBudget::new(HOST_BUDGET_BYTES),
             deferrals: Arc::new(Mutex::new(cloud_sync::Deferrals::new())),
             sessions: Mutex::new(BTreeMap::new()),
+            inspections: koru_store_server::cloud_inspection_host::InspectionHub::new(runtime),
         }
     }
 
@@ -681,6 +697,24 @@ impl Host for MobileCloudHost {
         let (completed, mut completed_rx) =
             tokio::sync::watch::channel::<Option<cloud_sync::Outcome>>(None);
         let task_reports = reports.clone();
+        let inspections = self.inspections.clone();
+        let inspection_session = koru_store_server::cloud_inspection_host::Session {
+            control_session: self.control_session_id,
+            account: permit.account_id,
+            account_generation: permit.account_generation,
+            scope,
+        };
+        let inspection_live = Arc::clone(&self.live);
+        let inspection_expiry = principal
+            .expires_at_seconds
+            .min(permit.expires_at_seconds)
+            .checked_mul(1000)
+            .and_then(|v| v.checked_sub(now_millis()))
+            .unwrap_or(0)
+            .max(0);
+        let inspection_deadline = tokio::time::Instant::now()
+            .checked_add(std::time::Duration::from_millis(inspection_expiry as u64))
+            .unwrap_or_else(tokio::time::Instant::now);
         let task = host.tokio().spawn(async move {
             let blob_work = async {
                 while completed_rx.changed().await.is_ok() {
@@ -713,54 +747,73 @@ impl Host for MobileCloudHost {
                 }
                 std::future::pending::<()>().await;
             };
-            let work = cloud_sync::subscribe_dataset(
-                recv,
-                send,
-                session,
-                plan,
-                worker,
-                authorize,
-                downloads,
-                deferrals,
-                |_start| transfer::Decision::Accept,
-                move |progress| match progress {
-                    Progress::PassStarted => {
-                        task_reports.send_if_modified(|report| {
-                            if let Some(report) = report {
-                                report.stage = Stage::Reconciling;
-                                true
-                            } else {
-                                false
-                            }
-                        });
-                    }
-                    Progress::PassFinished(outcome) => {
-                        task_reports.send_replace(Some(SessionReport {
-                            stage: if outcome.unavailable.is_empty() {
-                                Stage::Settled
-                            } else {
-                                Stage::Unavailable
-                            },
-                            error_code: (!outcome.unavailable.is_empty())
-                                .then_some("cloud_unit_unavailable"),
-                            ..SessionReport::default()
-                        }));
-                        completed.send_replace(Some(*outcome));
-                    }
-                    Progress::Refused { unit, code } | Progress::Unavailable { unit, code } => {
-                        tracing::warn!(
-                            ?unit,
-                            code = code.as_str(),
-                            "cloud subscription: unit refused"
-                        )
-                    }
-                    _ => {}
+            let driver = cloud_sync::driver::Driver::spawn(
+                cloud_sync::driver::OnceSource::new(recv, send, session),
+                cloud_sync::driver::Parts {
+                    plan,
+                    stage: cloud_sync::Stage::Full,
+                    jobs: worker,
+                    authorize,
+                    downloads,
+                    deferrals,
+                    permission: |_start: &transfer::Start| transfer::Decision::Accept,
+                    uploads: None,
+                    interest: None,
+                    progress: move |progress| match progress {
+                        Progress::PassStarted => {
+                            task_reports.send_if_modified(|report| {
+                                if let Some(report) = report {
+                                    report.stage = Stage::Reconciling;
+                                    true
+                                } else {
+                                    false
+                                }
+                            });
+                        }
+                        Progress::PassFinished(outcome) => {
+                            task_reports.send_replace(Some(SessionReport {
+                                stage: if outcome.unavailable.is_empty() {
+                                    Stage::Settled
+                                } else {
+                                    Stage::Unavailable
+                                },
+                                error_code: (!outcome.unavailable.is_empty())
+                                    .then_some("cloud_unit_unavailable"),
+                                ..SessionReport::default()
+                            }));
+                            completed.send_replace(Some(*outcome));
+                        }
+                        Progress::Refused { unit, code } | Progress::Unavailable { unit, code } => {
+                            tracing::warn!(
+                                ?unit,
+                                code = code.as_str(),
+                                "cloud subscription: unit refused"
+                            )
+                        }
+                        _ => {}
+                    },
                 },
             );
+            let _inspection_registration = inspections.register(
+                inspection_session,
+                &driver,
+                Arc::new(move || {
+                    tokio::time::Instant::now() < inspection_deadline
+                        && lock(&inspection_live).get(&permit_id).is_some_and(|held| {
+                            held.account_id == inspection_session.account
+                                && held.account_generation == inspection_session.account_generation
+                                && held.session_generation == generation
+                                && held.session_connection_id == session_connection_id
+                        })
+                }),
+            );
             let result = tokio::select! {
-                result = work => result,
+                result = driver.join() => result,
                 () = blob_work => unreachable!("file follower stays alive with the stream"),
             };
+            if let Some(registration) = &_inspection_registration {
+                registration.finish_delivery().await;
+            }
             let error_code = result.err().map(|error| cloud::static_code(error.code()));
             tracing::info!(?dataset, error_code, "cloud subscription: ended");
             reports.send_replace(Some(SessionReport {

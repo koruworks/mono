@@ -663,7 +663,7 @@ fn one_refused_workspace_does_not_stop_the_others() {
         (3, 2),
         "the refusal is one Workspace's, not the Profile's"
     );
-    assert_eq!(rows[0].error.as_deref(), Some("workspace_not_authorized"));
+    assert_eq!(rows[0].error, None);
     assert!(fixture.hosted.row(local[0].1).unwrap().enabled);
     assert!(fixture.hosted.row(local[2].1).unwrap().enabled);
     assert!(fixture.hosted.row(local[1].1).is_none());
@@ -1015,7 +1015,7 @@ fn a_refused_workspace_is_tried_again_rather_than_given_up() {
 
     let rows = fixture.inspect().unwrap();
     assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
-    assert_eq!(rows[0].error.as_deref(), Some("workspace_not_authorized"));
+    assert_eq!(rows[0].error, None);
     let saved = remembered(&fixture);
     assert!(saved.enabled && saved.starts_on);
 }

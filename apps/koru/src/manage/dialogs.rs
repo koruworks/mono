@@ -43,6 +43,10 @@ mod tests;
 
 /// One question over the tab.
 pub(crate) enum Dialog {
+    CloudFile {
+        key: super::cloud::copy::ViewKey,
+        confirm: Confirm,
+    },
     /// *Sign out…*: this computer leaves the account.
     SignOut(Confirm),
     /// *Unlink…* on a Google Account that is not the Profile's last.
@@ -73,6 +77,7 @@ impl Dialog {
     /// What the inspector calls it.
     pub(crate) fn name(&self) -> &'static str {
         match self {
+            Self::CloudFile { .. } => "Cloud file confirmation",
             Self::SignOut(_) => "Manage sign-out dialog",
             Self::Unlink { .. } => "Manage unlink dialog",
             Self::UnlinkDevice { .. } => "Manage unlink device dialog",
@@ -90,6 +95,7 @@ impl Dialog {
     fn confirm(&self) -> &Confirm {
         match self {
             Self::SignOut(confirm)
+            | Self::CloudFile { confirm, .. }
             | Self::Unlink { confirm, .. }
             | Self::UnlinkDevice { confirm, .. }
             | Self::Remove(confirm)
@@ -101,6 +107,7 @@ impl Dialog {
     fn confirm_mut(&mut self) -> &mut Confirm {
         match self {
             Self::SignOut(confirm)
+            | Self::CloudFile { confirm, .. }
             | Self::Unlink { confirm, .. }
             | Self::UnlinkDevice { confirm, .. }
             | Self::Remove(confirm)
@@ -259,6 +266,11 @@ impl ManageView {
     /// and take it down when it stops. A page dialog already up stays; the
     /// controller's question follows it.
     pub(super) fn settle_dialogs(&mut self) {
+        if matches!(&self.dialog, Some(Dialog::CloudFile { key, .. })
+            if self.c.cloud_copy().view.key() != Some(key) || self.c.cloud_copy().view.phase() != super::cloud::copy::Phase::Ready)
+        {
+            self.dialog = None;
+        }
         let wanted = if self.c.confirming_remove().is_some() {
             Some(Mirror::Remove)
         } else if self.c.confirming_offline() {
@@ -431,6 +443,13 @@ impl ManageView {
             self.dialog = Some(dialog);
             return;
         }
+        if let Dialog::CloudFile { key, .. } = dialog {
+            if let Some(intent) = self.c.cloud_copy_mut().view.answer(&key, outcome) {
+                self.c.cloud_copy_intent(intent);
+            }
+            self.sync();
+            return;
+        }
         let confirmed = outcome == ConfirmOutcome::Confirm;
         // A device's unlink is Agent's, not the Profiles controller's.
         if let Dialog::UnlinkDevice { device_id, .. } = &dialog {
@@ -441,6 +460,7 @@ impl ManageView {
             return;
         }
         let intent = match dialog {
+            Dialog::CloudFile { .. } => unreachable!(),
             Dialog::SignOut(_) if confirmed => Intent::SignOut,
             Dialog::Unlink { profile, index, .. } if confirmed => Intent::Unlink(profile, index),
             Dialog::SignOut(_) | Dialog::Unlink { .. } | Dialog::UnlinkDevice { .. } => return,

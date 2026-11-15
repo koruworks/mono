@@ -101,19 +101,6 @@ pub(crate) struct SyncChannels {
 }
 
 impl SyncChannels {
-    pub(crate) fn controls(self) -> Vec<(MenuAction, char)> {
-        use koru_draw::icons;
-        match (self.devices, self.cloud) {
-            (true, true) => vec![
-                (MenuAction::Sync, icons::DEVICES),
-                (MenuAction::Cloud, icons::CLOUD),
-            ],
-            (true, false) => vec![(MenuAction::Sync, icons::DEVICES)],
-            (false, true) => vec![(MenuAction::Cloud, icons::CLOUD)],
-            (false, false) => vec![(MenuAction::Sync, icons::DESKTOP)],
-        }
-    }
-
     fn words(self, lang: koru_i18n::Lang) -> String {
         let mut channels = Vec::new();
         if self.devices {
@@ -170,26 +157,11 @@ impl ExploreView {
         )
     }
 
-    pub(crate) fn sync_channel_controls(&self) -> El {
-        row("Sync channels").gap(Space::S1).children(
-            self.sync_channels()
-                .controls()
-                .into_iter()
-                .map(|(action, glyph)| {
-                    row("Sync channel")
-                        .id(action.key())
-                        .hit()
-                        .focusable()
-                        .action(Action::Click)
-                        .action(Action::Focus)
-                        .semantics(Role::MenuItem)
-                        .name(action.words())
-                        .min_h(metrics::ROW_MIN)
-                        .pad_x(Space::S1)
-                        .radius(Radius::M)
-                        .states(&WORKSPACE_ROW_STATES)
-                        .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
-                }),
+    pub(crate) fn sync_channel_icons(&self) -> El {
+        row("Sync channels").child(
+            icon(koru_draw::icons::CLOUD, IconSize::L)
+                .decorative()
+                .ink(Ink::Secondary),
         )
     }
     pub(crate) fn workspace_import_anchor(
@@ -373,9 +345,9 @@ impl ExploreView {
                     .fill(),
             )
             .child(
-                text(t(lang, Words::ManageWorkspaces))
-                    .role(roles::HINT)
-                    .ink(Ink::Secondary)
+                row("Manage workspaces")
+                    .w(metrics::ROW_MIN)
+                    .min_h(metrics::ROW_MIN)
                     .id(MANAGE)
                     .semantics(Role::MenuItem)
                     .name(Words::ManageWorkspaces)
@@ -385,7 +357,12 @@ impl ExploreView {
                     .action(Action::Focus)
                     .pad_x(Space::S1)
                     .radius(Radius::M)
-                    .states(&WORKSPACE_ROW_STATES),
+                    .states(&WORKSPACE_ROW_STATES)
+                    .child(
+                        icon(koru_draw::icons::FADERS, IconSize::L)
+                            .decorative()
+                            .ink(Ink::Secondary),
+                    ),
             )
     }
 
@@ -399,11 +376,11 @@ impl ExploreView {
             MenuAction::Cloud => koru_draw::icons::CLOUD,
             MenuAction::Retry => koru_draw::icons::ARROWS_CLOCKWISE,
         };
-        let mut item = row("Workspace menu action")
+        let item = row("Workspace menu action")
             .id(action.key())
             .min_h(metrics::ROW_MIN)
-            .pad_x(alias::NAV_PAD)
-            .gap(Space::S2)
+            .pad_x(Space::S1)
+            .pad_y(Space::S0_5)
             .hit()
             .focusable()
             .action(Action::Click)
@@ -411,28 +388,35 @@ impl ExploreView {
             .semantics(Role::MenuItem)
             .name(action.words())
             .radius(Radius::M)
-            .states(&WORKSPACE_ROW_STATES)
+            .states(&WORKSPACE_ROW_STATES);
+        let mut contents = row("Workspace action contents")
+            .fill()
+            .min_h(metrics::ROW_MIN)
+            .gap(Space::S2)
             .child(icon(glyph, IconSize::L).decorative().ink(Ink::Secondary))
             .child(text(t(lang, action.words())).role(roles::ROW).fill());
         if action == MenuAction::Trash {
-            item = item.child(
+            contents = contents.child(
                 text(self.trash_count.to_string())
                     .role(roles::HINT)
                     .ink(Ink::Hint),
             );
         } else if action == MenuAction::Import {
-            item = item.child(
+            contents = contents.child(
                 icon(koru_draw::icons::CARET_RIGHT, IconSize::L)
                     .decorative()
                     .ink(Ink::Hint),
             );
         }
-        item
+        row("Workspace action inset")
+            .pad_x(alias::ROW_PLATE_INSET)
+            .child(item.fill().child(contents))
     }
 
     pub(crate) fn workspace_menu_footer(&self) -> El {
         let mut foot = col("Workspace menu footer")
-            .child(rule())
+            .pad_top(Space::S1)
+            .gap(Space::S1)
             .child(self.workspace_menu_action(MenuAction::New))
             .child(self.workspace_menu_action(MenuAction::Import));
         if let Some(notice) = self

@@ -20,6 +20,7 @@ name = "koru-agent"
 path = "src/main.rs"
 
 [dependencies]
+koru-store-wire = { path = "../../crates/koru-store-wire" }
 koru-socials-publisher = { path = "../../crates/koru-socials-publisher" }
 koru-features = { path = "../../crates/koru-features" }
 koru-account-runtime = { path = "../../crates/koru-account-runtime" }
@@ -300,7 +301,6 @@ koru-api-wire = { path = "../../crates/koru-api-wire" }
 # are already in this package's dependency graph through `koru-api-gateway`,
 # and neither opens a worker, so the `no-sink` guard above still covers the
 # package.
-koru-store-wire = { path = "../../crates/koru-store-wire" }
 koru-api-gateway-core = { path = "../../crates/koru-api-gateway-core" }
 # The delegate process suite reads a run's authority back to prove it was
 # revoked when the run ended; `AuthorityState` is the wire's word for it.

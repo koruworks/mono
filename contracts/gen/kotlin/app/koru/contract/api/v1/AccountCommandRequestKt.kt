@@ -342,6 +342,165 @@ public object AccountCommandRequestKt {
     public fun hasCloudSyncEnabled(): kotlin.Boolean {
       return _builder.hasCloudSyncEnabled()
     }
+
+    /**
+     * ```
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];`
+     */
+    public var cloudWorkspaceId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudWorkspaceId")
+        get() = _builder.cloudWorkspaceId
+      @kotlin.jvm.JvmName("setCloudWorkspaceId")
+        set(value) {
+        _builder.cloudWorkspaceId = value
+      }
+    /**
+     * ```
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];`
+     */
+    public fun clearCloudWorkspaceId() {
+      _builder.clearCloudWorkspaceId()
+    }
+    /**
+     * ```
+     * Inventory reads only. The exact Workspace/incarnation pair is required
+     * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+     * ```
+     *
+     * `optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];`
+     * @return Whether the cloudWorkspaceId field is set.
+     */
+    public fun hasCloudWorkspaceId(): kotlin.Boolean {
+      return _builder.hasCloudWorkspaceId()
+    }
+
+    /**
+     * `optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];`
+     */
+    public var cloudIncarnationId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudIncarnationId")
+        get() = _builder.cloudIncarnationId
+      @kotlin.jvm.JvmName("setCloudIncarnationId")
+        set(value) {
+        _builder.cloudIncarnationId = value
+      }
+    /**
+     * `optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];`
+     */
+    public fun clearCloudIncarnationId() {
+      _builder.clearCloudIncarnationId()
+    }
+    /**
+     * `optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];`
+     * @return Whether the cloudIncarnationId field is set.
+     */
+    public fun hasCloudIncarnationId(): kotlin.Boolean {
+      return _builder.hasCloudIncarnationId()
+    }
+
+    /**
+     * `optional string cloud_cursor = 14 [json_name = "cloudCursor"];`
+     */
+    public var cloudCursor: kotlin.String
+      @kotlin.jvm.JvmName("getCloudCursor")
+        get() = _builder.cloudCursor
+      @kotlin.jvm.JvmName("setCloudCursor")
+        set(value) {
+        _builder.cloudCursor = value
+      }
+    /**
+     * `optional string cloud_cursor = 14 [json_name = "cloudCursor"];`
+     */
+    public fun clearCloudCursor() {
+      _builder.clearCloudCursor()
+    }
+    /**
+     * `optional string cloud_cursor = 14 [json_name = "cloudCursor"];`
+     * @return Whether the cloudCursor field is set.
+     */
+    public fun hasCloudCursor(): kotlin.Boolean {
+      return _builder.hasCloudCursor()
+    }
+
+    /**
+     * ```
+     * Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];`
+     */
+    public var cloudDocumentSelectionJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudDocumentSelectionJson")
+        get() = _builder.cloudDocumentSelectionJson
+      @kotlin.jvm.JvmName("setCloudDocumentSelectionJson")
+        set(value) {
+        _builder.cloudDocumentSelectionJson = value
+      }
+    /**
+     * ```
+     * Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];`
+     */
+    public fun clearCloudDocumentSelectionJson() {
+      _builder.clearCloudDocumentSelectionJson()
+    }
+    /**
+     * ```
+     * Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];`
+     * @return Whether the cloudDocumentSelectionJson field is set.
+     */
+    public fun hasCloudDocumentSelectionJson(): kotlin.Boolean {
+      return _builder.hasCloudDocumentSelectionJson()
+    }
+
+    /**
+     * ```
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * ```
+     *
+     * `optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];`
+     */
+    public var cloudFileNodeId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudFileNodeId")
+        get() = _builder.cloudFileNodeId
+      @kotlin.jvm.JvmName("setCloudFileNodeId")
+        set(value) {
+        _builder.cloudFileNodeId = value
+      }
+    /**
+     * ```
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * ```
+     *
+     * `optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];`
+     */
+    public fun clearCloudFileNodeId() {
+      _builder.clearCloudFileNodeId()
+    }
+    /**
+     * ```
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * ```
+     *
+     * `optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];`
+     * @return Whether the cloudFileNodeId field is set.
+     */
+    public fun hasCloudFileNodeId(): kotlin.Boolean {
+      return _builder.hasCloudFileNodeId()
+    }
   }
 }
 public inline fun app.koru.contract.api.v1.AccountCommandRequest.copy(block: `app.koru.contract.api.v1`.AccountCommandRequestKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.AccountCommandRequest =

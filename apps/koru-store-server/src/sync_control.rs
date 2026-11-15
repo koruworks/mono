@@ -2,6 +2,7 @@
 
 //! The Store end of the Agent-owned replication control session.
 
+use crate::cloud_inspection_host::{InspectionHub, Owner as InspectionOwner};
 use std::sync::{Arc, Mutex};
 
 use koru_sync_control::{
@@ -119,6 +120,7 @@ pub fn start(
     replication: impl Into<ReplicationRuntime>,
     grace: std::time::Duration,
     store: crate::StoreWorkerClient,
+    inspections: Arc<InspectionHub>,
 ) -> Result<(), String> {
     let replication = replication.into();
     let endpoint = koru_ipc::Endpoint::for_service_root(CONTROL_SERVICE, channel, root)
@@ -126,7 +128,7 @@ pub fn start(
     let listener = koru_ipc::Listener::bind(endpoint).map_err(|error| error.to_string())?;
     std::thread::Builder::new()
         .name("koru-store-server sync control".into())
-        .spawn(move || serve(listener, host, replication, grace, store))
+        .spawn(move || serve(listener, host, replication, grace, store, inspections))
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -137,6 +139,7 @@ fn serve(
     replication: ReplicationRuntime,
     grace: std::time::Duration,
     store: crate::StoreWorkerClient,
+    inspections: Arc<InspectionHub>,
 ) {
     loop {
         let Ok(mut stream) = listener.accept() else {
@@ -226,7 +229,10 @@ fn serve(
                 response,
                 koru_sync_control::ControlResponse::Rejected { .. }
             ) {
-                response = runtime_action.apply(&replication, &store, response);
+                // The control-state lock is already released. Live callbacks
+                // may re-enter it while checking the inspection's authority.
+                inspections.revalidate();
+                response = runtime_action.apply(&replication, &store, &inspections, response);
                 // **Nothing is promoted here any more** (D258). B8 raised this
                 // device's seeded `local_only` rows from the account, pairing
                 // and selection evidence these very requests carry; on
@@ -237,10 +243,20 @@ fn serve(
                 // trigger is now `Store::choose_transport_mode`, reached from
                 // the Manage tab through the local Store route.
             }
-            let response = ResponseFrame {
+            let mut response = ResponseFrame {
                 id: request.id,
                 response,
             };
+            if matches!(
+                response.response,
+                koru_sync_control::ControlResponse::CloudInspection(_)
+            ) && serde_json::to_vec(&response).map_or(true, |bytes| {
+                bytes.len() > koru_sync_control::inspection::MAX_INSPECTION_RESPONSE_FRAME_BYTES
+            }) {
+                response.response = koru_sync_control::ControlResponse::Rejected {
+                    code: "inspection_frame_too_large".into(),
+                };
+            }
             if let Err(error) =
                 koru_ipc::frame::write_frame(&mut stream, CONTROL_FRAME_VERSION, &response)
             {
@@ -275,6 +291,7 @@ fn serve(
         if let Ok(mut state) = host.lock() {
             state.end_session(hello.session_id);
         }
+        inspections.close_session(hello.session_id.as_uuid());
         // **The host clears; the data plane is only released.** Host
         // bookkeeping is what a status surface reads, and with no session
         // there is honestly none — but the endpoint, the connections and the
@@ -286,7 +303,32 @@ fn serve(
     }
 }
 
+fn inspection_owner(
+    session: koru_sync_control::ControlSessionId,
+    owner: koru_sync_control::inspection::InspectionOwner,
+) -> InspectionOwner {
+    InspectionOwner {
+        control_session: session.as_uuid(),
+        owner_scope: owner.owner_scope,
+        account: owner.account_id,
+        account_generation: owner.account_generation,
+    }
+}
+
 enum RuntimeAction {
+    InspectionStart {
+        owner: InspectionOwner,
+        token: uuid::Uuid,
+        request: koru_sync_control::inspection::InspectionRequest,
+    },
+    InspectionPoll {
+        owner: InspectionOwner,
+        token: uuid::Uuid,
+    },
+    InspectionCancel {
+        owner: InspectionOwner,
+        token: uuid::Uuid,
+    },
     Provision([u8; 32]),
     Authorize(koru_sync_control::AuthorizationSnapshot),
     Connect(koru_device::DeviceId),
@@ -380,6 +422,9 @@ enum CloudRootAction {
 fn request_kind_name(request: &koru_sync_control::ControlRequest) -> &'static str {
     use koru_sync_control::ControlRequest as R;
     match request {
+        R::StartCloudInspection { .. } => "start_cloud_inspection",
+        R::PollCloudInspection { .. } => "poll_cloud_inspection",
+        R::CancelCloudInspection { .. } => "cancel_cloud_inspection",
         R::ProvisionEndpoint { .. } => "provision_endpoint",
         R::ReplaceAuthorization { .. } => "replace_authorization",
         R::ConnectPeer { .. } => "connect_peer",
@@ -416,6 +461,32 @@ impl RuntimeAction {
     fn from_request(request: &koru_sync_control::ControlRequest) -> Self {
         use koru_sync_control::ControlRequest;
         match request {
+            ControlRequest::StartCloudInspection {
+                control_session_id,
+                owner,
+                token,
+                request,
+            } => Self::InspectionStart {
+                owner: inspection_owner(*control_session_id, *owner),
+                token: *token,
+                request: (**request).clone(),
+            },
+            ControlRequest::PollCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            } => Self::InspectionPoll {
+                owner: inspection_owner(*control_session_id, *owner),
+                token: *token,
+            },
+            ControlRequest::CancelCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            } => Self::InspectionCancel {
+                owner: inspection_owner(*control_session_id, *owner),
+                token: *token,
+            },
             ControlRequest::ProvisionEndpoint { secret } => Self::Provision(*secret.expose()),
             ControlRequest::ReplaceAuthorization { snapshot } => Self::Authorize(snapshot.clone()),
             ControlRequest::ConnectPeer { peer } => Self::Connect(*peer),
@@ -522,9 +593,33 @@ impl RuntimeAction {
         self,
         runtime: &ReplicationRuntime,
         store: &crate::StoreWorkerClient,
+        inspections: &Arc<InspectionHub>,
         response: koru_sync_control::ControlResponse,
     ) -> koru_sync_control::ControlResponse {
         match self {
+            Self::InspectionStart {
+                owner,
+                token,
+                request,
+            } => {
+                return match inspections.start(owner, token, request) {
+                    Ok(token) => {
+                        koru_sync_control::ControlResponse::CloudInspectionStarted { token }
+                    }
+                    Err(failure) => koru_sync_control::ControlResponse::CloudInspection(
+                        koru_sync_control::inspection::InspectionPoll::Failed { failure },
+                    ),
+                };
+            }
+            Self::InspectionPoll { owner, token } => {
+                return koru_sync_control::ControlResponse::CloudInspection(
+                    inspections.poll(owner, token),
+                );
+            }
+            Self::InspectionCancel { owner, token } => {
+                inspections.cancel(owner, token);
+                return koru_sync_control::ControlResponse::Ok;
+            }
             Self::ReadCloudBootstrap { workspace, policy } => {
                 let koru_sync_control::ControlResponse::CloudBootstrap {
                     control_session_id, ..
@@ -1140,6 +1235,7 @@ mod tests {
             replication.clone(),
             std::time::Duration::from_millis(200),
             test_store_client(),
+            InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .unwrap();
         let endpoint =
@@ -1262,6 +1358,7 @@ mod tests {
             replication.clone(),
             grace,
             test_store_client(),
+            InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .unwrap();
         let endpoint =
@@ -1303,6 +1400,7 @@ mod tests {
             replication.clone(),
             std::time::Duration::from_millis(300),
             test_store_client(),
+            InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .unwrap();
         let endpoint =

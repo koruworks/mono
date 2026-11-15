@@ -35,7 +35,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use koru_store_core::errors::Result;
-use koru_store_core::ids::WorkspaceId;
+use koru_store_core::ids::{DocumentId, WorkspaceId};
 use koru_store_core::model::BlobHash;
 use koru_store_core::ports::LegacyPromotion;
 use koru_store_core::service::Backend;
@@ -152,6 +152,37 @@ impl SqliteBackend {
     }
 }
 
+impl SqliteBackend {
+    /// No create, configuration, migration, or implicit Store cache mutation.
+    fn prepare_existing_inspection(&self, id: WorkspaceId) -> Result<SqliteWorkspace> {
+        let connection = if let Some(memory) = &self.memory {
+            // Hold the keeper until the new connection has joined. Unlike
+            // open(), this never inserts a missing entry in the map.
+            let held = memory.held.lock().unwrap_or_else(|e| e.into_inner());
+            let Some((name, _)) = held.get(&id) else {
+                return Err(koru_store_core::Error::new(
+                    koru_store_core::Code::StorageFailed,
+                    "workspace storage is missing",
+                ));
+            };
+            rusqlite::Connection::open_with_flags(
+                format!("file:{}?mode=memory&cache=shared", name.as_str()),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
+                    | rusqlite::OpenFlags::SQLITE_OPEN_URI
+                    | rusqlite::OpenFlags::SQLITE_OPEN_SHARED_CACHE,
+            )
+            .map_err(crate::db::sql_failed)?
+        } else {
+            rusqlite::Connection::open_with_flags(
+                self.workspace_db(id),
+                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+            )
+            .map_err(crate::db::sql_failed)?
+        };
+        SqliteWorkspace::prepare_manifest_inspection(connection)
+    }
+}
+
 impl Backend for SqliteBackend {
     type Workspace = SqliteWorkspace;
     type Blobs = crate::blobs::SqliteBlobs;
@@ -168,39 +199,25 @@ impl Backend for SqliteBackend {
         id: WorkspaceId,
     ) -> Box<dyn FnOnce() -> koru_store_core::service::WorkspaceManifestInspection + Send> {
         use koru_store_core::service::WorkspaceManifestInspection;
-        let prepared = (|| {
-            let connection = if let Some(memory) = &self.memory {
-                // Hold the keeper until the new connection has joined. Unlike
-                // open(), this never inserts a missing entry in the map.
-                let held = memory.held.lock().unwrap_or_else(|e| e.into_inner());
-                let Some((name, _)) = held.get(&id) else {
-                    return Err(koru_store_core::Error::new(
-                        koru_store_core::Code::StorageFailed,
-                        "workspace storage is missing",
-                    ));
-                };
-                rusqlite::Connection::open_with_flags(
-                    format!("file:{}?mode=memory&cache=shared", name.as_str()),
-                    rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
-                        | rusqlite::OpenFlags::SQLITE_OPEN_URI
-                        | rusqlite::OpenFlags::SQLITE_OPEN_SHARED_CACHE,
-                )
-                .map_err(crate::db::sql_failed)?
-            } else {
-                rusqlite::Connection::open_with_flags(
-                    self.workspace_db(id),
-                    rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-                )
-                .map_err(crate::db::sql_failed)?
-            };
-            SqliteWorkspace::prepare_manifest_inspection(connection)
-        })();
+        let prepared = self.prepare_existing_inspection(id);
         Box::new(move || {
             let span =
                 koru_store_core::stats::Span::start(koru_store_core::stats::names::AUTHORITY_READ);
             let inspected = prepared.and_then(|repo| repo.inspect_prepared_manifest(id));
             span.stop();
             inspected.unwrap_or_else(WorkspaceManifestInspection::Unavailable)
+        })
+    }
+
+    fn prepare_document_inspection(
+        &self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        budget: koru_store_core::service::DocumentInspectionBudget,
+    ) -> koru_store_core::service::DocumentInspection {
+        let prepared = self.prepare_existing_inspection(workspace);
+        Box::new(move || {
+            prepared.and_then(|repo| repo.inspect_prepared_document(workspace, document, budget))
         })
     }
 

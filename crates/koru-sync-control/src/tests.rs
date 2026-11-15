@@ -496,8 +496,8 @@ fn host_on(session_id: ControlSessionId) -> ControlHost {
 }
 
 #[test]
-fn the_control_protocol_is_seven_and_the_greeting_refuses_every_other_number() {
-    assert_eq!(CONTROL_PROTOCOL_VERSION, 8);
+fn the_control_protocol_is_nine_and_the_greeting_refuses_every_other_number() {
+    assert_eq!(CONTROL_PROTOCOL_VERSION, 9);
     assert_eq!(CONTROL_FRAME_VERSION, 1);
     // A different number, and its own: the peer protocol went 5 -> 6 for the
     // root-catalog exchange while the control protocol stayed 7.
