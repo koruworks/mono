@@ -46,7 +46,7 @@ impl Transport for ReadSource {
         {
             return Ok(HttpResponse {
                 status: 200,
-                body: br#"{"subscriptions":[],"next_cursor":null,"cloud_access":true}"#.to_vec(),
+                body: serde_json::to_vec(&serde_json::json!({"subscriptions":[],"next_cursor":null,"cloud_access":self.mode.load(Ordering::SeqCst)!=5})).unwrap(),
             });
         }
         assert!(request.path_and_query.ends_with("&limit=100"));
@@ -74,6 +74,9 @@ impl Transport for ReadSource {
 struct HostPort {
     calls: AtomicUsize,
     context: CloudDocumentContext,
+    driver: Arc<DriverState>,
+    change_on_return: AtomicBool,
+    wrong_remove_reply: AtomicBool,
 }
 impl CloudDocumentPort for HostPort {
     fn run(
@@ -85,8 +88,18 @@ impl CloudDocumentPort for HostPort {
         _: &Cancel,
     ) -> Result<CloudDocumentOutcome, CloudDocumentFailure> {
         assert_eq!(context, self.context);
-        assert!(can_write);
+        if matches!(action, CloudDocumentAction::RemoveFile { .. }) {
+            assert!(can_write);
+        }
         self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.change_on_return.load(Ordering::SeqCst) {
+            self.driver.0.lock().unwrap().account_generation += 1;
+        }
+        let action = if self.wrong_remove_reply.load(Ordering::SeqCst) {
+            CloudDocumentAction::Inspect
+        } else {
+            action
+        };
         match action {
             CloudDocumentAction::Inspect => {
                 Ok(CloudDocumentOutcome::View(CloudDocumentInspectionV1 {
@@ -138,6 +151,9 @@ fn setup() -> (
     let port = Arc::new(HostPort {
         calls: AtomicUsize::new(0),
         context,
+        driver: driver.clone(),
+        change_on_return: AtomicBool::new(false),
+        wrong_remove_reply: AtomicBool::new(false),
     });
     let mut service = ProductionAccountService::with_client(
         AccountClient::with_transport(transport.clone()),
@@ -277,4 +293,80 @@ fn acknowledged_removal_invalidates_selection_until_inventory_is_read_again() {
     ));
     assert_eq!(transport.calls.load(Ordering::SeqCst), 2);
     assert_eq!(port.calls.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn cloud_document_account_change_after_possible_submission_never_reports_success() {
+    let (mut service, _, port, selection) = setup();
+    port.change_on_return.store(true, Ordering::SeqCst);
+    let result = service
+        .cloud_document_command(
+            2,
+            2,
+            CloudDocumentSelectionPayload::new(serde_json::to_string(&selection).unwrap()).unwrap(),
+            Some("00000000-0000-0000-0000-000000001234".into()),
+            &Cancel::never(),
+        )
+        .unwrap()
+        .result;
+    assert!(matches!(
+        result,
+        AccountOperationResult::CloudFileRemoval {
+            removed: false,
+            failure: Some(CloudInspectionFailure::OutcomeUnknown),
+            ..
+        }
+    ));
+    assert!(service.cloud_document_page.is_none());
+}
+
+#[test]
+fn cloud_document_unexpected_remove_reply_is_unknown_and_invalidates_confirmation() {
+    let (mut service, _, port, selection) = setup();
+    port.wrong_remove_reply.store(true, Ordering::SeqCst);
+    let result = service
+        .cloud_document_command(
+            2,
+            2,
+            CloudDocumentSelectionPayload::new(serde_json::to_string(&selection).unwrap()).unwrap(),
+            Some("00000000-0000-0000-0000-000000001234".into()),
+            &Cancel::never(),
+        )
+        .unwrap()
+        .result;
+    assert!(matches!(
+        result,
+        AccountOperationResult::CloudFileRemoval {
+            removed: false,
+            failure: Some(CloudInspectionFailure::OutcomeUnknown),
+            ..
+        }
+    ));
+    assert!(service.cloud_document_page.is_none());
+}
+#[test]
+fn cloud_document_false_entitlement_masks_bad_host_presentation_grant() {
+    let (mut service, transport, _, selection) = setup();
+    transport.mode.store(5, Ordering::SeqCst);
+    let result = service
+        .cloud_document_command(
+            2,
+            2,
+            CloudDocumentSelectionPayload::new(serde_json::to_string(&selection).unwrap()).unwrap(),
+            None,
+            &Cancel::never(),
+        )
+        .unwrap()
+        .result;
+    let AccountOperationResult::CloudDocumentInspection {
+        payload: Some(payload),
+        failure: None,
+        ..
+    } = result
+    else {
+        panic!()
+    };
+    let view = CloudDocumentInspectionV1::from_json(payload.as_str()).unwrap();
+    assert!(!view.can_request_removal);
+    assert!(view.removable_files.is_empty());
 }
