@@ -5,8 +5,10 @@
 //! acknowledged successor, and the read the AI worker's resume needs.
 
 use super::*;
-use koru_delegate_core::decisions::{DecisionBytes, DecisionEditAction, DecisionEditBinding};
-use koru_delegate_core::{DocumentId, PrepareNativeResult};
+use koru_delegate_core::decisions::{
+    DecisionBytes, DecisionEditAction, DecisionEditBinding, DecisionResumeState,
+};
+use koru_delegate_core::{DocumentId, PrepareNativeResult, same_native_edit_revision};
 use koru_delegate_sqlite::NativeLeaseOutcome;
 
 /// The edit a Koru decision protects, exactly as the tool call proposed it.
@@ -32,6 +34,15 @@ impl std::fmt::Debug for DecisionEditRequest {
 impl Orchestrator {
     /// Prepare a Koru edit decision for the exact live consumer's current
     /// turn. C commits the decision, its wait and the initial projection.
+    ///
+    /// Exact retained replay comes first (contract section 2): when the
+    /// Run's open decision is this operation, the retained record is
+    /// returned to its origin or to its acknowledged consumer without fresh
+    /// policy, boot, live-fence or publication checks, and nothing is
+    /// written. The same operation with a different edit is `bot_conflict`;
+    /// another operation while a decision owns the Run is
+    /// `bot_decision_owned`. Only when no decision is open does fresh
+    /// preparation run.
     pub fn bot_prepare_edit_decision(
         &mut self,
         fence: &BotExecutionFence,
@@ -40,6 +51,10 @@ impl Orchestrator {
         proof: &FreshBotPolicyProof,
         boot: DelegateBootId,
     ) -> Result<DecisionRecord, RunError> {
+        owner_device(fence.owner, device)?;
+        if let Some(record) = self.retained_edit_decision(fence, edit)? {
+            return Ok(record);
+        }
         self.decision_boot_current(boot)?;
         self.bot_live_fence(fence, device, true, true)?;
         let run = fence.run;
@@ -162,6 +177,80 @@ impl Orchestrator {
         Ok((observation, resume))
     }
 
+    /// The Run's open Koru edit decision for exactly this operation, read
+    /// through the sole ledger decoder. History only: it grants nothing and
+    /// writes nothing. `Ok(None)` only when the Run has no open wait at all
+    /// (a settled decision is still replayed by C's own exact binding match).
+    fn retained_edit_decision(
+        &mut self,
+        fence: &BotExecutionFence,
+        edit: &DecisionEditRequest,
+    ) -> Result<Option<DecisionRecord>, RunError> {
+        let Some(execution) = self
+            .bot_ledger()?
+            .decision_wait_execution(fence.owner, fence.run)?
+        else {
+            return Ok(None);
+        };
+        // An open no-decision cleanup wait also owns the Run: no new question.
+        let expected = execution
+            .expected
+            .decision
+            .ok_or_else(|| refused("bot_decision_owned"))?;
+        let record = self
+            .bot_ledger()?
+            .bot_decision(fence.owner, fence.run, expected.decision)?
+            .ok_or_else(|| refused("bot_fenced"))?;
+        let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
+            return Err(refused("bot_decision_owned"));
+        };
+        if binding.operation_id != edit.operation_id {
+            return Err(refused("bot_decision_owned"));
+        }
+        if binding.bot != fence.bot || binding.run != fence.run {
+            return Err(refused("bot_fenced"));
+        }
+        let origin = binding.origin_attempt == fence.attempt
+            && binding.origin_generation == fence.generation
+            && binding.origin_session == fence.session
+            && Some(binding.origin_turn) == fence.turn;
+        let consumer = record.resume.as_ref().is_some_and(|resume| {
+            let (attempt, generation, session, _) = resume.consumer_identity();
+            let turn = match &resume.state {
+                DecisionResumeState::InputAcknowledged { acknowledgment }
+                | DecisionResumeState::Closed {
+                    acknowledgment: Some(acknowledgment),
+                } => Some(acknowledgment.turn),
+                _ => None,
+            };
+            attempt == fence.attempt
+                && generation == fence.generation
+                && session == Some(fence.session)
+                && turn.is_some()
+                && turn == fence.turn
+        });
+        if !origin && !consumer {
+            return Err(refused("bot_fenced"));
+        }
+        let same_revision = same_native_edit_revision(
+            &edit.expected_revision,
+            binding.expected_revision.as_slice(),
+        )
+        .unwrap_or(false);
+        if binding.action != edit.action
+            || !same_revision
+            || !record.receipt.binding.matches_edit_except_revision(
+                edit.operation_id,
+                edit.target,
+                edit.edit_fingerprint,
+                &edit.payload,
+            )
+        {
+            return Err(refused("bot_conflict"));
+        }
+        Ok(Some(record))
+    }
+
     pub(super) fn decision_global_policy(
         &mut self,
         proof: &FreshBotPolicyProof,
@@ -180,3 +269,6 @@ impl Orchestrator {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
