@@ -56,6 +56,20 @@ pub struct RunState {
     /// Bounded volatile retry identity for the retained decision cleanup CAS.
     /// Unknown SQL outcomes reuse this exact request; restart reads its row.
     pub(crate) decision_cleanup: Option<DecisionCleanupRetry>,
+    /// Whether this process may still ask the host to create the reserved
+    /// successor. Only a reservation made in this process is `Reserved`; once
+    /// creation is dispatched (or the reservation predates this process) the
+    /// exact creation key is recovered by `lookup`, never created again.
+    pub(crate) decision_launch: Option<DecisionLaunch>,
+}
+
+/// The one physical successor creation a decision reservation allows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DecisionLaunch {
+    /// Reserved here; no creation has been asked for yet.
+    Reserved(koru_delegate_core::IdempotencyKey),
+    /// The creation was asked for; its answer may have been lost.
+    Dispatched(koru_delegate_core::IdempotencyKey),
 }
 
 impl RunState {
@@ -99,6 +113,7 @@ impl RunState {
             delivery_retry: None,
             publication_returned: None,
             decision_cleanup: None,
+            decision_launch: None,
         }
     }
 
@@ -118,6 +133,11 @@ pub struct Attempt {
     pub session: Option<SessionId>,
     /// The turn this orchestrator submitted and has not seen end.
     pub orchestrator_turn: Option<AgentTurnId>,
+    /// A recorded decision successor's continuation turn, mirrored only from
+    /// C's acknowledged resume input for this exact attempt. It is the
+    /// successor's counterpart of the original's immutable InitialSend turn,
+    /// kept after the turn ends; it never names the original attempt.
+    pub resume_turn: Option<AgentTurnId>,
     /// A live recovered turn without positive proof that this attempt submitted it.
     /// It fences automatic submission until its exact terminal event is observed.
     pub recovered_unowned_turn: Option<AgentTurnId>,
@@ -157,6 +177,7 @@ impl Attempt {
             generation,
             session: None,
             orchestrator_turn: None,
+            resume_turn: None,
             recovered_unowned_turn: None,
             turns: HashMap::new(),
             pending_approvals: HashMap::new(),

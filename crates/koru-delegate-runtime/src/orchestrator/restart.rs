@@ -576,7 +576,22 @@ impl Orchestrator {
         } else {
             None
         };
-        let bot_turn = bot_send.as_ref().and_then(|send| send.turn);
+        // The original InitialSend proves only the original attempt's turn. A
+        // recorded decision successor's turn is the acknowledged resume input
+        // of the open wait for this exact consumer; nothing else is positive.
+        let bot_turn = match bot_send.as_ref() {
+            Some(send) if send.attempt == row.attempt && send.generation == row.generation => {
+                send.turn
+            }
+            Some(_) => self.decision_resume_turn(run, row.attempt, row.generation, session)?,
+            None => None,
+        };
+        if bot_send
+            .as_ref()
+            .is_some_and(|send| send.attempt != row.attempt || send.generation != row.generation)
+        {
+            attempt.resume_turn = bot_turn;
+        }
         attempt.session = Some(session);
         // A session summary proves activity, not who asked for it. Read only
         // a bounded window of existing content-free steps for positive ownership.

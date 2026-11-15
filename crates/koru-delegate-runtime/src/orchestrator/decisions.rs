@@ -20,9 +20,12 @@ use koru_delegate_core::{
 };
 use koru_delegate_sqlite::{AnswerDecision, DecisionRecord};
 
+mod driver;
 mod edit;
+mod launch;
 mod resume;
 mod successor;
+pub use driver::DecisionResumeStep;
 pub use edit::DecisionEditRequest;
 pub use resume::DecisionEnrollmentBridge;
 

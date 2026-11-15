@@ -8,7 +8,21 @@
 use super::*;
 use crate::orchestrator::state::Attempt;
 use koru_delegate_core::decisions::DecisionResumeState;
+use koru_delegate_core::{AgentTurnId, AttemptGeneration, RunAttemptId, SessionId};
 use koru_session_protocol::CreationLookup;
+
+/// The acknowledged continuation turn a retained resume carries, if any.
+pub(super) fn acknowledged_turn(
+    resume: &koru_delegate_core::decisions::DecisionResume,
+) -> Option<AgentTurnId> {
+    match &resume.state {
+        DecisionResumeState::InputAcknowledged { acknowledgment }
+        | DecisionResumeState::Closed {
+            acknowledgment: Some(acknowledgment),
+        } => Some(acknowledgment.turn),
+        _ => None,
+    }
+}
 
 impl Orchestrator {
     /// Recover a reserved successor creation by its exact key. A known
@@ -42,8 +56,11 @@ impl Orchestrator {
     }
 
     /// Mirror the retained successor into working memory: the new attempt
-    /// at its generation on its bound session, holding the controller, with
-    /// the acknowledged turn only once C recorded the acknowledgment.
+    /// at its generation on its bound session, holding the controller only
+    /// after the host granted it, with the acknowledged turn only once C
+    /// recorded the acknowledgment. Re-running it for the same consumer keeps
+    /// what working memory already knows (turn tallies, an ended turn) and
+    /// adds only the newly recorded acknowledgment.
     pub fn bot_install_decision_successor(
         &mut self,
         owner: BotOwner,
@@ -60,18 +77,41 @@ impl Orchestrator {
         if row.attempt != attempt
             || row.generation != generation
             || row.retired
+            || row.phase.is_terminal()
             || row.provider_session.and_then(|key| key.session) != Some(session)
         {
             return Err(refused("bot_fenced"));
         }
-        let turn = match &resume.state {
-            DecisionResumeState::InputAcknowledged { acknowledgment }
-            | DecisionResumeState::Closed {
-                acknowledgment: Some(acknowledgment),
-            } => Some(acknowledgment.turn),
-            _ => None,
-        };
+        let turn = acknowledged_turn(&resume);
+        let (same, holds) = self
+            .runs
+            .get(&run)
+            .and_then(|state| state.attempt.as_ref())
+            .filter(|memory| {
+                memory.id == attempt
+                    && memory.generation == generation
+                    && memory.session == Some(session)
+            })
+            .map_or((false, false), |memory| (true, memory.holds_lease));
+        if !holds {
+            // The controller is positive evidence only from the host's grant.
+            self.ports.sessions.attach(session)?;
+        }
         let state = self.open(run)?;
+        state.decision_launch = None;
+        if same {
+            let memory = state.attempt.as_mut().expect("matched above");
+            memory.holds_lease = true;
+            if let Some(turn) = turn
+                && memory.resume_turn.is_none()
+            {
+                memory.resume_turn = Some(turn);
+                if memory.orchestrator_turn.is_none() && memory.bot_terminal_turn != Some(turn) {
+                    memory.orchestrator_turn = Some(turn);
+                }
+            }
+            return Ok(());
+        }
         let (run_workspace, captured, is_bot) = match state.attempt.take() {
             Some(old) => {
                 if old.id != attempt {
@@ -87,9 +127,41 @@ impl Orchestrator {
         successor.holds_lease = true;
         successor.bot_observed = true;
         successor.orchestrator_turn = turn;
+        successor.resume_turn = turn;
         successor.run_workspace = run_workspace;
         successor.captured = captured;
         state.attempt = Some(successor);
         Ok(())
+    }
+
+    /// The acknowledged continuation turn of the open decision wait's exact
+    /// recorded consumer, for restart reconciliation. `None` is "no positive
+    /// evidence", never permission: no open wait, another consumer, or an
+    /// input that was never acknowledged.
+    pub(in crate::orchestrator) fn decision_resume_turn(
+        &mut self,
+        run: RunId,
+        attempt: RunAttemptId,
+        generation: AttemptGeneration,
+        session: SessionId,
+    ) -> Result<Option<AgentTurnId>, RunError> {
+        let Some(admission) = self.bot_ledger()?.bot_admission(run)? else {
+            return Ok(None);
+        };
+        let owner = admission.submission.provenance.owner;
+        let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+            return Ok(None);
+        };
+        let Some(resume) = execution.resume else {
+            return Ok(None);
+        };
+        let (consumer, consumer_generation, consumer_session, _) = resume.consumer_identity();
+        if consumer != attempt
+            || consumer_generation != generation
+            || consumer_session != Some(session)
+        {
+            return Ok(None);
+        }
+        Ok(acknowledged_turn(&resume))
     }
 }

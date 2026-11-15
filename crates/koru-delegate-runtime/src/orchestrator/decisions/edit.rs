@@ -63,6 +63,11 @@ impl Orchestrator {
         let ActorRef::Person { profile } = submission.request.requested_by else {
             return Err(refused("bot_fenced"));
         };
+        // Plan section 5: without the existing delegated launch a successor
+        // could never be started, so no answerable Koru decision is prepared.
+        if let Some(code) = self.decision_successor_unsupported(run)? {
+            return Err(refused(code));
+        }
         let global_policy = self.decision_global_policy(proof)?;
         let binding = DecisionBindingV1::KoruEdit(DecisionEditBinding {
             version: DecisionVersionV1,
