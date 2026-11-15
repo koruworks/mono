@@ -258,6 +258,8 @@ fn routine_native_composite_subject_current_policy_and_attempt_defenses() {
 fn routine_native_retained_marker_refuses_v1_manual_downgrade_for_result_and_memory() {
     for (memory, orphan) in [(false, false), (true, false), (false, true), (true, true)] {
         let (mut h, proof) = fixture();
+        // Capture the valid subject before deliberately corrupting its admission.
+        let mut fresh_memory = super::memory::request(&h, true);
         if memory {
             let request = super::memory::request(&h, true);
             h.db.allocate_memory_edit(&request, fixtures::document(0xd0), &h.fence, &proof)
@@ -312,7 +314,7 @@ fn routine_native_retained_marker_refuses_v1_manual_downgrade_for_result_and_mem
         assert!(h.db.native_result(&h.request.key).is_err());
         h.request.key.operation_id = Uuid::new_v4();
         assert!(h.db.prepare_native_result(&h.request).is_err());
-        let fresh_memory = super::memory::request(&h, true);
+        fresh_memory.key = h.request.key.clone();
         assert!(
             h.db.allocate_memory_edit(&fresh_memory, fixtures::document(0xd0), &h.fence, &ordinary)
                 .is_err()
