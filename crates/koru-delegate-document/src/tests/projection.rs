@@ -179,11 +179,11 @@ fn projection_refuses_legacy_newer_wrong_subject_and_detached_without_mutating()
         assert_eq!(doc.version(), before);
     }
     let doc = bot(false);
-    let mut intent = intent(&doc);
-    intent.identity.run = RunId::from_uuid(v4(99));
+    let mut offered = intent(&doc);
+    offered.identity.run = RunId::from_uuid(v4(99));
     assert!(
         RunProjectionStaging::default()
-            .prepare(&doc, &intent)
+            .prepare(&doc, &offered)
             .is_err()
     );
     let doc = bot(false);
