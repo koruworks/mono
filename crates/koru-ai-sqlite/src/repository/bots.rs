@@ -17,10 +17,10 @@ pub use lifecycle::{
 };
 mod creation;
 pub use creation::BotCreationScan;
+mod decisions;
 pub(crate) mod library;
 mod reads;
-mod decisions;
-pub use decisions::BotDecisionReplayRollover;
+pub use decisions::{BOT_DECISION_NEEDED_YOU, BotDecisionClosure, BotDecisionReplayRollover};
 mod routines;
 pub use routines::{
     RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,

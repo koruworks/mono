@@ -4,6 +4,7 @@
 
 mod ai;
 mod artifacts;
+mod decision_bridge;
 #[cfg(feature = "fixtures")]
 #[doc(hidden)]
 pub mod fixtures;
@@ -36,6 +37,7 @@ mod session_routes;
 pub mod settings;
 pub mod workspaces;
 
+pub use decision_bridge::{DECISION_ENROLL_ROUTE, DECISION_READ_ROUTE, DecisionBridgeCredential};
 pub use session_bridge::{BridgeError, BridgeSubscription, SessionBridge};
 
 pub const SESSION_TTL_MILLIS: i64 = 60 * 60 * 1_000;
@@ -1060,6 +1062,9 @@ pub struct GatewayState {
     /// Derived bootstrap authority and bounded HTTP-body admission only. The
     /// private shell does not own an AI job or a physical execution permit.
     routine_bridge: Arc<routine_bridge::HttpState>,
+    /// The decision wait bridge's own credential domain and HTTP admission;
+    /// the Routine credential is never accepted on its routes.
+    decision_bridge: Arc<decision_bridge::HttpState>,
     native_mutations: std::sync::OnceLock<Arc<koru_ai_server::NativeMutationGate>>,
     artifacts: std::sync::OnceLock<Arc<dyn koru_artifact_api::ArtifactDomain>>,
     /// `http://127.0.0.1:<port>`, handed down by the host once its listener
@@ -1164,6 +1169,7 @@ impl GatewayState {
             artifacts: std::sync::OnceLock::new(),
             delegate: std::sync::OnceLock::new(),
             bot_delegate: std::sync::OnceLock::new(),
+            decision_bridge: Arc::new(decision_bridge::HttpState::new(routine_worker.clone())),
             routine_bridge: Arc::new(routine_bridge::HttpState::new(routine_worker)),
             native_mutations: std::sync::OnceLock::new(),
             public_endpoint: std::sync::OnceLock::new(),
@@ -1239,6 +1245,15 @@ impl GatewayState {
         authority: koru_delegate_api::routines::RoutineBridgeAuthority,
     ) -> bool {
         self.routine_bridge.install(authority)
+    }
+
+    /// Install the decision domain's separately derived credential once,
+    /// before serving. Until it is installed every decision route answers 401.
+    pub fn set_decision_bridge_credential(
+        &self,
+        credential: Arc<dyn decision_bridge::DecisionBridgeCredential>,
+    ) -> bool {
+        self.decision_bridge.install(credential)
     }
 
     /// Same process-scoped gate given to AI recovery, composed before serving.
@@ -1477,6 +1492,8 @@ pub fn router(state: Arc<GatewayState>) -> Router {
         // Private bootstrap authentication, absent from the public catalog.
         // Valid envelopes refuse Unavailable until the real AI owner is wired.
         .merge(routine_bridge::router(Arc::clone(&state.routine_bridge)))
+        // The decision wait bridge: its own credential domain (O115).
+        .merge(decision_bridge::router(Arc::clone(&state.decision_bridge)))
         // The Artifact Store's own namespace (D13). Its routes exist whether
         // or not `artifacts.db` opened, and answer 503 when it did not.
         .merge(artifacts::router())
@@ -1529,7 +1546,9 @@ async fn authenticate(
     }
     // Only these exact paths bypass the ordinary session bearer. Their own
     // handler checks the derived capability before it ever polls a body.
-    if routine_bridge::is_endpoint(request.uri().path()) {
+    if routine_bridge::is_endpoint(request.uri().path())
+        || decision_bridge::is_endpoint(request.uri().path())
+    {
         return next.run(request).await;
     }
     let bearer = request
