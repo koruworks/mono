@@ -469,6 +469,14 @@ impl Validate for CloudUsageWorkspacesResponseV1 {
         if self.items.len() > 100 {
             return Err("too many Workspaces");
         }
+        let mut workspaces = std::collections::HashSet::new();
+        if self
+            .items
+            .iter()
+            .any(|row| !workspaces.insert(row.workspace_id.0))
+        {
+            return Err("duplicate Workspace identity");
+        }
         if self.next_cursor.as_ref().is_some_and(|cursor| {
             cursor.is_empty()
                 || cursor.len() > 2048

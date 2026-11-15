@@ -9,6 +9,9 @@ impl ProfilesController {
         &mut self,
         failure: koru_workspace_host::account_ui::CommandFailure,
     ) -> bool {
+        if self.inventory_cancellations.fail(failure) {
+            return true;
+        }
         self.apply_to_forms(|form| form.account_command_failed_active(failure))
     }
     fn account_command_failed_active(
@@ -52,6 +55,9 @@ impl ProfilesController {
         &mut self,
         admission: koru_workspace_host::account_ui::CommandAdmission,
     ) -> bool {
+        if self.inventory_cancellations.admit(admission) {
+            return true;
+        }
         self.apply_to_forms(|form| {
             if form.cloud_admitted(admission) {
                 return true;
@@ -445,6 +451,7 @@ impl ProfilesController {
                 }
             }
             AccountOperationResult::SignedOut => {
+                self.retire_cloud_inventory();
                 self.cloud.invalidate();
                 self.cloud_uri = None;
                 self.creation_submission = None;

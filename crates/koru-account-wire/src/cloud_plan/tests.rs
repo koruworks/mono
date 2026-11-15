@@ -29,6 +29,24 @@ fn all_approved_fixtures_round_trip_without_losing_nulls() {
 }
 
 #[test]
+fn workspace_page_rejects_duplicate_identity_even_with_a_different_incarnation() {
+    let page = fixtures()
+        .into_iter()
+        .find(|f| f["name"] == "workspace_page")
+        .unwrap()["response"]
+        .clone();
+    for changed_incarnation in [false, true] {
+        let mut invalid = page.clone();
+        let mut duplicate = invalid["items"][0].clone();
+        if changed_incarnation {
+            duplicate["incarnation_id"] = json!("00000000-0000-0000-0000-000000000099");
+        }
+        invalid["items"].as_array_mut().unwrap().push(duplicate);
+        assert!(serde_json::from_value::<CloudUsageWorkspacesResponseV1>(invalid).is_err());
+    }
+}
+
+#[test]
 fn bigint_is_exact_and_canonical() {
     for value in [0, 9_007_199_254_740_993, i64::MAX] {
         let decimal = Decimal::new(value).unwrap();

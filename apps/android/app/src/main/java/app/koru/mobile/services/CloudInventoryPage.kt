@@ -60,7 +60,7 @@ internal object CloudInventoryDecoder {
                         row.decimalString("source_revision"), row.label("display_name", 1024), state, profile,
                         amount(row.getJSONObject("usage")))
                 }
-                require(items.map { it.workspace to it.incarnation }.distinct().size == items.size)
+                require(items.map { it.workspace }.distinct().size == items.size)
                 CloudInventoryPage.Workspaces(epoch, items, cursor)
             }
             "cloud-usage-documents-v1" -> {
