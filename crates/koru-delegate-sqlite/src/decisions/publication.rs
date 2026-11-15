@@ -4,6 +4,7 @@
 //! coverage stay in the document adapter; no raw delta is a SQL authority.
 
 use super::*;
+mod insert;
 mod rows;
 mod write;
 
@@ -74,6 +75,18 @@ fn correlate(
         ) => require(*fence == wait.origin)?,
         _ => return Err(corrupt("bot_decision_publications", "decision_id")),
     }
+    if matches!(record.state, DecisionProjectionState::Applied { .. }) {
+        for publication in record.target.publications() {
+            let body = encoded(&publication.fact, DECISION_FRAME_BYTES)?;
+            require(crate::publications::verify_exact_on(
+                conn,
+                publication.event,
+                identity.run,
+                publication.fact.publication_kind(),
+                &body,
+            )?)?;
+        }
+    }
     Ok(())
 }
 
@@ -93,6 +106,40 @@ fn consumer_matches(resume: &DecisionResume, fence: &DecisionFence) -> bool {
         && fence.generation == generation
         && Some(fence.session) == session
         && Some(fence.turn) == turn
+}
+
+pub(super) fn latest_applied_on(
+    conn: &Connection,
+    owner: BotOwner,
+    run: RunId,
+) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+    authority::owner(conn, owner, run)?;
+    rows::open(conn, run)?;
+    let mut current = rows::latest(conn, run)?;
+    for _ in 0..3 {
+        let Some(id) = current else {
+            return Ok(None);
+        };
+        let record = read(conn, owner, run, id)?
+            .ok_or_else(|| corrupt("bot_decision_publications", "transition_id"))?;
+        if matches!(record.state, DecisionProjectionState::Applied { .. }) {
+            return Ok(Some(record));
+        }
+        if matches!(record.state, DecisionProjectionState::Superseded { .. }) {
+            return Err(corrupt("bot_decision_publications", "latest_state"));
+        }
+        let Some(prior) = &record.target.predecessor().projection else {
+            return Ok(None);
+        };
+        let previous = read(conn, owner, run, prior.transition)?
+            .ok_or_else(|| corrupt("bot_decision_publications", "predecessor"))?;
+        require(
+            previous.identity.sequence == prior.sequence
+                && previous.identity.target_digest == prior.target_digest,
+        )?;
+        current = Some(prior.transition);
+    }
+    Err(corrupt("bot_decision_publications", "predecessor_depth"))
 }
 
 pub(super) fn prefix(
@@ -150,32 +197,7 @@ impl RunsDb {
         owner: BotOwner,
         run: RunId,
     ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
-        authority::owner(self.conn(), owner, run)?;
-        let mut current = self.latest_decision_projection(owner, run)?;
-        // At most two open targets precede the applied base. Follow exact
-        // retained links, never scan an arbitrarily long superseded history.
-        for _ in 0..3 {
-            let Some(record) = current else {
-                return Ok(None);
-            };
-            if matches!(record.state, DecisionProjectionState::Applied { .. }) {
-                return Ok(Some(record));
-            }
-            if matches!(record.state, DecisionProjectionState::Superseded { .. }) {
-                return Err(corrupt("bot_decision_publications", "latest_state"));
-            }
-            let Some(prior) = &record.target.predecessor().projection else {
-                return Ok(None);
-            };
-            let previous = read(self.conn(), owner, run, prior.transition)?
-                .ok_or_else(|| corrupt("bot_decision_publications", "predecessor"))?;
-            require(
-                previous.identity.sequence == prior.sequence
-                    && previous.identity.target_digest == prior.target_digest,
-            )?;
-            current = Some(previous);
-        }
-        Err(corrupt("bot_decision_publications", "predecessor_depth"))
+        latest_applied_on(self.conn(), owner, run)
     }
 
     pub fn latest_decision_projection(
@@ -184,6 +206,9 @@ impl RunsDb {
         run: RunId,
     ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
         authority::owner(self.conn(), owner, run)?;
+        // A latest/applied base is never derived through an illegal open
+        // prefix, even when a caller did not first request that prefix.
+        rows::open(self.conn(), run)?;
         rows::latest(self.conn(), run)?
             .map(|id| {
                 read(self.conn(), owner, run, id)?

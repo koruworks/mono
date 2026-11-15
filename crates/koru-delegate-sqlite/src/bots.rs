@@ -13,8 +13,8 @@ pub use routines::{
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::decisions::{
-    DecisionPreparedProjection, DecisionProjectionAcknowledgment, DecisionProjectionRecord,
-    DecisionTransitionId,
+    BotWaitId, DecisionPreparedProjection, DecisionProjectionAcknowledgment,
+    DecisionProjectionRecord, DecisionPublicationBase, DecisionTransitionId, RunProjectionTargetV1,
 };
 use koru_delegate_core::{
     AgentTurnId, AttemptGeneration, BotAdmissionBarrier, BotAdmissionState, BotBootPage,
@@ -175,6 +175,14 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn record_decision_source(
+        &mut self,
+        owner: BotOwner,
+        transition: DecisionTransitionId,
+        wait: BotWaitId,
+        base: &DecisionPublicationBase,
+        target: &RunProjectionTargetV1,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError>;
     fn decision_projection(
         &self,
         owner: BotOwner,

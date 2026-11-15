@@ -83,7 +83,20 @@ pub struct PublicationRecord {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PendingPublicationRunCursor {
     rowid: i64,
-    event: EventId,
+    ledger_epoch: uuid::Uuid,
+    guard: PendingPublicationCursorGuard,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingPublicationCursorGuard {
+    Event(EventId),
+    // A malformed key is never copied or hashed without a byte bound. With no
+    // intervening SQLite changes its rowid still denotes the same raw key;
+    // any change, including a rolled-back write, makes this cursor stale.
+    MalformedEpoch {
+        total_changes: i64,
+        data_version: i64,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,6 +159,7 @@ impl RunsDb {
     pub fn pending_publication_run_anchor(
         &self,
     ) -> Result<Option<PendingPublicationRunCursor>, LedgerError> {
+        let stamp = publication_change_stamp(self.conn())?;
         let mut query = self.conn().prepare(
             "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
              WHERE acknowledged_at_ms IS NULL ORDER BY run_id DESC LIMIT 1",
@@ -155,7 +169,7 @@ impl RunsDb {
             .map_err(|e| LedgerError::sql("anchor pending publication Runs", e))?;
         rows.next()
             .map_err(|e| LedgerError::sql("anchor pending publication Runs", e))?
-            .map(pending_candidate)
+            .map(|row| pending_candidate(row, self.publication_cursor_epoch(), stamp))
             .transpose()
             .map(|v| v.map(|(cursor, _)| cursor))
     }
@@ -168,13 +182,14 @@ impl RunsDb {
         through: PendingPublicationRunCursor,
         before_or_at: Option<PendingPublicationRunCursor>,
     ) -> Result<PendingPublicationRunSeek, LedgerError> {
-        if !cursor_present(self.conn(), through)?
+        let stamp = publication_change_stamp(self.conn())?;
+        if !cursor_present(self, through, stamp)?
             || after
-                .map(|c| cursor_present(self.conn(), c))
+                .map(|c| cursor_present(self, c, stamp))
                 .transpose()?
                 .is_some_and(|v| !v)
             || before_or_at
-                .map(|c| cursor_present(self.conn(), c))
+                .map(|c| cursor_present(self, c, stamp))
                 .transpose()?
                 .is_some_and(|v| !v)
         {
@@ -221,7 +236,7 @@ impl RunsDb {
             .map_err(|e| LedgerError::sql("seek pending publication Run", e))?
         {
             Some(row) => {
-                let (cursor, run) = pending_candidate(row)?;
+                let (cursor, run) = pending_candidate(row, self.publication_cursor_epoch(), stamp)?;
                 Ok(match run {
                     Some(run) => PendingPublicationRunSeek::Candidate { cursor, run },
                     None => PendingPublicationRunSeek::Malformed { cursor },
@@ -542,7 +557,21 @@ pub(crate) fn enqueue_exact_on(
     body: &str,
     now: i64,
 ) -> Result<(), crate::BotLedgerError> {
-    let retained = tx.query_row(
+    if verify_exact_on(tx, event, run, kind, body)? {
+        return Ok(());
+    }
+    insert_on(tx, event, run, kind, body, now)?;
+    Ok(())
+}
+
+pub(crate) fn verify_exact_on(
+    conn: &rusqlite::Connection,
+    event: EventId,
+    run: RunId,
+    kind: PublicationKind,
+    body: &str,
+) -> Result<bool, crate::BotLedgerError> {
+    let retained = conn.query_row(
         "SELECT CASE WHEN typeof(run_id)='text' AND length(CAST(run_id AS BLOB))=36 THEN run_id END,
                 CASE WHEN typeof(kind)='text' AND length(CAST(kind AS BLOB))<=32 THEN kind END,
                 CASE WHEN typeof(body_json)='text' AND length(CAST(body_json AS BLOB)) BETWEEN 1 AND 4194304 THEN body_json END
@@ -556,28 +585,35 @@ pub(crate) fn enqueue_exact_on(
         {
             return Err(crate::BotLedgerError::Conflict);
         }
-        return Ok(());
+        return Ok(true);
     }
-    insert_on(tx, event, run, kind, body, now)?;
-    Ok(())
+    Ok(false)
 }
 
 fn pending_candidate(
     row: &rusqlite::Row<'_>,
+    ledger_epoch: uuid::Uuid,
+    stamp: (i64, i64),
 ) -> Result<(PendingPublicationRunCursor, Option<RunId>), LedgerError> {
     let bad = || LedgerError::Corrupt {
         table: "pending_publications",
         column: "seek_identity",
     };
     let event = match row.get_ref(1).map_err(|_| bad())? {
-        rusqlite::types::ValueRef::Text(bytes) if bytes.len() == 36 => {
-            parse_event(std::str::from_utf8(bytes).map_err(|_| bad())?)?
-        }
-        _ => return Err(bad()),
+        rusqlite::types::ValueRef::Text(bytes) if bytes.len() == 36 => std::str::from_utf8(bytes)
+            .ok()
+            .and_then(|s| parse_event(s).ok()),
+        _ => None,
     };
     let cursor = PendingPublicationRunCursor {
         rowid: row.get(0).map_err(|_| bad())?,
-        event,
+        ledger_epoch,
+        guard: event.map(PendingPublicationCursorGuard::Event).unwrap_or(
+            PendingPublicationCursorGuard::MalformedEpoch {
+                total_changes: stamp.0,
+                data_version: stamp.1,
+            },
+        ),
     };
     let run = match row.get_ref(2).map_err(|_| bad())? {
         rusqlite::types::ValueRef::Text(bytes) if bytes.len() == 36 => std::str::from_utf8(bytes)
@@ -585,19 +621,42 @@ fn pending_candidate(
             .and_then(|s| parse_run(s).ok()),
         _ => None,
     };
-    Ok((cursor, run))
+    Ok((cursor, if event.is_some() { run } else { None }))
 }
 
 fn cursor_present(
-    conn: &rusqlite::Connection,
+    db: &RunsDb,
     cursor: PendingPublicationRunCursor,
+    stamp: (i64, i64),
 ) -> Result<bool, LedgerError> {
+    if cursor.ledger_epoch != db.publication_cursor_epoch() {
+        return Ok(false);
+    }
+    let event = match cursor.guard {
+        PendingPublicationCursorGuard::Event(event) => Some(event.to_string()),
+        PendingPublicationCursorGuard::MalformedEpoch {
+            total_changes,
+            data_version,
+        } => {
+            if stamp != (total_changes, data_version) {
+                return Ok(false);
+            }
+            None
+        }
+    };
+    db.conn().query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_publications WHERE rowid=?1 AND (?2 IS NULL OR event_id=?2))",
+        params![cursor.rowid,event], |r| r.get(0),
+    ).map_err(|e| LedgerError::sql("check publication Run cursor", e))
+}
+
+fn publication_change_stamp(conn: &rusqlite::Connection) -> Result<(i64, i64), LedgerError> {
     conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pending_publications WHERE rowid=?1 AND event_id=?2)",
-        params![cursor.rowid, cursor.event.to_string()],
-        |r| r.get(0),
+        "SELECT total_changes(),data_version FROM pragma_data_version",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
     )
-    .map_err(|e| LedgerError::sql("check publication Run cursor", e))
+    .map_err(|e| LedgerError::sql("observe publication cursor epoch", e))
 }
 
 fn parse_event(value: &str) -> Result<EventId, LedgerError> {

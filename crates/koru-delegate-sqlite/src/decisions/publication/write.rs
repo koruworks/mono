@@ -33,11 +33,22 @@ pub(super) fn prior_applied(
                 && old.identity.workspace == record.identity.workspace
                 && old.identity.document == record.identity.document
                 && old.identity.subject_digest == record.identity.subject_digest
-                && old.target.effects().status == record.target.predecessor().status
-                && old.target.effects().failure_reason
-                    == record.target.predecessor().failure_reason
                 && matches!(old.state, DecisionProjectionState::Applied { .. }),
         )?;
+        if old.identity.wait == record.identity.wait {
+            require(
+                old.target.effects().status == record.target.predecessor().status
+                    && old.target.effects().failure_reason
+                        == record.target.predecessor().failure_reason,
+            )?;
+        } else {
+            let prior_wait =
+                super::super::rows::by_wait(conn, record.identity.run, old.identity.wait)?
+                    .ok_or_else(|| corrupt("bot_decision_publications", "prior_wait"))?;
+            require(
+                prior_wait.phase == BotWaitPhase::Settled && prior_wait.settled_at_ms.is_some(),
+            )?;
+        }
     }
     Ok(())
 }
