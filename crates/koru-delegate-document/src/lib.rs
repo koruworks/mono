@@ -57,12 +57,14 @@
 //! `store.snapshot(ws, id)`. `crates/koru-store-sqlite/tests/run_document.rs`
 //! proves the sequence through the real store.
 
+mod bounded_value;
 mod codec;
 mod document;
 mod schedule;
 
 pub use codec::{Part, RunDocumentError, TimelineItem};
 pub use document::RunDocument;
+pub use document::projection::{AppliedRunProjection, RunProjectionIntent, RunProjectionStaging};
 pub use schedule::{
     RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOverview, ScheduleClaimAuthority,
     ScheduleClaimPlan, ScheduleDocument, ScheduleDocumentError, ScheduleRunClaim,

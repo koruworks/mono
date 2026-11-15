@@ -2,7 +2,7 @@
 use super::*;
 mod routine;
 
-fn bot_header() -> RunHeader {
+pub(super) fn bot_header() -> RunHeader {
     let mut value = header();
     value.scope = WorkspaceScope::BotFolder {
         folder: BotWorkingFolder::new("D:/owner/bot".into()).unwrap(),

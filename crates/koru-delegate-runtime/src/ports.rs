@@ -25,12 +25,14 @@ use std::{
     time::Duration,
 };
 
+use koru_delegate_core::decisions::{DecisionPreparedProjection, DecisionTransitionId};
 use koru_delegate_core::{
     AgentTurnId, ArtifactDisposition, AttemptGeneration, DelegationRequest, DocumentId, EventId,
     HostInstanceId, IdempotencyKey, ProjectId, ProviderKind, ProviderSessionKey, PublicationKind,
     ResultReference, RunAttemptId, RunContextItem, RunHeader, RunId, SessionId, SessionProfileKey,
     WorkspaceId,
 };
+pub use koru_delegate_document::{AppliedRunProjection, RunProjectionIntent};
 use koru_delegate_document::{
     RunDocument, RunDocumentError, ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument,
     ScheduleDocumentError, ScheduleWrite,
@@ -581,16 +583,26 @@ impl ScheduleEvents for NoScheduleEvents {
 /// One open Run document on this device: read it in place, and commit one
 /// fact at a time durably.
 ///
-/// `commit` runs the write against the document and returns only once the
-/// host has made it durable — the store's acknowledgement in the real
-/// adapter, nothing in the fake. Every step, usage fact and status change
-/// goes through it, which is what §17.1's *commit first* means in code.
+/// `commit` applies and sends the write. The actual host receives its durable
+/// acknowledgement separately; callers use `settle` and `durable` where the
+/// answer requires it. Decision projections additionally qualify the exact VV.
 pub trait RunDocumentHandle: Send {
     fn document(&self) -> &RunDocument;
     fn commit(
         &mut self,
         write: &mut dyn FnMut(&RunDocument) -> Result<(), RunDocumentError>,
     ) -> PortResult<()>;
+    /// Specialized, unexposed decision path. No success default: the owning
+    /// adapter must settle the causal base before preparing on private staging.
+    fn prepare_decision_projection(
+        &mut self,
+        intent: &RunProjectionIntent,
+    ) -> PortResult<DecisionPreparedProjection>;
+    fn apply_prepared_projection(
+        &mut self,
+        prepared: &DecisionPreparedProjection,
+    ) -> PortResult<AppliedRunProjection>;
+    fn discard_prepared_projection(&mut self, transition: DecisionTransitionId) -> PortResult<()>;
     /// Take in whatever the host has already been sent for this document
     /// and answer whether anything arrived. **Never waits**: a reader that
     /// blocks here is a reader that stalls the one thread the worker
