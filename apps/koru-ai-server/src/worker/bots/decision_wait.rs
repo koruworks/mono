@@ -17,6 +17,7 @@ use koru_delegate_core::decisions::{
 };
 use std::collections::BTreeMap;
 
+mod card;
 mod client;
 mod delegate;
 mod driver;
@@ -29,6 +30,10 @@ mod tests;
 pub use delegate::BotDelegateDecisionWait;
 pub(in crate::worker) use jobs::{DecisionWaitJob, DecisionWaitResult};
 pub use port::{DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject};
+
+/// Above the device-wide open-decision cap (50): a retained receipt per open
+/// decision, with headroom for settled ones not yet forgotten.
+const DECISION_RECEIPT_LIMIT: usize = 64;
 
 #[derive(Clone)]
 enum Request {
@@ -91,6 +96,19 @@ struct Active {
 /// new owner. The delegate port is `None` in production until IPC16 exists.
 pub(in crate::worker) struct DecisionWaitDriver {
     delegate: Option<Arc<dyn DecisionWaitDelegate>>,
+    /// Decision receipts the trusted preparer handed over (`record_bot_decision`):
+    /// what a card's answer must name (binding digest, human, offered choices).
+    /// In memory only: an AI restart interrupts every live attempt, so no card
+    /// outlives it. Bounded; never authority (the ledger rechecks everything).
+    receipts: std::collections::HashMap<
+        koru_delegate_core::decisions::DecisionId,
+        koru_delegate_api::bots::DecisionReceiptView,
+    >,
+    /// The first sent form of each human answer, by its stable request id.
+    answers: std::collections::HashMap<
+        koru_delegate_core::decisions::DecisionAnswerId,
+        koru_delegate_api::bots::DecisionAnswerRequest,
+    >,
     owner: Option<BotOwner>,
     epoch: u64,
     serial: u64,
@@ -100,6 +118,8 @@ impl DecisionWaitDriver {
     pub(in crate::worker) fn new(delegate: Option<Arc<dyn DecisionWaitDelegate>>) -> Self {
         Self {
             delegate,
+            receipts: std::collections::HashMap::new(),
+            answers: std::collections::HashMap::new(),
             owner: None,
             epoch: 0,
             serial: 0,
@@ -108,6 +128,70 @@ impl DecisionWaitDriver {
     }
     pub(in crate::worker) fn delegate(&self) -> Option<Arc<dyn DecisionWaitDelegate>> {
         self.delegate.clone()
+    }
+    /// The latest retained receipt for one decision, if handed over.
+    pub(in crate::worker) fn receipt(
+        &self,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Option<&koru_delegate_api::bots::DecisionReceiptView> {
+        self.receipts.get(&decision)
+    }
+    /// Keep the newer of two receipts for one decision; `false` when full.
+    pub(in crate::worker) fn remember(
+        &mut self,
+        view: koru_delegate_api::bots::DecisionReceiptView,
+    ) -> bool {
+        let decision = view.receipt.decision;
+        if let Some(old) = self.receipts.get(&decision) {
+            if old.receipt.state.revision > view.receipt.state.revision {
+                return true;
+            }
+        } else if self.receipts.len() >= DECISION_RECEIPT_LIMIT {
+            // Settled decisions are history: make room from them first.
+            self.receipts.retain(|_, kept| {
+                kept.receipt.state.phase != koru_delegate_core::decisions::DecisionPhase::Settled
+            });
+            if self.receipts.len() >= DECISION_RECEIPT_LIMIT {
+                return false;
+            }
+        }
+        self.receipts.insert(decision, view);
+        true
+    }
+    pub(in crate::worker) fn forget(
+        &mut self,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) {
+        self.receipts.remove(&decision);
+        self.answers.retain(|_, answer| answer.decision != decision);
+    }
+    /// The exact answer first sent under this request id, for an exact
+    /// replay after an unknown outcome (O138: one key per human answer).
+    pub(in crate::worker) fn answered(
+        &self,
+        request: koru_delegate_core::decisions::DecisionAnswerId,
+    ) -> Option<&koru_delegate_api::bots::DecisionAnswerRequest> {
+        self.answers.get(&request)
+    }
+    /// Keep the first sent form of one answer; `false` when full.
+    pub(in crate::worker) fn retain_answer(
+        &mut self,
+        answer: koru_delegate_api::bots::DecisionAnswerRequest,
+    ) -> bool {
+        if !self.answers.contains_key(&answer.request)
+            && self.answers.len() >= DECISION_RECEIPT_LIMIT
+        {
+            return false;
+        }
+        self.answers.entry(answer.request).or_insert(answer);
+        true
+    }
+    /// A definite refusal: that exact form is never sent again.
+    pub(in crate::worker) fn drop_answer(
+        &mut self,
+        request: koru_delegate_core::decisions::DecisionAnswerId,
+    ) {
+        self.answers.remove(&request);
     }
     pub(in crate::worker) fn cancel_all(&self) {
         for active in self.active.values() {

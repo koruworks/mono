@@ -482,6 +482,9 @@ impl WorkerState {
             Self::defer_decision(chat);
             return true;
         };
+        // The rollover requires the decision's card (O129): write or replay
+        // it first, in case the write after enrollment did not land.
+        let _ = self.ensure_bot_decision_card(key);
         let rolled = match self.repository.rollover_bot_decision_replay(
             ai_owner(key),
             key,
@@ -554,11 +557,13 @@ impl WorkerState {
                 self.streams.remove(&attempt);
                 self.cancellations.remove(&attempt);
                 self.work_terminal(attempt);
+                self.decision_waits.forget(key.decision_id);
                 false
             }
             // Another cause ended it; that cause's owner drives this task.
             Ok(BotDecisionClosure::AlreadyEnded) => {
                 chat.decision = None;
+                self.decision_waits.forget(key.decision_id);
                 true
             }
             Ok(BotDecisionClosure::Owed) | Err(_) => {
