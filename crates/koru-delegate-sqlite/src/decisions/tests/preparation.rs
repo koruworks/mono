@@ -122,7 +122,11 @@ fn decision_prepare_refuses_routine_edit_grant_bypass_but_keeps_native_subject()
 fn decision_prepare_routine_native_refuses_unlinked_or_downgraded_identity() {
     let mut h = Harness::new();
     h.native();
-    h.routine(false);
+    h.routine(true);
+    // Retain a complete valid subject before damaging the live link cohort.
+    h.db.conn()
+        .execute("UPDATE bot_routine_links SET state='held'", [])
+        .unwrap();
     assert!(h.prepare_at(1000).is_err());
     h.db.conn()
         .execute_batch("PRAGMA ignore_check_constraints=ON")

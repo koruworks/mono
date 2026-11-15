@@ -40,6 +40,8 @@ pub(super) fn retired(h: &mut Harness) -> DecisionRecord {
     request(h, id);
     let prior = ack(h, id);
     let f = h.origin();
+    h.db.advance(f.run, f.generation, crate::AttemptPhase::Ended)
+        .unwrap();
     let a = h.db.retire(f.run, f.generation).unwrap();
     let key = &prior.wait.enrollment_request.as_ref().unwrap().key;
     let release = OriginWaitStop::Confirmed {
