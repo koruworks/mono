@@ -65,8 +65,14 @@ type Inspection<T> = std::result::Result<T, StrictReferenceError>;
 pub struct InspectedFileReferences {
     schema: u32,
     blobs: Vec<String>,
+    node_ids: Vec<NodeId>,
 }
 impl InspectedFileReferences {
+    /// Complete validated live IDs across every supported raw tree, including
+    /// Trash. A projected reader must not silently omit any of these nodes.
+    pub fn node_ids(&self) -> &[NodeId] {
+        &self.node_ids
+    }
     pub fn schema_version(&self) -> u32 {
         self.schema
     }
@@ -162,9 +168,12 @@ pub fn inspect_file_references(
             }
         }
     }
+    let mut node_ids = ids.into_iter().collect::<Vec<_>>();
+    node_ids.sort_unstable();
     Ok(InspectedFileReferences {
         schema: schema as u32,
         blobs,
+        node_ids,
     })
 }
 
