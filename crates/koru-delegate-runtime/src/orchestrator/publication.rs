@@ -6,8 +6,11 @@
 
 use super::*;
 use crate::{
-    PortResult, RunDocumentHandle, RunPublicationOperation, RunPublicationStart,
-    RunPublicationTicket, publication_pending,
+    PortResult, RunDocumentHandle, RunPublicationDocument, RunPublicationOperation,
+    RunPublicationStart, RunPublicationTicket, publication_pending,
+};
+use koru_delegate_core::decisions::{
+    DecisionPreparedProjection, DecisionProjectionAcknowledgment, DecisionProjectionState,
 };
 use koru_delegate_document::{RunDocument, RunDocumentError};
 
@@ -103,6 +106,93 @@ impl RunDocumentOwner {
 }
 
 impl Orchestrator {
+    /// Select through the sole retained decoder. No caller-authored target or
+    /// delta reaches the physical worker through this production entry point.
+    pub fn next_run_publication(
+        &mut self,
+        run: RunId,
+    ) -> Result<Option<RunPublicationStart>, RunError> {
+        if self.publication_ticket.is_some() {
+            return Err(publication_pending().into());
+        }
+        let owner = self.publication_owner(run)?;
+        let Some(record) = self.bot_ledger()?.next_decision_projection(owner, run)? else {
+            return Ok(None);
+        };
+        let operation = match record.state {
+            DecisionProjectionState::Pending => {
+                RunPublicationOperation::Prepare(crate::RunProjectionIntent {
+                    identity: record.identity,
+                    target: record.target,
+                })
+            }
+            DecisionProjectionState::Prepared { prepared } => {
+                RunPublicationOperation::Apply(prepared)
+            }
+            _ => return Err(publication_pending().into()),
+        };
+        self.transfer_run_publication(run, operation).map(Some)
+    }
+
+    fn publication_owner(&mut self, run: RunId) -> Result<koru_delegate_core::BotOwner, RunError> {
+        self.bot_ledger()?
+            .bot_execution(run)?
+            .map(|record| record.owner)
+            .ok_or_else(|| publication_pending().into())
+    }
+
+    /// The physical worker retains the same handle while this transaction
+    /// records its exact bytes. An unknown writer result never permits apply.
+    pub fn record_run_preparation(
+        &mut self,
+        ticket: RunPublicationTicket,
+        prepared: &DecisionPreparedProjection,
+    ) -> Result<DecisionPreparedProjection, RunError> {
+        if self.publication_ticket != Some(ticket) || prepared.identity.run != ticket.run {
+            return Err(publication_pending().into());
+        }
+        let owner = self.publication_owner(ticket.run)?;
+        let retained = self
+            .bot_ledger()?
+            .record_decision_preparation(owner, prepared)?;
+        match retained.state {
+            DecisionProjectionState::Prepared { prepared: exact } if exact == *prepared => {
+                Ok(exact)
+            }
+            _ => Err(publication_pending().into()),
+        }
+    }
+
+    /// A checked document result supplies causal evidence; SQL supplies the
+    /// retained delta identity and exact target-derived publication envelopes.
+    pub fn acknowledge_run_projection(
+        &mut self,
+        proof: &crate::AppliedRunProjection,
+    ) -> Result<(), RunError> {
+        let identity = proof.identity();
+        let owner = self.publication_owner(identity.run)?;
+        let retained = self
+            .bot_ledger()?
+            .decision_projection(owner, identity.run, identity.transition)?
+            .ok_or_else(publication_pending)?;
+        if retained.identity != *identity {
+            return Err(publication_pending().into());
+        }
+        let prepared = retained.prepared().ok_or_else(publication_pending)?;
+        let ack = DecisionProjectionAcknowledgment {
+            identity: identity.clone(),
+            delta_digest: prepared.delta_digest,
+            observed_version: proof.observed_version().clone(),
+        };
+        let applied = self
+            .bot_ledger()?
+            .acknowledge_decision_projection(owner, &ack)?;
+        if !matches!(applied.state, DecisionProjectionState::Applied { .. }) {
+            return Err(publication_pending().into());
+        }
+        Ok(())
+    }
+
     /// Host-only handoff after the sole ledger has selected/validated a target.
     /// This does not create a decision, accept a source frontier or write SQL.
     pub fn transfer_run_publication(
@@ -120,11 +210,7 @@ impl Orchestrator {
             }
             RunPublicationOperation::Apply(prepared) => &prepared.identity,
         };
-        let state = self.open(run)?;
-        if identity.run != run
-            || identity.workspace != state.workspace
-            || identity.document != state.document
-        {
+        if identity.run != run {
             return Err(PortError::new(
                 crate::Port::Documents,
                 "projection_subject",
@@ -136,13 +222,61 @@ impl Orchestrator {
             run,
             epoch: uuid::Uuid::new_v4(),
         };
-        let handle = state.doc.transfer(ticket)?;
+        if let Some(state) = self.runs.get(&run) {
+            if identity.workspace != state.workspace || identity.document != state.document {
+                return Err(publication_pending().into());
+            }
+        }
+        let cold = self
+            .runs
+            .get(&run)
+            .is_none_or(|state| matches!(state.doc, RunDocumentOwner::ReopenOwed { .. }));
+        let document = if cold {
+            // Only the validated SQL placement is used. Freeze a specification
+            // without opening or joining anything on this actor thread.
+            let job = self
+                .ports
+                .documents
+                .publication_open(identity.workspace, identity.document)?;
+            if let Some(state) = self.runs.get_mut(&run) {
+                state.doc = RunDocumentOwner::PublicationInFlight { ticket };
+            } else {
+                self.runs.insert(
+                    run,
+                    RunState::with_document_owner(
+                        identity.workspace,
+                        identity.document,
+                        RunDocumentOwner::PublicationInFlight { ticket },
+                    ),
+                );
+            }
+            RunPublicationDocument::Cold(job)
+        } else {
+            RunPublicationDocument::Attached(self.runs.get_mut(&run).unwrap().doc.transfer(ticket)?)
+        };
         self.publication_ticket = Some(ticket);
         Ok(RunPublicationStart {
             ticket,
-            handle,
+            document,
             operation,
         })
+    }
+
+    /// A request which never reached the worker still owns either its original
+    /// handle or an unexecuted cold-open specification. Neither may be lost in
+    /// a full/disconnected request channel.
+    pub fn cancel_unstarted_publication(&mut self, start: RunPublicationStart) {
+        match start.document {
+            RunPublicationDocument::Attached(handle) => {
+                if let Err(handle) = self.return_run_publication(start.ticket, handle) {
+                    drop(handle);
+                }
+            }
+            RunPublicationDocument::Cold(job) => {
+                drop(job);
+                self.lost_run_publication(start.ticket);
+            }
+        }
     }
 
     /// An actual physical return, not a logical timeout. A mismatched completion

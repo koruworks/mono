@@ -11,8 +11,8 @@ use std::{
 
 use koru_delegate_core::decisions::DecisionPreparedProjection;
 use koru_delegate_runtime::{
-    AppliedRunProjection, Port, PortError, PortResult, RunDocumentHandle, RunPublicationOperation,
-    RunPublicationStart, RunPublicationTicket,
+    AppliedRunProjection, Port, PortError, PortResult, RunDocumentHandle, RunPublicationDocument,
+    RunPublicationOperation, RunPublicationStart, RunPublicationTicket,
 };
 
 enum Request {
@@ -240,15 +240,37 @@ fn execute(active: &mut Option<Active>, request: Request) -> Completion {
     match request {
         Request::Start(start) => {
             if active.is_some() {
-                return Completion::Returned {
-                    ticket: start.ticket,
-                    handle: start.handle,
-                    error: Some(busy()),
+                // Endpoint protocol forbids a second Start. Never open a second
+                // canonical connection if that invariant is violated.
+                return match start.document {
+                    RunPublicationDocument::Attached(handle) => Completion::Returned {
+                        ticket: start.ticket,
+                        handle,
+                        error: Some(busy()),
+                    },
+                    RunPublicationDocument::Cold(job) => {
+                        drop(job);
+                        Completion::Lost {
+                            ticket: start.ticket,
+                        }
+                    }
                 };
             }
+            let handle = match start.document {
+                RunPublicationDocument::Attached(handle) => handle,
+                RunPublicationDocument::Cold(job) => match job.open() {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        tracing::warn!(target: "koru::delegate", code = error.code, "publication cold open remains owed");
+                        return Completion::Lost {
+                            ticket: start.ticket,
+                        };
+                    }
+                },
+            };
             *active = Some(Active {
                 ticket: start.ticket,
-                handle: start.handle,
+                handle,
             });
             match start.operation {
                 RunPublicationOperation::Prepare(intent) => {

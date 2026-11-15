@@ -149,6 +149,11 @@ pub enum RunProjectionTargetV1 {
     Source {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor,
+        /// One accepted stream observation can clear approval attention before
+        /// its terminal transition, or detect then terminate a child. These
+        /// audited paths require at most two existing transition events.
+        #[serde(deserialize_with = "strict_leaf")]
+        transitions: DecisionList<RunEvent, 2>,
         effects: DecisionProjectionEffects,
         bookkeeping: DecisionSourceBookkeeping,
     },
@@ -297,18 +302,36 @@ impl DecisionValidate for RunProjectionTargetV1 {
         self.fence().validate()?;
         let effects = self.effects();
         let before = &self.predecessor().status;
-        let expected = match effects.event {
-            // An already accepted terminal source cannot be undone by later Stop.
-            Some(_) if before.is_terminal() => before.clone(),
-            Some(event) => transition_bot(before, &event).map_err(|_| DecisionError::Invalid)?,
-            None => before.clone(),
+        let (expected, changes_status) = match self {
+            Self::Source { transitions, .. } => {
+                require(effects.event.is_none())?;
+                let mut status = before.clone();
+                for event in transitions.as_slice() {
+                    require(!matches!(event, RunEvent::BotResponseDelivered))?;
+                    if !status.is_terminal() {
+                        status =
+                            transition_bot(&status, event).map_err(|_| DecisionError::Invalid)?;
+                    }
+                }
+                (status, !transitions.as_slice().is_empty())
+            }
+            Self::Control { .. } => (
+                match effects.event {
+                    Some(_) if before.is_terminal() => before.clone(),
+                    Some(event) => {
+                        transition_bot(before, &event).map_err(|_| DecisionError::Invalid)?
+                    }
+                    None => before.clone(),
+                },
+                effects.event.is_some(),
+            ),
         };
         require(
             expected == effects.status
                 && (effects.failure_reason.is_none()
                     || matches!(effects.status, RunStatus::Failed { .. })),
         )?;
-        if effects.event.is_none() || before.is_terminal() {
+        if !changes_status || before.is_terminal() {
             require(effects.failure_reason == self.predecessor().failure_reason)?;
         }
         let mut steps = BTreeSet::new();

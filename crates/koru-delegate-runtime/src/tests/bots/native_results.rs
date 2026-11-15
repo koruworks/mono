@@ -540,6 +540,7 @@ fn verified_native_result_is_registered_once_and_partial_result_survives_termina
         .unwrap()
         .doc
         .document()
+        .unwrap()
         .header()
         .unwrap();
     assert_eq!(header.native_results, vec![evidence]);
@@ -653,6 +654,7 @@ fn failed_run_publication_keeps_verified_pending_and_recovery_never_leases_again
             .unwrap()
             .doc
             .document()
+            .unwrap()
             .header()
             .unwrap()
             .native_results,

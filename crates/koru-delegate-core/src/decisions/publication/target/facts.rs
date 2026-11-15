@@ -26,6 +26,7 @@ pub(super) fn validate(target: &RunProjectionTargetV1) -> Result<(), DecisionErr
     let steps: BTreeMap<_, _> = projected.iter().map(|step| (step.id, step)).collect();
     let mut events = BTreeSet::new();
     let mut referenced = BTreeSet::new();
+    let mut usage_published = false;
     for publication in target.publications() {
         require(events.insert(publication.event) && publication.fact.run() == fence.run)?;
         if matches!(publication.fact, RunFact::Completed { .. }) {
@@ -57,6 +58,8 @@ pub(super) fn validate(target: &RunProjectionTargetV1) -> Result<(), DecisionErr
                     && report.completeness == usage.fact().completeness
                     && report.cached_relationship == usage.cached_input_relationship,
             )?;
+            require(!usage_published)?;
+            usage_published = true;
             continue;
         }
         let id = publication.step.ok_or(DecisionError::Invalid)?;
@@ -105,6 +108,19 @@ pub(super) fn validate(target: &RunProjectionTargetV1) -> Result<(), DecisionErr
                     )
             ))?;
         }
+    }
+    if matches!(target, RunProjectionTargetV1::Source { .. }) {
+        // A Source target is the complete accepted event, not an optional
+        // subset of its bus effects. Bookkeeping-only events have no steps;
+        // every retained source step and usage amendment otherwise has its
+        // stable envelope before Prepared, including fact-only source detail.
+        require(referenced.len() == steps.len())?;
+        require(
+            usage_published
+                == target
+                    .source_bookkeeping()
+                    .is_some_and(|b| b.usage.is_some()),
+        )?;
     }
     Ok(())
 }

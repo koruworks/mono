@@ -63,6 +63,8 @@ const WATCH_POLL: Duration = Duration::from_secs(1);
 
 pub enum Command {
     BotDrain,
+    /// Wake only; the bounded worker completion channel owns the value.
+    PublicationWake,
     Bot {
         command: koru_delegate_api::bots::BotCommand,
         reply: mpsc::SyncSender<Response>,
@@ -173,6 +175,7 @@ pub enum Command {
 }
 
 mod bots;
+mod publication;
 mod routine;
 #[cfg(test)]
 pub(crate) mod tests;
@@ -236,6 +239,8 @@ pub struct Actor {
     pumps: HashMap<RunId, Pump>,
     watchers: HashMap<RunId, Vec<Watcher>>,
     active: Arc<AtomicU32>,
+    publication_worker: Option<crate::publication::PublicationWorker>,
+    publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
 }
 
 impl Actor {
@@ -263,6 +268,8 @@ impl Actor {
             pumps: HashMap::new(),
             watchers: HashMap::new(),
             active: Arc::new(AtomicU32::new(0)),
+            publication_worker: None,
+            publication_ack: None,
         }
     }
 
@@ -500,6 +507,7 @@ impl Actor {
                 settle_at = (!durable).then(|| Instant::now() + SETTLE_POLL);
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
+                self.retry_publication_ack();
                 if let Err(error) = self.orchestrator.retry_publications(64) {
                     tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
                 }
@@ -586,6 +594,7 @@ impl Actor {
         for pump in self.pumps.values() {
             pump.stop.store(true, Ordering::Release);
         }
+        self.shutdown_publication();
         // What was sent is acknowledged before this process is gone.
         self.orchestrator.settle_all();
     }
@@ -606,6 +615,7 @@ impl Actor {
         }
         match command {
             Command::BotDrain => self.drain_one_bot(),
+            Command::PublicationWake => self.drain_publication_completions(),
             Command::Bot { command, reply } => {
                 let queue_changed = matches!(
                     command,
@@ -1065,11 +1075,21 @@ impl Actor {
     }
 
     fn publications_pending(&self) -> bool {
-        self.orchestrator
+        if self.publication_ack.is_some() {
+            return true;
+        }
+        match self
+            .orchestrator
             .ports()
             .store
-            .open_publications(1)
-            .is_ok_and(|pending| !pending.is_empty())
+            .pending_publication_run_anchor()
+        {
+            Ok(anchor) => anchor.is_some(),
+            Err(error) => {
+                tracing::warn!(target: "koru::delegate", %error, "publication debt could not be observed");
+                true
+            }
+        }
     }
 
     fn drain_deferred_starts(&mut self) {

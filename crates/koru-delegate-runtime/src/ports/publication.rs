@@ -15,8 +15,19 @@ pub struct RunPublicationTicket {
 /// physical loss before another workflow can start; a timeout is neither.
 pub struct RunPublicationStart {
     pub ticket: RunPublicationTicket,
-    pub handle: Box<dyn RunDocumentHandle>,
+    pub document: RunPublicationDocument,
     pub operation: RunPublicationOperation,
+}
+
+pub enum RunPublicationDocument {
+    Attached(Box<dyn RunDocumentHandle>),
+    Cold(Box<dyn RunDocumentOpen>),
+}
+
+/// A single-use specification. Constructing it performs no Store I/O; the
+/// fixed publication worker opens only after the actor has reserved ownership.
+pub trait RunDocumentOpen: Send {
+    fn open(self: Box<Self>) -> PortResult<Box<dyn RunDocumentHandle>>;
 }
 
 pub enum RunPublicationOperation {

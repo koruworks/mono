@@ -49,10 +49,22 @@ impl RunState {
         document: DocumentId,
         doc: Box<dyn RunDocumentHandle>,
     ) -> Self {
+        Self::with_document_owner(
+            workspace,
+            document,
+            super::publication::RunDocumentOwner::attached(doc),
+        )
+    }
+
+    pub(super) fn with_document_owner(
+        workspace: WorkspaceId,
+        document: DocumentId,
+        doc: super::publication::RunDocumentOwner,
+    ) -> Self {
         Self {
             workspace,
             document,
-            doc: super::publication::RunDocumentOwner::attached(doc),
+            doc,
             attempt: None,
             last_attempt: None,
             provider: None,

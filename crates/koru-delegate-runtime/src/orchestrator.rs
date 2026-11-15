@@ -360,6 +360,7 @@ pub struct Orchestrator {
     native_routine_policies: Vec<koru_delegate_core::RoutinePolicyBarrier>,
     bot_boot: bot_boot::BootCoordination,
     publication_ticket: Option<crate::RunPublicationTicket>,
+    publication_retry: record::PublicationRetry,
 }
 
 impl Orchestrator {
@@ -373,6 +374,7 @@ impl Orchestrator {
             native_routine_policies: Vec::new(),
             bot_boot: bot_boot::BootCoordination::new(),
             publication_ticket: None,
+            publication_retry: record::PublicationRetry::default(),
         }
     }
 

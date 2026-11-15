@@ -417,7 +417,7 @@ impl Orchestrator {
                     // decides.
                     if state
                         .doc
-                        .document()
+                        .document()?
                         .header()?
                         .artifacts
                         .iter()

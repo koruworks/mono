@@ -79,7 +79,7 @@ impl RunProjectionStaging {
         intent: &RunProjectionIntent,
     ) -> Result<DecisionPreparedProjection> {
         connected.check_projection_subject(&intent.identity, &intent.target, false)?;
-        connected.check_projection_predecessor(&intent.target)?;
+        connected.check_projection_predecessor(intent)?;
         self.refresh(connected)?;
         let stage = self.staged.as_ref().ok_or_else(|| invalid(()))?;
         let base = stage.doc.oplog_vv();
@@ -248,7 +248,8 @@ impl RunDocument {
         }
     }
 
-    fn check_projection_predecessor(&self, target: &RunProjectionTargetV1) -> Result<()> {
+    fn check_projection_predecessor(&self, intent: &RunProjectionIntent) -> Result<()> {
+        let target = &intent.target;
         let header = self.header()?;
         require_document(
             header.status == target.predecessor().status
@@ -260,8 +261,21 @@ impl RunDocument {
                 require_document(
                     prior.transition == marker.identity.transition
                         && prior.sequence == marker.identity.sequence
-                        && prior.target_digest == marker.identity.target_digest,
+                        && prior.target_digest == marker.identity.target_digest
+                        && marker.identity.run == intent.identity.run
+                        && marker.identity.workspace == intent.identity.workspace
+                        && marker.identity.document == intent.identity.document
+                        && marker.identity.subject_digest == intent.identity.subject_digest,
                 )?;
+                if marker.identity.wait != intent.identity.wait {
+                    // A new wait's first target was accepted by the sole SQL
+                    // owner only after the prior wait settled with no owed
+                    // projection. Its D-observed durable baseline includes
+                    // ordinary writes since that old marker. The host checks
+                    // current Link acknowledgement before preparing; a changed
+                    // wait ID alone is never SQL settlement authority.
+                    return Ok(());
+                }
                 if let RunProjectionTargetV1::Control {
                     retained_bookkeeping,
                     ..
@@ -299,7 +313,7 @@ impl RunDocument {
 
     fn write_projection(&self, intent: &RunProjectionIntent) -> Result<()> {
         self.check_projection_subject(&intent.identity, &intent.target, false)?;
-        self.check_projection_predecessor(&intent.target)?;
+        self.check_projection_predecessor(intent)?;
         let effects = intent.target.effects();
         let start = self.timeline().len();
         // Shared neutral shape preflight precedes every staging mutation. The

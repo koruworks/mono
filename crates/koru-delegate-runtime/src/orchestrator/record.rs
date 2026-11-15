@@ -19,6 +19,22 @@ use crate::{RunFact, orchestrator::RunError};
 
 use super::Orchestrator;
 
+use koru_delegate_sqlite::{PendingPublicationRunCursor, PendingPublicationRunSeek};
+
+/// Volatile traversal only. Durable rows remain the backlog; no body or Run
+/// collection is retained here. The anchor is a live key bound, not a snapshot.
+#[derive(Default)]
+pub(super) struct PublicationRetry {
+    cursor: Option<PendingPublicationRunCursor>,
+    pass: Option<PublicationPass>,
+}
+struct PublicationPass {
+    anchor: PendingPublicationRunCursor,
+    stop: Option<PendingPublicationRunCursor>,
+    after: Option<PendingPublicationRunCursor>,
+    wrapped: bool,
+}
+
 impl Orchestrator {
     /// The run's status as the document holds it.
     pub(crate) fn status(&mut self, run: RunId) -> Result<RunStatus, RunError> {
@@ -230,11 +246,82 @@ impl Orchestrator {
         Ok(true)
     }
 
-    /// Re-send every publication the bus has not acknowledged, oldest
-    /// first, under its original id. Bounded per call.
+    /// Rotate across pending Runs, retaining FIFO within each Run. At most 53
+    /// indexed seeks and one 64-row/4 MiB body prefix per call. Unavailable
+    /// exclusive owners cannot hide another Run behind the old global LIMIT.
     pub fn retry_publications(&mut self, limit: usize) -> Result<usize, RunError> {
-        let open = self.ports.store.open_publications(limit)?;
-        self.drain_publications(open)
+        if limit == 0 {
+            return Ok(0);
+        }
+        let mut refreshed = false;
+        for _ in 0..53 {
+            if self.publication_retry.pass.is_none() {
+                let Some(anchor) = self.ports.store.pending_publication_run_anchor()? else {
+                    return Ok(0);
+                };
+                self.publication_retry.pass = Some(PublicationPass {
+                    anchor,
+                    stop: self.publication_retry.cursor,
+                    after: self.publication_retry.cursor,
+                    wrapped: false,
+                });
+            }
+            let pass = self
+                .publication_retry
+                .pass
+                .as_ref()
+                .expect("initialized above");
+            let seek = self.ports.store.next_pending_publication_run(
+                pass.after,
+                pass.anchor,
+                if pass.wrapped { pass.stop } else { None },
+            )?;
+            match seek {
+                PendingPublicationRunSeek::Candidate { cursor, run } => {
+                    self.publication_retry.cursor = Some(cursor);
+                    self.publication_retry.pass.as_mut().unwrap().after = Some(cursor);
+                    // This tests actual durability, not membership of the cache:
+                    // attached historical readers do not consume exclusion slots.
+                    if !self.document_durable(run) {
+                        continue;
+                    }
+                    let open = self
+                        .ports
+                        .store
+                        .decision_open_publications_for(run, limit.min(64))?;
+                    // A short byte-bounded prefix is not a drain observation.
+                    // The next rotation reads the same Run again if debt remains.
+                    return self.drain_publications(open);
+                }
+                PendingPublicationRunSeek::Malformed { cursor } => {
+                    self.publication_retry.pass.as_mut().unwrap().after = Some(cursor);
+                    // Preserve malformed debt and the last valid restart cursor,
+                    // but do not let this key hide later keys in the active pass.
+                    tracing::warn!(target: "koru::delegate", "malformed publication Run key remains queued");
+                }
+                PendingPublicationRunSeek::Exhausted => {
+                    let pass = self.publication_retry.pass.as_mut().unwrap();
+                    if !pass.wrapped && pass.stop.is_some() {
+                        pass.after = None;
+                        pass.wrapped = true;
+                    } else {
+                        self.publication_retry.pass = None;
+                        return Ok(0);
+                    }
+                }
+                PendingPublicationRunSeek::StaleCursor => {
+                    self.publication_retry.pass = None;
+                    if refreshed {
+                        // A stale lower bound must be discarded, but never restart
+                        // a scan repeatedly within the same actor turn.
+                        self.publication_retry.cursor = None;
+                        return Ok(0);
+                    }
+                    refreshed = true;
+                }
+            }
+        }
+        Ok(0)
     }
 
     fn drain_publications(

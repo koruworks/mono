@@ -284,6 +284,32 @@ impl koru_delegate_runtime::RoutineLedger for SharedLedger {
 }
 
 impl RunStore for SharedLedger {
+    fn pending_publication_run_anchor(
+        &self,
+    ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError> {
+        self.0.lock().unwrap().pending_publication_run_anchor()
+    }
+    fn next_pending_publication_run(
+        &self,
+        after: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+        through: koru_delegate_sqlite::PendingPublicationRunCursor,
+        before_or_at: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+    ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .next_pending_publication_run(after, through, before_or_at)
+    }
+    fn decision_open_publications_for(
+        &self,
+        run: RunId,
+        limit: usize,
+    ) -> Result<Vec<OpenPublication>, LedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .decision_open_publications_for(run, limit)
+    }
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         Some(self)
     }

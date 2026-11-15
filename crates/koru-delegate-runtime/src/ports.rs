@@ -161,6 +161,20 @@ pub type PortResult<T> = Result<T, PortError>;
 /// test. The method set is the ledger's own; the port exists so the
 /// orchestrator can be driven with no file.
 pub trait RunStore: ScheduleLedger {
+    fn pending_publication_run_anchor(
+        &self,
+    ) -> Result<Option<koru_delegate_sqlite::PendingPublicationRunCursor>, LedgerError>;
+    fn next_pending_publication_run(
+        &self,
+        after: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+        through: koru_delegate_sqlite::PendingPublicationRunCursor,
+        before_or_at: Option<koru_delegate_sqlite::PendingPublicationRunCursor>,
+    ) -> Result<koru_delegate_sqlite::PendingPublicationRunSeek, LedgerError>;
+    fn decision_open_publications_for(
+        &self,
+        run: RunId,
+        limit: usize,
+    ) -> Result<Vec<OpenPublication>, LedgerError>;
     /// Native intent/effect evidence on the same sole-writer connection.
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
         None
@@ -630,6 +644,15 @@ pub trait RunDocumentHandle: Send {
 
 /// The Run documents of a workspace, through the Store.
 pub trait RunDocuments {
+    /// Freeze a cold-open specification without opening a canonical connection.
+    /// A host without this seam refuses; it never opens on the actor as fallback.
+    fn publication_open(
+        &mut self,
+        _workspace: WorkspaceId,
+        _document: DocumentId,
+    ) -> PortResult<Box<dyn RunDocumentOpen>> {
+        Err(publication_pending())
+    }
     /// §7.1 step 3: commit the Run document with its header, atomically and
     /// idempotently by run id — a retry after a lost answer finds the one
     /// it made. This is the moment a run exists.

@@ -382,11 +382,61 @@ fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
         allocated_steps: DecisionList::new(vec![id(91)]).unwrap(),
     };
     let mut effects = source.target.effects().clone();
+    effects.event = None;
     effects.economics_at_ms = Some(1234);
     effects.models = DecisionList::new(vec![identity(48)]).unwrap();
+    let fence = *source.target.fence();
+    effects.steps = DecisionList::new(vec![TimelineEntry {
+        id: id(91),
+        kind: StepKind::ApprovalRequired,
+        at_ms: 1,
+        refs: TimelineRefs::new([
+            TimelineRef::Attempt {
+                attempt: fence.attempt,
+            },
+            TimelineRef::Turn { turn: fence.turn },
+            TimelineRef::Approval { approval: id(103) },
+        ])
+        .unwrap(),
+    }])
+    .unwrap();
+    let usage = bookkeeping.usage.as_ref().unwrap();
+    effects.publications = DecisionList::new(vec![
+        DecisionProjectionPublication {
+            event: id(104),
+            step: Some(id(91)),
+            fact: RunFact::ApprovalRequired {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                approval: id(103),
+            },
+        },
+        DecisionProjectionPublication {
+            event: usage.event,
+            step: None,
+            fact: RunFact::Usage {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: usage.turn,
+                report: UsageReport {
+                    usage: usage.id,
+                    revision: usage.revision,
+                    input: usage.input,
+                    output: usage.output,
+                    cached_input: usage.cached_input,
+                    model: usage.model,
+                    completeness: usage.fact().completeness,
+                    cached_relationship: usage.cached_input_relationship,
+                },
+            },
+        },
+    ])
+    .unwrap();
     source.target = RunProjectionTargetV1::Source {
         version: DecisionVersionV1,
         predecessor: source.target.predecessor().clone(),
+        transitions: DecisionList::new(vec![RunEvent::ApprovalRequired]).unwrap(),
         effects,
         bookkeeping: bookkeeping.clone(),
     };
@@ -429,6 +479,85 @@ fn projection_source_bookkeeping_usage_and_economics_survive_later_control() {
         marker["bookkeeping"],
         serde_json::to_value(bookkeeping).unwrap()
     );
+}
+
+#[test]
+fn projection_new_wait_uses_current_baseline_but_same_wait_keeps_exact_bookkeeping() {
+    let doc = bot(false);
+    let mut first = intent(&doc);
+    let bookkeeping = DecisionSourceBookkeeping {
+        boundary: DecisionSourceBoundary {
+            fence: *first.target.fence(),
+            producer_epoch: v4(100),
+            stream: DecisionSourceStream::Agent,
+            sequence: StreamSequence::new(3).unwrap(),
+            resulting: DecisionSourceFrontiers {
+                agent_after: Some(StreamSequence::new(3).unwrap()),
+                session_after: None,
+            },
+        },
+        unflushed: DecisionList::new(vec![DecisionTurnTally {
+            turn: turn(82),
+            originator: TurnOriginator::Orchestrator,
+            tool_calls: 2,
+            tool_failures: 0,
+            failure_breakdown: ToolFailures::default(),
+        }])
+        .unwrap(),
+        usage: None,
+        allocated_steps: DecisionList::default(),
+    };
+    if let RunProjectionTargetV1::Control {
+        retained_bookkeeping,
+        ..
+    } = &mut first.target
+    {
+        *retained_bookkeeping = Some(bookkeeping);
+    }
+    first.identity.target_digest = first.target.digest().unwrap();
+    let mut stage = RunProjectionStaging::default();
+    let old = stage.prepare(&doc, &first).unwrap();
+    applied(&mut stage, &doc, &old);
+    // Model ordinary causal writes after SQL-qualified exit. D1 deliberately
+    // keeps the generic Run5 writer closed until E; raw Loro here only supplies
+    // that later canonical state, not proof that the previous wait settled.
+    doc.doc()
+        .get_map("run")
+        .insert(
+            "status",
+            loro::LoroValue::from(serde_json::to_value(RunStatus::running()).unwrap()),
+        )
+        .unwrap();
+    doc.doc().commit();
+    let mut second = next(&doc, &first, RunEvent::Cancel);
+    if let RunProjectionTargetV1::Control {
+        retained_bookkeeping,
+        ..
+    } = &mut second.target
+    {
+        *retained_bookkeeping = None;
+    }
+    second.identity.target_digest = second.target.digest().unwrap();
+    assert!(
+        stage.prepare(&doc, &second).is_err(),
+        "same wait cannot replace accepted bookkeeping"
+    );
+    second.identity.wait = id(73);
+    let mut stale = second.clone();
+    if let RunProjectionTargetV1::Control { predecessor, .. } = &mut stale.target {
+        predecessor.status = first.target.effects().status.clone();
+    }
+    stale.identity.target_digest = stale.target.digest().unwrap();
+    assert!(
+        stage.prepare(&doc, &stale).is_err(),
+        "new wait still checks current canonical status"
+    );
+    let prepared = stage.prepare(&doc, &second).unwrap();
+    applied(&mut stage, &doc, &prepared);
+    assert_eq!(doc.header().unwrap().status, RunStatus::Cancelled);
+    let mut late = RunProjectionStaging::default();
+    assert!(late.apply(&doc, &old).is_err());
+    assert_eq!(doc.header().unwrap().status, RunStatus::Cancelled);
 }
 
 #[test]
@@ -543,6 +672,7 @@ fn projection_marker_has_independent_64k_and_depth_bounds() {
         oversized.target = RunProjectionTargetV1::Source {
             version: DecisionVersionV1,
             predecessor: original.target.predecessor().clone(),
+            transitions: DecisionList::default(),
             effects,
             bookkeeping: bookkeeping.clone(),
         };

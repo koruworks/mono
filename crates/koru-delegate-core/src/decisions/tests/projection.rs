@@ -127,10 +127,13 @@ fn decision_projection_source_requires_exact_allocated_steps_and_bounded_target(
         usage: None,
         allocated_steps: DecisionList::default(),
     };
+    let mut effects = base.effects().clone();
+    effects.event = None;
     let mut t = RunProjectionTargetV1::Source {
         version: DecisionVersionV1,
         predecessor: base.predecessor().clone(),
-        effects: base.effects().clone(),
+        transitions: DecisionList::new(vec![RunEvent::ApprovalRequired]).unwrap(),
+        effects,
         bookkeeping,
     };
     assert!(t.validate().is_ok());
@@ -197,4 +200,153 @@ fn decision_projection_control_cannot_coalesce_source_only_or_delivery_effects()
             transition_bot(&RunStatus::running(), &RunEvent::BotResponseDelivered).unwrap();
     }
     assert!(t.validate().is_err());
+}
+
+#[test]
+fn decision_source_manifest_refuses_omission_and_cross_kind_facts() {
+    let fence = edit().origin();
+    let entry = TimelineEntry {
+        id: id(90),
+        kind: StepKind::AttachmentRejected,
+        refs: TimelineRefs::new([
+            TimelineRef::Attempt {
+                attempt: fence.attempt,
+            },
+            TimelineRef::Turn { turn: fence.turn },
+            TimelineRef::Attachment { attachment: id(91) },
+        ])
+        .unwrap(),
+        at_ms: 8,
+    };
+    let base = target();
+    let mut effects = base.effects().clone();
+    effects.event = None;
+    effects.status = base.predecessor().status.clone();
+    effects.steps = DecisionList::new(vec![entry]).unwrap();
+    let mut source = RunProjectionTargetV1::Source {
+        version: DecisionVersionV1,
+        predecessor: base.predecessor().clone(),
+        transitions: DecisionList::default(),
+        effects,
+        bookkeeping: DecisionSourceBookkeeping {
+            boundary: DecisionSourceBoundary {
+                fence,
+                producer_epoch: uuid(92),
+                stream: DecisionSourceStream::Agent,
+                sequence: StreamSequence::new(8).unwrap(),
+                resulting: DecisionSourceFrontiers {
+                    agent_after: Some(StreamSequence::new(8).unwrap()),
+                    session_after: None,
+                },
+            },
+            unflushed: DecisionList::default(),
+            usage: None,
+            allocated_steps: DecisionList::new(vec![id(90)]).unwrap(),
+        },
+    };
+    assert!(
+        source.validate().is_err(),
+        "the step cannot lose its bus fact"
+    );
+    let fact = RunFact::AttachmentRejected {
+        run: fence.run,
+        attempt: fence.attempt,
+        turn: fence.turn,
+        attachment: id(91),
+        code: koru_session_protocol::ErrorCode::AttachmentNotFound,
+    };
+    if let RunProjectionTargetV1::Source { effects, .. } = &mut source {
+        effects.publications = DecisionList::new(vec![DecisionProjectionPublication {
+            event: id(93),
+            step: Some(id(90)),
+            fact,
+        }])
+        .unwrap();
+    }
+    assert!(source.validate().is_ok());
+    let bytes = source.canonical_bytes().unwrap();
+    assert_eq!(
+        RunProjectionTargetV1::decode(bytes.as_slice()).unwrap(),
+        source
+    );
+    if let RunProjectionTargetV1::Source { effects, .. } = &mut source {
+        effects.publications = DecisionList::new(vec![DecisionProjectionPublication {
+            event: id(93),
+            step: Some(id(90)),
+            fact: RunFact::WaitingForInput {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+            },
+        }])
+        .unwrap();
+    }
+    assert!(
+        source.validate().is_err(),
+        "same Run and step do not permit a different fact kind"
+    );
+}
+
+#[test]
+fn decision_source_transitions_are_ordered_bounded_and_never_delivery_authority() {
+    let base = target();
+    let mut effects = base.effects().clone();
+    effects.event = None;
+    effects.status = RunStatus::running();
+    let mut source = RunProjectionTargetV1::Source {
+        version: DecisionVersionV1,
+        predecessor: base.predecessor().clone(),
+        transitions: DecisionList::new(vec![
+            RunEvent::ChildSessionDetected,
+            RunEvent::ChildSessionTerminated,
+        ])
+        .unwrap(),
+        effects,
+        bookkeeping: DecisionSourceBookkeeping {
+            boundary: DecisionSourceBoundary {
+                fence: edit().origin(),
+                producer_epoch: uuid(92),
+                stream: DecisionSourceStream::Agent,
+                sequence: StreamSequence::new(8).unwrap(),
+                resulting: DecisionSourceFrontiers {
+                    agent_after: Some(StreamSequence::new(8).unwrap()),
+                    session_after: None,
+                },
+            },
+            unflushed: DecisionList::default(),
+            usage: None,
+            allocated_steps: DecisionList::default(),
+        },
+    };
+    assert!(source.validate().is_ok());
+    let encoded = source.canonical_bytes().unwrap();
+    let mut raw: serde_json::Value = serde_json::from_slice(encoded.as_slice()).unwrap();
+    raw["transitions"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::to_value(RunEvent::ApprovalRequired).unwrap());
+    assert!(RunProjectionTargetV1::decode(&serde_json::to_vec(&raw).unwrap()).is_err());
+    if let RunProjectionTargetV1::Source {
+        transitions,
+        effects,
+        ..
+    } = &mut source
+    {
+        *transitions = DecisionList::new(vec![RunEvent::BotResponseDelivered]).unwrap();
+        effects.status = RunStatus::Completed;
+    }
+    assert!(source.validate().is_err());
+    if let RunProjectionTargetV1::Source {
+        transitions,
+        effects,
+        ..
+    } = &mut source
+    {
+        *transitions = DecisionList::default();
+        effects.event = Some(RunEvent::ApprovalRequired);
+    }
+    assert!(
+        source.validate().is_err(),
+        "there is only one Source transition authority"
+    );
 }
