@@ -356,3 +356,46 @@ fn decision_resolved_effect_requires_publication_then_releases_only_wait_for_con
         settled.receipt
     );
 }
+
+#[test]
+fn decision_consume_replay_under_a_new_transition_licenses_nothing_and_records_no_projection() {
+    // A stateless retrying caller mints a new transition each time; the
+    // replay must still be read-only, not a refused second Control.
+    let (mut h, record, request, fence, payload) = ready();
+    let first =
+        h.db.consume_decision_edit(
+            &expected(&record),
+            DecisionTransitionId::mint(),
+            &request,
+            &payload,
+            &fence,
+            &h.proof,
+            h.boot,
+        )
+        .unwrap();
+    assert!(first.execute.is_some());
+    let count = |h: &Harness| -> i64 {
+        h.db.conn()
+            .query_row(
+                "SELECT count(*) FROM bot_decision_publications WHERE run_id=?1",
+                [fence.run.to_storage()],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let projections = count(&h);
+    let replay =
+        h.db.consume_decision_edit(
+            &expected(&record),
+            DecisionTransitionId::mint(),
+            &request,
+            &payload,
+            &fence,
+            &h.proof,
+            h.boot,
+        )
+        .unwrap();
+    assert_eq!(replay.intent, first.intent);
+    assert!(replay.execute.is_none());
+    assert_eq!(count(&h), projections, "no new projection");
+}
