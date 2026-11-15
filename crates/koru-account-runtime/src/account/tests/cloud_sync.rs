@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 use crate::account::cloud_sync::{
-    CloudSyncPort, DeviceCloudSync, CLOUD_SYNC_UNAVAILABLE, STATE_VERSION,
+    CLOUD_SYNC_UNAVAILABLE, CloudSyncPort, DeviceCloudSync, STATE_VERSION,
 };
 use koru_account_core::WorkspaceId;
 use koru_account_wire::{
@@ -473,10 +473,12 @@ fn local_cloud_choices_are_account_scoped_before_session_refresh() {
     let choices = fixture.service.cloud_profiles(account);
     assert_eq!(choices.len(), 1);
     assert_eq!(choices[0].profile_id, profile.to_string());
-    assert!(fixture
-        .service
-        .cloud_profiles(KoruIdentityId::mint())
-        .is_empty());
+    assert!(
+        fixture
+            .service
+            .cloud_profiles(KoruIdentityId::mint())
+            .is_empty()
+    );
     assert!(
         fixture.hosted.calls().is_empty(),
         "local policy must precede HTTP and credentials"
@@ -557,10 +559,12 @@ fn turning_a_profile_on_then_off_carries_every_workspace_with_it() {
     let remembered = &saved.accounts.values().next().unwrap().profiles[&profile];
     assert!(remembered.enabled);
     assert_eq!(remembered.workspaces.len(), 3);
-    assert!(remembered
-        .workspaces
-        .values()
-        .all(|entry| entry.enabled && entry.incarnation_id.is_some() && entry.error.is_none()));
+    assert!(
+        remembered
+            .workspaces
+            .values()
+            .all(|entry| entry.enabled && entry.incarnation_id.is_some() && entry.error.is_none())
+    );
 
     let rows = fixture.set(false).unwrap();
     assert_eq!(
@@ -580,10 +584,12 @@ fn turning_a_profile_on_then_off_carries_every_workspace_with_it() {
     let saved = fixture.port.saved();
     let remembered = &saved.accounts.values().next().unwrap().profiles[&profile];
     assert!(!remembered.enabled);
-    assert!(remembered
-        .workspaces
-        .values()
-        .all(|entry| !entry.enabled && entry.authorization_version == 2));
+    assert!(
+        remembered
+            .workspaces
+            .values()
+            .all(|entry| !entry.enabled && entry.authorization_version == 2)
+    );
 }
 
 #[test]
@@ -617,10 +623,12 @@ fn a_version_mismatch_is_resolved_from_the_accounts_own_cloud_list() {
         learned.incarnation_id,
         Some(uuid::Uuid::from_u128(ELSEWHERE_INCARNATION))
     );
-    assert!(fixture
-        .hosted
-        .calls()
-        .contains(&"/v1/account/cloud/workspaces".to_string()));
+    assert!(
+        fixture
+            .hosted
+            .calls()
+            .contains(&"/v1/account/cloud/workspaces".to_string())
+    );
 
     // And turning it off disables both, including the one this device never
     // activated itself.
@@ -629,9 +637,11 @@ fn a_version_mismatch_is_resolved_from_the_accounts_own_cloud_list() {
         (rows[0].synced_workspaces, rows[0].error.clone()),
         (0, None)
     );
-    assert!(local
-        .iter()
-        .all(|(_, workspace)| { !fixture.hosted.row(*workspace).unwrap().enabled }));
+    assert!(
+        local
+            .iter()
+            .all(|(_, workspace)| { !fixture.hosted.row(*workspace).unwrap().enabled })
+    );
 }
 
 #[test]
