@@ -244,3 +244,58 @@ fn routine_route_frame_requires_current_protocol_private_capability_and_device()
         &BotCommand::RegisterRoutineRoute { identity: foreign }
     ));
 }
+
+#[test]
+fn decision_commands_need_the_private_capability_device_and_the_current_frame() {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    let capability =
+        BotDelegateAuthority::new("decision-read-private-capability-0123456789012345".into())
+            .unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let identity = Identity {
+        launch_id: "fixture".into(),
+        authority: "ordinary-stop".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
+    };
+    let owner: koru_delegate_core::BotOwner = serde_json::from_value(
+        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":device}),
+    )
+    .unwrap();
+    let command = BotCommand::ReadBotDecisionWait {
+        owner,
+        bot: koru_delegate_core::BotId::mint(),
+        run: koru_delegate_core::RunId::mint(),
+        wait_id: koru_delegate_core::decisions::BotWaitId::mint(),
+        decision_id: koru_delegate_core::decisions::DecisionId::mint(),
+    };
+    assert!(admits_bot_command(&identity, &capability, &command));
+    // A decision-bridge credential is not the Bot channel capability.
+    let other =
+        BotDelegateAuthority::new("ordinary-scope-label-01234567890123456789".into()).unwrap();
+    assert!(!admits_bot_command(&identity, &other, &command));
+    let mut foreign = command.clone();
+    if let BotCommand::ReadBotDecisionWait { owner, .. } = &mut foreign {
+        owner.device = koru_delegate_core::DeviceId::new();
+    }
+    assert!(!admits_bot_command(&identity, &capability, &foreign));
+    let request = Request::Bot {
+        authority: capability,
+        command,
+    };
+    // An older handshake is refused before any decision body is decoded.
+    for older in 1..WIRE_VERSION {
+        assert!(
+            read_current_request(&mut frame::encode(older, &request).unwrap().as_slice())
+                .unwrap()
+                .is_none(),
+            "{older}"
+        );
+    }
+    assert_eq!(
+        read_current_request(&mut frame::encode(WIRE_VERSION, &request).unwrap().as_slice())
+            .unwrap(),
+        Some(request)
+    );
+}

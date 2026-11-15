@@ -32,6 +32,19 @@ pub(super) fn bot_failure(error: RunError) -> Failure {
         error => failure_of(&error),
     }
 }
+/// The exact retained decision as the IPC16 reply carries it.
+fn decision_view(
+    record: koru_delegate_sqlite::DecisionRecord,
+) -> koru_delegate_api::bots::DecisionReceiptView {
+    koru_delegate_api::bots::DecisionReceiptView {
+        receipt: record.receipt,
+        wait: record.wait.wait,
+        wait_phase: record.wait.phase,
+        wait_revision: record.wait.revision,
+        native_response: record.native_response,
+        resume: record.resume,
+    }
+}
 impl Actor {
     pub(super) fn refuse_ordinary_bot_route(&mut self, command: &Command) -> bool {
         let (run, workspace, reply) = match command {
@@ -425,6 +438,114 @@ impl Actor {
                 self.wake_bots();
                 BotReply::Applied
             }
+            BotCommand::PrepareNativeDecision {
+                fence,
+                approval,
+                proof,
+                boot,
+            } => BotReply::Decision {
+                decision: decision_view(
+                    self.orchestrator
+                        .bot_prepare_native_decision(&fence, device, approval, &proof, boot)
+                        .map_err(bot_failure)?,
+                ),
+            },
+            BotCommand::PrepareEditDecision {
+                fence,
+                edit,
+                proof,
+                boot,
+            } => {
+                let edit = koru_delegate_runtime::DecisionEditRequest {
+                    target: edit.target,
+                    action: edit.action,
+                    operation_id: edit.operation_id,
+                    edit_fingerprint: edit.edit_fingerprint,
+                    expected_revision: edit.expected_revision.as_slice().to_vec(),
+                    payload: edit.payload.as_slice().to_vec(),
+                };
+                BotReply::Decision {
+                    decision: decision_view(
+                        self.orchestrator
+                            .bot_prepare_edit_decision(&fence, device, &edit, &proof, boot)
+                            .map_err(bot_failure)?,
+                    ),
+                }
+            }
+            BotCommand::AnswerDecision {
+                answer,
+                proof,
+                boot,
+            } => {
+                // The private Bot channel is the trusted human route: the
+                // server admitted its credential, `owner()` bound the device,
+                // and the ledger binds the answer to the decision's own human,
+                // exact revision and binding digest in its writer.
+                let answer = koru_delegate_sqlite::AnswerDecision {
+                    owner: answer.owner,
+                    run: answer.run,
+                    decision: answer.decision,
+                    expected_revision: answer.expected_revision,
+                    binding_digest: answer.binding_digest,
+                    request: answer.request,
+                    human: answer.human,
+                    choice: answer.choice,
+                    authority_digest: answer.authority_digest,
+                };
+                let record = self
+                    .orchestrator
+                    .bot_answer_decision(&answer, device, &proof, boot)
+                    .map_err(bot_failure)?;
+                self.notify(answer.run);
+                BotReply::Decision {
+                    decision: decision_view(record),
+                }
+            }
+            BotCommand::ConsumeDecisionEdit {
+                fence,
+                request,
+                payload,
+                proof,
+                boot,
+            } => {
+                let leased = self
+                    .orchestrator
+                    .bot_consume_decision_edit(
+                        &fence,
+                        device,
+                        &request,
+                        payload.as_slice(),
+                        &proof,
+                        boot,
+                    )
+                    .map_err(bot_failure)?;
+                // A retained row never carries Execute; only the first fresh
+                // commit, which returned its one lease, does.
+                let mut intent = leased.intent.view();
+                if leased.execute.is_some() {
+                    intent.disposition = koru_delegate_core::NativeResultDisposition::Execute;
+                }
+                BotReply::NativeResult { intent }
+            }
+            BotCommand::ReadBotDecisionWait {
+                owner,
+                bot,
+                run,
+                wait_id,
+                decision_id,
+            } => match self
+                .orchestrator
+                .bot_read_decision_wait_and_resume(owner, bot, run, wait_id, decision_id, device)
+                .map_err(bot_failure)?
+            {
+                (Some(observation), resume) => BotReply::DecisionWait {
+                    observation,
+                    resume,
+                },
+                // The exact owner/subject read succeeded and found no frozen
+                // cleanup intent; an error above is never reported as Missing.
+                (None, _) => BotReply::Missing,
+            },
             BotCommand::TakeOver { .. } | BotCommand::HandBack { .. } => {
                 return Err(unavailable("bot_control_unsupported"));
             }

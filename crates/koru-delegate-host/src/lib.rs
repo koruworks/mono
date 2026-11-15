@@ -36,6 +36,10 @@ mod actor;
 mod authority;
 mod bootstrap;
 mod context;
+// Built and driven by the decision resume driver's maintenance call, which the
+// runtime author lands; until then only its tests construct it.
+#[cfg_attr(not(test), allow(dead_code))]
+mod decision_bridge;
 mod documents;
 mod events;
 mod ledger;

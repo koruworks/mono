@@ -23,6 +23,7 @@
 //! see both.
 
 pub mod bots;
+pub mod decision_bridge;
 pub mod ipc;
 mod local;
 mod port;

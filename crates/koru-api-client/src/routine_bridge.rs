@@ -116,7 +116,7 @@ impl crate::Client {
 // Inspect raw authority before URL parsing, which normalizes shorthand integer
 // IPv4 hosts and drops explicit default ports. Neither is evidence of a literal
 // loopback IP origin with an explicitly supplied nonzero port.
-fn origin(value: &str) -> RoutineBridgeTransportResult<reqwest::Url> {
+pub(crate) fn origin(value: &str) -> RoutineBridgeTransportResult<reqwest::Url> {
     let invalid = || RoutineBridgeTransportError::NotSent(BeforeSend::InvalidEndpoint);
     let authority = value.strip_prefix("http://").ok_or_else(invalid)?;
     let authority = authority.strip_suffix('/').unwrap_or(authority);
@@ -154,7 +154,7 @@ fn origin(value: &str) -> RoutineBridgeTransportResult<reqwest::Url> {
     reqwest::Url::parse(&canonical).map_err(|_| invalid())
 }
 
-struct Permit<'a>(&'a AtomicBool);
+pub(crate) struct Permit<'a>(pub(crate) &'a AtomicBool);
 impl Drop for Permit<'_> {
     fn drop(&mut self) {
         self.0.store(false, Ordering::Release)
@@ -335,21 +335,24 @@ impl RoutineBridgeClient {
     }
 }
 
-fn bounded_deadline(caller: Instant, started: Instant) -> RoutineBridgeTransportResult<Instant> {
+pub(crate) fn bounded_deadline(
+    caller: Instant,
+    started: Instant,
+) -> RoutineBridgeTransportResult<Instant> {
     let cap = started
         .checked_add(ROUTINE_BRIDGE_DEADLINE)
         .ok_or(RoutineBridgeTransportError::NotSent(BeforeSend::Deadline))?;
     Ok(caller.min(cap))
 }
 
-fn before_remaining(deadline: Instant) -> RoutineBridgeTransportResult<Duration> {
+pub(crate) fn before_remaining(deadline: Instant) -> RoutineBridgeTransportResult<Duration> {
     deadline
         .checked_duration_since(Instant::now())
         .filter(|left| !left.is_zero())
         .ok_or(RoutineBridgeTransportError::NotSent(BeforeSend::Deadline))
 }
 
-fn read_bounded<R: Read>(
+pub(crate) fn read_bounded<R: Read>(
     reader: &mut R,
     length: Option<u64>,
     deadline: Instant,
