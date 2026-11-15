@@ -3,6 +3,7 @@
 use super::*;
 use koru_ai_core::{AgentActivityEvent as A, AgentActivityLive, AgentToolKind};
 use koru_delegate_api::bots::BotObservation;
+pub(super) mod decision;
 #[cfg(test)]
 mod tests;
 
@@ -80,6 +81,11 @@ impl WorkerState {
         let Some(staged) = staged else {
             return Ok(false);
         };
+        // A terminal of an enrolled origin is interpreted only with the
+        // delegate's matching cleanup proof; until then it stays staged.
+        let Some(staged) = self.intercept_origin_terminal(id, chat, staged)? else {
+            return Ok(false);
+        };
         // Keep the exact candidate on uncertain acknowledgment/readback. Its
         // random source identities and live choices must not be remapped.
         match commit_staged(&mut self.repository, &staged.batch) {
@@ -90,6 +96,17 @@ impl WorkerState {
                 return Err(error);
             }
         }
+        self.install_staged(id, chat, staged)
+    }
+
+    /// After the exact batch is durable: install its mapping, publish, and
+    /// end the live task only when the committed batch was terminal.
+    fn install_staged(
+        &mut self,
+        id: InferenceAttemptId,
+        chat: &mut LiveChat,
+        staged: Staged,
+    ) -> Result<bool, AiError> {
         let Staged {
             batch,
             mapper,

@@ -57,6 +57,7 @@ mod boot;
 pub(super) use boot::{BootRecovery, BotBootJob, BotBootResult};
 mod branch;
 pub(in crate::worker) mod chat;
+pub(crate) mod decision_wait;
 mod library;
 mod lifecycle;
 pub(crate) mod memory;

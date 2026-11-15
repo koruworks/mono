@@ -91,6 +91,9 @@ pub struct WorkerConfig {
     native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
+    /// The delegate reads behind the decision wait handshake (IPC16). No
+    /// production composition installs one yet, so every decision job refuses.
+    decision_wait_delegate: Option<Arc<dyn bots::decision_wait::DecisionWaitDelegate>>,
     /// The Store's data root beside this AI root, which no Bot's selected
     /// working folder may be (P1.8).
     store_root: Option<PathBuf>,
@@ -150,6 +153,14 @@ impl WorkerConfig {
         self.bot_authority = Some(authority);
         self
     }
+    /// The real delegate decision reads, once the delegate API provides them.
+    pub fn with_decision_wait_delegate(
+        mut self,
+        delegate: Arc<dyn bots::decision_wait::DecisionWaitDelegate>,
+    ) -> Self {
+        self.decision_wait_delegate = Some(delegate);
+        self
+    }
     /// The Store's data root, so a Bot's selected folder is never it.
     pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
         self.store_root = Some(store_root);
@@ -163,6 +174,7 @@ impl WorkerConfig {
             provider_runtime: None,
             store_context: None,
             bot_authority: None,
+            decision_wait_delegate: None,
             store_root: None,
             bot_delegate: None,
             native_recovery: None,
@@ -196,6 +208,7 @@ impl WorkerConfig {
             provider_runtime: Some(runtime),
             store_context: None,
             bot_authority: None,
+            decision_wait_delegate: None,
             store_root: None,
             bot_delegate: None,
             native_recovery: None,
@@ -234,6 +247,7 @@ impl WorkerConfig {
             provider_runtime: Some(runtime),
             store_context: None,
             bot_authority: None,
+            decision_wait_delegate: None,
             store_root: None,
             bot_delegate: None,
             native_recovery: None,
@@ -1220,6 +1234,8 @@ impl AiServerPort for AiWorkerClient {
 enum Envelope {
     RoutineOccurrence(Box<bots::occurrence::Incoming>),
     RoutineOccurrenceCompleted(Box<bots::occurrence::OccurrenceResult>),
+    DecisionWait(Box<bots::decision_wait::Incoming>),
+    DecisionWaitCompleted(Box<bots::decision_wait::DecisionWaitResult>),
     /// Read-only observation of production recovery for spawned-worker tests.
     #[cfg(test)]
     ReadRoutineCreationForFixture {
@@ -1699,6 +1715,7 @@ fn accept_command_listing(
 
 struct WorkerState {
     occurrences: bots::occurrence::OccurrenceDriver,
+    decision_waits: bots::decision_wait::DecisionWaitDriver,
     bot_boot: bots::BootRecovery,
     native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     native_drain_busy: bool,
@@ -2008,6 +2025,9 @@ fn run_worker(
         routine_recovery: Default::default(),
         routine_listings: Default::default(),
         occurrences: bots::occurrence::OccurrenceDriver::new(routine_calls),
+        decision_waits: bots::decision_wait::DecisionWaitDriver::new(
+            config.decision_wait_delegate.take(),
+        ),
         memory_reads: Default::default(),
         memory_writes: Default::default(),
         bot_resends: Default::default(),
@@ -2194,6 +2214,8 @@ fn run_worker(
             Ok(Envelope::RoutineOccurrenceCompleted(result)) => {
                 state.complete_routine_occurrence(*result)
             }
+            Ok(Envelope::DecisionWait(incoming)) => state.begin_decision_wait(*incoming),
+            Ok(Envelope::DecisionWaitCompleted(result)) => state.complete_decision_wait(*result),
             Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
@@ -2232,6 +2254,7 @@ fn run_worker(
     state.cancel_active_for_shutdown();
     state.routine_listings.invalidate();
     state.occurrences.cancel_all();
+    state.decision_waits.cancel_all();
     if let Some(admin) = &mut state.provider_admin {
         admin.stop();
     }
@@ -5984,6 +6007,10 @@ fn valid_ollama_endpoint(endpoint: &url::Url) -> bool {
 enum ProviderAdminJob {
     RoutineMutation(bots::occurrence::OccurrenceJob),
     RoutineRead(bots::occurrence::OccurrenceJob),
+    /// Decision wait enrollment: the Routine mutation lane, never a new queue.
+    DecisionWaitMutation(bots::decision_wait::DecisionWaitJob),
+    /// Decision wait reads: the bounded Run-read lane.
+    DecisionWaitRead(bots::decision_wait::DecisionWaitJob),
     BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotRoutineListing(bots::routine::listing::ListingJob),
     BotRoutineDetail(bots::routine::detail::DetailJob),
@@ -6042,7 +6069,7 @@ struct AdminSubmitError {
 struct ProviderAdminPool {
     /// Two admitted operations share one physical mutation thread and one
     /// queued job. Their permits survive every phase and waiter cancellation.
-    routine_sender: Option<SyncSender<bots::occurrence::OccurrenceJob>>,
+    routine_sender: Option<SyncSender<bots::occurrence::MutationWork>>,
     routine_thread: Option<JoinHandle<()>>,
     sender: Option<SyncSender<ProviderAdminJob>>,
     thread: Option<JoinHandle<()>>,
@@ -6130,7 +6157,10 @@ impl ProviderAdminPool {
                         Err(RecvTimeoutError::Disconnected) => break,
                     };
                     match job {
-                        ProviderAdminJob::RoutineMutation(_) | ProviderAdminJob::RoutineRead(_) => {
+                        ProviderAdminJob::RoutineMutation(_)
+                        | ProviderAdminJob::RoutineRead(_)
+                        | ProviderAdminJob::DecisionWaitMutation(_)
+                        | ProviderAdminJob::DecisionWaitRead(_) => {
                             unreachable!("Routine occurrence lane dispatch")
                         }
                         ProviderAdminJob::BotChatRecovery(job) => {
@@ -6491,20 +6521,16 @@ impl ProviderAdminPool {
                 return Err(error.to_string());
             }
         };
-        let (routine_sender, routine_receiver) = sync_channel::<bots::occurrence::OccurrenceJob>(1);
+        let (routine_sender, routine_receiver) = sync_channel::<bots::occurrence::MutationWork>(1);
         let routine_shutdown = Arc::clone(&shutdown);
         let routine_thread = match std::thread::Builder::new()
             .name("koru-ai-routine-mutation".into())
             .spawn(move || {
                 while !routine_shutdown.load(Ordering::Acquire) {
                     match routine_receiver.recv_timeout(LOOP_INTERVAL) {
-                        Ok(job) => send_admin_envelope(
-                            &routine_output,
-                            Envelope::RoutineOccurrenceCompleted(Box::new(
-                                job.run(routine_agents.as_ref()),
-                            )),
-                            &routine_shutdown,
-                        ),
+                        Ok(work) => {
+                            work.run(&routine_output, routine_agents.as_ref(), &routine_shutdown)
+                        }
                         Err(RecvTimeoutError::Timeout) => continue,
                         Err(RecvTimeoutError::Disconnected) => break,
                     }
@@ -6549,24 +6575,36 @@ impl ProviderAdminPool {
     }
 
     fn try_submit(&self, job: ProviderAdminJob) -> Result<(), AdminSubmitError> {
-        if let ProviderAdminJob::RoutineMutation(job) = job {
+        if matches!(
+            &job,
+            ProviderAdminJob::RoutineMutation(_) | ProviderAdminJob::DecisionWaitMutation(_)
+        ) {
+            let work = match job {
+                ProviderAdminJob::RoutineMutation(job) => {
+                    bots::occurrence::MutationWork::Routine(job)
+                }
+                ProviderAdminJob::DecisionWaitMutation(job) => {
+                    bots::occurrence::MutationWork::Decision(job)
+                }
+                _ => unreachable!("mutation lane classification"),
+            };
             let Some(sender) = &self.routine_sender else {
                 return Err(AdminSubmitError {
-                    job: ProviderAdminJob::RoutineMutation(job),
+                    job: work.into_admin(),
                     failure: unavailable_failure(),
                 });
             };
-            return sender.try_send(job).map_err(|error| match error {
-                TrySendError::Full(job) => AdminSubmitError {
-                    job: ProviderAdminJob::RoutineMutation(job),
+            return sender.try_send(work).map_err(|error| match error {
+                TrySendError::Full(work) => AdminSubmitError {
+                    job: work.into_admin(),
                     failure: failure(
                         "ai_worker_saturated",
                         "The Routine mutation lane is busy. Try again.",
                         true,
                     ),
                 },
-                TrySendError::Disconnected(job) => AdminSubmitError {
-                    job: ProviderAdminJob::RoutineMutation(job),
+                TrySendError::Disconnected(work) => AdminSubmitError {
+                    job: work.into_admin(),
                     failure: unavailable_failure(),
                 },
             });
@@ -6664,11 +6702,16 @@ impl ProviderAdminPool {
         }
         if matches!(
             &job,
-            ProviderAdminJob::BotRunRead(_) | ProviderAdminJob::RoutineRead(_)
+            ProviderAdminJob::BotRunRead(_)
+                | ProviderAdminJob::RoutineRead(_)
+                | ProviderAdminJob::DecisionWaitRead(_)
         ) {
             let read = match job {
                 ProviderAdminJob::BotRunRead(read) => bots::occurrence::RunReadWork::Bot(read),
                 ProviderAdminJob::RoutineRead(read) => bots::occurrence::RunReadWork::Routine(read),
+                ProviderAdminJob::DecisionWaitRead(read) => {
+                    bots::occurrence::RunReadWork::Decision(read)
+                }
                 _ => unreachable!("Run read lane classification"),
             };
             let Some(sender) = &self.run_read_sender else {

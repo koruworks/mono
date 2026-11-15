@@ -48,6 +48,9 @@ pub(in crate::worker) struct LiveChat {
     pub(super) mapper: Option<AgentEventMapper>,
     pub(super) live: Vec<AgentLiveAction>,
     pub(super) pending: Option<super::replay::Staged>,
+    /// A Koru decision wait this task is enrolled in (origin terminal proof,
+    /// held wait or acknowledged consumer). `None` for every ordinary task.
+    pub(super) decision: Option<super::replay::decision::DecisionWait>,
     phase: Phase,
     due: Instant,
     busy: bool,
@@ -76,6 +79,7 @@ impl LiveChat {
     pub(super) fn control_fence(&self) -> Option<BotExecutionFence> {
         if self.finishing.is_some()
             || self.pending.is_some()
+            || self.decision.is_some()
             || !matches!(self.phase, Phase::Observe)
         {
             return None;
@@ -84,6 +88,18 @@ impl LiveChat {
             .as_ref()
             .filter(|fence| fence.turn.is_some())
             .cloned()
+    }
+    /// A person's Stop or an automatic interruption is in progress.
+    pub(super) fn is_finishing(&self) -> bool {
+        self.finishing.is_some()
+    }
+    /// Observe the current fence at once (after a decision verdict or the
+    /// consumer rollover); never used to leave a finishing disposition.
+    pub(super) fn observe_now(&mut self) {
+        if self.finishing.is_none() {
+            self.phase = Phase::Observe;
+            self.due = Instant::now();
+        }
     }
 }
 #[cfg(test)]
@@ -105,6 +121,7 @@ impl LiveChat {
             )),
             live: Vec::new(),
             pending: None,
+            decision: None,
             phase: Phase::Observe,
             due: Instant::now(),
             busy: false,
@@ -234,6 +251,7 @@ impl WorkerState {
                 mapper: None,
                 live: Vec::new(),
                 pending: None,
+                decision: None,
                 phase: if routine {
                     Phase::RoutineAdmission
                 } else {
@@ -261,6 +279,8 @@ impl WorkerState {
     }
     pub(in crate::worker) fn schedule_bot_chat_step(&mut self) {
         self.prune_bot_steers();
+        // Decision reads use the bounded Run-read lane, never this Bot slot.
+        self.schedule_bot_decision_reads();
         // At most one finite Bot IO job occupies this pool at once. Native
         // waiting happens in the host, not on either AI provider thread.
         let Some(port) = self.bot_delegate.clone() else {
@@ -308,7 +328,11 @@ impl WorkerState {
                     } else if automatic {
                         chat.finishing == Some(Finish::Interrupt) && !chat.busy
                     } else {
-                        chat.finishing.is_none() && !chat.busy
+                        // A staged origin terminal awaiting proof, or a held
+                        // wait, is not observed again until its verdict.
+                        chat.finishing.is_none()
+                            && !chat.busy
+                            && chat.decision.as_ref().is_none_or(|wait| wait.observes())
                     }
             })
             .min_by_key(|(_, chat)| chat.due)
@@ -992,6 +1016,7 @@ impl WorkerState {
             mapper: None,
             live: Vec::new(),
             pending: None,
+            decision: None,
             phase: Phase::Admission,
             due: Instant::now(),
             busy: false,
@@ -1002,7 +1027,9 @@ impl WorkerState {
             resend: false,
             staging: Default::default(),
         });
-        // A person's Stop is never delayed by an automatic backoff.
+        // A person's Stop is never delayed by an automatic backoff, and it
+        // supersedes any decision wait: ordinary Stop keeps its own mapping.
+        chat.decision = None;
         chat.finishing = Some(Finish::Stop);
         chat.phase = Phase::Admission;
         chat.retries = 0;
@@ -1074,6 +1101,7 @@ impl WorkerState {
                     mapper: None,
                     live: Vec::new(),
                     pending: None,
+                    decision: None,
                     phase: if delivery && finish.is_none() {
                         Phase::Delivery
                     } else {

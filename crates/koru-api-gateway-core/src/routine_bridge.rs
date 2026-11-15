@@ -16,14 +16,14 @@ use koru_delegate_api::routines::*;
 use serde::{Serialize, de::DeserializeOwned};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-const HTTP_CAPACITY: usize = 8;
+pub(crate) const HTTP_CAPACITY: usize = 8;
 
 /// The permit follows the application buffer through Body and every Bytes
 /// clone. There is no TTL: retained memory must retain its allocation slot.
 /// Field order drops the buffer before releasing its permit.
-struct ResponseAllocation {
-    bytes: Vec<u8>,
-    _permit: OwnedSemaphorePermit,
+pub(crate) struct ResponseAllocation {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) _permit: OwnedSemaphorePermit,
 }
 impl AsRef<[u8]> for ResponseAllocation {
     fn as_ref(&self) -> &[u8] {
@@ -135,7 +135,7 @@ async fn handle(State(state): State<Arc<HttpState>>, request: Request) -> Respon
     }
 }
 
-fn remaining(deadline: Instant) -> Result<(), StatusCode> {
+pub(crate) fn remaining(deadline: Instant) -> Result<(), StatusCode> {
     if Instant::now() >= deadline {
         Err(StatusCode::GATEWAY_TIMEOUT)
     } else {
@@ -155,7 +155,7 @@ fn authorized(state: &HttpState, headers: &HeaderMap) -> bool {
             .is_some_and(|authority| authority.matches_authorization(value.as_bytes()))
 }
 
-fn framing(headers: &HeaderMap) -> Result<Option<usize>, StatusCode> {
+pub(crate) fn framing(headers: &HeaderMap) -> Result<Option<usize>, StatusCode> {
     let bad = StatusCode::BAD_REQUEST;
     let mut types = headers.get_all(header::CONTENT_TYPE).iter();
     let content_type = types.next().ok_or(bad)?.to_str().map_err(|_| bad)?;
@@ -291,7 +291,7 @@ async fn handle_until(
     }))
 }
 
-async fn read_body(
+pub(crate) async fn read_body(
     body: Body,
     expected: Option<usize>,
     deadline: Instant,

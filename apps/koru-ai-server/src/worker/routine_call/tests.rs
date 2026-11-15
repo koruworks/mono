@@ -55,6 +55,31 @@ fn cancelled_waiter_retains_physical_permit_until_owner_finishes() {
 }
 
 #[test]
+fn decision_call_shares_the_handle_but_refuses_in_its_own_vocabulary() {
+    use koru_delegate_core::decisions::{BotWaitEnrollmentReply, BotWaitRefusal};
+    let count = Arc::new(Count(AtomicUsize::new(0)));
+    let waker = Waker::from(count.clone());
+    let mut cx = Context::from_waker(&waker);
+    let (reply, mut call) =
+        refusal_channel::<BotWaitEnrollmentReply, BotWaitRefusal>(Cancellation::default());
+    assert!(Pin::new(&mut call).poll(&mut cx).is_pending());
+    // A lost decision producer is unknown completion: never Missing.
+    drop(reply);
+    assert_eq!(count.0.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        Pin::new(&mut call).poll(&mut cx),
+        Poll::Ready(Err(BotWaitRefusal::Unavailable))
+    );
+    let (reply, mut call) =
+        refusal_channel::<BotWaitEnrollmentReply, BotWaitRefusal>(Cancellation::default());
+    reply.send(Err(BotWaitRefusal::Stale));
+    assert_eq!(
+        Pin::new(&mut call).poll(&mut cx),
+        Poll::Ready(Err(BotWaitRefusal::Stale))
+    );
+}
+
+#[test]
 fn dropped_owner_wakes_waiter_with_unavailable() {
     let count = Arc::new(Count(AtomicUsize::new(0)));
     let waker = Waker::from(count.clone());

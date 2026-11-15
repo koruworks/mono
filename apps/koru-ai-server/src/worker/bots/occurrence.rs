@@ -208,16 +208,19 @@ fn refusal(error: BotError) -> RoutineBridgeRefusal {
     }
 }
 
-/// Existing Run reads and Routine observations share the same bounded thread.
+/// Existing Run reads, Routine observations and decision wait reads share the
+/// same bounded thread.
 pub(in crate::worker) enum RunReadWork {
     Bot(BotRunReadJob),
     Routine(OccurrenceJob),
+    Decision(super::decision_wait::DecisionWaitJob),
 }
 impl RunReadWork {
     pub(in crate::worker) fn into_admin(self) -> ProviderAdminJob {
         match self {
             Self::Bot(job) => ProviderAdminJob::BotRunRead(job),
             Self::Routine(job) => ProviderAdminJob::RoutineRead(job),
+            Self::Decision(job) => ProviderAdminJob::DecisionWaitRead(job),
         }
     }
     pub(in crate::worker) fn run(self, output: &SyncSender<Envelope>, shutdown: &AtomicBool) {
@@ -228,6 +231,38 @@ impl RunReadWork {
                 Envelope::RoutineOccurrenceCompleted(Box::new(job.run(None))),
                 shutdown,
             ),
+            Self::Decision(job) => send_admin_envelope(
+                output,
+                Envelope::DecisionWaitCompleted(Box::new(job.run())),
+                shutdown,
+            ),
         }
+    }
+}
+
+/// The Routine mutation lane's work: Routine occurrence mutations and decision
+/// wait enrollment share its one physical thread and its one queued slot.
+pub(in crate::worker) enum MutationWork {
+    Routine(OccurrenceJob),
+    Decision(super::decision_wait::DecisionWaitJob),
+}
+impl MutationWork {
+    pub(in crate::worker) fn into_admin(self) -> ProviderAdminJob {
+        match self {
+            Self::Routine(job) => ProviderAdminJob::RoutineMutation(job),
+            Self::Decision(job) => ProviderAdminJob::DecisionWaitMutation(job),
+        }
+    }
+    pub(in crate::worker) fn run(
+        self,
+        output: &SyncSender<Envelope>,
+        agents: Option<&AgentSessions>,
+        shutdown: &AtomicBool,
+    ) {
+        let envelope = match self {
+            Self::Routine(job) => Envelope::RoutineOccurrenceCompleted(Box::new(job.run(agents))),
+            Self::Decision(job) => Envelope::DecisionWaitCompleted(Box::new(job.run())),
+        };
+        send_admin_envelope(output, envelope, shutdown);
     }
 }
