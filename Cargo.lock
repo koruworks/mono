@@ -7285,6 +7285,7 @@ dependencies = [
  "koru-ipc",
  "koru-pairing",
  "koru-store-core",
+ "koru-store-wire",
  "serde",
  "serde_json",
  "url",

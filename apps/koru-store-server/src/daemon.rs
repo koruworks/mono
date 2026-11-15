@@ -1107,10 +1107,13 @@ async fn run(
             replication.clone(),
             SYNC_SESSION_GRACE,
             store_client.clone(),
+            crate::cloud_inspection_host::InspectionHub::new(tokio::runtime::Handle::current()),
         )
         .map_err(|error| Error::new(Code::StorageFailed, format!("sync control: {error}")))?;
         Some(crate::sync_control::ReplicationRuntime::Iroh(replication))
     } else if let Some(network_edge) = network_edge {
+        let inspections =
+            crate::cloud_inspection_host::InspectionHub::new(tokio::runtime::Handle::current());
         tracing::info!("store startup: replication (network edge)");
         let replication_store = Arc::new(crate::replication::LiveReplicationStore::new(
             Arc::clone(&state),
@@ -1135,6 +1138,7 @@ async fn run(
             crate::sync_control::ReplicationRuntime::Session(replication.clone()),
             SYNC_SESSION_GRACE,
             store_client.clone(),
+            Arc::clone(&inspections),
         )
         .map_err(|error| Error::new(Code::StorageFailed, format!("sync control: {error}")))?;
         // The Cloud owner is installed before the first bridged session can
@@ -1147,6 +1151,7 @@ async fn run(
             Arc::clone(&state.rooms),
             Arc::clone(&state.cloud_activity),
             Arc::clone(&blob_engine_slot),
+            inspections,
         );
         let mut sessions = network_edge
             .sessions
