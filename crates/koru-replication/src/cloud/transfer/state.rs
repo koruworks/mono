@@ -254,6 +254,7 @@ pub struct Stream {
     local_sent: bool,
     peer: Option<(i64, usize)>,
     incoming: Option<Incoming>,
+    rejected: Option<Incoming>,
     outgoing: Option<Sending>,
     waiting: Option<(Start, u64, u64)>,
     budget: MemoryBudget,
@@ -300,6 +301,7 @@ impl Stream {
             local_sent: false,
             peer: None,
             incoming: None,
+            rejected: None,
             outgoing: None,
             waiting: None,
             budget,
@@ -362,6 +364,7 @@ impl Stream {
     pub fn cancel(&mut self, reason: Error) -> Error {
         self.closed.get_or_insert(reason);
         self.incoming = None;
+        self.rejected = None;
         self.outgoing = None;
         self.waiting = None;
         self.closed.unwrap()
@@ -376,6 +379,13 @@ impl Stream {
         }
     }
     pub fn check(&mut self, now: u64) -> Result<(), Error> {
+        if self
+            .rejected
+            .as_ref()
+            .is_some_and(|value| now >= value.deadline)
+        {
+            self.rejected = None;
+        }
         if let Some(e) = self.closed {
             return Err(e);
         }
@@ -455,8 +465,38 @@ impl Stream {
         now: u64,
         authorize: impl FnOnce(Unit) -> Result<(), Refusal>,
     ) -> Result<Admission, Error> {
-        let result = self.receive_control_inner(control, first, now, authorize);
+        let result = self.receive_control_inner(control, first, now, authorize, false);
         result.map_err(|e| self.cancel(e))
+    }
+    /// End only this upload after an exact admission refusal. The opposite
+    /// direction retains its transfer, policy and original credential deadline.
+    pub fn reject_outgoing_admission(&mut self, now: u64) -> Result<(), Error> {
+        self.check(now)?;
+        self.outgoing = None;
+        Ok(())
+    }
+    pub fn reject_incoming_admission(&mut self, now: u64) -> Result<(), Error> {
+        self.check(now)?;
+        self.incoming = None;
+        self.waiting = None;
+        Ok(())
+    }
+    /// Validate a refused start without reserving its payload or granting an
+    /// import. An automatic sender may already have bounded body frames in
+    /// flight; retain only their parser/hash until ordered metadata, another
+    /// start or the original deadline ends that discard window.
+    pub fn reject_start_admission(
+        &mut self,
+        start: Start,
+        first: u64,
+        now: u64,
+        authorize: impl FnOnce(Unit) -> Result<(), Refusal>,
+    ) -> Result<(), Error> {
+        let scope = self.scope;
+        let result =
+            self.receive_control_inner(Control::TransferStart(start), first, now, authorize, true);
+        self.scope = scope; // A refused first manifest never binds the stream.
+        result.map(|_| ()).map_err(|error| self.cancel(error))
     }
     fn receive_control_inner(
         &mut self,
@@ -464,6 +504,7 @@ impl Stream {
         first: u64,
         now: u64,
         authorize: impl FnOnce(Unit) -> Result<(), Refusal>,
+        reject: bool,
     ) -> Result<Admission, Error> {
         self.check(now)?;
         control.validate()?;
@@ -532,6 +573,14 @@ impl Stream {
                 let room = self.scope.room(start.unit)?;
                 authorize(start.unit).map_err(Error::Authority)?;
                 let deadline = self.deadline(&start, first, now)?;
+                self.rejected = None;
+                if reject {
+                    if start.total_length <= self.local.1 {
+                        self.rejected =
+                            Some(Incoming::discard(start, room, deadline, &self.budget)?);
+                    }
+                    return Ok(Admission::Deferred);
+                }
                 if start.total_length <= self.local.1 {
                     self.incoming = Some(Incoming::new(start, room, deadline, &self.budget)?);
                     Ok(Admission::Automatic)
@@ -638,6 +687,15 @@ impl Stream {
                     if workspace_id != self.scope.eligibility_workspace {
                         return Err(Error::Invalid);
                     }
+                    if self.rejected.is_some() && super::fragments::is_fragment(&messages) {
+                        let rejected = self.rejected.as_mut().expect("checked rejected start");
+                        authorize(rejected.start.unit).map_err(Error::Authority)?;
+                        if rejected.frame(messages)? {
+                            self.rejected = None;
+                        }
+                        return Ok((Admission::Deferred, None));
+                    }
+                    self.rejected = None;
                     if let Some(pending) = self.incoming.as_mut() {
                         authorize(pending.start.unit).map_err(Error::Authority)?;
                         Ok((
@@ -673,6 +731,7 @@ impl Stream {
                         return Err(Error::Invalid);
                     }
                     authorize(self.scope.metadata_unit(&message)?).map_err(Error::Authority)?;
+                    self.rejected = None;
                     Ok((
                         Admission::Metadata,
                         Some(PeerFrame::Loro {

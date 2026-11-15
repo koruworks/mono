@@ -7,6 +7,7 @@ use koru_device::cloud::{CloudId, CloudReplicaPrincipalV1};
 use koru_store_core::{DocumentId, WorkspaceId};
 use loro::{ExportMode, LoroDoc};
 use sha2::{Digest, Sha256};
+mod admission;
 mod catalog;
 mod claim_amendment;
 mod claim_reference;
