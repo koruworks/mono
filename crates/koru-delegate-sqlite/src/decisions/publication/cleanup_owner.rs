@@ -61,9 +61,9 @@ pub(super) fn origin(
                     .ok_or(BotLedgerError::Fenced)?;
                 require(
                     matches!(answer.choice, DecisionAnswerChoice::Deny {})
-                        && state.revision == answer.committed_revision
+                        && state.revision >= answer.committed_revision
                         && projection.identity.decision.as_ref().is_some_and(|r| {
-                            r.decision == *decision && r.revision == answer.committed_revision
+                            r.decision == *decision && r.revision == state.revision
                         }),
                 )?;
                 Ok(Some(DecisionCleanupOrigin::Denied {
@@ -124,6 +124,31 @@ pub(super) fn action(origin: &DecisionCleanupOrigin) -> DecisionControlAction {
         },
         _ => DecisionControlAction::Preserve {},
     }
+}
+
+/// At most the latest target and its exact predecessor. During Source+carry
+/// insertion, the accepted Source is newest; it cannot supply the owner itself.
+pub(super) fn retained_for_carry(
+    conn: &Connection,
+    owner: BotOwner,
+    run: RunId,
+) -> Result<Option<DecisionCleanupOrigin>, BotLedgerError> {
+    let Some(latest) = rows::latest(conn, run)? else {
+        return Ok(None);
+    };
+    let latest = read(conn, owner, run, latest)?.ok_or(BotLedgerError::Stale)?;
+    if let Some(origin) = origin(conn, &latest)? {
+        return Ok(Some(origin));
+    }
+    if latest.identity.kind != DecisionProjectionKind::Source {
+        return Ok(None);
+    }
+    let Some(prior) = &latest.target.predecessor().projection else {
+        return Ok(None);
+    };
+    let prior = read(conn, owner, run, prior.transition)?.ok_or(BotLedgerError::Stale)?;
+    require(prior.identity.wait == latest.identity.wait)?;
+    origin(conn, &prior)
 }
 
 pub(super) fn carry(

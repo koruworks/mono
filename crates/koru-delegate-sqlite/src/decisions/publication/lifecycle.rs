@@ -220,7 +220,8 @@ impl RunsDb {
             require(requested.identity.wait==expected.wait)?;
             let expected_decision=expected.decision.as_ref().ok_or(BotLedgerError::Invalid)?;
             require(requested.identity.decision.as_ref().is_some_and(|d|d.decision==expected_decision.decision))?;
-            let (cause,minimum_cleanup_revision)=match cleanup_owner::origin(tx,&requested)? {
+            let offered_origin=cleanup_owner::origin(tx,&requested)?.ok_or(BotLedgerError::Fenced)?;
+            let (cause,minimum_cleanup_revision)=match Some(offered_origin.clone()) {
                 Some(DecisionCleanupOrigin::Requested {cause,expected_wait_revision,..})=>(cause,next(expected_wait_revision)?),
                 Some(DecisionCleanupOrigin::Denied {decision,..}) if decision==expected_decision.decision=>(DecisionClosureReason::Denied,DecisionRevision::new(1).map_err(|_|BotLedgerError::Invalid)?),
                 _=>return Err(BotLedgerError::Conflict),
@@ -233,6 +234,14 @@ impl RunsDb {
                     _=>PriorAttempt::Ended,
                 }}
             };
+            if let Some(retained)=read(tx,expected.owner,expected.run,transition)? {
+                require(retained.identity.wait==expected.wait && retained.identity.sequence==next(requested.identity.sequence)?)?;
+                let RunProjectionTargetV1::Control {action:stored,..}=&retained.target else {return Err(BotLedgerError::Conflict)};
+                require(*stored==action)?;
+            }else{
+                let current=cleanup_owner::current(tx,expected.owner,expected.run)?.ok_or(BotLedgerError::Stale)?;
+                require(current.expected==*expected && current.projection==cleanup_projection && current.origin==offered_origin)?;
+            }
             let result=mutation::consumer_cleanup_on(tx,expected,observation,now)?;
             if result.outcome==crate::WriteOutcome::AlreadyApplied {return commit_control(tx,transition,result,action,now)}
             let mut record=result.record;

@@ -172,12 +172,15 @@ pub(super) fn insert_on(
         action:
             DecisionControlAction::CleanupRequested {
                 expected_wait_revision,
-                ..
+                cause,
             },
         ..
     } = target
     {
-        require(wait.revision == next(*expected_wait_revision)?)?;
+        if wait.revision != next(*expected_wait_revision)? {
+            let retained=super::cleanup_owner::retained_for_carry(tx,owner,run)?;
+            require(retained==Some(DecisionCleanupOrigin::Requested {wait:wait.wait,expected_wait_revision:*expected_wait_revision,cause:*cause}))?;
+        }
     }
     let mut resume = None;
     let decision = match wait.reason {

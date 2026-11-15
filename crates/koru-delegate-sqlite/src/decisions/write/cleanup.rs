@@ -124,6 +124,9 @@ pub(crate) fn consumer_cleanup_on(
     )?;
     drain::correlate(tx, expected.owner, old.wait.origin.bot, native_drain)?;
     effect_outcome(tx, &old, retained_effect_outcome.as_ref())?;
+    let admitted = authority::retained(tx, &old.receipt.binding)?;
+    let elapsed = admitted.active_elapsed_at(now).min(i64::MAX as u64) as i64;
+    tx.execute("UPDATE bot_admissions SET active_elapsed_ms=?2,active_since_ms=NULL,updated_at_ms=max(updated_at_ms,?3) WHERE run_id=?1",params![expected.run.to_storage(),elapsed,now]).map_err(sql)?;
     tx.execute("UPDATE bot_wait_runtime SET cleanup_evidence_json=?2,revision=?3,updated_at_ms=max(updated_at_ms,?4) WHERE wait_id=?1 AND cleanup_evidence_json IS NULL",
         params![expected.wait.to_storage(),encoded(cleanup,DECISION_EVIDENCE_BYTES)?,next(expected.revision)?.get(),now]).map_err(sql)?;
     done(
