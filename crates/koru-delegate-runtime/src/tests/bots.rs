@@ -12,6 +12,196 @@ use koru_delegate_core::decisions::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn decision_cleanup_ownership(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<koru_delegate_sqlite::DecisionCleanupOwnership>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_cleanup_ownership(owner, run)
+    }
+    fn consume_decision_edit(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        request: &koru_delegate_core::PrepareNativeResult,
+        payload: &[u8],
+        fence: &koru_delegate_core::BotExecutionFence,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<koru_delegate_sqlite::NativeLeaseOutcome, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .consume_decision_edit(expected, transition, request, payload, fence, proof, boot)
+    }
+    fn settle_decision_effect(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        outcome: &koru_delegate_core::decisions::DecisionRetainedEffect,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .settle_decision_effect(expected, transition, outcome)
+    }
+    fn settle_decision_wait(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        ack: &koru_delegate_core::decisions::DecisionProjectionAcknowledgment,
+    ) -> Result<koru_delegate_sqlite::DecisionWaitRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .settle_decision_wait(expected, ack)
+    }
+    fn begin_bot_wait_cleanup(
+        &mut self,
+        fence: &koru_delegate_core::decisions::DecisionFence,
+        reason: koru_delegate_core::decisions::BotWaitReason,
+        observed: koru_delegate_core::StreamSequence,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        base: &koru_delegate_core::decisions::DecisionPublicationBase,
+    ) -> Result<koru_delegate_sqlite::DecisionWaitRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .begin_bot_wait_cleanup(fence, reason, observed, transition, base)
+    }
+    fn record_nondecision_cleanup(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        cleanup_projection: koru_delegate_core::decisions::DecisionTransitionId,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        cleanup: &koru_delegate_core::decisions::ConsumerCleanup,
+    ) -> Result<koru_delegate_sqlite::DecisionWaitRecord, BotLedgerError> {
+        self.inner.lock().unwrap().record_nondecision_cleanup(
+            expected,
+            cleanup_projection,
+            transition,
+            cleanup,
+        )
+    }
+    fn answer_bot_decision(
+        &mut self,
+        input: &koru_delegate_sqlite::AnswerDecision,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .answer_bot_decision(input, transition, proof, boot)
+    }
+    fn record_decision_native_answer(
+        &mut self,
+        owner: BotOwner,
+        run: RunId,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        response: &koru_delegate_core::decisions::DecisionNativeResponse,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .record_decision_native_answer(owner, run, transition, response)
+    }
+    fn record_decision_consumer_cleanup(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        cleanup_projection: koru_delegate_core::decisions::DecisionTransitionId,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        observation: &koru_delegate_core::decisions::ConsumerCleanup,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner.lock().unwrap().record_decision_consumer_cleanup(
+            expected,
+            cleanup_projection,
+            transition,
+            observation,
+        )
+    }
+    fn enroll_decision_cleanup(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .enroll_decision_cleanup(expected, transition)
+    }
+    fn record_decision_enrollment(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        reply: &koru_delegate_core::decisions::BotWaitEnrollmentReply,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .record_decision_enrollment(expected, transition, reply)
+    }
+    fn record_decision_origin_stop(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        release: &koru_delegate_core::decisions::OriginWaitStop,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .record_decision_origin_stop(expected, transition, release)
+    }
+    fn reserve_decision_successor(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        host: koru_delegate_core::HostInstanceId,
+        fingerprint: [u8; 32],
+        proof: &FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner.lock().unwrap().reserve_decision_successor(
+            expected,
+            transition,
+            host,
+            fingerprint,
+            proof,
+            boot,
+        )
+    }
+    fn bind_decision_successor(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        creation: koru_delegate_core::IdempotencyKey,
+        host: koru_delegate_core::HostInstanceId,
+        session: koru_delegate_core::SessionId,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .bind_decision_successor(expected, transition, creation, host, session)
+    }
+    fn record_decision_resume_input(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        input: koru_delegate_core::IdempotencyKey,
+        fingerprint: [u8; 32],
+        acknowledgment: Option<&koru_delegate_core::decisions::DecisionInputAcknowledgment>,
+    ) -> Result<koru_delegate_sqlite::DecisionRecord, BotLedgerError> {
+        self.inner.lock().unwrap().record_decision_resume_input(
+            expected,
+            transition,
+            input,
+            fingerprint,
+            acknowledgment,
+        )
+    }
     fn owned_bot_execution_page(
         &self,
         device: DeviceId,
@@ -83,7 +273,8 @@ impl BotLedger for RecordingStore {
         target: &RunProjectionTargetV1,
     ) -> Result<DecisionProjectionRecord, BotLedgerError> {
         self.check("decision_source_before")?;
-        let record = self.inner
+        let record = self
+            .inner
             .lock()
             .unwrap()
             .record_decision_source(owner, transition, wait, base, target)?;
