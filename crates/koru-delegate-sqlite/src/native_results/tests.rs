@@ -11,6 +11,13 @@ mod drain;
 mod memory;
 mod routine;
 
+/// Reuse the actual admission/attempt/policy setup for decision transaction
+/// tests, without a production authority bypass or a second fixture parser.
+pub(crate) fn decision_base() -> (RunsDb, BotExecutionFence, BotPolicyBarrier) {
+    let h = Harness::new();
+    (h.db, h.fence, h.policy)
+}
+
 struct Harness {
     db: RunsDb,
     fence: BotExecutionFence,
