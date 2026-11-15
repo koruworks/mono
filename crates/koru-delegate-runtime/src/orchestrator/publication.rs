@@ -413,6 +413,114 @@ impl Orchestrator {
         true
     }
 
+    /// Final wait settlement and the end of exclusive publication ownership.
+    /// D holds the private proof C requires: the sole handle physically
+    /// returned (`publication_returned`, installed only after Attached
+    /// installation), it is durable and still carries the exact latest
+    /// Applied marker, the journal is empty and no Source retry is staged.
+    /// C settles only the wait, never admission or capacity: a normally
+    /// continuing Run stays Executing. Returns the ordinary stream to pump
+    /// from the accepted Agent frontier once the fence has ended.
+    pub fn settle_publication_wait(&mut self, run: RunId) -> Result<Option<Started>, RunError> {
+        use koru_delegate_core::decisions::{ConsumerCleanup, DecisionPhase};
+        if self
+            .publication_ticket
+            .is_some_and(|ticket| ticket.run == run)
+        {
+            return Ok(None);
+        }
+        let Some(state) = self.runs.get(&run) else {
+            return Ok(None);
+        };
+        if state.decision_source.is_some() {
+            return Ok(None);
+        }
+        let Some(proof) = state
+            .publication_returned
+            .as_ref()
+            .map(|returned| returned.proof.clone())
+        else {
+            return Ok(None);
+        };
+        let owner = self.publication_owner(run)?;
+        if self
+            .bot_ledger()?
+            .next_decision_projection(owner, run)?
+            .is_some()
+        {
+            return Ok(None);
+        }
+        let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+            return Ok(None);
+        };
+        // Avoid futile writer transactions; the C writer remains decisive.
+        let eligible = match &execution.decision_state {
+            Some(decision) => decision.phase == DecisionPhase::Settled,
+            None => matches!(
+                execution.wait.cleanup,
+                Some(ConsumerCleanup::Confirmed { .. })
+            ),
+        };
+        if !eligible {
+            return Ok(None);
+        }
+        let latest = self
+            .bot_ledger()?
+            .latest_applied_decision_projection(owner, run)?
+            .ok_or_else(publication_pending)?;
+        if latest.identity != *proof.identity() {
+            return Ok(None);
+        }
+        let prepared = latest.prepared().ok_or_else(publication_pending)?;
+        let state = self.runs.get(&run).ok_or_else(publication_pending)?;
+        match &state.doc {
+            RunDocumentOwner::Attached {
+                handle,
+                exclusive: true,
+            } if handle.durable() => {
+                handle
+                    .document()
+                    .check_returned_projection(prepared, &proof)?;
+            }
+            _ => return Ok(None),
+        }
+        let ack = DecisionProjectionAcknowledgment {
+            identity: latest.identity.clone(),
+            delta_digest: prepared.delta_digest,
+            observed_version: proof.observed_version().clone(),
+        };
+        self.bot_ledger()?
+            .settle_decision_wait(&execution.expected, &ack)?;
+        // Later ordinary commits on this same handle causally include every
+        // applied projection; a new decision re-enters from a durable base.
+        let state = self.runs.get_mut(&run).ok_or_else(publication_pending)?;
+        if let RunDocumentOwner::Attached { exclusive, .. } = &mut state.doc {
+            *exclusive = false;
+        }
+        state.publication_returned = None;
+        state.source_epoch = None;
+        state.source_obligation = None;
+        state.source_usage.clear();
+        state.decision_cleanup = None;
+        let Some(attempt) = state.attempt.as_ref() else {
+            return Ok(None);
+        };
+        let (attempt_id, generation) = (attempt.id, attempt.generation);
+        let Some(session) = attempt.session else {
+            return Ok(None);
+        };
+        let after = state.source_frontiers.agent_after;
+        let status = state.doc.document()?.header()?.status;
+        let events = self.ports.sessions.subscribe(session, after)?;
+        Ok(Some(Started {
+            run,
+            attempt: attempt_id,
+            generation,
+            status,
+            events: Some(events),
+        }))
+    }
+
     /// Runs whose publication is owned exclusively here, in RunId order. This
     /// is the retained in-memory inventory (bounded by the occupancy owner's
     /// 50 waits plus 2 occupied Runs), not a history scan. The host rotates a

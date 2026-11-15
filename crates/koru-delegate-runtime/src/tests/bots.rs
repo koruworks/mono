@@ -53,6 +53,7 @@ impl BotLedger for RecordingStore {
         expected: &koru_delegate_core::decisions::DecisionWaitExpected,
         ack: &koru_delegate_core::decisions::DecisionProjectionAcknowledgment,
     ) -> Result<koru_delegate_sqlite::DecisionWaitRecord, BotLedgerError> {
+        self.check("decision_wait_settle")?;
         self.inner
             .lock()
             .unwrap()

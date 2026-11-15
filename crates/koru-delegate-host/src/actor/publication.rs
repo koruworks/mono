@@ -68,7 +68,22 @@ impl Actor {
     /// ticket; this only acts on what the orchestrator positively reports.
     pub(super) fn drive_publication(&mut self) {
         self.schedule_publication();
+        self.settle_publication_waits();
         self.connect_source_producers();
+    }
+
+    /// A drained Run whose wait C may now settle leaves exclusive ownership
+    /// and resumes its ordinary stream; admission and capacity are untouched.
+    fn settle_publication_waits(&mut self) {
+        for run in self.orchestrator.publication_candidates() {
+            match self.orchestrator.settle_publication_wait(run) {
+                Ok(Some(started)) => self.pump(started),
+                Ok(None) => {}
+                Err(error) => {
+                    tracing::debug!(target: "koru::delegate", run = ?run, %error, "decision wait not settled");
+                }
+            }
+        }
     }
 
     /// Rotate through the retained exclusive inventory, at most one visit per

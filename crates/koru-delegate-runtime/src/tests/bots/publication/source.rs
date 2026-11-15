@@ -242,3 +242,53 @@ fn decision_source_applied_installs_before_carried_control_replaces_marker() {
             if intent.identity.kind == DecisionProjectionKind::Control));
     h.orchestrator.cancel_unstarted_publication(next);
 }
+
+#[test]
+fn decision_wait_settlement_needs_private_return_proof_and_a_settled_decision() {
+    let (mut h, _, fence) = waiting_with_memory(true);
+    let run = fence.run;
+    // Nothing has physically returned yet: there is no proof to offer C.
+    assert!(
+        h.orchestrator
+            .settle_publication_wait(run)
+            .unwrap()
+            .is_none()
+    );
+    apply_next(&mut h, run);
+    // The exact durable marker returned, but the decision is still open.
+    h.ledger.lock().unwrap().ops.clear();
+    assert!(
+        h.orchestrator
+            .settle_publication_wait(run)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !h.ledger
+            .lock()
+            .unwrap()
+            .ops
+            .contains(&"decision_wait_settle")
+    );
+    assert!(h.orchestrator.run_publication_pending(run));
+    // A staged Source retry also withholds the proof.
+    let epoch = Uuid::new_v4();
+    h.orchestrator.register_source_producer(run, epoch);
+    h.orchestrator
+        .handle_from_producer(run, epoch, source_tool(fence.turn.unwrap(), 8))
+        .unwrap();
+    assert!(h.orchestrator.runs[&run].decision_source.is_some());
+    assert!(
+        h.orchestrator
+            .settle_publication_wait(run)
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        !h.ledger
+            .lock()
+            .unwrap()
+            .ops
+            .contains(&"decision_wait_settle")
+    );
+}

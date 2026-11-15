@@ -6,9 +6,8 @@
 use super::*;
 use crate::orchestrator::state::{DecisionCleanupRequest, DecisionCleanupRetry};
 use koru_delegate_core::decisions::{
-    BotWaitPhase, DecisionClosureReason, DecisionControlAction, DecisionProjectionRecord,
-    DecisionProjectionState, DecisionTransitionId, ObservedCreationRetirement,
-    ObservedRetirementResult, RunProjectionTargetV1,
+    BotWaitPhase, DecisionClosureReason, DecisionTransitionId, ObservedCreationRetirement,
+    ObservedRetirementResult,
 };
 use koru_session_protocol::{CreationLookup, ProcessState};
 use std::time::{Duration, Instant};
@@ -57,9 +56,13 @@ impl Orchestrator {
             retained.identity.document,
             RunDocumentOwner::Unopened,
         );
-        if execution
-            .as_ref()
-            .is_some_and(|execution| retained_cleanup(&retained, execution))
+        // The sole C owner decides cleanup ownership: a Requested Stop/expiry/
+        // authority change, a Koru Deny answer (O109), or a no-decision
+        // obligation. Placement still comes from the retained projection above.
+        if execution.is_some()
+            && ledger
+                .decision_cleanup_ownership(admission.owner, run)?
+                .is_some()
         {
             state.decision_cleanup = Some(DecisionCleanupRetry {
                 request: None,
@@ -99,8 +102,14 @@ impl Orchestrator {
             *exclusive = true;
         }
         // The first retained cleanup owns its cause. A later budget/Stop does
-        // not replace that immutable request or its absorbing terminal outcome.
-        if retained_cleanup(&retained, &execution) {
+        // not replace that immutable request, a Koru Deny answer's ownership
+        // or a no-decision obligation, nor its absorbing terminal outcome.
+        if self
+            .bot_ledger()?
+            .decision_cleanup_ownership(owner, run)?
+            .is_some()
+        {
+            let state = self.runs.get_mut(&run).ok_or_else(publication_pending)?;
             state
                 .decision_cleanup
                 .get_or_insert(DecisionCleanupRetry {
@@ -111,6 +120,7 @@ impl Orchestrator {
                 .request = None;
             return Ok(true);
         }
+        let state = self.runs.get_mut(&run).ok_or_else(publication_pending)?;
         let retry = state
             .decision_cleanup
             .get_or_insert_with(|| DecisionCleanupRetry {
@@ -135,11 +145,14 @@ impl Orchestrator {
             .bot_ledger()?
             .decision_wait_execution(owner, run)?
             .ok_or_else(publication_pending)?;
-        let exact = self
+        // Ownership is re-read after any unknown/replayed write. Another owner
+        // that committed first (a Deny answer, an earlier request) is equally
+        // a durable fence; a rolled-back request is not.
+        let ownership = self
             .bot_ledger()?
-            .decision_projection(owner, run, request.transition)?
+            .decision_cleanup_ownership(owner, run)?
             .ok_or_else(publication_pending)?;
-        if !retained_cleanup(&exact, &current) {
+        if ownership.expected.wait != current.wait.wait {
             return Err(publication_pending().into());
         }
         self.runs
@@ -198,9 +211,6 @@ impl Orchestrator {
         run: RunId,
         owner_stop: bool,
     ) -> Result<bool, RunError> {
-        use koru_delegate_core::decisions::{
-            DecisionClosureReason, DecisionControlAction, RunProjectionTargetV1,
-        };
         let owner = self.publication_owner(run)?;
         let Some(execution) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
             return Err(publication_pending().into());
@@ -211,20 +221,19 @@ impl Orchestrator {
         if !owner_stop {
             return Ok(true);
         }
-        let retained = self
-            .bot_ledger()?
-            .latest_decision_projection(owner, run)?
-            .ok_or_else(publication_pending)?;
-        if retained.identity.wait != execution.wait.wait {
+        // Only the sole C owner says who owns this cleanup. A person's Stop or
+        // execution-budget cancellation is a Requested/Canceled origin; a Koru
+        // Deny or no-decision obligation is not an owner Stop (O109).
+        let Some(ownership) = self.bot_ledger()?.decision_cleanup_ownership(owner, run)? else {
+            return Err(publication_pending().into());
+        };
+        if ownership.expected.wait != execution.wait.wait {
             return Err(publication_pending().into());
         }
         Ok(matches!(
-            retained.target,
-            RunProjectionTargetV1::Control {
-                action: DecisionControlAction::CleanupRequested {
-                    cause: DecisionClosureReason::Canceled,
-                    ..
-                } | DecisionControlAction::Stop {},
+            ownership.origin,
+            koru_delegate_sqlite::DecisionCleanupOrigin::Requested {
+                cause: DecisionClosureReason::Canceled,
                 ..
             }
         ))
@@ -388,18 +397,4 @@ impl Orchestrator {
         }
         Ok(Some(observed))
     }
-}
-
-fn retained_cleanup(
-    retained: &DecisionProjectionRecord,
-    execution: &koru_delegate_sqlite::DecisionWaitExecution,
-) -> bool {
-    execution.wait.phase == BotWaitPhase::CleanupPending
-        && retained.identity.wait == execution.wait.wait
-        && !matches!(retained.state, DecisionProjectionState::Superseded { .. })
-        && matches!(&retained.target,
-            RunProjectionTargetV1::Control {
-                action: DecisionControlAction::CleanupRequested { expected_wait_revision, .. },
-                wait_phase: BotWaitPhase::CleanupPending, ..
-            } if expected_wait_revision.get().checked_add(1) == Some(execution.wait.revision.get()))
 }
