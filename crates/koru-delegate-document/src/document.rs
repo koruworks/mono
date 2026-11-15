@@ -163,6 +163,9 @@ impl RunDocument {
         let known_cohort = match schema {
             1..=RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION => routine.is_none(),
             RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION => routine.is_some(),
+            // Bot5 carries Manual or Routine Bot provenance, never an ordinary
+            // Run; the provenance/origin checks below still apply.
+            crate::RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION => bot.is_some(),
             _ => true, // A newer readable header remains read-only at writable().
         };
         if !known_cohort

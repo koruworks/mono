@@ -9,7 +9,8 @@
 //!
 //! ```text
 //! run       LoroMap   last-writer-wins; written by the executing device (D15)
-//!             schema         i64      ordinary/Interactive 3, Routine 4; reader maximum
+//!             schema         i64      ordinary/Interactive 3, Routine 4, Bot projection 5;
+//!                                     reader maximum
 //!                                     RUN_DOCUMENT_SCHEMA_VERSION — the run's OWN gate,
 //!                                     never `meta.schema_version` (proposal F3)
 //!             id             RunId as text
@@ -88,8 +89,12 @@ pub const SCHEDULE_KIND: &str = "koru-schedule";
 /// The Run document's own version, written to `run.schema`. Gated with
 /// `koru_store_core::version::Compatibility::against(found, this)`: a run
 /// written by a newer build opens read-only here, never refused, and never
-/// through the node model's `meta.schema_version` (proposal F3).
-pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 4;
+/// through the node model's `meta.schema_version` (proposal F3). This is the
+/// reader maximum: Bot5 (Manual and Routine Bot Runs, written by a committed
+/// decision projection) reads and writes here; creation still writes 3 or 4.
+pub const RUN_DOCUMENT_SCHEMA_VERSION: i64 = 5;
+/// Bot Runs upgraded by a committed decision projection, Manual or Routine.
+pub const RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION: i64 = 5;
 /// Ordinary and Interactive Bot creation keeps writing the existing format.
 pub const RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION: i64 = 3;
 /// A Routine Run must retain its coherent scheduled Bot provenance.

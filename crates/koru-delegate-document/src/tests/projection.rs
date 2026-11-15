@@ -159,13 +159,10 @@ fn projection_prepare_is_private_exact_and_bot3_bot4_upgrade_is_specialized() {
         assert_eq!(doc.header().unwrap().bot, h.bot);
         assert_eq!(doc.header().unwrap().origin, h.origin);
         assert_eq!(doc.header().unwrap().native_results, h.native_results);
-        assert!(matches!(
-            doc.set_status(&RunStatus::Cancelled),
-            Err(RunDocumentError::ReadOnly {
-                found: 5,
-                understood: 4
-            })
-        ));
+        // The reader gate understands Bot5: later ordinary writes on the same
+        // handle stay writable once the exclusive window has ended.
+        assert!(doc.compatibility().writable());
+        doc.set_status(&RunStatus::Cancelled).unwrap();
     }
     assert_eq!(
         RunDocument::create(&header()).unwrap().schema_version(),
