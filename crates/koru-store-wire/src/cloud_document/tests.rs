@@ -123,3 +123,16 @@ fn escaped_text_cannot_cross_the_encoded_frame_limit() {
         .validate()
     );
 }
+
+#[test]
+fn removal_controls_match_visible_trash_and_actual_write_presentation_gate() {
+    let mut value = fixture();
+    value.removable_files[0].in_trash = true;
+    assert!(value.to_json().is_err());
+    value.document.blocks[0].in_trash = true;
+    assert!(value.to_json().is_ok());
+    value.can_request_removal = false;
+    assert!(value.to_json().is_err());
+    value.removable_files.clear();
+    assert!(value.to_json().is_ok());
+}

@@ -805,6 +805,8 @@ enum AccountAction {
   ACCOUNT_ACTION_INSPECT_CLOUD_PLAN = 18;
   ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES = 19;
   ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS = 20;
+  ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT = 21;
+  ACCOUNT_ACTION_REMOVE_CLOUD_FILE = 22;
 }
 message AccountCommandRequest {
   HostContext host = 1;
@@ -826,6 +828,10 @@ message AccountCommandRequest {
   optional string cloud_workspace_id = 12;
   optional string cloud_incarnation_id = 13;
   optional string cloud_cursor = 14;
+  // Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+  optional string cloud_document_selection_json = 15;
+  // REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+  optional string cloud_file_node_id = 16;
 }
 message AccountCommandReply {
   uint64 requester = 1;
@@ -917,6 +923,13 @@ message MobileAccountResult {
   // Exact request selectors, echoed for documents on success and failure.
   optional string cloud_workspace_id = 17;
   optional string cloud_incarnation_id = 18;
+  // Echoed on inspection/removal success and failure.
+  optional string cloud_document_selection_json = 19;
+  // Validated detached passive projection, <=1 MiB UTF-8 bytes.
+  optional string cloud_document_inspection_json = 20;
+  optional string cloud_file_node_id = 21;
+  // True only after the ordinary remote durable Ack; never bytes-freed evidence.
+  bool cloud_file_removed = 22;
 }
 
 // One Profile's Cloud sync state on this device. Ids, booleans, counts and a

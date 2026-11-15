@@ -22,6 +22,8 @@ public  final class AccountCommandRequest extends
     cloudWorkspaceId_ = "";
     cloudIncarnationId_ = "";
     cloudCursor_ = "";
+    cloudDocumentSelectionJson_ = "";
+    cloudFileNodeId_ = "";
   }
   private int bitField0_;
   public static final int HOST_FIELD_NUMBER = 1;
@@ -752,6 +754,166 @@ public  final class AccountCommandRequest extends
     checkByteStringIsUtf8(value);
     cloudCursor_ = value.toStringUtf8();
     bitField0_ |= 0x00000020;
+  }
+
+  public static final int CLOUD_DOCUMENT_SELECTION_JSON_FIELD_NUMBER = 15;
+  private java.lang.String cloudDocumentSelectionJson_;
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return Whether the cloudDocumentSelectionJson field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudDocumentSelectionJson() {
+    return ((bitField0_ & 0x00000040) != 0);
+  }
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The cloudDocumentSelectionJson.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudDocumentSelectionJson() {
+    return cloudDocumentSelectionJson_;
+  }
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The bytes for cloudDocumentSelectionJson.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudDocumentSelectionJsonBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudDocumentSelectionJson_);
+  }
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @param value The cloudDocumentSelectionJson to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudDocumentSelectionJson(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000040;
+    cloudDocumentSelectionJson_ = value;
+  }
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   */
+  private void clearCloudDocumentSelectionJson() {
+    bitField0_ = (bitField0_ & ~0x00000040);
+    cloudDocumentSelectionJson_ = getDefaultInstance().getCloudDocumentSelectionJson();
+  }
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @param value The bytes for cloudDocumentSelectionJson to set.
+   */
+  private void setCloudDocumentSelectionJsonBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudDocumentSelectionJson_ = value.toStringUtf8();
+    bitField0_ |= 0x00000040;
+  }
+
+  public static final int CLOUD_FILE_NODE_ID_FIELD_NUMBER = 16;
+  private java.lang.String cloudFileNodeId_;
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return Whether the cloudFileNodeId field is set.
+   */
+  @java.lang.Override
+  public boolean hasCloudFileNodeId() {
+    return ((bitField0_ & 0x00000080) != 0);
+  }
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return The cloudFileNodeId.
+   */
+  @java.lang.Override
+  public java.lang.String getCloudFileNodeId() {
+    return cloudFileNodeId_;
+  }
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return The bytes for cloudFileNodeId.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getCloudFileNodeIdBytes() {
+    return com.google.protobuf.ByteString.copyFromUtf8(cloudFileNodeId_);
+  }
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @param value The cloudFileNodeId to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setCloudFileNodeId(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    bitField0_ |= 0x00000080;
+    cloudFileNodeId_ = value;
+  }
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   */
+  private void clearCloudFileNodeId() {
+    bitField0_ = (bitField0_ & ~0x00000080);
+    cloudFileNodeId_ = getDefaultInstance().getCloudFileNodeId();
+  }
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @param value The bytes for cloudFileNodeId to set.
+   */
+  private void setCloudFileNodeIdBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    cloudFileNodeId_ = value.toStringUtf8();
+    bitField0_ |= 0x00000080;
   }
 
   public static app.koru.contract.api.v1.AccountCommandRequest parseFrom(
@@ -1597,6 +1759,168 @@ public  final class AccountCommandRequest extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return Whether the cloudDocumentSelectionJson field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudDocumentSelectionJson() {
+      return instance.hasCloudDocumentSelectionJson();
+    }
+    /**
+     * <pre>
+     * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return The cloudDocumentSelectionJson.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudDocumentSelectionJson() {
+      return instance.getCloudDocumentSelectionJson();
+    }
+    /**
+     * <pre>
+     * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return The bytes for cloudDocumentSelectionJson.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudDocumentSelectionJsonBytes() {
+      return instance.getCloudDocumentSelectionJsonBytes();
+    }
+    /**
+     * <pre>
+     * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @param value The cloudDocumentSelectionJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudDocumentSelectionJson(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudDocumentSelectionJson(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudDocumentSelectionJson() {
+      copyOnWrite();
+      instance.clearCloudDocumentSelectionJson();
+      return this;
+    }
+    /**
+     * <pre>
+     * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+     * </pre>
+     *
+     * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+     * @param value The bytes for cloudDocumentSelectionJson to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudDocumentSelectionJsonBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudDocumentSelectionJsonBytes(value);
+      return this;
+    }
+
+    /**
+     * <pre>
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * </pre>
+     *
+     * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+     * @return Whether the cloudFileNodeId field is set.
+     */
+    @java.lang.Override
+    public boolean hasCloudFileNodeId() {
+      return instance.hasCloudFileNodeId();
+    }
+    /**
+     * <pre>
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * </pre>
+     *
+     * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+     * @return The cloudFileNodeId.
+     */
+    @java.lang.Override
+    public java.lang.String getCloudFileNodeId() {
+      return instance.getCloudFileNodeId();
+    }
+    /**
+     * <pre>
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * </pre>
+     *
+     * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+     * @return The bytes for cloudFileNodeId.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getCloudFileNodeIdBytes() {
+      return instance.getCloudFileNodeIdBytes();
+    }
+    /**
+     * <pre>
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * </pre>
+     *
+     * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+     * @param value The cloudFileNodeId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudFileNodeId(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.setCloudFileNodeId(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * </pre>
+     *
+     * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearCloudFileNodeId() {
+      copyOnWrite();
+      instance.clearCloudFileNodeId();
+      return this;
+    }
+    /**
+     * <pre>
+     * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+     * </pre>
+     *
+     * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+     * @param value The bytes for cloudFileNodeId to set.
+     * @return This builder for chaining.
+     */
+    public Builder setCloudFileNodeIdBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setCloudFileNodeIdBytes(value);
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.AccountCommandRequest)
   }
   @java.lang.Override
@@ -1628,11 +1952,14 @@ public  final class AccountCommandRequest extends
             "cloudWorkspaceId_",
             "cloudIncarnationId_",
             "cloudCursor_",
+            "cloudDocumentSelectionJson_",
+            "cloudFileNodeId_",
           };
           java.lang.String info =
-              "\u0000\u000e\u0000\u0001\u0001\u000e\u000e\u0000\u0001\u0000\u0001\u1009\u0000\u0002" +
+              "\u0000\u0010\u0000\u0001\u0001\u0010\u0010\u0000\u0001\u0000\u0001\u1009\u0000\u0002" +
               "\u000b\u0003\u0003\u0004\f\u0005\u0003\u0006\u0208\u0007\u0208\b\u0208\t\u1003\u0001" +
-              "\n\u021a\u000b\u1007\u0002\f\u1208\u0003\r\u1208\u0004\u000e\u1208\u0005";
+              "\n\u021a\u000b\u1007\u0002\f\u1208\u0003\r\u1208\u0004\u000e\u1208\u0005\u000f\u1208" +
+              "\u0006\u0010\u1208\u0007";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

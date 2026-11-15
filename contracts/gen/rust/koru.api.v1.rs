@@ -1263,6 +1263,12 @@ pub struct AccountCommandRequest {
     pub cloud_incarnation_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag="14")]
     pub cloud_cursor: ::core::option::Option<::prost::alloc::string::String>,
+    /// Exact account/Workspace/incarnation/unit/document/head selection, <=1024 UTF-8 bytes.
+    #[prost(string, optional, tag="15")]
+    pub cloud_document_selection_json: ::core::option::Option<::prost::alloc::string::String>,
+    /// REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+    #[prost(string, optional, tag="16")]
+    pub cloud_file_node_id: ::core::option::Option<::prost::alloc::string::String>,
 }
 #[allow(clippy::derive_partial_eq_without_eq)]
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1428,6 +1434,17 @@ pub struct MobileAccountResult {
     pub cloud_workspace_id: ::core::option::Option<::prost::alloc::string::String>,
     #[prost(string, optional, tag="18")]
     pub cloud_incarnation_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// Echoed on inspection/removal success and failure.
+    #[prost(string, optional, tag="19")]
+    pub cloud_document_selection_json: ::core::option::Option<::prost::alloc::string::String>,
+    /// Validated detached passive projection, <=1 MiB UTF-8 bytes.
+    #[prost(string, optional, tag="20")]
+    pub cloud_document_inspection_json: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag="21")]
+    pub cloud_file_node_id: ::core::option::Option<::prost::alloc::string::String>,
+    /// True only after the ordinary remote durable Ack; never bytes-freed evidence.
+    #[prost(bool, tag="22")]
+    pub cloud_file_removed: bool,
 }
 /// One Profile's Cloud sync state on this device. Ids, booleans, counts and a
 /// stable code only — never a Workspace name, a path or a credential.
@@ -1653,6 +1670,8 @@ pub enum AccountAction {
     InspectCloudPlan = 18,
     InspectCloudUsageWorkspaces = 19,
     InspectCloudUsageDocuments = 20,
+    InspectCloudDocument = 21,
+    RemoveCloudFile = 22,
 }
 impl AccountAction {
     /// String value of the enum field names used in the ProtoBuf definition.
@@ -1681,6 +1700,8 @@ impl AccountAction {
             AccountAction::InspectCloudPlan => "ACCOUNT_ACTION_INSPECT_CLOUD_PLAN",
             AccountAction::InspectCloudUsageWorkspaces => "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES",
             AccountAction::InspectCloudUsageDocuments => "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS",
+            AccountAction::InspectCloudDocument => "ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT",
+            AccountAction::RemoveCloudFile => "ACCOUNT_ACTION_REMOVE_CLOUD_FILE",
         }
     }
     /// Creates an enum from field names used in the ProtoBuf definition.
@@ -1706,6 +1727,8 @@ impl AccountAction {
             "ACCOUNT_ACTION_INSPECT_CLOUD_PLAN" => Some(Self::InspectCloudPlan),
             "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_WORKSPACES" => Some(Self::InspectCloudUsageWorkspaces),
             "ACCOUNT_ACTION_INSPECT_CLOUD_USAGE_DOCUMENTS" => Some(Self::InspectCloudUsageDocuments),
+            "ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT" => Some(Self::InspectCloudDocument),
+            "ACCOUNT_ACTION_REMOVE_CLOUD_FILE" => Some(Self::RemoveCloudFile),
             _ => None,
         }
     }
