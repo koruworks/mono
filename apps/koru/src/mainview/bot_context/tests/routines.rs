@@ -780,8 +780,16 @@ fn routine_detail_stale_and_existing_tab_expected_bot() {
     assert!(v.bot_context_action(refresh));
     let (seq, _, _) = detail_request(&mut v, &commands);
     detail_answer(&mut v, &tx, &bot, seq, id, Ok(detail_page(&bot, &p, id)));
+    let bot_tab = v
+        .tabs()
+        .iter()
+        .position(|tab| matches!(&tab.view,TabView::Bot(view) if view.bot()==Some(bot.id)))
+        .unwrap();
     v.tabs_mut().push(Tab::ai_chat_existing_at(target, None));
     assert!(!v.open_routine_conversation(bot.id, target));
+    // TabStrip::push selects the inserted ordinary tab. Restore the source
+    // Bot before exercising its independent label callback and held detail.
+    v.tabs_mut().select(bot_tab);
     assert!(held(&mut v).routines.detail.can_open(target));
     assert!(v.bot_context_action(key));
     let label = commands

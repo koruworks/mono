@@ -113,9 +113,6 @@ impl Routines {
     pub fn visible(&self) -> bool {
         self.visible
     }
-    pub fn navigable(&self) -> bool {
-        self.visible && !self.stale && !self.loading() && self.notice.is_none()
-    }
     pub fn read(&mut self) -> Option<Command> {
         if !self.visible || !self.owed || self.asking.is_some() {
             return None;
