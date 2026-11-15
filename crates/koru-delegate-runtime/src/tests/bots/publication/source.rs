@@ -912,7 +912,22 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
         .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
         .unwrap_err();
     let shown = error.to_string();
-    assert!(pending_code(error), "{shown}");
+    let execution = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .decision_wait_execution(fence.owner, run)
+        .unwrap();
+    let state = execution.as_ref().map(|execution| {
+        (
+            execution.wait.phase,
+            execution.decision_state.clone(),
+            execution.resume.as_ref().map(|resume| resume.state.clone()),
+            execution.current_attempt.clone(),
+        )
+    });
+    assert!(pending_code(error), "{shown}: {state:?}");
     let control = latest(&h, &fence);
     assert!(matches!(
         &control.target,
