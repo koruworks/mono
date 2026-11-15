@@ -18,6 +18,7 @@ mod occupancy;
 mod preparation;
 mod projection;
 mod resume;
+mod wait_read;
 
 struct Harness {
     db: RunsDb,
