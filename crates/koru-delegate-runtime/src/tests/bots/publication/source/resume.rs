@@ -35,15 +35,9 @@ fn attach_projection(h: &mut Harness, run: RunId, exclusive: bool) {
     };
 }
 
+/// The dev-only builder's edit, so the fixture edit has one copy.
 fn edit_request() -> crate::DecisionEditRequest {
-    crate::DecisionEditRequest {
-        target: DocumentId::new(),
-        action: DecisionEditAction::EditDocument,
-        operation_id: Uuid::new_v4(),
-        edit_fingerprint: [3; 32],
-        expected_revision: vec![2, 1, 2, 2, 4],
-        payload: b"PRIVATE-EDIT".to_vec(),
-    }
+    crate::test_support::edit_request()
 }
 
 fn edit_decision() -> Chain {
