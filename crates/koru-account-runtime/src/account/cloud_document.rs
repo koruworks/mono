@@ -185,21 +185,25 @@ impl ProductionAccountService {
         }
         let port = self.cloud_document.clone().ok_or(Unavailable)?;
         let removal = matches!(action, CloudDocumentAction::RemoveFile { .. });
-        let result = port.run(context, selection.clone(), action, can_write, cancel);
+        let mut result = port.run(context, selection.clone(), action, can_write, cancel);
         if removal {
             self.cloud_document_page = None;
         }
         if cancel.cancelled() || self.document_context() != Some((context, account)) {
             return Err(if removal { OutcomeUnknown } else { Unavailable });
         }
-        match &result {
+        match &mut result {
             Ok(CloudDocumentOutcome::View(view)) if !removal => {
+                view.can_request_removal &= can_write;
+                if !view.can_request_removal {
+                    view.removable_files.clear();
+                }
                 if view.selection != *selection || view.to_json().is_err() {
                     return Err(Unavailable);
                 }
             }
             Ok(CloudDocumentOutcome::Removed) if removal => {}
-            Ok(_) => return Err(Unavailable),
+            Ok(_) => return Err(if removal { OutcomeUnknown } else { Unavailable }),
             Err(_) => {}
         }
         result
