@@ -1,6 +1,150 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+#[test]
+fn decision_source_preserves_ordinary_subject_refs_without_fabricated_attempt_refs() {
+    let fence = edit().origin();
+    let cases = [
+        (
+            StepKind::ApprovalRequired,
+            TimelineRef::Approval { approval: id(91) },
+            RunFact::ApprovalRequired {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                approval: id(91),
+            },
+            None,
+        ),
+        (
+            StepKind::ApprovalResolved {
+                outcome: ApprovalOutcome::Approved,
+            },
+            TimelineRef::Approval { approval: id(91) },
+            RunFact::ApprovalResolved {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                approval: id(91),
+                outcome: ApprovalOutcome::Approved,
+            },
+            None,
+        ),
+        (
+            StepKind::AttachmentAccepted,
+            TimelineRef::Attachment { attachment: id(91) },
+            RunFact::AttachmentAccepted {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+            },
+            None,
+        ),
+        (
+            StepKind::AttachmentRejected,
+            TimelineRef::Attachment { attachment: id(91) },
+            RunFact::AttachmentRejected {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                attachment: id(91),
+                code: koru_session_protocol::ErrorCode::AttachmentNotFound,
+            },
+            None,
+        ),
+        (
+            StepKind::ChildSessionDetected,
+            TimelineRef::Session { session: id(91) },
+            RunFact::ChildSessionDetected {
+                run: fence.run,
+                attempt: fence.attempt,
+                turn: fence.turn,
+                child: id(91),
+                terminated: false,
+            },
+            Some(RunEvent::ChildSessionDetected),
+        ),
+    ];
+    for (kind, subject, fact, transition) in cases {
+        let prior = target().predecessor().clone();
+        let status = transition.map_or_else(
+            || prior.status.clone(),
+            |event| transition_bot(&prior.status, &event).unwrap(),
+        );
+        let entry = TimelineEntry {
+            id: id(90),
+            kind,
+            refs: TimelineRefs::new([TimelineRef::Turn { turn: fence.turn }, subject]).unwrap(),
+            at_ms: 8,
+        };
+        let source = RunProjectionTargetV1::Source {
+            version: DecisionVersionV1,
+            predecessor: prior,
+            transitions: DecisionList::new(transition.into_iter().collect()).unwrap(),
+            effects: DecisionProjectionEffects {
+                event: None,
+                status,
+                failure_reason: None,
+                economics_at_ms: None,
+                steps: DecisionList::new(vec![entry]).unwrap(),
+                models: DecisionList::default(),
+                publications: DecisionList::new(vec![DecisionProjectionPublication {
+                    event: id(93),
+                    step: Some(id(90)),
+                    fact,
+                }])
+                .unwrap(),
+            },
+            bookkeeping: DecisionSourceBookkeeping {
+                boundary: DecisionSourceBoundary {
+                    fence,
+                    producer_epoch: uuid(92),
+                    stream: DecisionSourceStream::Agent,
+                    sequence: StreamSequence::new(8).unwrap(),
+                    resulting: DecisionSourceFrontiers {
+                        agent_after: Some(StreamSequence::new(8).unwrap()),
+                        session_after: None,
+                    },
+                },
+                unflushed: DecisionList::default(),
+                usage: None,
+                allocated_steps: DecisionList::new(vec![id(90)]).unwrap(),
+            },
+        };
+        assert!(
+            source.validate().is_ok(),
+            "ordinary refs are valid: {:?}",
+            source.effects().steps.as_slice()[0].kind
+        );
+        let bytes = source.canonical_bytes().unwrap();
+        assert_eq!(
+            RunProjectionTargetV1::decode(bytes.as_slice()).unwrap(),
+            source
+        );
+
+        for refs in [
+            vec![TimelineRef::Turn { turn: fence.turn }],
+            vec![TimelineRef::Turn { turn: id(94) }, subject],
+            vec![
+                TimelineRef::Turn { turn: fence.turn },
+                subject,
+                TimelineRef::Attempt { attempt: id(94) },
+            ],
+        ] {
+            let mut wrong = source.clone();
+            if let RunProjectionTargetV1::Source { effects, .. } = &mut wrong {
+                let mut entry = effects.steps.as_slice()[0].clone();
+                entry.refs = TimelineRefs::new(refs).unwrap();
+                effects.steps = DecisionList::new(vec![entry]).unwrap();
+            }
+            assert!(
+                wrong.validate().is_err(),
+                "missing subject, wrong turn or explicit wrong attempt must fail"
+            );
+        }
+    }
+}
+
 fn target() -> RunProjectionTargetV1 {
     RunProjectionTargetV1::Control {
         version: DecisionVersionV1,
