@@ -222,6 +222,26 @@ fn suppressed_batch(batch: &BotReplayBatch) -> BotReplayBatch {
     batch
 }
 
+/// The public closing event of a Bot turn the closure just ended as
+/// "Needed you" (O128): exactly one, only when this call wrote the closure,
+/// never for an exact replay or any other outcome. Not a failure.
+pub(super) fn needed_you_event(
+    attempt: InferenceAttemptId,
+    closure: BotDecisionClosure,
+    at: Timestamp,
+) -> Option<PublicAiEvent> {
+    match closure {
+        BotDecisionClosure::Closed { reason } => Some(PublicAiEvent::NeededYou {
+            attempt_id: attempt,
+            reason,
+            at,
+        }),
+        BotDecisionClosure::ClosedBefore
+        | BotDecisionClosure::AlreadyEnded
+        | BotDecisionClosure::Owed => None,
+    }
+}
+
 fn decision_proof_unavailable() -> AiError {
     // Never shown: a Storage-class result keeps the chat and its staged
     // candidate for the next finite observation (`complete_bot_chat_step`).
@@ -544,7 +564,14 @@ impl WorkerState {
             observed,
             Timestamp::now(),
         ) {
-            Ok(BotDecisionClosure::Closed) => {
+            Ok(
+                closure @ (BotDecisionClosure::Closed { .. } | BotDecisionClosure::ClosedBefore),
+            ) => {
+                // Only after the writer: the one closing event (O128) when
+                // this call wrote the closure, then the transient task goes.
+                if let Some(event) = needed_you_event(attempt, closure, Timestamp::now()) {
+                    self.publish_public(event);
+                }
                 // Only after the writer: remove the matching transient task.
                 for action in &chat.live {
                     if let AgentLiveAction::OfferApproval { invocation, .. }

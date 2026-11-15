@@ -542,9 +542,46 @@ impl AiError {
 
 /// Whether `code` is one of the engine's own stable stop codes, the only
 /// values a reply's `stop_code` may carry: the closed `bot_input_*`
-/// refusals of a Bot task's first input.
+/// refusals of a Bot task's first input, and the two "Needed you" endings of
+/// a Bot turn whose decision wait closed without the work continuing (O128).
 pub fn is_engine_stop_code(code: &str) -> bool {
     koru_delegate_core::BotInputRefusal::from_code(code).is_some()
+        || matches!(code, STOP_DECISION_NEEDED_YOU | STOP_DECISION_DECLINED)
+}
+
+/// The stop code of a Bot turn that ended as "Needed you" for any reason
+/// other than the person declining (expiry, cancel, or one the closure could
+/// not tell apart). Stored in the attempt's open `stop_reason`.
+pub const STOP_DECISION_NEEDED_YOU: &str = "bot_decision_needed_you";
+/// The stop code of a Bot turn that ended as "Needed you" because the person
+/// declined the decision.
+pub const STOP_DECISION_DECLINED: &str = "bot_decision_declined";
+
+/// Why a Bot turn ended as "Needed you" (O128), only as far as the closure
+/// positively knows it. Absent means the closure could not tell the reasons
+/// apart; it is never a guess.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum NeededYouReason {
+    /// The person declined the decision.
+    Declined,
+    /// The decision was not answered in time (it expired or was cancelled).
+    NotAnswered,
+}
+
+impl NeededYouReason {
+    /// The stop code the closure stores for this ending.
+    pub const fn stop_code(reason: Option<Self>) -> &'static str {
+        match reason {
+            Some(Self::Declined) => STOP_DECISION_DECLINED,
+            Some(Self::NotAnswered) | None => STOP_DECISION_NEEDED_YOU,
+        }
+    }
+    /// The positively known reason a stored stop code records, if any.
+    pub fn from_stop_code(code: &str) -> Option<Self> {
+        (code == STOP_DECISION_DECLINED).then_some(Self::Declined)
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
