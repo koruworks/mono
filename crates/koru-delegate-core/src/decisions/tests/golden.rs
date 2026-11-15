@@ -25,9 +25,9 @@ fn decision_binding_golden_bytes_and_domain_digest() {
         expected_digest,
         reference(b"koru.bot.decision.binding.v1\0", expected)
     );
-    println!(
-        "binding golden digest: {}",
-        String::from(DecisionDigest::from_bytes(expected_digest))
+    assert_eq!(
+        String::from(DecisionDigest::from_bytes(expected_digest)),
+        "fc7f1478f1873cfbfcf0c8c1e09b7df1642a5ce6d34db2fe3ae51064d05f839c"
     );
 }
 #[test]
@@ -41,9 +41,9 @@ fn decision_enrollment_golden_bytes_and_domain_digest() {
         expected_digest,
         reference(b"koru.bot.decision.binding.v1", expected)
     );
-    println!(
-        "enrollment golden digest: {}",
-        String::from(DecisionDigest::from_bytes(expected_digest))
+    assert_eq!(
+        String::from(DecisionDigest::from_bytes(expected_digest)),
+        "eea3f6a744b114f2b4095dbcb990e63bf5c6a288a50df0ec9738428c11790b61"
     );
 }
 #[test]
@@ -68,8 +68,8 @@ fn decision_routine_binding_golden_preserves_full_claim_and_route() {
     assert_eq!(b.canonical_bytes().unwrap(), expected);
     let expected_digest = reference(b"koru.bot.decision.binding.v1", expected);
     assert_eq!(*b.digest().unwrap().as_bytes(), expected_digest);
-    println!(
-        "routine binding golden digest: {}",
-        String::from(DecisionDigest::from_bytes(expected_digest))
+    assert_eq!(
+        String::from(DecisionDigest::from_bytes(expected_digest)),
+        "b6f0d0c28bf3046d8990aa7008d4026c5fd58ea8717c42cfa7d92000132dfe9f"
     );
 }
