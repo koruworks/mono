@@ -4853,6 +4853,7 @@ dependencies = [
  "loro",
  "parley",
  "qrcode",
+ "quick-xml 0.41.0",
  "reqwest 0.12.28",
  "serde",
  "serde_json",

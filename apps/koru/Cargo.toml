@@ -171,6 +171,8 @@ parley.workspace = true
 chrono.workspace = true
 qrcode.workspace = true
 reqwest.workspace = true
+# GitHub's public release feed remains available when its REST API is rate limited.
+quick-xml.workspace = true
 # An AI chat tab's title is capped at twenty graphemes (D22): a flag or a
 # family emoji is one character to the reader, and never cut in half.
 unicode-segmentation.workspace = true

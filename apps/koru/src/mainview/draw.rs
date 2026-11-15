@@ -1261,7 +1261,7 @@ impl MainView {
         let w = self.sidebar.full();
         // Monospace: the digits hold still while the number changes under them.
         let badge =
-            koru_ui::KoruMeasurementBadge::measure(&mut self.engine, &format!("{w:.0} px"), 1.0);
+            koru_ui::KoruMeasurementBadge::measure(&mut self.engine, &format!("{w:.0}px"), 1.0);
         let (tw, _) = badge.size();
         let edge = self.sidebar_rect();
         let x = (edge.x + edge.w + 8.0).min((self.viewport.0 - tw - 4.0).max(4.0));

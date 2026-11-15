@@ -61,10 +61,7 @@ pub(crate) use modal::{Delegation, Hit, Outcome, Phase};
 /// resolved once by [`begin`].
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) enum DelegationOrigin {
-    /// Nothing known, so the modal opens empty. No gesture opens it this
-    /// way since the `+` menu's *Delegate* row went (the New… launcher took
-    /// its place); the tests keep it as the subject-less baseline.
-    #[cfg(test)]
+    /// The `+` menu's Delegate row: no subject, so the modal opens empty.
     Blank,
     /// `/delegate` in the editor. The row it was typed on becomes the context
     /// **and what is left of its words becomes the objective** — the command
@@ -125,7 +122,6 @@ impl DelegationOrigin {
                 objective.clone()
             }
             Self::ReRun { seed } => seed.objective.as_str().to_owned(),
-            #[cfg(test)]
             Self::Blank => String::new(),
         }
     }
@@ -157,7 +153,6 @@ impl DelegationOrigin {
     fn pill_anchor(&self) -> Option<(DocumentId, NodeId)> {
         match self {
             // Neither names a row a crumb could go on.
-            #[cfg(test)]
             Self::Blank => None,
             Self::ReRun { .. } => None,
             Self::SlashCommand {
@@ -177,7 +172,6 @@ impl DelegationOrigin {
         match self {
             // A re-run's context is the earlier run's pins, not a row this
             // window is looking at -- see `MainView::rerun_context`.
-            #[cfg(test)]
             Self::Blank => None,
             Self::ReRun { .. } => None,
             Self::SlashCommand {
