@@ -128,6 +128,164 @@ fn anyone() -> Authorize {
     Arc::new(|_| Ok(()))
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inspection_reads_and_edits_missing_local_unfiled_copy_without_store_adoption() {
+    use crate::cloud_inspection_host::{InspectionHub, Owner, Session};
+    use koru_store_wire::cloud_document::{
+        CloudDocumentAction, CloudDocumentInspectionV1, CloudDocumentSelection,
+    };
+    use koru_sync_control::inspection::{InspectionPoll, InspectionRequest};
+    let device = device();
+    let cloud = FakeCloud::default();
+    uploaded(&device, &cloud).await;
+    let unfiled = DocumentId::new();
+    let mut model = koru_core::WorkspaceDoc::create(
+        koru_core::WorkspaceId::from_uuid(device.workspace.as_uuid()),
+        "Retained copy",
+    )
+    .unwrap();
+    model
+        .stamp_document_id(koru_core::DocumentId::from_uuid(unfiled.as_uuid()))
+        .unwrap();
+    let note = model
+        .insert(
+            koru_core::Parent::Root,
+            koru_core::Node::document("Keep note").unwrap(),
+        )
+        .unwrap();
+    let file = model
+        .insert(
+            koru_core::Parent::Node(note),
+            koru_core::Node::file(
+                "File",
+                koru_core::BlobHash::new("b3", &"a".repeat(64)),
+                "text/plain",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let unit = document_unit(device.workspace, unfiled);
+    cloud.put(unit, &model.export_snapshot().unwrap());
+    let replica = replica(&device).await;
+    let scope = workspace_scope(device.workspace, device.profile, device.manifest);
+    let koru_device::cloud::CloudReplicaPrincipalV1::Workspace { incarnation_id, .. } =
+        scope.principal
+    else {
+        panic!()
+    };
+    let account = koru_device::cloud::CloudId::from_bytes(uuid::Uuid::new_v4().into_bytes());
+    let owner = Owner {
+        control_session: uuid::Uuid::new_v4(),
+        owner_scope: 9,
+        account,
+        account_generation: 2,
+    };
+    let selection = CloudDocumentSelection {
+        account_id: account.to_string(),
+        workspace_id: device.workspace.to_storage(),
+        incarnation_id: incarnation_id.to_string(),
+        cloud_unit_id: uuid::Uuid::new_v4().to_string(),
+        document_id: unfiled.to_storage(),
+        source_head_digest: Sha256::digest(cloud.unit(unit).unwrap().oplog_vv().encode())
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect(),
+    };
+    for remove in [false, true] {
+        let driver = Driver::spawn(
+            Sessions::new(cloud.clone(), scope, MemoryBudget::new(64 << 20), 1),
+            parts(replica.client(), device.workspace, Stage::Full, anyone()),
+        );
+        passes(&driver, 1).await;
+        let hub = InspectionHub::new(tokio::runtime::Handle::current());
+        let _registration = hub
+            .register(
+                Session {
+                    control_session: owner.control_session,
+                    account,
+                    account_generation: 2,
+                    scope,
+                },
+                &driver,
+                Arc::new(|| true),
+            )
+            .unwrap();
+        let action = if remove {
+            CloudDocumentAction::RemoveFile {
+                node_id: file.to_storage(),
+            }
+        } else {
+            CloudDocumentAction::Inspect
+        };
+        let token = hub
+            .start(
+                owner,
+                uuid::Uuid::new_v4(),
+                InspectionRequest {
+                    selection: selection.clone(),
+                    action,
+                    can_write: true,
+                },
+            )
+            .unwrap();
+        let answer = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let answer = hub.poll(owner, token);
+                if !matches!(answer, InspectionPoll::Pending) {
+                    break answer;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        if remove {
+            assert!(matches!(answer, InspectionPoll::Removed), "{answer:?}");
+        } else {
+            let InspectionPoll::View { json } = answer else {
+                panic!("{answer:?}")
+            };
+            let view = CloudDocumentInspectionV1::from_json(&json).unwrap();
+            assert_eq!(view.selection, selection);
+            assert!(
+                view.removable_files
+                    .iter()
+                    .any(|r| r.node_id == file.to_storage())
+            );
+        }
+        driver.join().await.unwrap();
+        let workspace = device.workspace;
+        let (listed, local) = replica
+            .with_store(move |store| {
+                (
+                    store.documents(workspace).unwrap(),
+                    store.prepare_document_inspection(
+                        workspace,
+                        unfiled,
+                        koru_store_core::service::DocumentInspectionBudget {
+                            payload_bytes: 1 << 20,
+                            journal_rows: 100,
+                            metadata_bytes: 4096,
+                        },
+                    ),
+                )
+            })
+            .unwrap();
+        assert!(listed.iter().all(|r| r.id != unfiled));
+        assert!(
+            local.is_err() || local.unwrap()().is_err(),
+            "no local body imported"
+        );
+    }
+    let retained = koru_core::WorkspaceDoc::adopt(cloud.unit(unit).unwrap()).unwrap();
+    assert_eq!(
+        retained.read(note).unwrap().content.as_text(),
+        Some("Keep note")
+    );
+    assert!(retained.read(file).is_err());
+    assert!(cloud.log.lock().unwrap().uploaded.contains(&unit));
+}
+
 /// A Workspace with one document that has content, on a device's Store.
 struct Device {
     store: Arc<MemoryStore>,

@@ -232,7 +232,7 @@ pub(crate) fn activate(
             }
         },
     );
-    let service = ProductionAccountService::new(
+    let mut service = ProductionAccountService::new(
         client.clone(),
         signed,
         koru_device::DeviceSigningKey::from_secret_bytes(signing_secret),
@@ -262,6 +262,7 @@ pub(crate) fn activate(
     // regional credential policy: that names the region and issuer a sync
     // credential is verified against. Without one
     // the account works as before and Cloud is not attached.
+    let mut inspection_port = None;
     let cloud: Option<Arc<dyn koru_account_runtime::cloud::Driver>> =
         configuration.credential_rollout.as_ref().map(|policy| {
             let host = super::cloud::MobileCloudHost::new(
@@ -274,6 +275,7 @@ pub(crate) fn activate(
                 // where bytes may be *sent* stays compiled in per region.
                 configuration.origin.clone(),
             );
+            inspection_port = Some(host.inspection_port());
             let coordinator = koru_account_runtime::cloud::Control::start_with_clock(
                 koru_account_runtime::cloud::HostedApi::new(client.clone()),
                 host,
@@ -290,6 +292,9 @@ pub(crate) fn activate(
             );
             Arc::new(coordinator) as Arc<dyn koru_account_runtime::cloud::Driver>
         });
+    if let Some(port) = inspection_port {
+        service = service.with_cloud_document_port(port);
+    }
     let mut composed = MobileAccount::compose(service, bridge, entry, directory, enrollment, cloud);
     let value = Arc::get_mut(&mut composed).expect("new account is not shared yet");
     value.control.set_responder_session_gate(responder_session);
