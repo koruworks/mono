@@ -175,6 +175,11 @@ impl std::error::Error for BotLedgerError {}
 /// Authentication happens before this port. Each mutation is one existing
 /// crash-injectable IMMEDIATE transaction, including its idempotency lookup.
 pub trait BotLedger {
+    fn decision_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError>;
     fn record_decision_source(
         &mut self,
         owner: BotOwner,
