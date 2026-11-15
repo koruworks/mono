@@ -861,6 +861,42 @@ impl WorkspaceDoc {
         Ok(ws)
     }
 
+    /// Read the actual blob slot even when a legacy embed coexists with it.
+    /// Unlike the forgiving content projection, malformed slot fields fail.
+    /// This does not expand an embed or authorize editing its target. Callers
+    /// establishing complete source semantics still use the strict raw walk.
+    pub fn retained_blob(&self, target: NodeId) -> Result<Option<Content>> {
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        let Some(raw) = meta.get(K_BLOB) else {
+            return Ok(None);
+        };
+        let hash = as_string(raw)
+            .filter(|s| !s.is_empty())
+            .ok_or(StoreError::Malformed("invalid retained blob"))?;
+        let mime = match meta.get(K_MIME) {
+            None => String::new(),
+            Some(value) => {
+                as_string(value).ok_or(StoreError::Malformed("invalid retained mime"))?
+            }
+        };
+        let dimension = |key| -> Result<Option<u32>> {
+            meta.get(key)
+                .map(|value| {
+                    as_i64(value)
+                        .and_then(|n| u32::try_from(n).ok())
+                        .ok_or(StoreError::Malformed("invalid retained dimension"))
+                })
+                .transpose()
+        };
+        Ok(Some(Content::Blob {
+            hash: BlobHash(hash),
+            mime,
+            width: dimension(K_WIDTH)?,
+            height: dimension(K_HEIGHT)?,
+            attrs: read_attrs(&meta),
+        }))
+    }
+
     pub fn name(&self) -> Option<String> {
         as_string(self.doc.get_map(C_META).get(K_NAME)?)
     }

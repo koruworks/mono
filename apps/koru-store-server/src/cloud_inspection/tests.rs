@@ -326,3 +326,55 @@ fn pure_legacy_edit_never_authors_a_current_tree_and_cross_tree_duplicate_is_ref
     assert!(project(old.clone(), selection).is_err());
     assert!(WorkspaceDoc::adopt_detached_tree(old, DocumentTree::Outline, budget()).is_err());
 }
+
+#[test]
+fn embedded_attachment_discloses_both_slots_and_removes_only_attachment_leaf() {
+    let (mut cloud, selection, root, file) = fixture();
+    let target = cloud
+        .insert(
+            Parent::Root,
+            Node::document("Embedded target survives").unwrap(),
+        )
+        .unwrap();
+    let tree = cloud.doc().get_tree("nodes");
+    let tid = tree
+        .nodes()
+        .into_iter()
+        .find(|tid| {
+            tree.get_meta(*tid)
+                .unwrap()
+                .get("id")
+                .and_then(|v| v.as_value().cloned())
+                == Some(loro::LoroValue::String(file.to_storage().into()))
+        })
+        .unwrap();
+    tree.get_meta(tid)
+        .unwrap()
+        .insert("embed", target.to_storage())
+        .unwrap();
+    let view = project(detached(&cloud), selection.clone()).unwrap();
+    let block = view
+        .document
+        .blocks
+        .iter()
+        .find(|b| b.id == file.to_storage())
+        .unwrap();
+    assert_eq!(block.kind, "file");
+    assert!(block.blob.is_some() && block.reference.is_some());
+    assert!(
+        view.removable_files
+            .iter()
+            .any(|f| f.node_id == file.to_storage())
+    );
+    let delta = remove_file(detached(&cloud), &selection, &file.to_storage(), 42).unwrap();
+    cloud.import(&delta).unwrap();
+    assert!(hashes(&cloud).unwrap().is_empty());
+    assert_eq!(
+        cloud.read(target).unwrap().content.as_text(),
+        Some("Embedded target survives")
+    );
+    assert_eq!(
+        cloud.read(root).unwrap().content.as_text(),
+        Some("Keep this note")
+    );
+}
