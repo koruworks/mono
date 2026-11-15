@@ -2,6 +2,7 @@
 
 //! Bounded account worker and its hosted-account service.
 
+pub mod cloud_document;
 mod cloud_inventory;
 mod cloud_status;
 pub mod cloud_sync;
@@ -949,6 +950,7 @@ pub struct ProductionAccountService {
     responder_session: Option<Arc<crate::enrollment::ResponderSessionGate>>,
     local_profiles: Arc<dyn lifecycle::LocalProfileInventory>,
     cloud_sync: Option<Arc<dyn cloud_sync::CloudSyncPort>>,
+    cloud_document: Option<Arc<dyn cloud_document::CloudDocumentPort>>,
     /// Whether an account has Koru Cloud, as last answered. Memory only, and
     /// read by one thing: a Profile waiting to start syncing
     /// (`cloud_sync::cloud_access_known`).
@@ -1044,6 +1046,7 @@ impl ProductionAccountService {
             responder_session: None,
             local_profiles: ports.local_profiles,
             cloud_sync: ports.cloud_sync,
+            cloud_document: None,
             cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
@@ -1074,6 +1077,15 @@ impl ProductionAccountService {
     /// the same moments, so the two can never disagree about who is signed in.
     pub fn with_cloud(mut self, cloud: Arc<dyn crate::cloud::Driver>) -> Self {
         self.cloud = Some(cloud);
+        self
+    }
+
+    /// Attach the host's exact-scoped detached Cloud inspection carrier.
+    pub fn with_cloud_document_port(
+        mut self,
+        port: Arc<dyn cloud_document::CloudDocumentPort>,
+    ) -> Self {
+        self.cloud_document = Some(port);
         self
     }
 
@@ -2383,6 +2395,7 @@ impl AccountService for ProductionAccountService {
             responder_session: self.responder_session.clone(),
             local_profiles: self.local_profiles.clone(),
             cloud_sync: self.cloud_sync.clone(),
+            cloud_document: self.cloud_document.clone(),
             cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
