@@ -38,8 +38,8 @@ use koru_delegate_scope::{ReconcileReport, ScopeClaims, ScopeIdentity, ScopeRefu
 use crate::{CaptureFailure, PortError, Ports, SessionEvents, SourceRefusal};
 
 pub use create::CreateIntentStatus;
-pub use deletion::{Purged, RunPlace};
 pub use decisions::{DecisionEditRequest, DecisionEnrollmentBridge, DecisionResumeStep};
+pub use deletion::{Purged, RunPlace};
 pub use events::TOOL_STEP_BOUND;
 pub use publication::source::{SourceProducer, SourceProgress};
 pub use state::RunState;
@@ -367,6 +367,11 @@ pub struct Orchestrator {
     bot_boot: bot_boot::BootCoordination,
     publication_ticket: Option<crate::RunPublicationTicket>,
     publication_retry: record::PublicationRetry,
+    /// Runs whose open decision wait this process published for their tool
+    /// classification (O147), with their owner. Bounded by the ledger's
+    /// open-wait caps; a Run leaves only when a read proves no wait open.
+    decision_authority: std::collections::BTreeMap<RunId, koru_delegate_core::BotOwner>,
+    decision_authority_seeded: bool,
 }
 
 impl Orchestrator {
@@ -382,6 +387,8 @@ impl Orchestrator {
             publication_ticket: None,
             scope_recovery_incomplete: false,
             publication_retry: record::PublicationRetry::default(),
+            decision_authority: std::collections::BTreeMap::new(),
+            decision_authority_seeded: false,
         }
     }
 

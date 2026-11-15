@@ -210,7 +210,10 @@ impl RunStore for RecordingStore {
         after: Option<RunId>,
         limit: usize,
     ) -> Result<Vec<RunId>, LedgerError> {
-        self.inner.lock().unwrap().decision_projection_runs(after, limit)
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_projection_runs(after, limit)
     }
     fn pending_publication_run_anchor(
         &self,
@@ -1026,11 +1029,15 @@ impl Sessions for ScriptedSessions {
         _decision: koru_delegate_core::ApprovalDecision,
         _choice: Option<koru_delegate_core::ApprovalChoiceId>,
     ) -> PortResult<()> {
-        self.script.lock().unwrap().calls.push(Call::AnswerApproval {
-            session,
-            key,
-            approval,
-        });
+        self.script
+            .lock()
+            .unwrap()
+            .calls
+            .push(Call::AnswerApproval {
+                session,
+                key,
+                approval,
+            });
         Ok(())
     }
     fn observe(&mut self, session: SessionId) -> PortResult<AgentEventObservation> {
@@ -1282,6 +1289,14 @@ pub(crate) struct AuthorityLog {
     pub forgotten: Vec<RunId>,
     /// When set, the next `launch` refuses with this code.
     pub refuse: Option<&'static str>,
+    /// Every decision-wait publication (O147), in order.
+    pub waits: Vec<(
+        RunId,
+        Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    )>,
 }
 
 /// A run authority the tests can read: it mints a distinct bearer per
@@ -1302,6 +1317,17 @@ pub(crate) const RUN_TOOLS: [&str; 6] = [
 ];
 
 impl McpEndpoints for StubMcp {
+    fn publish_decision_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    ) -> PortResult<()> {
+        self.log.lock().unwrap().waits.push((run, wait));
+        Ok(())
+    }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let mut log = self.log.lock().unwrap();
         if let Some(code) = log.refuse.take() {

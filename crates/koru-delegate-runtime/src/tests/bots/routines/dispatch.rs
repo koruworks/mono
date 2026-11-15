@@ -12,6 +12,16 @@ struct FailPolicyAfterMcp {
     uncertain: bool,
 }
 impl McpEndpoints for FailPolicyAfterMcp {
+    fn publish_decision_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    ) -> PortResult<()> {
+        self.inner.publish_decision_wait(run, wait)
+    }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let run = launch.run;
         let result = self.inner.launch(launch)?;

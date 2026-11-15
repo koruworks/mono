@@ -156,6 +156,17 @@ impl koru_delegate_scope::ScopeRoots for NeverRoots {
 }
 struct NeverMcp;
 impl McpEndpoints for NeverMcp {
+    fn publish_decision_wait(
+        &mut self,
+        _: RunId,
+        _: Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    ) -> PortResult<()> {
+        // These actor tests open no decision wait, so nothing is published.
+        Ok(())
+    }
     fn launch(&mut self, _: McpLaunch<'_>) -> PortResult<koru_session_protocol::DelegationLaunch> {
         unreachable!()
     }

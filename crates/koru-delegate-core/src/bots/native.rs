@@ -22,6 +22,29 @@ pub enum RunToolAuthority {
         provenance: crate::BotProvenance,
         policy: CapturedBotPolicy,
     },
+    /// IPC 16 (decision contract section 3): the same Bot Run while its
+    /// decision wait is open. Never Ordinary and never a lease: callers allow
+    /// reads, retained replay and the exact decision retry, and refuse new
+    /// unrelated mutations. `phase` is the decision's phase as the delegate
+    /// last read it from its ledger.
+    BotDecisionWait {
+        provenance: crate::BotProvenance,
+        policy: CapturedBotPolicy,
+        decision: crate::decisions::DecisionId,
+        phase: crate::decisions::DecisionPhase,
+    },
+}
+impl RunToolAuthority {
+    /// The Bot subject of either Bot classification; `None` for Ordinary.
+    pub fn bot_subject(&self) -> Option<(&crate::BotProvenance, &CapturedBotPolicy)> {
+        match self {
+            Self::Ordinary {} => None,
+            Self::Bot { provenance, policy }
+            | Self::BotDecisionWait {
+                provenance, policy, ..
+            } => Some((provenance, policy)),
+        }
+    }
 }
 impl std::fmt::Debug for RunToolAuthority {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

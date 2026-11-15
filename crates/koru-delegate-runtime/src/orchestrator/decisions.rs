@@ -20,6 +20,7 @@ use koru_delegate_core::{
 };
 use koru_delegate_sqlite::{AnswerDecision, DecisionRecord};
 
+mod authority;
 mod driver;
 mod edit;
 mod launch;
@@ -131,9 +132,13 @@ impl Orchestrator {
             routine_policy: None,
         });
         let base = self.decision_base(run)?;
-        Ok(self
+        let record = self
             .bot_ledger()?
-            .prepare_bot_decision(&binding, proof, boot, &base)?)
+            .prepare_bot_decision(&binding, proof, boot, &base)?;
+        // The wait is open: publish it for the Run's classification (O147)
+        // before the caller learns of the decision.
+        self.sync_decision_authority(fence.owner, run)?;
+        Ok(record)
     }
 
     /// The attached document's current state as the first projection base.

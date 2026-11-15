@@ -45,10 +45,11 @@ use std::time::Duration;
 /// edit path is exactly the ordinary one and no decision command is sent.
 /// Opening it is an availability transition the delivery lead reviews.
 ///
-/// **Must stay `false` until the decision-wait mutation fence lands (O147):**
-/// the authenticated `BotDecisionWait` classification that refuses
-/// unrelated model mutations, including AI Routine Create/Retry, while a
-/// decision waits. That fence is a wire change and is not in this build.
+/// The decision-wait mutation fence (O147) has landed: while a decision
+/// waits the Run classifies as `BotDecisionWait` and new unrelated model
+/// mutations, AI Routine Create/Retry included, are refused. What still
+/// gates this constant is the delivery lead's exposure review (with O144
+/// and O128); it is not turned on here.
 pub(super) const EDIT_DECISIONS_AVAILABLE: bool = false;
 
 /// How long the immediate response may wait for the initial projection's
@@ -385,11 +386,13 @@ pub(super) fn status_unknown(key: &NativeResultKey) -> ToolFailure {
     )
 }
 
-fn in_progress(key: &NativeResultKey) -> ToolFailure {
+/// Also the O147 wait fence's refusal: typed and not retryable while the
+/// wait is open.
+pub(super) fn in_progress(key: &NativeResultKey) -> ToolFailure {
     keyed(
         key,
         "decision_in_progress",
-        "Another approval request owns this task. No new edit can be asked until it is answered; do not retry this edit under a new operation.",
+        "Another approval request owns this task. No new change can be made until it is answered; do not retry it under a new operation.",
     )
 }
 

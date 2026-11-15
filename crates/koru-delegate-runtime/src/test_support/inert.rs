@@ -360,12 +360,21 @@ impl ScopeRoots for FixtureRoots {
 /// store keeps it. The endpoint is a loopback address nothing listens on.
 pub(super) struct RecordingMcp {
     workspaces: HashMap<RunId, PathBuf>,
+    /// The last decision wait published per Run (O147).
+    waits: HashMap<
+        RunId,
+        (
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        ),
+    >,
 }
 
 impl RecordingMcp {
     pub(super) fn new() -> Self {
         Self {
             workspaces: HashMap::new(),
+            waits: HashMap::new(),
         }
     }
 }
@@ -380,6 +389,24 @@ const RUN_TOOLS: [&str; 6] = [
 ];
 
 impl McpEndpoints for RecordingMcp {
+    fn publish_decision_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<(
+            koru_delegate_core::decisions::DecisionId,
+            koru_delegate_core::decisions::DecisionPhase,
+        )>,
+    ) -> PortResult<()> {
+        match wait {
+            Some(wait) => {
+                self.waits.insert(run, wait);
+            }
+            None => {
+                self.waits.remove(&run);
+            }
+        }
+        Ok(())
+    }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         self.workspaces
             .insert(launch.run, launch.run_workspace.to_path_buf());

@@ -77,6 +77,11 @@ impl Orchestrator {
             .ok_or(RunError::UnknownRun)?
             .generation;
         let authority = self.resolve_run_tool_authority(run, generation, device)?;
+        // The open decision wait first (O147): once the launch value is
+        // resolvable again, it already resolves fenced.
+        if let RunToolAuthority::Bot { provenance, .. } = &authority {
+            self.sync_decision_authority(provenance.owner, run)?;
+        }
         self.ports
             .mcp
             .publish_authority(run, generation, authority)?;

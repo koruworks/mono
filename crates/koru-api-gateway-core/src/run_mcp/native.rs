@@ -38,17 +38,19 @@ pub(super) async fn classify(
         BotReply::RunAuthority {
             authority: RunToolAuthority::Ordinary {},
         } => Ok(RunToolAuthority::Ordinary {}),
-        BotReply::RunAuthority {
-            authority: RunToolAuthority::Bot { provenance, policy },
-        } if provenance.valid()
-            && policy.valid()
-            && !provenance.owner.user_scope.as_uuid().is_nil()
-            && !provenance.owner.device.as_uuid().is_nil()
-            && policy.workspace == record.workspace
-            && record.grants.len() == 1
-            && record.grants.contains(&record.workspace) =>
+        BotReply::RunAuthority { authority }
+            if authority.bot_subject().is_some_and(|(provenance, policy)| {
+                provenance.valid()
+                    && policy.valid()
+                    && !provenance.owner.user_scope.as_uuid().is_nil()
+                    && !provenance.owner.device.as_uuid().is_nil()
+                    && policy.workspace == record.workspace
+                    && record.grants.len() == 1
+                    && record.grants.contains(&record.workspace)
+            }) =>
         {
-            Ok(RunToolAuthority::Bot { provenance, policy })
+            // Bot, or the same Bot while its decision wait is open (O147).
+            Ok(authority)
         }
         _ => Err(unavailable()),
     }

@@ -53,6 +53,8 @@ impl Orchestrator {
     ) -> Result<DecisionRecord, RunError> {
         owner_device(fence.owner, device)?;
         if let Some(record) = self.retained_edit_decision(fence, edit)? {
+            // A replay republishes the open wait (O147); history only.
+            self.sync_decision_authority(fence.owner, fence.run)?;
             return Ok(record);
         }
         self.decision_boot_current(boot)?;
@@ -112,9 +114,13 @@ impl Orchestrator {
             routine_policy: None,
         });
         let base = self.decision_base(run)?;
-        Ok(self
+        let record = self
             .bot_ledger()?
-            .prepare_bot_decision(&binding, proof, boot, &base)?)
+            .prepare_bot_decision(&binding, proof, boot, &base)?;
+        // The wait is open: publish it for the Run's classification (O147)
+        // before the caller learns of the decision.
+        self.sync_decision_authority(fence.owner, run)?;
+        Ok(record)
     }
 
     /// The one-use consume, only by the exact acknowledged successor fence.

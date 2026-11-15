@@ -633,10 +633,21 @@ impl Actor {
         if let Err(error) = self.orchestrator.retry_publications(64) {
             tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
         }
-        matches!(
+        let stepped = matches!(
             self.advance_decision_resume(),
             decision_resume::ResumeTurn::Stepped(..)
-        )
+        );
+        self.sync_decision_authorities();
+        stepped
+    }
+
+    /// Republish every open decision wait this process tracks, from the
+    /// ledger (O147), so a settled or closed wait lifts its fence and a
+    /// restart seeds it. A failure keeps the previous, fenced value.
+    pub(super) fn sync_decision_authorities(&mut self) {
+        if let Err(error) = self.orchestrator.sync_decision_authorities() {
+            tracing::warn!(target: "koru::delegate", %error, "decision wait classification not refreshed");
+        }
     }
 
     /// The answer to a person's request, once the run's commits are
@@ -669,7 +680,9 @@ impl Actor {
                     Err(failure) => Response::Failure(failure),
                 };
                 let _ = reply.send(response);
-                // A decision command may have opened or answered a wait.
+                // A decision command may have opened, answered or closed a
+                // wait; its classification follows the ledger.
+                self.sync_decision_authorities();
                 self.decision_resume_pending = true;
                 if queue_changed {
                     self.wake_bots();
