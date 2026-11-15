@@ -7,6 +7,26 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn record_decision_delivery(
+        &mut self,
+        receipt: &BotDeliveryReceipt,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        outcome: koru_delegate_core::decisions::DecisionDeliveryOutcome,
+        step: koru_delegate_core::TimelineEntryId,
+        artifacts: u32,
+        at_ms: i64,
+    ) -> Result<
+        (
+            koru_delegate_core::EventId,
+            koru_delegate_core::decisions::DecisionProjectionRecord,
+        ),
+        BotLedgerError,
+    > {
+        self.0.lock().unwrap().record_decision_delivery(
+            receipt, expected, transition, outcome, step, artifacts, at_ms,
+        )
+    }
     fn decision_native_drain(
         &self,
         owner: BotOwner,
