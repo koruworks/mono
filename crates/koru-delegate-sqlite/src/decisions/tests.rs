@@ -10,7 +10,9 @@ mod answers;
 mod corruption;
 mod enrollment;
 mod native_completion;
+mod observation;
 mod preparation;
+mod projection;
 
 struct Harness {
     db: RunsDb,

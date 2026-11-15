@@ -307,6 +307,13 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
 }
 
 impl BotLedger for RunsDb {
+    fn decision_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError> {
+        RunsDb::decision_wait_execution(self, owner, run)
+    }
     fn record_decision_source(
         &mut self,
         owner: BotOwner,

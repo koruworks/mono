@@ -8,6 +8,7 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Serialize, de::DeserializeOwned};
 
 mod authority;
+mod observation;
 mod publication;
 mod rows;
 // These transaction bodies deliberately have no public committing wrapper yet.
@@ -41,6 +42,18 @@ pub struct DecisionWaitRecord {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub settled_at_ms: Option<i64>,
+}
+
+/// One exact open runtime wait and its retained physical cleanup subject.
+/// Absence means no open wait, never that a process does not exist. A wait
+/// with a missing or mismatched attempt is an error, not an empty observation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionWaitExecution {
+    pub wait: DecisionWaitRecord,
+    pub decision_state: Option<DecisionState>,
+    pub resume: Option<DecisionResume>,
+    pub cleanup_target: DecisionCleanupTarget,
+    pub current_attempt: crate::AttemptRow,
 }
 
 fn sql(error: rusqlite::Error) -> BotLedgerError {

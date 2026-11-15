@@ -96,7 +96,10 @@ fn source_progress(
 ) -> Result<(), BotLedgerError> {
     if let Some(before) = before {
         if before.boundary.fence == next.boundary.fence {
-            require(before.boundary.producer_epoch == next.boundary.producer_epoch)?;
+            // A reconnect changes the physical pump epoch. The actor checks
+            // that epoch before acceptance; it is not a durable permission to
+            // reset either stream frontier. Retained replay still compares the
+            // complete original target, including its original epoch.
             let (sequence, other, next_other) = match next.boundary.stream {
                 DecisionSourceStream::Agent => (
                     before.boundary.resulting.agent_after,
