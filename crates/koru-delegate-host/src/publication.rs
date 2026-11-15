@@ -38,6 +38,7 @@ enum Request {
     Return {
         ticket: RunPublicationTicket,
     },
+    #[cfg_attr(not(test), allow(dead_code))] // sent once the actor composes the mailbox
     Enroll {
         request: EnrollBotWaitCleanup,
     },
@@ -253,6 +254,7 @@ impl PublicationWorker {
     /// this request's key if one came back; otherwise start this request when
     /// the single ticket is idle (no handle out, nothing in flight) and answer
     /// pending. Never blocks the caller and never invents a reply.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn enrollment(
         &mut self,
         request: &EnrollBotWaitCleanup,
@@ -336,6 +338,7 @@ impl Drop for PublicationWorker {
 }
 
 /// What a driver turn hears while enrollment is not finished.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn enrollment_pending() -> PortError {
     PortError::new(
         Port::Documents,
