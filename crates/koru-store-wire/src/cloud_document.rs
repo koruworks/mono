@@ -132,7 +132,7 @@ impl CloudDocumentInspectionV1 {
             if let Some(parent) = &block.parent_id {
                 parents.insert(parent.as_str());
             }
-            if matches!(block.kind.as_str(), "file" | "image") && block.blob.is_some() {
+            if matches!(block.kind.as_str(), "file" | "image" | "canvas") && block.blob.is_some() {
                 eligible.insert(block.id.as_str());
             }
             text.add(&block.kind)?;
@@ -249,6 +249,8 @@ pub struct DocumentProjection {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BlockProjection {
+    /// Inherited as well as direct in-document Trash membership.
+    pub in_trash: bool,
     pub id: String,
     pub parent_id: Option<String>,
     pub kind: String,
@@ -334,10 +336,7 @@ pub enum EntityReference {
     Label {
         value: String,
     },
-    /// A delegated run, by its Run document (P1.18). The pill's stored
-    /// record is a reference homed at the run under the `koru.run` role
-    /// (proposal §3.2); the phone opens it on the Run screen, and names the
-    /// executing device from the run's header rather than from the pill.
+    /// Passive run identity; never a navigation or execution grant.
     Run {
         document_id: String,
     },
@@ -375,4 +374,18 @@ impl CloudDocumentFailure {
             Self::OutcomeUnknown => "cloud_edit_outcome_unknown",
         }
     }
+}
+
+/// A detached view or a completed ordinary remote publication. `Removed` does
+/// not assert released bytes; authoritative inventory and usage must be read.
+#[derive(Serialize, Deserialize)]
+#[serde(
+    tag = "status",
+    content = "view",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
+pub enum CloudDocumentOutcome {
+    View(CloudDocumentInspectionV1),
+    Removed,
 }

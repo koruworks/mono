@@ -8,6 +8,7 @@
 
 mod attributes;
 mod cli;
+pub mod cloud_inspection;
 mod console;
 mod daemon;
 mod derived;
