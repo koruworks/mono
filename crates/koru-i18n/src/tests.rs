@@ -364,3 +364,29 @@ fn ending_a_step_and_ending_a_run_are_different_sentences_in_every_language() {
         );
     }
 }
+
+/// O128: a Bot turn's "Needed you" closing line has both sentences in every
+/// language, in sentence case, and neither reads as an error.
+#[test]
+fn needed_you_closing_lines_exist_in_every_language() {
+    assert_eq!(
+        t(Lang::En, Key::BotsNeededYouDeclined),
+        "You declined this, so the Bot stopped."
+    );
+    assert_eq!(
+        t(Lang::En, Key::BotsNeededYouUnanswered),
+        "The Bot stopped because it needed your decision."
+    );
+    for key in [Key::BotsNeededYouDeclined, Key::BotsNeededYouUnanswered] {
+        for lang in Lang::ALL {
+            let value = t(lang, key);
+            assert!(!value.trim().is_empty(), "{key:?} in {}", lang.tag());
+            assert_ne!(
+                value,
+                t(lang, Key::AiFailureGeneric),
+                "{key:?} in {}",
+                lang.tag()
+            );
+        }
+    }
+}
