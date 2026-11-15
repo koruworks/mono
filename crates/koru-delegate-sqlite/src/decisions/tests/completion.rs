@@ -18,7 +18,7 @@ pub(super) fn ack(record: &DecisionProjectionRecord) -> DecisionProjectionAcknow
 
 /// A native prompt answered and acknowledged: the decision settles while the
 /// native runtime continues. The returned Control is still pending.
-fn native_settled(allow: bool) -> (Harness, DecisionRecord, DecisionProjectionRecord) {
+pub(super) fn native_settled(allow: bool) -> (Harness, DecisionRecord, DecisionProjectionRecord) {
     let (mut h, record) = lifecycle::native_ready();
     let f = h.origin();
     let input = h.answer_input(&record, allow);

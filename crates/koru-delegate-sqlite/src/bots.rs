@@ -5,6 +5,7 @@
 use crate::LedgerError;
 mod repository;
 pub(crate) use repository::bounded_owned_executions;
+pub(crate) use repository::delivery_on;
 pub(crate) mod routines;
 pub use routines::RoutinePolicyRecord;
 pub use routines::{
@@ -354,6 +355,20 @@ pub trait BotLedger {
         run: RunId,
         decision: koru_delegate_core::decisions::DecisionId,
     ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError>;
+    /// Record a delivery receipt (successor-aware, as `record_bot_delivery`)
+    /// and its owed Delivery Control atomically while the handle is held
+    /// exclusively. `artifacts` is D's observed count, used only by Completed.
+    #[allow(clippy::too_many_arguments)]
+    fn record_decision_delivery(
+        &mut self,
+        receipt: &BotDeliveryReceipt,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        outcome: koru_delegate_core::decisions::DecisionDeliveryOutcome,
+        step: koru_delegate_core::TimelineEntryId,
+        artifacts: u32,
+        at_ms: i64,
+    ) -> Result<(koru_delegate_core::EventId, DecisionProjectionRecord), BotLedgerError>;
     fn record_decision_source(
         &mut self,
         owner: BotOwner,
