@@ -8,6 +8,7 @@ use koru_delegate_core::RunToolAuthority;
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::json;
 use std::sync::Arc;
+mod decision;
 mod dispatch;
 mod memory;
 mod policy;

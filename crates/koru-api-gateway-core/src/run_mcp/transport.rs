@@ -33,6 +33,7 @@ use rmcp::model::{
 use super::{native, tools};
 use crate::GatewayState;
 use koru_delegate_core::RunToolAuthority;
+mod native_bounds;
 mod routine_bounds;
 
 /// The most bytes one JSON-RPC message may carry. Arguments are a path, a
@@ -252,14 +253,22 @@ where
         ClientRequest::CallToolRequest(call) => {
             let routine = is_bot && native::routines::recognizes(call.params.name.as_ref());
             let mutation = routine && native::routines::mutation(call.params.name.as_ref());
+            let native = is_bot && native_bounds::recognizes(call.params.name.as_ref());
             if routine {
                 if let Err(refusal) = routine_bounds::preflight(&id) {
+                    return refusal;
+                }
+            }
+            if native {
+                if let Err(refusal) = native_bounds::preflight(&id) {
                     return refusal;
                 }
             }
             let result = ServerResult::CallToolResult(dispatch(call.params).await);
             if routine {
                 routine_bounds::answer(id, result, mutation)
+            } else if native {
+                native_bounds::answer(id, result)
             } else {
                 answer(id, result)
             }

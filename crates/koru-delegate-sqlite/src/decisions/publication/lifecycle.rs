@@ -244,6 +244,13 @@ impl RunsDb {
         self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
             let (mutation, outcome) =
                 mutation::consume_on(tx, expected, request, payload, fence, proof, boot, now)?;
+            // Consumed replay is read/reconcile-only (contract section 2): it
+            // carries no Execute and records no new projection, whatever
+            // transition the retrying caller minted. The first consume's
+            // Control was committed with that consume.
+            if mutation.outcome == crate::WriteOutcome::AlreadyApplied {
+                return Ok(outcome);
+            }
             commit_control(
                 tx,
                 transition,

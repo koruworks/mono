@@ -131,7 +131,14 @@ impl WorkerState {
 
     fn answer_decision_wait(&mut self, operation: Operation, reply: BotWaitEnrollmentReply) {
         self.decision_waits.finish(&operation.key);
+        // The receipt answers first and alone; the card follows in its own
+        // transaction (O129) and its outcome changes nothing in this reply.
+        let enrolled = matches!(reply, BotWaitEnrollmentReply::Enrolled { .. })
+            .then(|| operation.key.wait.clone());
         operation.reply.send(Ok(reply));
+        if let Some(key) = enrolled {
+            let _ = self.ensure_bot_decision_card(&key);
+        }
     }
 
     fn refuse_decision_wait(&mut self, operation: Operation, code: BotWaitRefusal) {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Native tool orchestration; document semantics remain in the shared MCP owner.
+use super::decision::EditDecisions;
 use super::*;
 use crate::GatewayState;
 use koru_ai_server::{
@@ -29,6 +30,13 @@ trait PolicySource {
     ) -> Result<(), ToolFailure> {
         Ok(())
     }
+    /// Hand the AI the exact positive decision receipt the owner answered,
+    /// so its card can name the binding, human and revision. History only:
+    /// it grants nothing, and a failure never changes the tool's answer.
+    fn record_decision(
+        &self,
+        view: &koru_delegate_api::bots::DecisionReceiptView,
+    ) -> Result<(), ToolFailure>;
 }
 impl PolicySource for AiWorkerClient {
     fn current(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure> {
@@ -47,6 +55,13 @@ impl PolicySource for AiWorkerClient {
         self.reconcile_native_operation(owner, bot, key)
             .map(|_| ())
             .map_err(|_| failure("native_recovery_pending"))
+    }
+    fn record_decision(
+        &self,
+        view: &koru_delegate_api::bots::DecisionReceiptView,
+    ) -> Result<(), ToolFailure> {
+        self.record_bot_decision(view.clone())
+            .map_err(|_| failure("decision_record_unavailable"))
     }
 }
 pub(super) fn failure(code: &'static str) -> ToolFailure {
@@ -112,6 +127,7 @@ pub(in crate::run_mcp) async fn call(
             captured,
             params.name.as_ref(),
             Value::Object(params.arguments.unwrap_or_default()),
+            EditDecisions::production(),
         )
     })
     .await;
@@ -159,6 +175,7 @@ fn invoke(
     captured: CapturedBotPolicy,
     tool: &str,
     mut arguments: Value,
+    decisions: EditDecisions,
 ) -> Result<Value, ToolFailure> {
     let mutation = match tool {
         "create_document" | "edit_document" => true,
@@ -201,6 +218,13 @@ fn invoke(
             .invoke(&request, tool, arguments)
             .map_err(refused);
     }
+    // The exact denied arguments, retained only if this edit can become a
+    // decision. Computed before the shared builder consumes them.
+    let pacing = match decisions {
+        EditDecisions::Open(pacing) if tool == "edit_document" => Some(pacing),
+        _ => None,
+    };
+    let payload = pacing.and_then(|_| super::decision::payload(&arguments));
     let prepared = backend
         .prepare_native_write(tool, arguments)
         .map_err(refused)?;
@@ -244,76 +268,85 @@ fn invoke(
             .ok_or_else(|| failure("native_execution_unavailable"))?,
         operation_id: operation_id.expect("mutation"),
     };
-    let retained = match owner_call(port, BotCommand::ReconcileNativeResult { key: key.clone() })? {
-        BotReply::Missing => None,
-        BotReply::NativeResult { intent } => {
+    // A typed selected-page denial that may become a decision. Computed from
+    // the classification's captured policy and the current AI proof; the
+    // owner repeats the predicate authoritatively.
+    let denial = pacing.and(payload.as_ref()).and_then(|_| {
+        super::decision::selected_page_denial(
+            &provenance,
+            &captured,
+            &current.proof,
+            record.workspace,
+            description,
+        )
+    });
+    let retained = match port.execute(BotCommand::ReconcileNativeResult { key: key.clone() }) {
+        Ok(BotReply::Missing) => None,
+        Ok(BotReply::NativeResult { intent }) => {
             validate_intent(&intent, &key, &prepared, expected_hash)?;
             Some(intent)
         }
+        // While a decision owns the Run's publication the owner cannot prove
+        // absence; only the decision path's own exact replay can answer.
+        Err(error) if denial.is_some() && error.code == "publication_pending" => None,
         _ => return Err(failure("native_owner_unavailable")),
     };
-    if let Some(intent) = &retained {
-        if intent.stage == NativeResultStage::Registered {
-            return saved(store, &authority, intent);
-        }
-        if intent.stage == NativeResultStage::Refused {
-            return Err(failure("native_request_refused"));
-        }
-        if intent.stage == NativeResultStage::Verified {
-            // Durable evidence belongs to the owner, including edits whose
-            // transport cannot independently prove a second Store outcome.
-            let evidence = intent
-                .verified
-                .as_ref()
-                .filter(|e| {
-                    e.valid()
-                        && e.operation_id == key.operation_id
-                        && e.workspace == intent.destination
-                        && e.document == intent.target
-                })
-                .ok_or_else(|| failure("save_status_unknown"))?;
-            return confirm(
-                port,
-                policy,
+    if let Some(intent) = &retained
+        && let Some(answer) = recover_retained(
+            port,
+            policy,
+            store,
+            &backend,
+            &authority,
+            &provenance,
+            &prepared,
+            intent,
+        )
+    {
+        return answer;
+    }
+    let mut synchronized = false;
+    if retained.is_none()
+        && let (Some(denial), Some(payload), Some(pacing)) = (denial, payload.as_ref(), pacing)
+    {
+        let edit = super::decision::DeniedEdit {
+            fence: &fence,
+            key: &key,
+            denial,
+            fingerprint: expected_hash,
+            expected_revision: description.expected_revision.as_deref().unwrap_or_default(),
+            payload,
+        };
+        let outcome = super::decision::decide(
+            port,
+            provenance.owner,
+            &edit,
+            &current.proof,
+            pacing,
+            &|view| policy.record_decision(view),
+            || {
+                synchronized = true;
+                fresh_fence(port, &current.proof, &fence, &captured)
+            },
+        )?;
+        if let super::decision::DecisionOutcome::Consume { view, boot } = outcome {
+            return consume(
                 store,
+                policy,
+                port,
+                &backend,
                 &authority,
-                intent,
-                NativeWriteEvidence {
-                    kind: match evidence.kind {
-                        NativeResultKind::CreatedPage => NativeWriteKind::Created,
-                        NativeResultKind::EditedPage => NativeWriteKind::Edited,
-                    },
-                    workspace: evidence.workspace,
-                    document: evidence.document,
-                    version: evidence.version.clone(),
-                    title: evidence.title.clone(),
-                    confirmed_at_ms: evidence.confirmed_at_ms,
-                },
+                &provenance,
+                &prepared,
+                &edit,
+                &view,
+                &current.proof,
+                boot,
             );
         }
-        // Recover original Store proof before asking for fresh execution rights.
-        // This can register a held creation after an access-narrowing barrier.
-        match backend.reconcile_native_write(&prepared, store_identity(&provenance, intent)) {
-            Ok(NativeReconciliation::Verified(evidence)) => {
-                return confirm(port, policy, store, &authority, intent, evidence);
-            }
-            Ok(NativeReconciliation::Unconfirmed)
-                if intent.stage == NativeResultStage::Prepared => {}
-            _ => return Err(failure("save_status_unknown")),
-        }
     }
-    super::policy::synchronize(&current.proof, |command| owner_call(port, command))?;
-    match owner_call(
-        port,
-        BotCommand::EffectFence {
-            fence: fence.clone(),
-        },
-    )? {
-        BotReply::EffectFence {
-            fence: observed,
-            policy,
-        } if observed == fence && policy == captured => {}
-        _ => return Err(failure("native_execution_unavailable")),
+    if !synchronized {
+        fresh_fence(port, &current.proof, &fence, &captured)?;
     }
     let title = match description.document {
         Some(document) => {
@@ -356,6 +389,167 @@ fn invoke(
         || policy.uncertain(provenance.owner, provenance.bot, key),
     )?;
     saved(store, &authority, &registered)
+}
+
+/// The existing fresh checks before a lease: current policy synchronization
+/// and the live effect fence with its unchanged captured policy.
+fn fresh_fence(
+    port: &dyn BotDelegatePort,
+    proof: &FreshBotPolicyProof,
+    fence: &BotExecutionFence,
+    captured: &CapturedBotPolicy,
+) -> Result<(), ToolFailure> {
+    super::policy::synchronize(proof, |command| owner_call(port, command))?;
+    match owner_call(
+        port,
+        BotCommand::EffectFence {
+            fence: fence.clone(),
+        },
+    )? {
+        BotReply::EffectFence {
+            fence: observed,
+            policy,
+        } if observed == *fence && policy == *captured => Ok(()),
+        _ => Err(failure("native_execution_unavailable")),
+    }
+}
+
+/// Settle a retained intent from its own evidence, before any fresh right is
+/// asked for. `None` only for an unleased Prepared intent whose Store effect
+/// is positively unconfirmed: the ordinary path may then ask for its one
+/// fresh lease, which the owner itself refuses to grant twice.
+#[allow(clippy::too_many_arguments)]
+fn recover_retained(
+    port: &dyn BotDelegatePort,
+    policy: &dyn PolicySource,
+    store: &StoreWorkerClient,
+    backend: &koru_mcp_server::LocalBackend,
+    authority: &NativeStoreAuthority,
+    provenance: &BotProvenance,
+    prepared: &PreparedNativeWrite,
+    intent: &NativeResultIntentView,
+) -> Option<Result<Value, ToolFailure>> {
+    let key = &intent.key;
+    if intent.stage == NativeResultStage::Registered {
+        return Some(saved(store, authority, intent));
+    }
+    if intent.stage == NativeResultStage::Refused {
+        return Some(Err(failure("native_request_refused")));
+    }
+    if intent.stage == NativeResultStage::Verified {
+        // Durable evidence belongs to the owner, including edits whose
+        // transport cannot independently prove a second Store outcome.
+        let Some(evidence) = intent.verified.as_ref().filter(|e| {
+            e.valid()
+                && e.operation_id == key.operation_id
+                && e.workspace == intent.destination
+                && e.document == intent.target
+        }) else {
+            return Some(Err(failure("save_status_unknown")));
+        };
+        return Some(confirm(
+            port,
+            policy,
+            store,
+            authority,
+            intent,
+            NativeWriteEvidence {
+                kind: match evidence.kind {
+                    NativeResultKind::CreatedPage => NativeWriteKind::Created,
+                    NativeResultKind::EditedPage => NativeWriteKind::Edited,
+                },
+                workspace: evidence.workspace,
+                document: evidence.document,
+                version: evidence.version.clone(),
+                title: evidence.title.clone(),
+                confirmed_at_ms: evidence.confirmed_at_ms,
+            },
+        ));
+    }
+    // Recover original Store proof before asking for fresh execution rights.
+    // This can register a held creation after an access-narrowing barrier.
+    match backend.reconcile_native_write(prepared, store_identity(provenance, intent)) {
+        Ok(NativeReconciliation::Verified(evidence)) => {
+            Some(confirm(port, policy, store, authority, intent, evidence))
+        }
+        Ok(NativeReconciliation::Unconfirmed) if intent.stage == NativeResultStage::Prepared => {
+            None
+        }
+        _ => Some(Err(failure("save_status_unknown"))),
+    }
+}
+
+/// The acknowledged consumer's retry of the exact approved edit: one atomic
+/// consume creates the native intent, its lease and the decision's
+/// consumption together; the existing Store executor and receipt path then
+/// runs once. A replay carries no Execute and only reconciles.
+#[allow(clippy::too_many_arguments)]
+fn consume(
+    store: &StoreWorkerClient,
+    policy: &dyn PolicySource,
+    port: &dyn BotDelegatePort,
+    backend: &koru_mcp_server::LocalBackend,
+    authority: &NativeStoreAuthority,
+    provenance: &BotProvenance,
+    prepared: &PreparedNativeWrite,
+    edit: &super::decision::DeniedEdit<'_>,
+    view: &koru_delegate_api::bots::DecisionReceiptView,
+    proof: &FreshBotPolicyProof,
+    boot: DelegateBootId,
+) -> Result<Value, ToolFailure> {
+    let decisions::DecisionBindingV1::KoruEdit(binding) = &view.receipt.binding else {
+        return Err(failure("native_operation_conflict"));
+    };
+    let description = prepared.description();
+    let document = description
+        .document
+        .ok_or_else(|| failure("native_operation_conflict"))?;
+    let title = koru_ai_server::native_document_title(store.clone(), authority.clone(), document)
+        .map_err(refused)?;
+    let request = PrepareNativeResult {
+        key: edit.key.clone(),
+        kind: NativeResultOperation::EditPage,
+        destination: description.workspace,
+        target: Some(document),
+        request_fingerprint: edit.fingerprint,
+        expected_revision: description.expected_revision.clone(),
+        // The binding's own policy identity: any change refuses consumption.
+        config_revision: binding.global_policy.config_revision.get(),
+        policy_revision: binding.global_policy.policy_revision.get(),
+        title,
+    };
+    let intent = match port.execute(BotCommand::ConsumeDecisionEdit {
+        fence: edit.fence.clone(),
+        request,
+        payload: edit.payload.clone(),
+        proof: proof.clone(),
+        boot,
+    }) {
+        Ok(BotReply::NativeResult { intent }) => intent,
+        // A typed refusal committed nothing; there is no other route to run it.
+        Err(error) if error.code.starts_with("bot_") && !error.retryable => {
+            return Err(failure("native_execution_unavailable"));
+        }
+        // The consume may have committed its one lease: never run it blind.
+        _ => return Err(failure("save_status_unknown")),
+    };
+    validate_intent(&intent, edit.key, prepared, edit.fingerprint)?;
+    if intent.disposition == NativeResultDisposition::Execute {
+        let registered = execute_record(
+            port,
+            &intent,
+            || backend.execute_native_write(prepared, store_identity(provenance, &intent)),
+            || policy.settled(),
+            || policy.uncertain(provenance.owner, provenance.bot, edit.key.clone()),
+        )?;
+        return saved(store, authority, &registered);
+    }
+    // Consumed replay is reconcile-only: never another Execute or Store
+    // request, even when the original lease's outcome is still unknown.
+    recover_retained(
+        port, policy, store, backend, authority, provenance, prepared, &intent,
+    )
+    .unwrap_or_else(|| Err(failure("save_status_unknown")))
 }
 
 /// The single lease-to-settlement state machine for Result and Memory purposes.
