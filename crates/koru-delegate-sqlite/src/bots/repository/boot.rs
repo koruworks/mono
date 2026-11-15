@@ -110,7 +110,7 @@ pub(super) fn recover(db: &mut RunsDb, key: &BotRunKey) -> Result<bool, BotLedge
         if execution_projection(tx,key.run)?.is_none() { return Ok(false); }
         let record=super::super::routines::native_admission(tx,key.run)?;
         let p = &record.submission.provenance;
-        if p.owner != key.owner || p.bot != key.bot { return Err(BotLedgerError::Fenced); }
+        if p.owner != key.owner || p.bot != key.bot { return Ok(false); }
         super::super::routines::execution::retained(tx,&record)?;
         let changed = tx.execute(
             "UPDATE bot_admissions SET state='queued',updated_at_ms=?5
