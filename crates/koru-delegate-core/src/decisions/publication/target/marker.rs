@@ -26,23 +26,13 @@ impl DecisionProjectionMarker {
         timeline_start: u64,
     ) -> Result<Self, DecisionError> {
         target.matches_identity(identity)?;
-        let steps =
-            u64::try_from(target.projected_steps()?.len()).map_err(|_| DecisionError::TooLarge)?;
-        let count = steps
-            .checked_add(u64::from(
-                target
-                    .source_bookkeeping()
-                    .is_some_and(|b| b.usage.is_some()),
-            ))
-            .ok_or(DecisionError::TooLarge)?;
+        require(timeline_start == target.predecessor().timeline_start)?;
         let result = Self {
             identity: identity.clone(),
             status: target.effects().status.clone(),
             bookkeeping: target.resulting_bookkeeping()?,
             timeline_start,
-            timeline_end: timeline_start
-                .checked_add(count)
-                .ok_or(DecisionError::TooLarge)?,
+            timeline_end: target.timeline_end()?,
         };
         result.validate_bound()?;
         Ok(result)

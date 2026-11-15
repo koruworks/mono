@@ -7,7 +7,7 @@
 //! and closed vocabularies, and serializes as the body a pending
 //! publication stores (§7.1's queue) — so a fact is the same bytes on the
 //! first send and on every retry, and the journal dedupes on the
-//! [`koru_delegate_core::EventId`] the orchestrator minted for it.
+//! [`crate::EventId`] the orchestrator minted for it.
 //!
 //! **A fact carries what its row needs.** The body in the queue is what a
 //! re-publication after a restart is rebuilt from, so anything the event

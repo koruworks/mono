@@ -454,7 +454,7 @@ impl Orchestrator {
         Ok(self
             .open_in(run, workspace)?
             .doc
-            .document()
+            .document()?
             .header()?
             .bot
             .is_some())

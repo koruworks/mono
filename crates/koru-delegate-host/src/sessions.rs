@@ -36,6 +36,8 @@ use koru_session_protocol::{
 };
 use koru_session_wire::SubscriptionUpdate;
 
+mod decision;
+
 const PRODUCT: &str = "koru-delegate";
 /// The grid a delegated session is created with. Nobody looks at it until
 /// a person takes control, and a window resizes it then.
@@ -269,6 +271,13 @@ impl HostSessions {
 }
 
 impl Sessions for HostSessions {
+    fn subscribe_decision(
+        &mut self,
+        session: SessionId,
+        after: &koru_delegate_core::decisions::DecisionSourceFrontiers,
+    ) -> PortResult<Box<dyn SessionEvents>> {
+        self.decision_stream(session, after)
+    }
     fn supports_delegation(&self) -> bool {
         self.unary.supports_delegation()
     }

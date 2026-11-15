@@ -26,10 +26,30 @@ pub(super) fn validate(target: &RunProjectionTargetV1) -> Result<(), DecisionErr
     let steps: BTreeMap<_, _> = projected.iter().map(|step| (step.id, step)).collect();
     let mut events = BTreeSet::new();
     let mut referenced = BTreeSet::new();
+    let mut usage_published = false;
+    let mut child_published = false;
     for publication in target.publications() {
         require(events.insert(publication.event) && publication.fact.run() == fence.run)?;
         if matches!(publication.fact, RunFact::Completed { .. }) {
             require(target.delivery().is_some())?;
+        }
+        if let RunFact::ChildSessionDetected { terminated, .. } = &publication.fact {
+            let RunProjectionTargetV1::Source { transitions, .. } = target else {
+                return Err(DecisionError::Invalid);
+            };
+            require(!child_published)?;
+            child_published = true;
+            // The boolean retains request acceptance, never process-death
+            // evidence. It must agree with the exact owner-observed transition.
+            require(if *terminated {
+                transitions.as_slice()
+                    == [
+                        RunEvent::ChildSessionDetected,
+                        RunEvent::ChildSessionTerminated,
+                    ]
+            } else {
+                transitions.as_slice() == [RunEvent::ChildSessionDetected]
+            })?;
         }
         if let RunFact::Usage {
             attempt,
@@ -57,6 +77,8 @@ pub(super) fn validate(target: &RunProjectionTargetV1) -> Result<(), DecisionErr
                     && report.completeness == usage.fact().completeness
                     && report.cached_relationship == usage.cached_input_relationship,
             )?;
+            require(!usage_published)?;
+            usage_published = true;
             continue;
         }
         let id = publication.step.ok_or(DecisionError::Invalid)?;
@@ -105,6 +127,28 @@ pub(super) fn validate(target: &RunProjectionTargetV1) -> Result<(), DecisionErr
                     )
             ))?;
         }
+    }
+    if let RunProjectionTargetV1::Source { transitions, .. } = target {
+        // A Source target is the complete accepted event, not an optional
+        // subset of its bus effects. Bookkeeping-only events have no steps;
+        // every retained source step and usage amendment otherwise has its
+        // stable envelope before Prepared, including fact-only source detail.
+        require(referenced.len() == steps.len())?;
+        require(
+            usage_published
+                == target
+                    .source_bookkeeping()
+                    .is_some_and(|b| b.usage.is_some()),
+        )?;
+        require(
+            child_published
+                == transitions.as_slice().iter().any(|event| {
+                    matches!(
+                        event,
+                        RunEvent::ChildSessionDetected | RunEvent::ChildSessionTerminated
+                    )
+                }),
+        )?;
     }
     Ok(())
 }

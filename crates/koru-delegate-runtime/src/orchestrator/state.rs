@@ -22,7 +22,7 @@ use crate::{CapturedContext, RunDocumentHandle};
 pub struct RunState {
     pub workspace: WorkspaceId,
     pub document: DocumentId,
-    pub doc: Box<dyn RunDocumentHandle>,
+    pub(crate) doc: super::publication::RunDocumentOwner,
     /// The attempt this device is driving, if any.
     pub attempt: Option<Attempt>,
     /// The last attempt this device drove — so a late usage report (§17.2)
@@ -37,6 +37,10 @@ pub struct RunState {
     pub models: HashMap<(String, Option<String>, Option<String>), ModelRef>,
     /// Usage identities by turn, kept past the attempt for late reports.
     pub usage: HashMap<(RunAttemptId, AgentTurnId), UsageIdentity>,
+    /// Exact accepted source positions, kept separately for the two streams.
+    /// A noncontiguous sequence is legal; only an explicit gap invalidates it.
+    pub source_frontiers: koru_delegate_core::decisions::DecisionSourceFrontiers,
+    pub source_gap: bool,
 }
 
 impl RunState {
@@ -44,6 +48,18 @@ impl RunState {
         workspace: WorkspaceId,
         document: DocumentId,
         doc: Box<dyn RunDocumentHandle>,
+    ) -> Self {
+        Self::with_document_owner(
+            workspace,
+            document,
+            super::publication::RunDocumentOwner::attached(doc),
+        )
+    }
+
+    pub(super) fn with_document_owner(
+        workspace: WorkspaceId,
+        document: DocumentId,
+        doc: super::publication::RunDocumentOwner,
     ) -> Self {
         Self {
             workspace,
@@ -55,6 +71,11 @@ impl RunState {
             requested_model: None,
             models: HashMap::new(),
             usage: HashMap::new(),
+            source_frontiers: koru_delegate_core::decisions::DecisionSourceFrontiers {
+                agent_after: None,
+                session_after: None,
+            },
+            source_gap: false,
         }
     }
 

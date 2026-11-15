@@ -7,9 +7,81 @@ mod native_results;
 mod routines;
 
 use super::*;
+use koru_delegate_core::decisions::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        transition: DecisionTransitionId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_projection(owner, run, transition)
+    }
+    fn next_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .next_decision_projection(owner, run)
+    }
+    fn decision_projection_prefix(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Vec<DecisionProjectionRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_projection_prefix(owner, run)
+    }
+    fn latest_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .latest_decision_projection(owner, run)
+    }
+    fn latest_applied_decision_projection(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionProjectionRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .latest_applied_decision_projection(owner, run)
+    }
+    fn record_decision_preparation(
+        &mut self,
+        owner: BotOwner,
+        prepared: &DecisionPreparedProjection,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .record_decision_preparation(owner, prepared)
+    }
+    fn acknowledge_decision_projection(
+        &mut self,
+        owner: BotOwner,
+        acknowledgment: &DecisionProjectionAcknowledgment,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .acknowledge_decision_projection(owner, acknowledgment)
+    }
     fn read_routine_claim(
         &self,
         slot: &RoutineSlot,

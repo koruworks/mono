@@ -27,6 +27,11 @@ pub struct DecisionProjectionPrior {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionProjectionPredecessor {
+    /// Canonical materialization time first qualified by the document owner.
+    /// Retained here so cold controls do not invent an intent timestamp.
+    pub observed_created_at_ms: i64,
+    /// Exact expected document offset before this target's retained effects.
+    pub timeline_start: u64,
     pub projection: Option<DecisionProjectionPrior>,
     #[serde(deserialize_with = "strict_leaf")]
     pub status: RunStatus,
@@ -149,6 +154,11 @@ pub enum RunProjectionTargetV1 {
     Source {
         version: DecisionVersionV1,
         predecessor: DecisionProjectionPredecessor,
+        /// One accepted stream observation can clear approval attention before
+        /// its terminal transition, or detect then terminate a child. These
+        /// audited paths require at most two existing transition events.
+        #[serde(deserialize_with = "strict_leaf")]
+        transitions: DecisionList<RunEvent, 2>,
         effects: DecisionProjectionEffects,
         bookkeeping: DecisionSourceBookkeeping,
     },
@@ -231,6 +241,19 @@ impl RunProjectionTargetV1 {
         steps.extend_from_slice(self.effects().steps.as_slice());
         Ok(steps)
     }
+    pub fn timeline_end(&self) -> Result<u64, DecisionError> {
+        let steps =
+            u64::try_from(self.projected_steps()?.len()).map_err(|_| DecisionError::TooLarge)?;
+        self.predecessor()
+            .timeline_start
+            .checked_add(steps)
+            .and_then(|end| {
+                end.checked_add(u64::from(
+                    self.source_bookkeeping().is_some_and(|b| b.usage.is_some()),
+                ))
+            })
+            .ok_or(DecisionError::TooLarge)
+    }
     pub fn canonical_bytes(&self) -> Result<DecisionPayload, DecisionError> {
         self.validate()?;
         DecisionBytes::new(bounded::encode(self, DECISION_PAYLOAD_BYTES)?)
@@ -297,18 +320,36 @@ impl DecisionValidate for RunProjectionTargetV1 {
         self.fence().validate()?;
         let effects = self.effects();
         let before = &self.predecessor().status;
-        let expected = match effects.event {
-            // An already accepted terminal source cannot be undone by later Stop.
-            Some(_) if before.is_terminal() => before.clone(),
-            Some(event) => transition_bot(before, &event).map_err(|_| DecisionError::Invalid)?,
-            None => before.clone(),
+        let (expected, changes_status) = match self {
+            Self::Source { transitions, .. } => {
+                require(effects.event.is_none())?;
+                let mut status = before.clone();
+                for event in transitions.as_slice() {
+                    require(!matches!(event, RunEvent::BotResponseDelivered))?;
+                    if !status.is_terminal() {
+                        status =
+                            transition_bot(&status, event).map_err(|_| DecisionError::Invalid)?;
+                    }
+                }
+                (status, !transitions.as_slice().is_empty())
+            }
+            Self::Control { .. } => (
+                match effects.event {
+                    Some(_) if before.is_terminal() => before.clone(),
+                    Some(event) => {
+                        transition_bot(before, &event).map_err(|_| DecisionError::Invalid)?
+                    }
+                    None => before.clone(),
+                },
+                effects.event.is_some(),
+            ),
         };
         require(
             expected == effects.status
                 && (effects.failure_reason.is_none()
                     || matches!(effects.status, RunStatus::Failed { .. })),
         )?;
-        if effects.event.is_none() || before.is_terminal() {
+        if !changes_status || before.is_terminal() {
             require(effects.failure_reason == self.predecessor().failure_reason)?;
         }
         let mut steps = BTreeSet::new();
@@ -367,6 +408,7 @@ impl DecisionValidate for RunProjectionTargetV1 {
         flush::derive(self)?;
         delivery::validate(self)?;
         facts::validate(self)?;
+        self.timeline_end()?;
         // Count with the existing bounded streaming digest owner before copying.
         crate::routine_digest_json(
             b"koru.bot.decision.projection.target.v1",

@@ -13,7 +13,7 @@ impl Orchestrator {
         if device.as_uuid().is_nil() || provenance.owner.device != device {
             return Err(refused("bot_owner_mismatch"));
         }
-        let header = self.open(run)?.doc.document().header()?;
+        let header = self.open(run)?.doc.document()?.header()?;
         if header.run != run || header.bot.as_ref() != Some(&provenance) {
             return Err(refused("bot_provenance_mismatch"));
         }

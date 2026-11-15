@@ -16,6 +16,7 @@ mod create;
 mod deletion;
 mod events;
 mod native_results;
+mod publication;
 mod record;
 mod restart;
 mod resume;
@@ -139,6 +140,9 @@ pub enum RunError {
 }
 
 impl RunError {
+    pub fn publication_pending(&self) -> bool {
+        matches!(self, Self::Port(error) if error.port == crate::Port::Documents && error.code == "publication_pending")
+    }
     pub fn code(&self) -> &'static str {
         match self {
             Self::UnknownRun => "unknown_run",
@@ -355,6 +359,8 @@ pub struct Orchestrator {
     native_policies: Vec<CachedNativePolicy>,
     native_routine_policies: Vec<koru_delegate_core::RoutinePolicyBarrier>,
     bot_boot: bot_boot::BootCoordination,
+    publication_ticket: Option<crate::RunPublicationTicket>,
+    publication_retry: record::PublicationRetry,
 }
 
 impl Orchestrator {
@@ -367,6 +373,8 @@ impl Orchestrator {
             native_policies: Vec::new(),
             native_routine_policies: Vec::new(),
             bot_boot: bot_boot::BootCoordination::new(),
+            publication_ticket: None,
+            publication_retry: record::PublicationRetry::default(),
         }
     }
 
@@ -444,7 +452,7 @@ impl Orchestrator {
     /// The header as the Run document holds it.
     pub fn header(&mut self, run: RunId) -> Result<RunHeader, RunError> {
         let state = self.open(run)?;
-        Ok(state.doc.document().header()?)
+        Ok(state.doc.document()?.header()?)
     }
 
     /// The header and a window of the history, oldest first from `from`.
@@ -471,7 +479,7 @@ impl Orchestrator {
             .as_ref()
             .map(|attempt| attempt.run_workspace.clone())
             .filter(|path| !path.as_os_str().is_empty());
-        let document = state.doc.document();
+        let document = state.doc.document()?;
         let header = document.header()?;
         let all = document.timeline_all();
         let total = all.len() as u64;
@@ -659,7 +667,11 @@ impl Orchestrator {
     /// Whether any open run has a commit the Store has not yet called
     /// durable — the actor's reason to keep polling for acknowledgements.
     pub fn has_unsettled(&self) -> bool {
-        self.runs.values().any(|state| !state.doc.durable())
+        // In-flight publication completion wakes the actor itself. It must not
+        // create a recurring Store polling timer while the handle is away.
+        self.runs
+            .values()
+            .any(|state| state.doc.attached_unsettled())
     }
 
     /// Take in the acknowledgements that have already arrived, without
@@ -667,7 +679,7 @@ impl Orchestrator {
     /// that cannot be read is left for its next commit to report.
     pub fn absorb_acks(&mut self) -> bool {
         for state in self.runs.values_mut() {
-            if !state.doc.durable() {
+            if state.doc.attached_unsettled() {
                 let _ = state.doc.absorb();
             }
         }

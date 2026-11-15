@@ -508,7 +508,7 @@ impl Orchestrator {
         attempt.session = Some(session);
         // A session summary proves activity, not who asked for it. Read only
         // a bounded window of existing content-free steps for positive ownership.
-        let timeline = self.open(run)?.doc.document().timeline_window(0, 256);
+        let timeline = self.open(run)?.doc.document()?.timeline_window(0, 256);
         if let Some(turn) = active_turn {
             let originator = if is_bot {
                 (bot_turn == Some(turn)).then_some(TurnOriginator::Orchestrator)

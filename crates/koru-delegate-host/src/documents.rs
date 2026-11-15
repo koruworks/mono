@@ -110,6 +110,17 @@ fn room(document: DocumentId) -> String {
 }
 
 impl RunDocuments for StoreDocuments {
+    fn publication_open(
+        &mut self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> PortResult<Box<dyn koru_delegate_runtime::RunDocumentOpen>> {
+        Ok(Box::new(PublicationOpen {
+            client: self.client.clone(),
+            workspace,
+            document,
+        }))
+    }
     fn create(&mut self, workspace: WorkspaceId, header: &RunHeader) -> PortResult<DocumentId> {
         let document = RunDocument::create(header)?;
         let initial_update = document.export_updates_since(&VersionVector::default())?;
@@ -190,6 +201,17 @@ impl RunDocuments for StoreDocuments {
         }
         runs.sort_by_key(|listed| listed.header.created_at_ms);
         Ok(runs)
+    }
+}
+
+struct PublicationOpen {
+    client: Client,
+    workspace: WorkspaceId,
+    document: DocumentId,
+}
+impl koru_delegate_runtime::RunDocumentOpen for PublicationOpen {
+    fn open(self: Box<Self>) -> PortResult<Box<dyn RunDocumentHandle>> {
+        StoreDocuments::new(self.client).open(self.workspace, self.document)
     }
 }
 
