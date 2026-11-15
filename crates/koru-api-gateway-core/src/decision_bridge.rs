@@ -19,28 +19,40 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::any;
 use koru_ai_core::Cancellation;
 use koru_ai_server::{AiWorkerClient, RoutineCall, RoutineCallContext};
-use koru_delegate_api::routines::ROUTINE_BRIDGE_DEADLINE;
-use koru_delegate_core::decisions::{
-    BotWaitEnrollmentKey, BotWaitEnrollmentReply, BotWaitRefusal, DecisionError, DecisionValidate,
-    EnrollBotWaitCleanup, ReadBotWaitCleanup, decode_decision_frame, encode_decision_frame,
+// One copy of the bridge contract: routes, envelope, codec and reply
+// correlation are the delegate API's, which the host's client also speaks.
+use koru_delegate_api::decision_bridge::{
+    DECISION_BRIDGE_BODY_LIMIT, DECISION_BRIDGE_DEADLINE, DecisionBridgeAuthority,
+    DecisionBridgeCodecError, DecisionBridgeEnvelope, DecisionBridgePayload, DecisionBridgeReply,
 };
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+pub use koru_delegate_api::decision_bridge::{DECISION_ENROLL_ROUTE, DECISION_READ_ROUTE};
+use koru_delegate_core::decisions::{BotWaitEnrollmentReply, BotWaitRefusal};
+use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
-use uuid::Uuid;
 
 use crate::routine_bridge::{HTTP_CAPACITY, ResponseAllocation, framing, read_body, remaining};
 
-pub const DECISION_ENROLL_ROUTE: &str = "/private/bots/decisions/enroll-wait-cleanup";
-pub const DECISION_READ_ROUTE: &str = "/private/bots/decisions/read-wait-cleanup";
+// The shared HTTP body reader enforces the Routine bridge's frame bound; the
+// decision contract fixes the same value.
+const _: () =
+    assert!(DECISION_BRIDGE_BODY_LIMIT == koru_delegate_api::routines::ROUTINE_BRIDGE_BODY_LIMIT);
 
-/// The decision domain's bridge credential check. The delegate API author's
-/// domain-scoped authority (derived from the existing parent under its own
-/// context) implements this in composition; until it does, nothing is
-/// installed and every decision request answers 401.
+/// The decision domain's bridge credential check, implemented by the delegate
+/// API's domain-scoped authority below and installed by gateway composition.
+/// Until one is installed, every decision request answers 401.
 pub trait DecisionBridgeCredential: Send + Sync {
     /// Exact fixed-length comparison of one Authorization header value,
     /// before any body is read.
     fn matches_authorization(&self, candidate: &[u8]) -> bool;
+}
+
+/// The delegate API's decision-domain authority: derived from the bootstrap
+/// parent under `koru.bot.decision.bridge.v1`, header scheme `Koru-Decision`.
+/// The Routine authority has no implementation of this trait.
+impl DecisionBridgeCredential for DecisionBridgeAuthority {
+    fn matches_authorization(&self, candidate: &[u8]) -> bool {
+        DecisionBridgeAuthority::matches_authorization(self, candidate)
+    }
 }
 
 pub(crate) struct HttpState {
@@ -77,69 +89,9 @@ pub(crate) fn router(state: Arc<HttpState>) -> Router<Arc<crate::GatewayState>> 
     routes().with_state(state)
 }
 
-/// Same outer shape as the Routine bridge: version 1, a canonical v4 request
-/// id the AI owner keys its phases by, and one closed payload.
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DecisionBridgeEnvelope<T> {
-    #[serde(deserialize_with = "version_one")]
-    version: u8,
-    #[serde(deserialize_with = "request_uuid")]
-    request_id: Uuid,
-    payload: T,
-}
-impl<T: DecisionValidate> DecisionValidate for DecisionBridgeEnvelope<T> {
-    fn validate(&self) -> Result<(), DecisionError> {
-        if self.version != 1 || !v4(self.request_id) {
-            return Err(DecisionError::Invalid);
-        }
-        self.payload.validate()
-    }
-}
-fn v4(id: Uuid) -> bool {
-    id.get_version() == Some(uuid::Version::Random) && id.get_variant() == uuid::Variant::RFC4122
-}
-fn version_one<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u8, D::Error> {
-    let version = u8::deserialize(d)?;
-    if version == 1 {
-        Ok(version)
-    } else {
-        Err(serde::de::Error::custom(
-            "unsupported decision bridge version",
-        ))
-    }
-}
-fn request_uuid<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Uuid, D::Error> {
-    let text = String::deserialize(d)?;
-    let id = Uuid::parse_str(&text)
-        .map_err(|_| serde::de::Error::custom("invalid decision request UUID"))?;
-    if !v4(id) || id.to_string() != text {
-        return Err(serde::de::Error::custom("invalid decision request UUID"));
-    }
-    Ok(id)
-}
-
-/// The two closed requests. Only Read may ever be answered Missing.
-trait DecisionRequest: DeserializeOwned + DecisionValidate + Clone {
-    const READ: bool;
-    fn key(&self) -> &BotWaitEnrollmentKey;
-}
-impl DecisionRequest for EnrollBotWaitCleanup {
-    const READ: bool = false;
-    fn key(&self) -> &BotWaitEnrollmentKey {
-        &self.key
-    }
-}
-impl DecisionRequest for ReadBotWaitCleanup {
-    const READ: bool = true;
-    fn key(&self) -> &BotWaitEnrollmentKey {
-        &self.key
-    }
-}
-
 async fn handle(State(state): State<Arc<HttpState>>, request: Request) -> Response {
     let started = Instant::now();
-    let Some(deadline) = started.checked_add(ROUTINE_BRIDGE_DEADLINE) else {
+    let Some(deadline) = started.checked_add(DECISION_BRIDGE_DEADLINE) else {
         return StatusCode::GATEWAY_TIMEOUT.into_response();
     };
     match handle_until(&state, request, deadline).await {
@@ -240,20 +192,24 @@ type Starter<Q> = fn(
 )
     -> Result<RoutineCall<BotWaitEnrollmentReply, BotWaitRefusal>, BotWaitRefusal>;
 
-async fn dispatch<Q: DecisionRequest>(
+/// One closed request type (Enroll or Read); the delegate API's reply
+/// correlation decides which answers it may receive (only Read: Missing).
+async fn dispatch<Q: DecisionBridgePayload + DeserializeOwned + Clone>(
     worker: Option<&AiWorkerClient>,
     bytes: Vec<u8>,
     deadline: Instant,
     start: Starter<Q>,
-) -> Result<Vec<u8>, StatusCode> {
+) -> Result<Vec<u8>, StatusCode>
+where
+    BotWaitEnrollmentReply: DecisionBridgeReply<Q>,
+{
     remaining(deadline)?;
-    let request =
-        decode_decision_frame::<DecisionBridgeEnvelope<Q>>(&bytes).map_err(
-            |error| match error {
-                DecisionError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
-                DecisionError::Invalid => StatusCode::BAD_REQUEST,
-            },
-        )?;
+    let request = DecisionBridgeEnvelope::<Q>::decode(&bytes).map_err(|error| match error {
+        DecisionBridgeCodecError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        DecisionBridgeCodecError::Invalid | DecisionBridgeCodecError::Mismatch => {
+            StatusCode::BAD_REQUEST
+        }
+    })?;
     drop(bytes);
     remaining(deadline)?;
     let payload = match worker {
@@ -275,15 +231,10 @@ async fn dispatch<Q: DecisionRequest>(
     remaining(deadline)?;
     // Never send a reply that does not answer this exact request: Enroll
     // cannot turn absence into Missing, and no other key can be answered.
-    if !payload.matches_request(request.payload.key(), Q::READ) {
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-    let reply = encode_decision_frame(&DecisionBridgeEnvelope {
-        version: 1,
-        request_id: request.request_id,
-        payload,
-    })
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let reply = DecisionBridgeEnvelope::reply_to(&request, payload)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .encode()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     remaining(deadline)?;
     Ok(reply)
 }

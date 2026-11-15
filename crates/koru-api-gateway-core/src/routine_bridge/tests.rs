@@ -835,3 +835,28 @@ async fn routine_http_one_absolute_deadline_spans_streaming_and_codec_phases() {
         Err(StatusCode::GATEWAY_TIMEOUT)
     );
 }
+
+#[tokio::test]
+async fn routine_routes_refuse_the_decision_credential_before_any_body_read() {
+    let decision = koru_delegate_api::bots::BotDelegateAuthority::new(PARENT.into())
+        .unwrap()
+        .decision_bridge_authority()
+        .authorization_header();
+    for path in [
+        ROUTINE_PREPARE_ROUTE,
+        ROUTINE_PREPARATION_ROUTE,
+        ROUTINE_FINALIZE_ROUTE,
+        ROUTINE_LINK_ROUTE,
+        ROUTINE_PRECLAIM_ROUTE,
+    ] {
+        let polls = Arc::new(AtomicUsize::new(0));
+        let mut request = request(path, unpolled(polls.clone()));
+        request.headers_mut().insert(
+            header::AUTHORIZATION,
+            axum::http::HeaderValue::from_str(&decision).unwrap(),
+        );
+        let response = send(state(), request).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(polls.load(Ordering::SeqCst), 0, "{path}");
+    }
+}

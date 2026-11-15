@@ -10,6 +10,7 @@ use serde::{Serialize, de::DeserializeOwned};
 mod authority;
 mod current;
 mod drain;
+mod resume_runs;
 pub(crate) use current::fresh_native_input_on;
 pub(crate) use current::{acknowledged_continuation_on, fresh_activity_on, retained_consumer_on};
 mod effect;
@@ -25,6 +26,7 @@ mod rows;
 mod tests;
 #[allow(dead_code)]
 mod write;
+pub use resume_runs::DECISION_RESUME_RUN_PAGE;
 pub use write::AnswerDecision;
 
 /// Immutable identity of a cleanup mutation, independent of the projection
@@ -62,6 +64,18 @@ pub struct DecisionRecord {
     pub wait: DecisionWaitRecord,
     pub resume: Option<DecisionResume>,
     pub native_response: Option<DecisionNativeResponse>,
+}
+
+/// The durably acknowledged continuation of a recorded decision successor:
+/// the consumer identity and the input turn C recorded on the host's positive
+/// answer. History only; it is not permission to send input or execute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecisionAcknowledgedContinuation {
+    pub decision: DecisionId,
+    pub attempt: RunAttemptId,
+    pub generation: AttemptGeneration,
+    pub session: SessionId,
+    pub turn: AgentTurnId,
 }
 
 /// Historical evidence, not an occupancy discount or permission to stop.

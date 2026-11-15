@@ -731,6 +731,11 @@ pub(crate) enum Call {
     ResumeToken(SessionId),
     Observe(SessionId),
     Subscribe(SessionId),
+    AnswerApproval {
+        session: SessionId,
+        key: IdempotencyKey,
+        approval: koru_delegate_core::ApprovalId,
+    },
 }
 
 pub(crate) struct SessionScript {
@@ -1012,6 +1017,21 @@ impl Sessions for ScriptedSessions {
         let mut script = self.script.lock().unwrap();
         script.calls.push(Call::ResumeToken(session));
         Ok(script.resume_tokens.get(&session).cloned())
+    }
+    fn bot_answer_approval(
+        &mut self,
+        session: SessionId,
+        key: IdempotencyKey,
+        approval: koru_delegate_core::ApprovalId,
+        _decision: koru_delegate_core::ApprovalDecision,
+        _choice: Option<koru_delegate_core::ApprovalChoiceId>,
+    ) -> PortResult<()> {
+        self.script.lock().unwrap().calls.push(Call::AnswerApproval {
+            session,
+            key,
+            approval,
+        });
+        Ok(())
     }
     fn observe(&mut self, session: SessionId) -> PortResult<AgentEventObservation> {
         let mut script = self.script.lock().unwrap();

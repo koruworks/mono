@@ -17,6 +17,18 @@ description = "Drives a delegated run from request to terminal state through the
 # nothing that runs a process, opens a socket, serves HTTP or draws.
 # `src/tests/dependency.rs` is the fence.
 
+[features]
+default = []
+# The decision-chain builder (`test_support`) for dependents' composition
+# tests: an orchestrator over the real in-memory ledger and minimal scripted
+# ports, holding a prepared Koru edit decision in memory. A dependent turns it
+# on only in its `[dev-dependencies]`, because a `cfg(test)` guard here never
+# reaches the crates above (AGENTS.md, Testing). It touches no disk, Store,
+# provider or network, and drives only public orchestrator methods. The one
+# edge is the scope fixture identity, so no folder is canonicalized. Nothing
+# shipped enables it.
+test-support = ["koru-delegate-scope/fixtures"]
+
 [dependencies]
 blake3.workspace = true
 uuid.workspace = true

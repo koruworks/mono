@@ -13,6 +13,7 @@ mod bot_delivery;
 mod bots;
 mod control;
 mod create;
+mod decisions;
 mod deletion;
 mod events;
 mod native_results;
@@ -38,6 +39,7 @@ use crate::{CaptureFailure, PortError, Ports, SessionEvents, SourceRefusal};
 
 pub use create::CreateIntentStatus;
 pub use deletion::{Purged, RunPlace};
+pub use decisions::{DecisionEditRequest, DecisionEnrollmentBridge, DecisionResumeStep};
 pub use events::TOOL_STEP_BOUND;
 pub use publication::source::{SourceProducer, SourceProgress};
 pub use state::RunState;

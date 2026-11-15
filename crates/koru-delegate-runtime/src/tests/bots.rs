@@ -2,6 +2,7 @@
 
 mod admission_read;
 mod boot;
+mod decisions;
 mod host_gone;
 mod native_results;
 mod publication;
@@ -58,6 +59,38 @@ impl BotLedger for RecordingStore {
             .lock()
             .unwrap()
             .decision_retained_effect(owner, run, decision)
+    }
+    fn bot_decision(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_sqlite::DecisionRecord>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .bot_decision(owner, run, decision)
+    }
+    fn decision_resume_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<(BotOwner, RunId)>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_resume_runs(after, limit)
+    }
+    fn decision_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<koru_delegate_sqlite::DecisionAcknowledgedContinuation>, BotLedgerError>
+    {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_acknowledged_continuation(owner, run)
     }
     fn read_bot_decision_wait(
         &self,
@@ -601,50 +634,9 @@ impl BotLedger for RecordingStore {
         self.inner.lock().unwrap().record_bot_delivery(receipt)
     }
 }
+/// The one Bot submission fixture, shared with the dev-only builder.
 fn submission(n: u8) -> BotSubmission {
-    let mut request = request(
-        run_id(n),
-        WorkspaceScope::BotFolder {
-            folder: BotWorkingFolder::new(format!("C:/fixture/bot-{n}")).unwrap(),
-        },
-    );
-    request.context.clear();
-    BotSubmission {
-        provenance: BotProvenance {
-            routine: None,
-            owner: BotOwner {
-                user_scope: serde_json::from_value(serde_json::json!(v4(0xf0))).unwrap(),
-                device: request.executing_device,
-            },
-            bot: BotId::from_uuid(v4(0xe0)),
-            submission: BotRequestId::from_uuid(v4(n)),
-            chat_id: v4(0xe1),
-            ai_attempt_id: Some(v4(0xe2)),
-            assistant_message_id: Some(v4(0xe3)),
-            config_revision: 1,
-            policy_revision: 1,
-            continued_from: None,
-        },
-        policy: CapturedBotPolicy {
-            workspace: workspace(),
-            destination: workspace(),
-            access: BotAccess::Default,
-            selected_pages: Default::default(),
-        },
-        workspace: workspace(),
-        request,
-        input: PendingInput {
-            idempotency_key: v4(n).to_string().parse().unwrap(),
-            text: "task".into(),
-            attachment_ids: vec![],
-            references: vec![],
-            mode: None,
-            fast: None,
-            reasoning: None,
-            skills: vec![],
-            model: None,
-        },
-    }
+    crate::test_support::bot_submission(n)
 }
 fn key(s: &BotSubmission) -> BotRunKey {
     BotRunKey {

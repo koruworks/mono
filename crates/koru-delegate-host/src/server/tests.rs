@@ -42,11 +42,11 @@ fn admission_read_server_requires_private_capability_device_and_current_frame() 
         command,
     };
     assert_eq!(
-        read_current_request(&mut frame::encode(15, &request).unwrap().as_slice()).unwrap(),
+        read_current_request(&mut frame::encode(16, &request).unwrap().as_slice()).unwrap(),
         Some(request.clone())
     );
     assert!(
-        read_current_request(&mut frame::encode(14, &request).unwrap().as_slice())
+        read_current_request(&mut frame::encode(15, &request).unwrap().as_slice())
             .unwrap()
             .is_none()
     );
@@ -80,7 +80,7 @@ fn stale_wire_versions_cannot_reach_dispatch() {
             confirm: false,
         },
     ] {
-        for stale in [1, 3, 4, 6, 7, 10, 13, 14] {
+        for stale in [1, 3, 4, 6, 7, 10, 13, 14, 15] {
             let legacy = frame::encode(stale, &request).unwrap();
             assert!(
                 read_current_request(&mut legacy.as_slice())
@@ -178,7 +178,7 @@ fn routine_route_frame_requires_current_protocol_private_capability_and_device()
         authority: capability.clone(),
         command: command.clone(),
     };
-    let stale = frame::encode(14, &request).unwrap();
+    let stale = frame::encode(15, &request).unwrap();
     assert!(
         read_current_request(&mut stale.as_slice())
             .unwrap()
@@ -215,7 +215,7 @@ fn routine_route_frame_requires_current_protocol_private_capability_and_device()
             command: command.clone(),
         };
         assert!(
-            read_current_request(&mut frame::encode(14, &request).unwrap().as_slice())
+            read_current_request(&mut frame::encode(15, &request).unwrap().as_slice())
                 .unwrap()
                 .is_none()
         );
@@ -243,4 +243,117 @@ fn routine_route_frame_requires_current_protocol_private_capability_and_device()
         &capability,
         &BotCommand::RegisterRoutineRoute { identity: foreign }
     ));
+}
+
+#[test]
+fn decision_commands_need_the_private_capability_device_and_the_current_frame() {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    let capability =
+        BotDelegateAuthority::new("decision-read-private-capability-0123456789012345".into())
+            .unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let identity = Identity {
+        launch_id: "fixture".into(),
+        authority: "ordinary-stop".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
+    };
+    let owner: koru_delegate_core::BotOwner = serde_json::from_value(
+        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":device}),
+    )
+    .unwrap();
+    let command = BotCommand::ReadBotDecisionWait {
+        owner,
+        bot: koru_delegate_core::BotId::mint(),
+        run: koru_delegate_core::RunId::mint(),
+        wait_id: koru_delegate_core::decisions::BotWaitId::mint(),
+        decision_id: koru_delegate_core::decisions::DecisionId::mint(),
+    };
+    assert!(admits_bot_command(&identity, &capability, &command));
+    // A decision-bridge credential is not the Bot channel capability.
+    let other =
+        BotDelegateAuthority::new("ordinary-scope-label-01234567890123456789".into()).unwrap();
+    assert!(!admits_bot_command(&identity, &other, &command));
+    let mut foreign = command.clone();
+    if let BotCommand::ReadBotDecisionWait { owner, .. } = &mut foreign {
+        owner.device = koru_delegate_core::DeviceId::new();
+    }
+    assert!(!admits_bot_command(&identity, &capability, &foreign));
+    let request = Request::Bot {
+        authority: capability,
+        command,
+    };
+    // An older handshake is refused before any decision body is decoded.
+    for older in 1..WIRE_VERSION {
+        assert!(
+            read_current_request(&mut frame::encode(older, &request).unwrap().as_slice())
+                .unwrap()
+                .is_none(),
+            "{older}"
+        );
+    }
+    assert_eq!(
+        read_current_request(&mut frame::encode(WIRE_VERSION, &request).unwrap().as_slice())
+            .unwrap(),
+        Some(request)
+    );
+}
+
+/// IPC16. A version-15 frame, for an ordinary command or a decision command,
+/// is refused by its version before its body is decoded (an undecodable body
+/// is refused the same way, never surfaced as a decode error). `handle` then
+/// returns without writing: the connection closes unanswered, so an IPC15
+/// peer sees `delegate_unavailable` (retryable), not `delegate_incompatible`.
+/// The client half of that is pinned in the delegate API's own tests.
+#[test]
+fn ipc15_frames_are_refused_before_decoding_and_dropped_unanswered_so_the_peer_sees_delegate_unavailable()
+ {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    assert_eq!(WIRE_VERSION, 16);
+    let previous = WIRE_VERSION - 1;
+    let owner: koru_delegate_core::BotOwner = serde_json::from_value(
+        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":uuid::Uuid::new_v4()}),
+    )
+    .unwrap();
+    let ordinary = Request::Resume {
+        caller: Caller {
+            product: "test".into(),
+            trace_id: "test".into(),
+        },
+        run: koru_delegate_core::RunId::mint(),
+        confirm: false,
+    };
+    let decision = Request::Bot {
+        authority: BotDelegateAuthority::new(
+            "decision-ipc15-private-capability-0123456789012345".into(),
+        )
+        .unwrap(),
+        command: BotCommand::ReadBotDecisionWait {
+            owner,
+            bot: koru_delegate_core::BotId::mint(),
+            run: koru_delegate_core::RunId::mint(),
+            wait_id: koru_delegate_core::decisions::BotWaitId::mint(),
+            decision_id: koru_delegate_core::decisions::DecisionId::mint(),
+        },
+    };
+    for request in [ordinary, decision] {
+        let old = frame::encode(previous, &request).unwrap();
+        assert!(
+            read_current_request(&mut old.as_slice()).unwrap().is_none(),
+            "an IPC15 frame never becomes a command"
+        );
+        let undecodable = frame::encode(previous, &serde_json::json!({"old": true})).unwrap();
+        assert!(
+            read_current_request(&mut undecodable.as_slice())
+                .unwrap()
+                .is_none(),
+            "the version is checked before any body decoding"
+        );
+        let current = frame::encode(WIRE_VERSION, &request).unwrap();
+        assert_eq!(
+            read_current_request(&mut current.as_slice()).unwrap(),
+            Some(request)
+        );
+    }
 }

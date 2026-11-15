@@ -18,6 +18,7 @@ use koru_delegate_core::decisions::{
 use std::collections::BTreeMap;
 
 mod client;
+mod delegate;
 mod driver;
 #[cfg(test)]
 pub(in crate::worker) mod fixture;
@@ -25,6 +26,7 @@ mod jobs;
 mod port;
 #[cfg(test)]
 mod tests;
+pub use delegate::BotDelegateDecisionWait;
 pub(in crate::worker) use jobs::{DecisionWaitJob, DecisionWaitResult};
 pub use port::{DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject};
 

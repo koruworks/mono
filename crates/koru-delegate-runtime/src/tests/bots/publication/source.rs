@@ -5,6 +5,8 @@
 
 use super::*;
 
+mod resume;
+
 fn source_usage(
     turn: AgentTurnId,
     sequence: u64,
@@ -910,8 +912,12 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
     }
     let receipt = successor_receipt(&s, run, attempt, generation);
     let native = (
-        h.orchestrator.native_effects_pending(run).map_err(|e| e.to_string()),
-        h.orchestrator.native_outcomes_unknown(run).map_err(|e| e.to_string()),
+        h.orchestrator
+            .native_effects_pending(run)
+            .map_err(|e| e.to_string()),
+        h.orchestrator
+            .native_outcomes_unknown(run)
+            .map_err(|e| e.to_string()),
     );
     let error = h
         .orchestrator
@@ -973,4 +979,266 @@ fn decision_successor_delivery_is_refused_while_its_input_is_unacknowledged() {
             .is_none(),
         "no receipt was recorded"
     );
+}
+
+#[test]
+fn native_decision_answer_is_forwarded_with_the_journaled_key_and_replays_it() {
+    let (mut h, s, fence, policy, _) = native_results::active();
+    h.orchestrator
+        .synchronize_native_policy(policy.clone(), fence.owner.device)
+        .unwrap();
+    let offered = vec![
+        super::super::decisions::choice("allow"),
+        super::super::decisions::choice("reject"),
+    ];
+    let approval = super::super::decisions::prompt(&mut h, &fence, offered.clone());
+    let proof = FreshBotPolicyProof {
+        global: policy,
+        routine: None,
+    };
+    let boot = h.orchestrator.delegate_boot();
+    let prepared = h
+        .orchestrator
+        .bot_prepare_native_decision(&fence, fence.owner.device, approval, &proof, boot)
+        .unwrap();
+    // The decision is answerable only once its initial projection is
+    // published; drive it through real staging as the worker would.
+    {
+        use crate::orchestrator::publication::RunDocumentOwner;
+        let state = h.orchestrator.runs.get_mut(&fence.run).unwrap();
+        let RunDocumentOwner::Attached { handle, .. } =
+            std::mem::replace(&mut state.doc, RunDocumentOwner::Unopened)
+        else {
+            panic!("attached")
+        };
+        state.doc = RunDocumentOwner::Attached {
+            exclusive: false,
+            handle: Box::new(ProjectionHandle {
+                inner: handle,
+                staging: koru_delegate_document::RunProjectionStaging::default(),
+            }),
+        };
+    }
+    publish_owed(&mut h, fence.run);
+    // Publication advances the decision; answer its current revision.
+    let prepared = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .bot_decision(fence.owner, fence.run, prepared.receipt.decision)
+        .unwrap()
+        .unwrap();
+    let DecisionBindingV1::NativeApproval(binding) = &prepared.receipt.binding else {
+        panic!("native binding")
+    };
+    assert_eq!(binding.prompt, approval);
+    assert_eq!(binding.choices.as_slice().len(), 2);
+    assert_eq!(
+        binding.native_deadline_at_ms, None,
+        "O116: no native expiry"
+    );
+    // A second preparation for the same Run is owned by the open decision.
+    let ActorRef::Person { profile } = s.request.requested_by else {
+        panic!("person")
+    };
+    let input = AnswerDecision {
+        owner: fence.owner,
+        run: fence.run,
+        decision: prepared.receipt.decision,
+        expected_revision: prepared.receipt.state.revision,
+        binding_digest: prepared.receipt.binding_digest,
+        request: DecisionAnswerId::mint(),
+        human: profile,
+        choice: DecisionAnswerChoice::Native {
+            offered: binding.choices.as_slice()[0].clone(),
+        },
+        authority_digest: DecisionDigest::from_bytes([9; 32]),
+    };
+    let answered = h
+        .orchestrator
+        .bot_answer_decision(&input, fence.owner.device, &proof, boot)
+        .unwrap();
+    let Some(DecisionNativeResponse::Acknowledged { key, .. }) = answered.native_response else {
+        panic!("acknowledged native answer")
+    };
+    let forwarded: Vec<_> = h
+        .sessions
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .filter_map(|call| match call {
+            Call::AnswerApproval {
+                key, approval: a, ..
+            } if *a == approval => Some(*key),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(forwarded, vec![key.response_key]);
+    // The legacy unkeyed route cannot bypass the decision owner while the
+    // Run's publication is held for it.
+    if h.orchestrator.run_publication_pending(fence.run) {
+        assert!(
+            h.orchestrator
+                .bot_answer_approval(
+                    &fence,
+                    fence.owner.device,
+                    approval,
+                    ApprovalDecision::Approve,
+                    None
+                )
+                .is_err()
+        );
+    }
+}
+
+struct Enroller(uuid::Uuid);
+impl crate::DecisionEnrollmentBridge for Enroller {
+    fn enroll(
+        &mut self,
+        request: &EnrollBotWaitCleanup,
+    ) -> crate::PortResult<BotWaitEnrollmentReply> {
+        Ok(BotWaitEnrollmentReply::Enrolled {
+            receipt_digest: request.key.receipt_digest,
+            key: request.key.clone(),
+            ai_attempt: self.0,
+        })
+    }
+}
+
+/// Scripted runtime composition, not provider qualification.
+#[test]
+fn decision_edit_resume_chain_runs_through_runtime_steps_to_an_unacknowledged_successor() {
+    let (mut h, s, fence, policy, _) = native_results::active();
+    h.orchestrator
+        .synchronize_native_policy(policy.clone(), fence.owner.device)
+        .unwrap();
+    let proof = FreshBotPolicyProof {
+        global: policy,
+        routine: None,
+    };
+    let boot = h.orchestrator.delegate_boot();
+    let edit = crate::DecisionEditRequest {
+        target: DocumentId::new(),
+        action: DecisionEditAction::EditDocument,
+        operation_id: Uuid::new_v4(),
+        edit_fingerprint: [3; 32],
+        expected_revision: vec![2, 1, 2, 2, 4],
+        payload: b"PRIVATE-EDIT".to_vec(),
+    };
+    assert!(!format!("{edit:?}").contains("PRIVATE"));
+    h.orchestrator
+        .bot_prepare_edit_decision(&fence, fence.owner.device, &edit, &proof, boot)
+        .unwrap();
+    {
+        use crate::orchestrator::publication::RunDocumentOwner;
+        let state = h.orchestrator.runs.get_mut(&fence.run).unwrap();
+        let RunDocumentOwner::Attached { handle, .. } =
+            std::mem::replace(&mut state.doc, RunDocumentOwner::Unopened)
+        else {
+            panic!("attached")
+        };
+        state.doc = RunDocumentOwner::Attached {
+            exclusive: false,
+            handle: Box::new(ProjectionHandle {
+                inner: handle,
+                staging: koru_delegate_document::RunProjectionStaging::default(),
+            }),
+        };
+    }
+    publish_owed(&mut h, fence.run);
+    let run = fence.run;
+    let owner = fence.owner;
+    // The frozen intent is idempotent; the reply is the AI side's receipt.
+    let first = h
+        .orchestrator
+        .bot_request_decision_enrollment(owner, run)
+        .unwrap();
+    assert_eq!(
+        h.orchestrator
+            .bot_request_decision_enrollment(owner, run)
+            .unwrap(),
+        first
+    );
+    let ai_attempt = s.provenance.ai_attempt_id.unwrap();
+    h.orchestrator
+        .bot_enroll_decision(owner, run, &mut Enroller(ai_attempt))
+        .unwrap();
+    // Origin stop needs positive physical proof; the scripted host answers
+    // NoEvidence for the exact creation key, which qualifies.
+    let stopped = h.orchestrator.bot_stop_decision_origin(owner, run).unwrap();
+    assert!(stopped.is_some());
+    assert!(h.attempt(run).retired, "the origin attempt row is retired");
+    // AllowOnce, then reserve and bind the successor.
+    let record = stopped.unwrap();
+    let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
+        panic!("edit")
+    };
+    let ActorRef::Person { profile } = s.request.requested_by else {
+        panic!("person")
+    };
+    h.orchestrator
+        .bot_answer_decision(
+            &AnswerDecision {
+                owner,
+                run,
+                decision: record.receipt.decision,
+                expected_revision: record.receipt.state.revision,
+                binding_digest: record.receipt.binding_digest,
+                request: DecisionAnswerId::mint(),
+                human: profile,
+                choice: DecisionAnswerChoice::AllowOnce {},
+                authority_digest: DecisionDigest::from_bytes([9; 32]),
+            },
+            fence.owner.device,
+            &proof,
+            boot,
+        )
+        .unwrap();
+    assert_eq!(binding.human_profile, profile);
+    let host = h.sessions.lock().unwrap().host;
+    let resume = h
+        .orchestrator
+        .bot_reserve_decision_successor(owner, run, host, [42; 32], &proof, boot)
+        .unwrap();
+    let (_, generation, _, creation) = resume.consumer_identity();
+    assert_eq!(generation.get(), fence.generation.get() + 1);
+    // A lost reservation reply replays the same resume.
+    assert_eq!(
+        h.orchestrator
+            .bot_reserve_decision_successor(owner, run, host, [42; 32], &proof, boot)
+            .unwrap(),
+        resume
+    );
+    let session = SessionId::mint();
+    h.orchestrator
+        .bot_bind_decision_successor(owner, run, creation, host, session)
+        .unwrap();
+    // The read the AI worker uses now carries the retained resume.
+    let wait = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .decision_wait_execution(owner, run)
+        .unwrap()
+        .unwrap()
+        .wait
+        .wait;
+    let (_, read) = h
+        .orchestrator
+        .bot_read_decision_wait_and_resume(
+            owner,
+            fence.bot,
+            run,
+            wait,
+            record.receipt.decision,
+            fence.owner.device,
+        )
+        .unwrap();
+    assert!(matches!(
+        read.map(|resume| resume.state),
+        Some(DecisionResumeState::SessionBound { .. })
+    ));
 }

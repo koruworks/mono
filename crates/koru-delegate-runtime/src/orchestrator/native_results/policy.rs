@@ -168,7 +168,7 @@ impl Orchestrator {
 
     // Shared bounded cache and durable-current composition. Native callers keep
     // their existing >= captured-revision semantics; preclaim checks equality.
-    fn current_policy_for_submission(
+    pub(crate) fn current_policy_for_submission(
         &mut self,
         submission: &koru_delegate_core::BotSubmission,
         config_revision: u64,

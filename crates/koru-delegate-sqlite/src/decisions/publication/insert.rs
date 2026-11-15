@@ -92,14 +92,19 @@ fn base_on(
             )?;
         }
     } else {
+        // The first projection names the format the Bot Run was created at:
+        // Bot5 for this build's Bot Runs, Manual or Routine (BotRun5), or the
+        // previous default's Bot3 (Manual) / Bot4 (Routine). Only a Bot Run
+        // reaches here: a non-Bot Run has no admission and was refused above.
+        let routine = admitted.submission.provenance.routine.is_some();
         require(
             base.predecessor.projection.is_none()
-                && u8::from(base.source_schema)
-                    == if admitted.submission.provenance.routine.is_some() {
-                        4
-                    } else {
-                        3
-                    },
+                && match u8::from(base.source_schema) {
+                    5 => true,
+                    4 => routine,
+                    3 => !routine,
+                    _ => false,
+                },
         )?;
     }
     Ok(())

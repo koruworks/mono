@@ -31,6 +31,12 @@ impl BootCoordination {
 }
 
 impl Orchestrator {
+    /// This delegate process's boot identity. Decisions are prepared, answered
+    /// and resumed under it; a decision prepared under another boot is fenced.
+    pub fn delegate_boot(&self) -> DelegateBootId {
+        self.bot_boot.boot
+    }
+
     pub fn bot_hello(
         &mut self,
         owner: BotOwner,

@@ -92,6 +92,31 @@ fn a_run_written_by_a_newer_build_opens_read_only() {
 /// This build's own run is writable, and the version it stamps is the one
 /// the gate compares against.
 #[test]
+fn a_bot5_header_is_writable_but_an_ordinary_one_is_malformed() {
+    let mut header = bots::bot_header();
+    header.status = RunStatus::running();
+    let bot = RunDocument::create(&header).unwrap();
+    bot.doc()
+        .get_map("run")
+        .insert("schema", RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION)
+        .unwrap();
+    bot.doc().commit();
+    assert!(bot.compatibility().writable());
+    assert_eq!(bot.header().unwrap().bot, header.bot);
+    let ordinary = a_run_with(1);
+    ordinary
+        .doc()
+        .get_map("run")
+        .insert("schema", RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION)
+        .unwrap();
+    ordinary.doc().commit();
+    assert!(
+        ordinary.header().is_err(),
+        "schema 5 never holds an ordinary Run"
+    );
+}
+
+#[test]
 fn a_run_this_build_wrote_is_writable() {
     let run = a_run_with(1);
     assert_eq!(run.compatibility(), Compatibility::Writable);

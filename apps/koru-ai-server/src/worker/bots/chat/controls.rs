@@ -84,6 +84,7 @@ impl ControlJob {
                     session: s::SessionId::mint(),
                     turn: Some(s::AgentTurnId::mint()),
                 },
+                request: d::IdempotencyKey::mint(),
                 approval: s::ApprovalId::mint(),
                 decision: s::ApprovalDecision::Reject,
                 choice: None,
@@ -298,6 +299,11 @@ impl WorkerState {
                         AgentSource::Approval(*approval),
                         DelegateCommand::AnswerApproval {
                             fence,
+                            // IPC16 carries the key; this call mints one per
+                            // forwarded answer, as the host did before. A key
+                            // retained per human answer is the AI owner's to
+                            // add (it has no answer journal for this route).
+                            request: koru_delegate_core::IdempotencyKey::mint(),
                             approval: *approval,
                             decision: answer,
                             choice,

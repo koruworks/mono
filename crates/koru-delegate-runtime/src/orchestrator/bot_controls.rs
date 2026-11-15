@@ -11,7 +11,23 @@ use koru_delegate_sqlite::{
     AttemptPhase, BOT_ACTIVE_BUDGET_MS, BotExecutionRecord, BotInitialSend,
 };
 
-mod native_prompt;
+pub(super) mod native_prompt;
+
+/// The attempt's own recorded input turn: the original's immutable
+/// InitialSend turn only for that same attempt and generation, otherwise a
+/// recorded successor's acknowledged resume turn mirrored from C. The
+/// original's turn never stands in for a successor's, and the reverse.
+pub(super) fn recorded_input_turn(
+    send: Option<&BotInitialSend>,
+    attempt: &super::state::Attempt,
+) -> Option<AgentTurnId> {
+    match send {
+        Some(send) if send.attempt == attempt.id && send.generation == attempt.generation => {
+            send.turn
+        }
+        _ => attempt.resume_turn,
+    }
+}
 
 /// The session's answer to a Bot's strict initial input. A definite refusal
 /// of that input is pinned to its key by the session, so asking again can
@@ -93,12 +109,30 @@ impl Orchestrator {
         {
             return Err(refused("bot_fenced"));
         }
-        let current = attempt
+        let mut current = attempt
             .orchestrator_turn
-            .or_else(|| record.initial_send.as_ref().and_then(|send| send.turn));
+            .or_else(|| recorded_input_turn(record.initial_send.as_ref(), attempt));
+        let successor = record
+            .initial_send
+            .as_ref()
+            .is_some_and(|send| send.attempt != fence.attempt || send.generation != fence.generation);
+        if current.is_none() && successor {
+            // Working memory lost the successor's turn (a restart): only C's
+            // durable acknowledgment for this exact consumer restores it.
+            current =
+                self.decision_resume_turn(fence.run, fence.attempt, fence.generation, fence.session)?;
+            if let Some(memory) = self.open(fence.run)?.attempt.as_mut() {
+                memory.resume_turn = current;
+            }
+        }
         if exact_turn && fence.turn != current {
             return Err(refused("bot_turn_stale"));
         }
+        let attempt = self
+            .open(fence.run)?
+            .attempt
+            .as_ref()
+            .ok_or_else(|| refused("bot_fenced"))?;
         if controls {
             if !attempt.holds_lease
                 || attempt.release_owed
@@ -191,6 +225,14 @@ impl Orchestrator {
                 .bot_observed
         {
             return Err(refused("bot_observation_required"));
+        }
+        // The original InitialSend is immutable and belongs to its own attempt.
+        // A recorded successor's input is its decision continuation, never a
+        // second initial send, so BeginTurn on any other attempt is fenced.
+        if record.initial_send.as_ref().is_some_and(|send| {
+            send.attempt != fence.attempt || send.generation != fence.generation
+        }) {
+            return Err(refused("bot_fenced"));
         }
         let current = self
             .open(fence.run)?
@@ -316,6 +358,8 @@ impl Orchestrator {
         Ok(self.ports.sessions.bot_steer(fence.session, turn, input)?)
     }
 
+    /// Legacy IPC15 route: its command carries no stable request key, so
+    /// each call is its own request, exactly as the host did before.
     pub fn bot_answer_approval(
         &mut self,
         fence: &BotExecutionFence,
@@ -324,7 +368,38 @@ impl Orchestrator {
         decision: koru_delegate_core::ApprovalDecision,
         choice: Option<koru_delegate_core::ApprovalChoiceId>,
     ) -> Result<(), RunError> {
-        self.bot_live_fence(fence, device, true, true)?;
+        self.bot_answer_approval_keyed(
+            fence,
+            device,
+            koru_delegate_core::IdempotencyKey::mint(),
+            approval,
+            decision,
+            choice,
+        )
+    }
+
+    /// An ordinary (non-decision) native answer under the caller's stable
+    /// request key (O124): the same key is forwarded unchanged to the session
+    /// host, so a retry after a lost reply is the same request, never a
+    /// second answer. Refused while a decision owns the Run's publication.
+    pub fn bot_answer_approval_keyed(
+        &mut self,
+        fence: &BotExecutionFence,
+        device: DeviceId,
+        request: koru_delegate_core::IdempotencyKey,
+        approval: koru_delegate_core::ApprovalId,
+        decision: koru_delegate_core::ApprovalDecision,
+        choice: Option<koru_delegate_core::ApprovalChoiceId>,
+    ) -> Result<(), RunError> {
+        // Identity, owner device and controller first; then a decision-owned
+        // native prompt is answered only through the decision owner with its
+        // journaled key, so this route refuses rather than bypass it.
+        self.bot_live_fence_inner(fence, device, true, true, false)?;
+        self.restore_publication_owner(fence.run)?;
+        if self.run_publication_pending(fence.run) {
+            return Err(refused("bot_decision_owned"));
+        }
+        self.bot_execution_policy(fence.run)?;
         let turn = fence.turn.ok_or_else(|| refused("bot_turn_stale"))?;
         if self
             .open(fence.run)?
@@ -337,10 +412,13 @@ impl Orchestrator {
         {
             return Err(refused("bot_approval_stale"));
         }
-        Ok(self
-            .ports
-            .sessions
-            .bot_answer_approval(fence.session, approval, decision, choice)?)
+        Ok(self.ports.sessions.bot_answer_approval(
+            fence.session,
+            request,
+            approval,
+            decision,
+            choice,
+        )?)
     }
 
     pub fn bot_answer_questions(

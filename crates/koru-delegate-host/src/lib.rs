@@ -36,6 +36,7 @@ mod actor;
 mod authority;
 mod bootstrap;
 mod context;
+mod decision_bridge;
 mod documents;
 mod events;
 mod ledger;
@@ -230,6 +231,14 @@ fn serve(
         bootstrap.bot_authority(),
         Arc::clone(&schedule_stopped),
     );
+    // The decision enrollment client, under its own credential domain and the
+    // same stop flag. It moves onto the fixed publication worker below, the
+    // only thread its HTTP call runs on.
+    let decision_bridge = decision_bridge::HostDecisionBridge::new(
+        &gateway.client,
+        bootstrap.bot_authority(),
+        Arc::clone(&schedule_stopped),
+    );
     let scheduler = ScheduleCoordinator::new(
         Box::new(schedules::StoreSchedules::new(gateway.client.clone())),
         Box::new(ledger.clone()),
@@ -254,6 +263,9 @@ fn serve(
 
     let (commands, inbox) = mpsc::channel();
     let mut actor = actor::Actor::new(orchestrator, commands.clone(), device.clone());
+    actor
+        .attach_decision_bridge(Box::new(decision_bridge))
+        .map_err(|error| format!("could not start the publication worker: {error}"))?;
     let scheduler = scheduler::Handle::spawn(
         scheduler,
         gateway.client.clone(),

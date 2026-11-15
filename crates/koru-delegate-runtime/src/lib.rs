@@ -73,7 +73,8 @@ mod scheduler;
 pub use counters::{Counters, CountingCapture};
 pub use facts::{RunFact, UsageReport};
 pub use orchestrator::{
-    CreateError, CreateIntentStatus, Created, HandleOutcome, Options, Orchestrator, Purged,
+    CreateError, CreateIntentStatus, Created, DecisionEditRequest, DecisionEnrollmentBridge,
+    DecisionResumeStep, HandleOutcome, Options, Orchestrator, Purged,
     RestartReport, RunError, RunPlace, RunView, ScheduledScopeReservation,
     ScopeReservationResolution, SourceProducer, SourceProgress, Started, TOOL_STEP_BOUND,
     TimelineWindow, WindowItem,
@@ -107,6 +108,12 @@ pub use koru_delegate_sqlite::{
     AttemptPhase, AttemptRow, IntentRecord, LedgerError, LookupAnswer, OpenPublication,
     PendingIntent, Projection, WriteOutcome,
 };
+
+/// Dev-only decision-chain builder for dependents' composition tests. A
+/// dependent enables `test-support` in its `[dev-dependencies]`; nothing
+/// shipped does.
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
 
 #[cfg(test)]
 mod tests;

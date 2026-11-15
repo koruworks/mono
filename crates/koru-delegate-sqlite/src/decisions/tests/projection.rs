@@ -111,6 +111,77 @@ pub(super) fn advance_base(base: &mut DecisionPublicationBase, record: &Decision
     base.timeline_len = base.predecessor.timeline_start;
 }
 
+/// BotRun5. A Bot Run's first projection names the format it was created at:
+/// 5 for this build's Bot Runs (Manual or Routine), or 3 (Manual) / 4
+/// (Routine) for a Bot Run the previous default wrote. The other legacy
+/// cohort is refused, and so is a Run with no Bot admission (an ordinary Run)
+/// even at 5.
+#[test]
+fn first_projection_is_accepted_at_bot5_and_at_the_previous_bot3_bot4_defaults() {
+    for (routine, schema, accepted) in [
+        (false, 5u8, true),
+        (false, 3, true),
+        (false, 4, false),
+        (true, 5, true),
+        (true, 4, true),
+        (true, 3, false),
+    ] {
+        let mut h = Harness::new();
+        if routine {
+            // A Routine edit decision is refused at preparation; the Routine
+            // native decision opens the same wait for the projection.
+            h.native();
+            h.routine(true);
+        }
+        let decision = h.prepare();
+        let mut base = base(&h);
+        base.source_schema = schema.try_into().unwrap();
+        let target = source(&h, &base, 1);
+        let result = h.db.record_decision_source(
+            h.origin().owner,
+            DecisionTransitionId::mint(),
+            decision.wait.wait,
+            &base,
+            &target,
+        );
+        assert_eq!(
+            result.is_ok(),
+            accepted,
+            "routine={routine} schema={schema}"
+        );
+    }
+
+    // An ordinary Run (an intent, no Bot admission) is refused at 5.
+    let mut h = Harness::new();
+    let decision = h.prepare();
+    let mut request =
+        h.db.bot_admission(h.origin().run)
+            .unwrap()
+            .unwrap()
+            .submission
+            .request;
+    request.run = RunId::mint();
+    request.scope = koru_delegate_core::WorkspaceScope::Temporary;
+    let workspace = h.db.intent(h.origin().run).unwrap().unwrap().workspace;
+    h.db.record_intent(&request, workspace).unwrap();
+    let mut base = base(&h);
+    base.source_schema = 5u8.try_into().unwrap();
+    let mut target = source(&h, &base, 1);
+    if let RunProjectionTargetV1::Source { bookkeeping, .. } = &mut target {
+        bookkeeping.boundary.fence.run = request.run;
+    }
+    assert!(
+        h.db.record_decision_source(
+            h.origin().owner,
+            DecisionTransitionId::mint(),
+            decision.wait.wait,
+            &base,
+            &target,
+        )
+        .is_err()
+    );
+}
+
 #[test]
 fn decision_projection_source_replays_before_fresh_state_and_retains_first_preparation() {
     let mut h = Harness::new();

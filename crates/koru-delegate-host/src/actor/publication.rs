@@ -5,10 +5,58 @@
 //! the physical ticket. There is no caller-provided target or publication body.
 
 use super::*;
-use crate::publication::{Completion, PublicationWorker};
+use crate::publication::{Completion, EnrollmentClient, PublicationWorker};
 use koru_delegate_runtime::SourceProgress;
 
 impl Actor {
+    /// Start the one fixed worker now, carrying the host's decision
+    /// enrollment client onto its thread. Enrollment then runs there, only
+    /// while no Run's document handle is out, under the worker's single
+    /// ticket. Called once at composition, before the loop runs.
+    pub(crate) fn attach_decision_bridge(
+        &mut self,
+        client: EnrollmentClient,
+    ) -> std::io::Result<()> {
+        if self.publication_worker.is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                "the publication worker already started",
+            ));
+        }
+        self.publication_worker = Some(PublicationWorker::start_with_enrollment(
+            Self::publication_wake(self.commands.clone()),
+            client,
+        )?);
+        Ok(())
+    }
+
+    /// Owned sender in, so the wake borrows nothing of the actor.
+    fn publication_wake(commands: mpsc::Sender<Command>) -> impl Fn() + Send + 'static {
+        move || {
+            let _ = commands.send(Command::PublicationWake);
+        }
+    }
+
+    /// The composed host attaches its worker eagerly. An actor without an
+    /// enrollment client (no decision bridge composed) gets a worker on first
+    /// use whose enrollment answers `decision_enrollment_unavailable`.
+    pub(super) fn ensure_publication_worker(&mut self) -> Result<(), RunError> {
+        if self.publication_worker.is_none() {
+            self.publication_worker = Some(
+                PublicationWorker::start(Self::publication_wake(self.commands.clone())).map_err(
+                    |_| {
+                        PortError::new(
+                            koru_delegate_runtime::Port::Documents,
+                            "publication_worker_unavailable",
+                            "the publication worker could not start",
+                        )
+                    },
+                )?,
+            );
+        }
+        Ok(())
+    }
+
     fn start_run_publication(&mut self, run: RunId) -> Result<bool, RunError> {
         if self.publication_ack.is_some()
             || self
@@ -18,21 +66,7 @@ impl Actor {
         {
             return Err(koru_delegate_runtime::publication_pending().into());
         }
-        if self.publication_worker.is_none() {
-            let commands = self.commands.clone();
-            self.publication_worker = Some(
-                PublicationWorker::start(move || {
-                    let _ = commands.send(Command::PublicationWake);
-                })
-                .map_err(|_| {
-                    PortError::new(
-                        koru_delegate_runtime::Port::Documents,
-                        "publication_worker_unavailable",
-                        "the publication worker could not start",
-                    )
-                })?,
-            );
-        }
+        self.ensure_publication_worker()?;
         let Some(start) = self.orchestrator.next_run_publication(run)? else {
             return Ok(false);
         };
@@ -61,6 +95,9 @@ impl Actor {
             self.publication_completed(completion, false);
         }
         self.drive_publication();
+        // After the drain (an enrollment reply also wakes the actor here):
+        // one Run's decision wait per turn, rotating.
+        self.advance_decision_resume();
     }
 
     /// One maintenance step: start at most one physical workflow, then offer
@@ -98,6 +135,11 @@ impl Actor {
         {
             return;
         }
+        // A Run whose last workflow failed waits one ordinary TICK; others
+        // keep rotating meanwhile, and its handle stays home for the resume
+        // driver and enrollment. Expired entries leave the map.
+        let now = Instant::now();
+        self.publication_retry_at.retain(|_, at| *at > now);
         // Durable open projections come from the bounded keyset reader (also
         // after a restart, with no RunState); observations from memory.
         let candidates = match self.orchestrator.publication_runs(self.publication_cursor) {
@@ -108,6 +150,9 @@ impl Actor {
             }
         };
         for run in candidates {
+            if self.publication_retry_at.contains_key(&run) {
+                continue;
+            }
             match self.start_run_publication(run) {
                 Ok(true) => {
                     self.publication_cursor = Some(run);
@@ -157,13 +202,17 @@ impl Actor {
                     Ok(prepared) => Some(prepared),
                     Err(error) => {
                         tracing::warn!(target: "koru::delegate", %error, "publication preparation receipt remains unknown");
+                        self.defer_publication(ticket.run);
                         None
                     }
                 };
                 if let Some(worker) = self.publication_worker.as_mut() {
                     let result = match retained {
                         Some(prepared) => worker.apply(ticket, prepared),
-                        None => worker.return_handle(ticket),
+                        // The unrecorded candidate must not stay staged on
+                        // the handle: the re-read may select another
+                        // transition, which a stale candidate would refuse.
+                        None => worker.return_unrecorded(ticket, prepared.identity.transition),
                     };
                     if let Err(error) = result {
                         tracing::warn!(target: "koru::delegate", code = error.code, "publication ownership remains unresolved");
@@ -175,6 +224,7 @@ impl Actor {
                 proof,
                 handle,
             } => {
+                self.publication_retry_at.remove(&ticket.run);
                 if self.return_publication_handle(ticket, handle) {
                     // A writer failure retains this checked observation and the
                     // exclusive attached handle. It never becomes fresh authority.
@@ -195,10 +245,12 @@ impl Actor {
                 self.return_publication_handle(ticket, handle);
                 if let Some(error) = error {
                     tracing::warn!(target: "koru::delegate", code = error.code, "publication remains owed");
+                    self.defer_publication(ticket.run);
                 }
             }
             Completion::Pending { ticket, error } => {
                 tracing::warn!(target: "koru::delegate", code = error.code, "publication completion is unknown");
+                self.defer_publication(ticket.run);
                 if !shutting_down && let Some(worker) = self.publication_worker.as_mut() {
                     // Preserve handle-local staging and retained SQL bytes.
                     let _ = worker.return_handle(ticket);
@@ -220,6 +272,8 @@ impl Actor {
             }
             Completion::Lost { ticket } => {
                 self.orchestrator.lost_run_publication(ticket);
+                // A cold open that keeps failing reports Lost every time.
+                self.defer_publication(ticket.run);
             }
         }
     }
@@ -305,6 +359,16 @@ impl Actor {
                 self.stop_pump(run);
             }
         }
+    }
+
+    /// A failed or unknown workflow (refused receipt, refused prepare or open,
+    /// unknown apply) is not started again for that Run until one ordinary
+    /// TICK has passed. Without this a persistent failure restarted on every
+    /// worker wake, spinning the actor thread and keeping the handle out of
+    /// the resume driver's reach. The loop's existing TICK deadline brings it
+    /// back; nothing is persisted and no timer is added.
+    fn defer_publication(&mut self, run: RunId) {
+        self.publication_retry_at.insert(run, Instant::now() + TICK);
     }
 
     fn return_publication_handle(

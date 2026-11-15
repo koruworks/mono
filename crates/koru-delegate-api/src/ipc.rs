@@ -42,7 +42,9 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 13 binds queued Bot dispatch to current-owner replay for this boot.
 // Version 14 separates scoped Memory allocations/effects from saved results.
 // Version 15 registers retained Routine routes through the private Bot port.
-pub const WIRE_VERSION: u8 = 15;
+// Version 16 adds Bot decisions (prepare, answer, edit consume, wait read with
+// its resume) and a stable request key on the native approval answer.
+pub const WIRE_VERSION: u8 = 16;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -45,36 +45,18 @@ fn unreadable_barrier_is_not_missing_and_inventory_cursor_still_advances() {
     assert!(next.next.is_none());
 }
 
+// The boot replay fixtures are the dev-only builder's, so there is one copy.
+
 pub(super) fn policy(s: &BotSubmission, revision: u64) -> BotPolicyBarrier {
-    BotPolicyBarrier {
-        key: BotPolicyBarrierKey {
-            owner: s.provenance.owner,
-            bot: s.provenance.bot,
-            request: BotRequestId::from_uuid(v4(89 + revision as u8)).into(),
-        },
-        config_revision: revision,
-        policy_revision: s.provenance.policy_revision,
-        policy: s.policy.clone(),
-        effects_allowed: true,
-    }
+    crate::test_support::bot_policy(s, revision)
 }
 
 fn barrier(s: &BotSubmission) -> BotAdmissionBarrier {
-    BotAdmissionBarrier {
-        owner: s.provenance.owner,
-        bot: s.provenance.bot,
-        request: BotRequestId::from_uuid(v4(0xef)),
-        epoch: s.provenance.config_revision,
-        paused: false,
-    }
+    crate::test_support::admission_barrier(s)
 }
 
 pub(super) fn replay(orchestrator: &mut Orchestrator, s: &BotSubmission) {
-    replay_pair(
-        orchestrator,
-        barrier(s),
-        policy(s, s.provenance.config_revision),
-    );
+    crate::test_support::replay_boot(orchestrator, s);
 }
 
 pub(super) fn replay_pair(
@@ -82,15 +64,7 @@ pub(super) fn replay_pair(
     barrier: BotAdmissionBarrier,
     policy: BotPolicyBarrier,
 ) {
-    let boot = orchestrator
-        .bot_hello(barrier.owner, BotBootScan::Probe {}, barrier.owner.device)
-        .unwrap()
-        .boot;
-    let device = barrier.owner.device;
-    let receipt = orchestrator
-        .synchronize_boot_bot(boot, barrier, policy, device)
-        .unwrap();
-    assert_eq!(receipt.state, BotBootState::Ready);
+    crate::test_support::replay_boot_pair(orchestrator, barrier, policy);
 }
 
 #[test]

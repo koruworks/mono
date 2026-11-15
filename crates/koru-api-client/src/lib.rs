@@ -69,6 +69,10 @@ pub use schedules::{ScheduleSubscription, SchedulesClient, SchedulesResult};
 pub mod routine_bridge;
 #[cfg(feature = "delegate")]
 pub use routine_bridge::{RoutineBridgeClient, RoutineBridgeTransportError};
+#[cfg(feature = "delegate")]
+pub mod decision_bridge;
+#[cfg(feature = "delegate")]
+pub use decision_bridge::{DecisionBridgeClient, DecisionBridgeTransportError};
 pub mod catalog;
 pub use catalog::{
     CatalogClient, WORKSPACE_IN_USE, WorkspaceApiFailure, WorkspaceError, WorkspaceResult,

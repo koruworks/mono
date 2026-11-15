@@ -175,6 +175,7 @@ pub enum Command {
 }
 
 mod bots;
+mod decision_resume;
 mod publication;
 mod routine;
 #[cfg(test)]
@@ -245,6 +246,19 @@ pub struct Actor {
     publication_ack: Option<koru_delegate_runtime::AppliedRunProjection>,
     /// The last Run a physical publication workflow was started for.
     publication_cursor: Option<RunId>,
+    /// Runs whose last publication workflow failed, and the instant (one
+    /// ordinary TICK later) before which they are not started again. Memory
+    /// only; bounded by the publication candidates.
+    publication_retry_at: HashMap<RunId, Instant>,
+    /// The last Run offered to the decision resume driver (O123 rotation).
+    decision_resume_cursor: Option<RunId>,
+    /// Whether the last resume turn found an open decision wait (or none has
+    /// run yet, or a Bot command may have opened one): keeps the maintenance
+    /// tick alive so the next Run is offered.
+    decision_resume_pending: bool,
+    /// Every resume turn, as tests observe it.
+    #[cfg(test)]
+    resume_log: Vec<decision_resume::ResumeTurnRecord>,
 }
 
 impl Actor {
@@ -275,6 +289,12 @@ impl Actor {
             publication_worker: None,
             publication_ack: None,
             publication_cursor: None,
+            publication_retry_at: HashMap::new(),
+            decision_resume_cursor: None,
+            // A restart may find waits a previous process left open.
+            decision_resume_pending: true,
+            #[cfg(test)]
+            resume_log: Vec::new(),
         }
     }
 
@@ -512,12 +532,12 @@ impl Actor {
                 settle_at = (!durable).then(|| Instant::now() + SETTLE_POLL);
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
-                self.retry_publication_ack();
-                self.drive_publication();
-                if let Err(error) = self.orchestrator.retry_publications(64) {
-                    tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
-                }
-                publication_at = self.publications_pending().then(|| Instant::now() + TICK);
+                // A step taken offers the next turn now rather than a tick later.
+                publication_at = if self.maintenance_tick() {
+                    Some(Instant::now())
+                } else {
+                    self.publications_pending().then(|| Instant::now() + TICK)
+                };
             }
 
             if bot_budget_at.is_some_and(|deadline| deadline <= now) {
@@ -604,6 +624,21 @@ impl Actor {
         self.orchestrator.settle_all();
     }
 
+    /// One maintenance tick: the retained acknowledgment, one publication
+    /// step, bus retries, then one Run's decision wait (O123 rotation).
+    /// Returns whether that Run took a step.
+    fn maintenance_tick(&mut self) -> bool {
+        self.retry_publication_ack();
+        self.drive_publication();
+        if let Err(error) = self.orchestrator.retry_publications(64) {
+            tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
+        }
+        matches!(
+            self.advance_decision_resume(),
+            decision_resume::ResumeTurn::Stepped(..)
+        )
+    }
+
     /// The answer to a person's request, once the run's commits are
     /// durable — the one wait the actor still does, and it is the same wait
     /// a window's `StoreSession` does before it calls an edit saved.
@@ -634,6 +669,8 @@ impl Actor {
                     Err(failure) => Response::Failure(failure),
                 };
                 let _ = reply.send(response);
+                // A decision command may have opened or answered a wait.
+                self.decision_resume_pending = true;
                 if queue_changed {
                     self.wake_bots();
                 }
@@ -1095,7 +1132,9 @@ impl Actor {
     fn publications_pending(&self) -> bool {
         // Exclusive Runs keep the existing coalesced maintenance tick alive so
         // owed projections, observations and producer reconnects progress.
-        if self.publication_ack.is_some() || !self.orchestrator.publication_candidates().is_empty()
+        if self.publication_ack.is_some()
+            || self.decision_resume_pending
+            || !self.orchestrator.publication_candidates().is_empty()
         {
             return true;
         }

@@ -84,7 +84,15 @@ fn routine_expiry_adapter_records_no_draft_miss_without_policies_or_executable_r
     );
     assert!(miss.is_none());
     assert!(db.intents().unwrap().is_empty());
-    assert!(db.bot_admission(run).unwrap().is_none());
+    // No admission row exists. The skip retains the planned run id as a
+    // Routine marker, so `bot_admission` denies it at this tool-authority
+    // boundary instead of reading absence as an ordinary Run (63c7e124).
+    assert_eq!(
+        db.bot_admission(run),
+        Err(BotLedgerError::Ledger(
+            LedgerError::InvalidScheduleAuthority
+        ))
+    );
     assert!(
         db.current_routine_policy(association.owner, association.bot, header.schedule)
             .unwrap()

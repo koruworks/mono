@@ -23,6 +23,9 @@ pub use koru_delegate_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod decisions;
+pub use decisions::{DecisionAnswerRequest, DecisionEditProposal, DecisionReceiptView};
+
 /// Per-Agent-run secret passed only through trusted bootstrap. Not an owner
 /// identity and not persisted with an operation or Run. Same-account process
 /// memory access is outside this capability's isolation boundary.
@@ -46,6 +49,12 @@ impl BotDelegateAuthority {
     /// bootstrap capability.
     pub fn routine_bridge_authority(&self) -> crate::routines::RoutineBridgeAuthority {
         crate::routines::RoutineBridgeAuthority::from_parent_bytes(self.0.as_bytes())
+    }
+    /// Derive the separate decision-bridge capability. Its derive-key context
+    /// and header scheme differ from the Routine bridge's, so neither
+    /// credential authorizes the other's routes.
+    pub fn decision_bridge_authority(&self) -> crate::decision_bridge::DecisionBridgeAuthority {
+        crate::decision_bridge::DecisionBridgeAuthority::from_parent_bytes(self.0.as_bytes())
     }
     pub fn new(value: String) -> Option<Self> {
         (value.len() >= 32 && value.len() <= 256 && !value.contains('\0')).then_some(Self(value))
@@ -188,8 +197,12 @@ pub enum BotCommand {
         key: BotRunKey,
         fence: Option<BotExecutionFence>,
     },
+    /// IPC 16 (O124): `request` is the caller's stable key for this one
+    /// answer, forwarded unchanged to the session host so a retry of the same
+    /// answer is the same request. Refused while a decision owns the Run.
     AnswerApproval {
         fence: BotExecutionFence,
+        request: koru_delegate_core::IdempotencyKey,
         approval: ApprovalId,
         decision: ApprovalDecision,
         choice: Option<ApprovalChoiceId>,
@@ -257,6 +270,48 @@ pub enum BotCommand {
         key: BotRunKey,
         receipt: BotDeliveryReceipt,
     },
+    /// IPC 16: prepare a native approval decision for the exact live
+    /// consumer's pending prompt from its retained offered choices. `boot` is
+    /// the delegate boot this owner learned from `Hello`.
+    PrepareNativeDecision {
+        fence: BotExecutionFence,
+        approval: ApprovalId,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 16: prepare a one-use Koru edit decision for an edit refused only
+    /// by selected-page write access. No intent, lease or Store effect.
+    PrepareEditDecision {
+        fence: BotExecutionFence,
+        edit: DecisionEditProposal,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 16, human route only: a person's exact answer. A native answer is
+    /// forwarded with the ledger's journaled key; a retry replays it.
+    AnswerDecision {
+        answer: DecisionAnswerRequest,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 16: the one-use consume by the exact acknowledged successor. The
+    /// reply carries `Execute` only on the first fresh commit.
+    ConsumeDecisionEdit {
+        fence: BotExecutionFence,
+        request: PrepareNativeResult,
+        payload: koru_delegate_core::decisions::DecisionPayload,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 16: the exact retained decision-wait observation and the current
+    /// retained resume (O126). Historical; never permission to stop.
+    ReadBotDecisionWait {
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+        run: koru_delegate_core::RunId,
+        wait_id: koru_delegate_core::decisions::BotWaitId,
+        decision_id: koru_delegate_core::decisions::DecisionId,
+    },
 }
 impl BotCommand {
     /// The explicit owner asserted by the trusted AI owner. Native-result
@@ -294,7 +349,12 @@ impl BotCommand {
             | Self::SkipQuestions { fence, .. }
             | Self::TakeOver { fence }
             | Self::HandBack { fence }
-            | Self::EffectFence { fence } => Some(&fence.owner),
+            | Self::EffectFence { fence }
+            | Self::PrepareNativeDecision { fence, .. }
+            | Self::PrepareEditDecision { fence, .. }
+            | Self::ConsumeDecisionEdit { fence, .. } => Some(&fence.owner),
+            Self::AnswerDecision { answer, .. } => Some(&answer.owner),
+            Self::ReadBotDecisionWait { owner, .. } => Some(owner),
             Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
             Self::SynchronizeRoutinePolicy { barrier } => Some(&barrier.owner),
             Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
@@ -399,6 +459,17 @@ pub enum BotReply {
     MemoryEditAllocation {
         allocation: MemoryEditAllocation,
     },
+    /// IPC 16: the exact retained decision after a prepare or answer.
+    Decision {
+        decision: DecisionReceiptView,
+    },
+    /// IPC 16: the observation and the current retained resume (O126). An
+    /// absent observation answers `Missing` only after the exact owner/subject
+    /// read succeeded.
+    DecisionWait {
+        observation: koru_delegate_core::decisions::BotDecisionWaitObservation,
+        resume: Option<koru_delegate_core::decisions::DecisionResume>,
+    },
 }
 impl std::fmt::Debug for BotReply {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -460,6 +531,69 @@ pub trait BotDelegatePort: Send + Sync {
                 }
                 _ => Err(unknown()),
             },
+            _ => Err(unknown()),
+        }
+    }
+    /// IPC 16: the exact decision-wait observation and current resume within
+    /// the caller's remaining budget. `Ok(None)` only for the delegate's
+    /// positive `Missing` after its exact owner/subject read; a transport,
+    /// timeout, late, malformed or foreign-subject answer is unavailable,
+    /// never Missing. A legacy port may ignore the bound; a late answer is
+    /// still rejected here.
+    #[allow(clippy::type_complexity)]
+    fn read_bot_decision_wait(
+        &self,
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+        run: koru_delegate_core::RunId,
+        wait: koru_delegate_core::decisions::BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+        within: std::time::Duration,
+    ) -> Result<
+        Option<(
+            koru_delegate_core::decisions::BotDecisionWaitObservation,
+            Option<koru_delegate_core::decisions::DecisionResume>,
+        )>,
+        crate::Failure,
+    > {
+        use koru_delegate_core::decisions::DecisionValidate;
+        let started = std::time::Instant::now();
+        let unknown = || crate::Failure::unavailable();
+        if within.is_zero() {
+            return Err(unknown());
+        }
+        let answer = self.execute_within(
+            BotCommand::ReadBotDecisionWait {
+                owner,
+                bot,
+                run,
+                wait_id: wait,
+                decision_id: decision,
+            },
+            within,
+        )?;
+        if started.elapsed() >= within {
+            return Err(unknown());
+        }
+        match answer {
+            BotReply::Missing => Ok(None),
+            BotReply::DecisionWait {
+                observation,
+                resume,
+            } if observation.validate().is_ok()
+                && observation.key.owner == owner
+                && observation.key.bot == bot
+                && observation.key.run == run
+                && observation.key.wait_id == wait
+                && observation.key.decision_id == decision
+                && resume.as_ref().is_none_or(|resume| {
+                    resume.validate().is_ok()
+                        && resume.decision == decision
+                        && resume.origin == observation.cleanup_intent.origin()
+                }) =>
+            {
+                Ok(Some((observation, resume)))
+            }
             _ => Err(unknown()),
         }
     }

@@ -325,6 +325,31 @@ pub trait BotLedger {
         owner: BotOwner,
         run: RunId,
     ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError>;
+    /// The retained decision record (binding, state, resume, native answer)
+    /// through the sole bounded decoder, fenced to the exact owner and Run.
+    /// Exact history only: no fresh policy, clock or authority is implied.
+    fn bot_decision(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<crate::DecisionRecord>, BotLedgerError>;
+    /// At most `limit` (1..=16) Runs with an open decision wait strictly after
+    /// `after`, with their owner, through the approved open-wait index. The
+    /// caller rotates and wraps; selection is identity only, never authority.
+    fn decision_resume_runs(
+        &self,
+        after: Option<RunId>,
+        limit: usize,
+    ) -> Result<Vec<(BotOwner, RunId)>, BotLedgerError>;
+    /// The durably acknowledged continuation of the Run's current attempt
+    /// when it is a recorded decision successor; `None` otherwise. History
+    /// only: it never grants input, execution or capacity.
+    fn decision_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionAcknowledgedContinuation>, BotLedgerError>;
     /// The delegate-owned observation behind IPC16 `ReadBotDecisionWait`.
     /// Read-only and historical: it never grants permission to stop, and its
     /// fresh eligibility is derived from today's exact state alone.

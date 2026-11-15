@@ -279,13 +279,43 @@ impl Orchestrator {
             .store
             .current_attempt(key.run)?
             .ok_or_else(|| refused("bot_fenced"))?;
+        // The key's turn must be this attempt's own recorded input turn: the
+        // original InitialSend, or a recorded successor's acknowledged resume
+        // turn mirrored from C. Never the original's turn under a successor.
+        let mirrored = self
+            .runs
+            .get(&key.run)
+            .and_then(|state| state.attempt.as_ref())
+            .filter(|memory| memory.id == key.attempt && memory.generation == key.generation)
+            .map_or_else(
+                || {
+                    admission
+                        .initial_send
+                        .as_ref()
+                        .filter(|send| {
+                            send.attempt == key.attempt && send.generation == key.generation
+                        })
+                        .and_then(|send| send.turn)
+                },
+                |memory| {
+                    super::bot_controls::recorded_input_turn(
+                        admission.initial_send.as_ref(),
+                        memory,
+                    )
+                },
+            );
+        // Memory lost to a restart: a recorded successor's durable
+        // acknowledgment from C, for this exact attempt and session only.
+        let recorded = match (mirrored, attempt.provider_session.and_then(|k| k.session)) {
+            (Some(turn), _) => Some(turn),
+            (None, Some(session)) => {
+                self.decision_resume_turn(key.run, key.attempt, key.generation, session)?
+            }
+            (None, None) => None,
+        };
         if attempt.attempt != key.attempt
             || attempt.generation != key.generation
-            || admission.initial_send.as_ref().is_none_or(|send| {
-                send.attempt != key.attempt
-                    || send.generation != key.generation
-                    || send.turn != Some(key.turn)
-            })
+            || recorded != Some(key.turn)
             || key.operation_id.get_version_num() != 4
             || key.operation_id.as_bytes()[8] & 0xc0 != 0x80
         {

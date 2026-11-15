@@ -133,6 +133,7 @@ impl BotDelegatePort for Interactive {
             }
             D::AnswerApproval {
                 fence,
+                request: _,
                 approval,
                 decision,
                 choice,

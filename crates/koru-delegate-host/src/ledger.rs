@@ -289,7 +289,10 @@ impl RunStore for SharedLedger {
         after: Option<RunId>,
         limit: usize,
     ) -> Result<Vec<RunId>, LedgerError> {
-        self.0.lock().unwrap().decision_projection_runs(after, limit)
+        self.0
+            .lock()
+            .unwrap()
+            .decision_projection_runs(after, limit)
     }
     fn pending_publication_run_anchor(
         &self,

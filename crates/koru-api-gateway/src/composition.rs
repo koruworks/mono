@@ -171,6 +171,11 @@ pub(crate) fn open(
     let routine_bridge_authority = bot_authority
         .as_ref()
         .map(|authority| authority.routine_bridge_authority());
+    // The decision bridge's own domain: same bootstrap parent, separate derive
+    // context and header scheme, so neither credential opens the other's routes.
+    let decision_bridge_authority = bot_authority
+        .as_ref()
+        .map(|authority| authority.decision_bridge_authority());
     let bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> = bot_authority
         .and_then(|authority| {
             let endpoint = koru_ipc::Endpoint::for_service_channel_root(
@@ -198,7 +203,13 @@ pub(crate) fn open(
             Some(authority) => {
                 let ai_config = ai_config.with_bot_authority(Arc::new(authority));
                 match bot_delegate.clone() {
-                    Some(delegate) => ai_config.with_bot_delegate(delegate),
+                    // One IPC16 read through the same private port serves the
+                    // AI decision owner's wait and resume reads.
+                    Some(delegate) => ai_config
+                        .with_decision_wait_delegate(Arc::new(
+                            koru_ai_server::BotDelegateDecisionWait::new(delegate.clone()),
+                        ))
+                        .with_bot_delegate(delegate),
                     None => ai_config,
                 }
             }
@@ -228,6 +239,9 @@ pub(crate) fn open(
     }
     if let Some(authority) = routine_bridge_authority {
         state.set_routine_bridge_authority(authority);
+    }
+    if let Some(authority) = decision_bridge_authority {
+        state.set_decision_bridge_credential(Arc::new(authority));
     }
     state.set_native_mutation_gate(native_mutations);
 

@@ -274,12 +274,29 @@ impl Orchestrator {
                 attempt: row.attempt,
                 generation: row.generation,
                 session,
-                turn: self
+                // The live turn, else this attempt's own recorded input turn:
+                // the original's InitialSend only for the original attempt.
+                turn: match self
                     .runs
                     .get(&run)
                     .and_then(|state| state.attempt.as_ref())
-                    .and_then(|attempt| attempt.orchestrator_turn)
-                    .or_else(|| record.initial_send.as_ref().and_then(|send| send.turn)),
+                    .filter(|attempt| {
+                        attempt.id == row.attempt && attempt.generation == row.generation
+                    }) {
+                    Some(attempt) => attempt.orchestrator_turn.or_else(|| {
+                        super::bot_controls::recorded_input_turn(
+                            record.initial_send.as_ref(),
+                            attempt,
+                        )
+                    }),
+                    None => record
+                        .initial_send
+                        .as_ref()
+                        .filter(|send| {
+                            send.attempt == row.attempt && send.generation == row.generation
+                        })
+                        .and_then(|send| send.turn),
+                },
             })
         });
         Ok(BotAdmissionView {
