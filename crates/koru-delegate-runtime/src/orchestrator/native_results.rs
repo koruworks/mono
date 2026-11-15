@@ -162,7 +162,10 @@ impl Orchestrator {
         fence: &BotExecutionFence,
         device: DeviceId,
     ) -> Result<(), RunError> {
-        self.bot_live_fence(fence, device, true, true)?;
+        // Existing leased/terminal Result replay is checked after this live
+        // subject/controller fence and before fresh composite policy. Memory
+        // acquisition also performs its fresh-policy check after this helper.
+        self.bot_live_fence_inner(fence, device, true, true, false)?;
         let attempt = self.open(fence.run)?.attempt.as_ref().expect("validated");
         if fence.turn.is_none()
             || attempt.orchestrator_turn != fence.turn

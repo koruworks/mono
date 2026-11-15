@@ -38,10 +38,16 @@ impl Orchestrator {
         controls: bool,
         exact_turn: bool,
     ) -> Result<BotExecutionRecord, RunError> {
-        self.bot_live_fence_inner(fence, device, controls, exact_turn, false)
+        let record = self.bot_live_fence_inner(fence, device, controls, exact_turn, false)?;
+        if controls {
+            self.bot_execution_policy(fence.run)?;
+        }
+        Ok(record)
     }
 
-    fn bot_live_fence_inner(
+    /// Identity/controller validation is also required for retained native
+    /// replay. Fresh callers add policy after distinguishing that replay.
+    pub(super) fn bot_live_fence_inner(
         &mut self,
         fence: &BotExecutionFence,
         device: DeviceId,
@@ -102,9 +108,6 @@ impl Orchestrator {
                     && status.control() != Some(ControlState::Orchestrator))
             {
                 return Err(refused("bot_controller_required"));
-            }
-            if !initial_replay {
-                self.bot_execution_policy(fence.run)?;
             }
             if record.active_elapsed_at(self.ports.clock.now_ms()) >= BOT_ACTIVE_BUDGET_MS {
                 return Err(refused("bot_budget_exhausted"));
