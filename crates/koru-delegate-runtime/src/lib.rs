@@ -73,7 +73,8 @@ mod scheduler;
 pub use counters::{Counters, CountingCapture};
 pub use facts::{RunFact, UsageReport};
 pub use orchestrator::{
-    CreateError, CreateIntentStatus, Created, HandleOutcome, Options, Orchestrator, Purged,
+    CreateError, CreateIntentStatus, Created, DecisionEditRequest, DecisionEnrollmentBridge,
+    HandleOutcome, Options, Orchestrator, Purged,
     RestartReport, RunError, RunPlace, RunView, ScheduledScopeReservation,
     ScopeReservationResolution, SourceProducer, SourceProgress, Started, TOOL_STEP_BOUND,
     TimelineWindow, WindowItem,

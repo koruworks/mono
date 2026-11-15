@@ -20,6 +20,11 @@ use koru_delegate_core::{
 };
 use koru_delegate_sqlite::{AnswerDecision, DecisionRecord};
 
+mod edit;
+mod resume;
+pub use edit::DecisionEditRequest;
+pub use resume::DecisionEnrollmentBridge;
+
 impl Orchestrator {
     /// Prepare a native approval decision for the exact live consumer's
     /// pending prompt, from its retained offered choices. The document base is
