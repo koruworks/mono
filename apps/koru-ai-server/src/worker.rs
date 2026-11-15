@@ -1240,6 +1240,7 @@ enum Envelope {
         reply: SyncSender<ApiResult<()>>,
     },
     DecisionWaitCompleted(Box<bots::decision_wait::DecisionWaitResult>),
+    DecisionApplied(Box<bots::decision_wait::apply::ApplyResult>),
     /// Read-only observation of production recovery for spawned-worker tests.
     #[cfg(test)]
     ReadRoutineCreationForFixture {
@@ -2223,6 +2224,7 @@ fn run_worker(
                 state.record_bot_decision(*view, reply)
             }
             Ok(Envelope::DecisionWaitCompleted(result)) => state.complete_decision_wait(*result),
+            Ok(Envelope::DecisionApplied(result)) => state.complete_decision_apply(*result),
             Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
             Ok(Envelope::ProviderReturned(attempt)) => state.work_returned(attempt),
@@ -6018,6 +6020,9 @@ enum ProviderAdminJob {
     DecisionWaitMutation(bots::decision_wait::DecisionWaitJob),
     /// Decision wait reads: the bounded Run-read lane.
     DecisionWaitRead(bots::decision_wait::DecisionWaitJob),
+    /// Koru's one save of an approved edit (O133): background administration,
+    /// beside native recovery; never a lane that answers a person.
+    DecisionApply(Box<bots::decision_wait::apply::ApplyJob>),
     BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotRoutineListing(bots::routine::listing::ListingJob),
     BotRoutineDetail(bots::routine::detail::DetailJob),
@@ -6189,6 +6194,14 @@ impl ProviderAdminPool {
                             send_admin_envelope(
                                 &output,
                                 Envelope::NativeDrained(result),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::DecisionApply(job) => {
+                            let result = job.run();
+                            send_admin_envelope(
+                                &output,
+                                Envelope::DecisionApplied(Box::new(result)),
                                 &thread_shutdown,
                             );
                         }

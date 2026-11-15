@@ -9,12 +9,15 @@
 //! qualifies any of this. Ordinary Stop and unrelated terminals keep their
 //! existing mapping. Nothing here fabricates a provider event.
 use super::*;
+use crate::worker::bots::decision_wait::apply::{
+    ApplyJob, ApplyOutcome, ApplyProgress, ApplyResult, ApplyWork, approved_receipt,
+};
 use crate::worker::bots::decision_wait::{DecisionWaitJob, DecisionWaitPortError};
 use koru_ai_sqlite::BotDecisionClosure;
 use koru_delegate_core::decisions::{
     BotDecisionWaitObservation, BotWaitCleanupCause, BotWaitEnrollmentKey, DecisionClosureReason,
-    DecisionDisposition, DecisionFence, DecisionResume, DecisionResumeState, DecisionValidate,
-    FreshWaitStopEligibility, OriginWaitStop,
+    DecisionDisposition, DecisionFence, DecisionResume, DecisionResumeState, DecisionState,
+    DecisionValidate, FreshWaitStopEligibility, OriginWaitStop,
 };
 
 #[cfg(test)]
@@ -47,6 +50,8 @@ pub(in crate::worker) struct DecisionWait {
     busy: bool,
     due: Instant,
     rounds: u32,
+    /// Consumer stage only: Koru's own save of the approved edit (O133).
+    apply: Option<ApplyProgress>,
 }
 impl DecisionWait {
     fn new(key: BotWaitEnrollmentKey, stage: Stage) -> Self {
@@ -56,7 +61,15 @@ impl DecisionWait {
             busy: false,
             due: Instant::now(),
             rounds: 0,
+            apply: None,
         }
+    }
+    /// The acknowledged consumer, observed normally, with its approved-edit
+    /// trigger armed.
+    fn consumer(key: BotWaitEnrollmentKey, consumer: BotExecutionFence) -> Self {
+        let mut wait = Self::new(key, Stage::Consumer);
+        wait.apply = Some(ApplyProgress::new(consumer));
+        wait
     }
     /// Only these stages let the ordinary observation step run.
     pub(in crate::worker) fn observes(&self) -> bool {
@@ -69,6 +82,14 @@ impl DecisionWait {
         self.rounds = (self.rounds + 1).min(MAX_ROUND);
         self.due = Instant::now() + Duration::from_millis(250) * (1u32 << self.rounds);
     }
+}
+
+/// Why an approved-edit attempt could not be built on the writer.
+enum DecisionApplyGap {
+    /// Never in this process: no receipt (O146), no executor, another subject.
+    Absent,
+    /// Not on this read (native readiness, a repository or barrier read).
+    NotNow,
 }
 
 /// How one staged origin terminal is interpreted.
@@ -477,10 +498,148 @@ impl WorkerState {
             DecisionDisposition::Settled { .. } => {
                 self.close_needed_you(attempt, chat, key, observed)
             }
-            DecisionDisposition::Open { .. } => {
+            DecisionDisposition::Open { state } => {
                 Self::defer_decision(chat);
+                self.schedule_decision_apply(attempt, chat, key, state);
                 true
             }
+        }
+    }
+
+    /// O133 design B: on this authenticated consumer read, start at most one
+    /// attempt to save the approved edit. Never on the read lane, never
+    /// blocking the writer; a lane that cannot take it counts as an attempt.
+    fn schedule_decision_apply(
+        &mut self,
+        attempt: InferenceAttemptId,
+        chat: &mut LiveChat,
+        key: &BotWaitEnrollmentKey,
+        state: &DecisionState,
+    ) {
+        let Some(apply) = chat
+            .decision
+            .as_mut()
+            .and_then(|wait| wait.apply.as_mut())
+        else {
+            return;
+        };
+        if !apply.due(state) {
+            return;
+        }
+        let work = match self.decision_apply_work(key, apply.consumer()) {
+            Ok(work) => work,
+            Err(DecisionApplyGap::Absent) => {
+                apply.stop();
+                return;
+            }
+            Err(DecisionApplyGap::NotNow) => {
+                apply.start();
+                apply.finish(ApplyOutcome::Unavailable);
+                return;
+            }
+        };
+        apply.start();
+        let job = ApplyJob {
+            attempt,
+            key: key.clone(),
+            work,
+        };
+        let sent = self.provider_admin.as_ref().is_some_and(|pool| {
+            pool.try_submit(ProviderAdminJob::DecisionApply(Box::new(job)))
+                .is_ok()
+        });
+        if !sent {
+            apply.finish(ApplyOutcome::Unavailable);
+        }
+    }
+
+    /// Everything one attempt needs, from the writer's own state: the
+    /// retained receipt, the trusted Store executor, the delegate, the
+    /// authority reader and the current global barrier (the way a card's
+    /// answer builds its proof). Absent pieces stop the trigger; the model's
+    /// exact retry stays the fallback.
+    fn decision_apply_work(
+        &self,
+        key: &BotWaitEnrollmentKey,
+        consumer: &BotExecutionFence,
+    ) -> Result<ApplyWork, DecisionApplyGap> {
+        let view = approved_receipt(self.decision_waits.receipt(key.decision_id), key, &origin_of(key))
+            .ok_or(DecisionApplyGap::Absent)?;
+        let koru_delegate_core::decisions::DecisionBindingV1::KoruEdit(binding) =
+            &view.receipt.binding
+        else {
+            return Err(DecisionApplyGap::Absent);
+        };
+        let recovery = self
+            .native_recovery
+            .as_ref()
+            .ok_or(DecisionApplyGap::Absent)?;
+        if !recovery.gate.ready() {
+            return Err(DecisionApplyGap::NotNow);
+        }
+        let port = self.bot_delegate.clone().ok_or(DecisionApplyGap::Absent)?;
+        let authority = self.bot_authority.clone().ok_or(DecisionApplyGap::Absent)?;
+        let bot = match self.repository.bot(binding.bot) {
+            Ok(Some(bot)) => bot,
+            Ok(None) => return Err(DecisionApplyGap::Absent),
+            Err(_) => return Err(DecisionApplyGap::NotNow),
+        };
+        if bot.user_scope != binding.owner.user_scope
+            || bot.owner_device != binding.owner.device
+            || bot.home_workspace != binding.workspace
+        {
+            return Err(DecisionApplyGap::Absent);
+        }
+        let global = match self.lifecycle_policy_barrier(&bot) {
+            Ok(Some(barrier)) => barrier,
+            Ok(None) => crate::worker::bots::policy::barrier(&bot)
+                .map_err(|_| DecisionApplyGap::NotNow)?,
+            Err(_) => return Err(DecisionApplyGap::NotNow),
+        };
+        Ok(ApplyWork {
+            store: recovery.store.clone(),
+            port,
+            authority,
+            view: view.clone(),
+            consumer: consumer.clone(),
+            proof: koru_delegate_core::FreshBotPolicyProof {
+                global,
+                routine: None,
+            },
+        })
+    }
+
+    /// One finished attempt. The writer records nothing durable: it owes the
+    /// shared effect's two notifications, then updates the wait's transient
+    /// trigger state if the task still waits on the same decision.
+    pub(in crate::worker) fn complete_decision_apply(&mut self, result: ApplyResult) {
+        let ApplyResult {
+            attempt,
+            key,
+            report,
+        } = result;
+        if report.settled {
+            self.recover_bot_policy(true);
+        }
+        if let Some((owner, bot, native)) = report.uncertain {
+            let run = native.run;
+            let _ = self.queue_native_recovery(
+                owner,
+                bot,
+                Some(run),
+                Some(native),
+                koru_delegate_core::NativeDrainReason::UnconfirmedOperation,
+            );
+        }
+        tracing::debug!(outcome = ?report.outcome, "approved edit attempt finished");
+        if let Some(apply) = self
+            .bot_chats
+            .get_mut(&attempt)
+            .and_then(|chat| chat.decision.as_mut())
+            .filter(|wait| wait.key == key)
+            .and_then(|wait| wait.apply.as_mut())
+        {
+            apply.finish(report.outcome);
         }
     }
 
@@ -545,7 +704,10 @@ impl WorkerState {
             chat.input.mode.as_ref().map(|m| m.as_str().to_owned()),
             UsageDelivery::EachEvent,
         ));
-        chat.decision = Some(DecisionWait::new(key.clone(), Stage::Consumer));
+        chat.decision = Some(DecisionWait::consumer(
+            key.clone(),
+            rolled.consumer_fence.clone(),
+        ));
         chat.observe_now();
         true
     }

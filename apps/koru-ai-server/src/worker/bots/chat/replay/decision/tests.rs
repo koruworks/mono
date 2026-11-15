@@ -248,3 +248,43 @@ fn needed_you_closure_publishes_exactly_one_closing_event_and_no_failure() {
         assert_eq!(needed_you_event(attempt, closure, at), None, "{closure:?}");
     }
 }
+
+#[test]
+fn the_consumer_arms_the_approved_edit_trigger_and_the_read_backoff_paces_its_attempts() {
+    use crate::worker::bots::decision_wait::apply::{ApplyOutcome, MAX_APPLY_ATTEMPTS};
+    use koru_delegate_core::decisions::{DecisionKind, DecisionPhase, DecisionRevision};
+    let fence = fixture::fence();
+    let key = fixture::holding(&fence).key;
+    // Only the acknowledged consumer carries the trigger (O133 design B).
+    assert!(DecisionWait::new(key.clone(), Stage::Held).apply.is_none());
+    let mut wait = DecisionWait::consumer(key, fence.clone());
+    assert_eq!(wait.stage, Stage::Consumer);
+    assert_eq!(wait.apply.as_ref().unwrap().consumer(), &fence);
+    let granted = DecisionState {
+        kind: DecisionKind::KoruEdit,
+        authorization: DecisionAuthorization::Granted,
+        phase: DecisionPhase::AwaitRetry,
+        revision: DecisionRevision::new(6).unwrap(),
+    };
+    // A trigger that fails every time. Each completed consumer read defers
+    // the next one by the existing backoff (as `advance_consumer` does) and
+    // may start at most one attempt; there is no other starter.
+    let mut attempts = 0;
+    let mut spacing = Vec::new();
+    for _ in 0..(3 * MAX_APPLY_ATTEMPTS) {
+        wait.defer();
+        let apply = wait.apply.as_mut().unwrap();
+        if apply.due(&granted) {
+            apply.start();
+            apply.finish(ApplyOutcome::Unavailable);
+            attempts += 1;
+            spacing.push(wait.due.saturating_duration_since(Instant::now()));
+        }
+    }
+    assert_eq!(attempts, MAX_APPLY_ATTEMPTS, "a bounded number of attempts");
+    // The earliest next read after each attempt: about 0.5 s, 1 s, 2 s, 4 s.
+    // Before the last attempt, at least 3.5 s of read backoff passed.
+    let window: Duration = spacing[..spacing.len() - 1].iter().sum();
+    assert!(window >= Duration::from_millis(3_400), "{window:?}");
+    assert!(spacing.windows(2).all(|pair| pair[1] > pair[0]), "{spacing:?}");
+}
