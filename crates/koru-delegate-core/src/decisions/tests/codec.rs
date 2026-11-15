@@ -122,6 +122,10 @@ fn decision_content_debug_and_errors_are_redacted() {
 #[test]
 #[cfg(feature = "schema")]
 fn decision_schema_reports_uuid_revision_and_byte_array_domains() {
+    let retained_uuid = serde_json::to_value(schemars::schema_for!(Uuid)).unwrap();
+    assert_eq!(retained_uuid["type"], "string");
+    assert_eq!(retained_uuid["format"], "uuid");
+    assert!(retained_uuid.get("pattern").is_none());
     let ids = serde_json::to_value(schemars::schema_for!(DecisionId)).unwrap();
     assert!(ids["pattern"].as_str().unwrap().contains("-4"));
     let revision = serde_json::to_value(schemars::schema_for!(DecisionRevision)).unwrap();
