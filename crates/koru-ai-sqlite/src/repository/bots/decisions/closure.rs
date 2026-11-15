@@ -9,15 +9,21 @@
 use super::*;
 use koru_ai_core::bots::replay::{BotExecutionFence, BotTerminalCleanup};
 
-/// The open `inference_attempts.stop_reason` value this closure records.
-/// It is not a replay stop reason; the replay CHECK vocabulary is untouched.
-pub const BOT_DECISION_NEEDED_YOU: &str = "bot_decision_needed_you";
+/// The open `inference_attempts.stop_reason` value this closure records
+/// for every ending but a declined one (`STOP_DECISION_DECLINED`). Neither is
+/// a replay stop reason; the replay CHECK vocabulary is untouched.
+pub const BOT_DECISION_NEEDED_YOU: &str = koru_ai_core::STOP_DECISION_NEEDED_YOU;
 
 /// What one closure call established. None of these is a default success.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BotDecisionClosure {
-    /// This call, or an exact earlier one, ended the attempt as Needed you.
-    Closed,
+    /// This call ended the attempt as Needed you, for the reason it
+    /// positively knows (absent when the reasons cannot be told apart).
+    Closed {
+        reason: Option<koru_ai_core::NeededYouReason>,
+    },
+    /// An exact earlier closure ended it; nothing was written again.
+    ClosedBefore,
     /// Another cause already ended the attempt. Its ending is kept and this
     /// decision does not claim to have caused it.
     AlreadyEnded,
@@ -25,6 +31,24 @@ pub enum BotDecisionClosure {
     /// confirmed, or its final publication not acknowledged. Nothing written;
     /// the closure stays owed.
     Owed,
+}
+
+/// What the settled read positively says about why the work stopped: a
+/// Denied closure is the person declining (O109); an expired or cancelled one
+/// was not answered in time. Every other closure reason is not told apart.
+pub(super) fn needed_you_reason(
+    observed: &BotDecisionWaitObservation,
+) -> Option<koru_ai_core::NeededYouReason> {
+    match &observed.disposition {
+        DecisionDisposition::Settled { reason, .. } => match reason {
+            DecisionClosureReason::Denied => Some(koru_ai_core::NeededYouReason::Declined),
+            DecisionClosureReason::Expired | DecisionClosureReason::Canceled => {
+                Some(koru_ai_core::NeededYouReason::NotAnswered)
+            }
+            _ => None,
+        },
+        DecisionDisposition::Open { .. } => None,
+    }
 }
 
 fn origin_fence(key: &BotWaitEnrollmentKey) -> BotExecutionFence {
@@ -88,14 +112,18 @@ impl Repository {
         let (live, unstopped, ours): (bool, bool, bool) = tx
             .query_row(
                 "SELECT status IN ('pending','streaming'),stop_reason IS NULL,
-                 status='interrupted' AND stop_reason IS ?2 FROM inference_attempts WHERE id=?1",
-                params![attempt.to_storage(), BOT_DECISION_NEEDED_YOU],
+                 status='interrupted' AND stop_reason IN (?2,?3) FROM inference_attempts WHERE id=?1",
+                params![
+                    attempt.to_storage(),
+                    BOT_DECISION_NEEDED_YOU,
+                    koru_ai_core::STOP_DECISION_DECLINED
+                ],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .map_err(bad)?;
         if !live {
             return Ok(if ours {
-                BotDecisionClosure::Closed
+                BotDecisionClosure::ClosedBefore
             } else {
                 BotDecisionClosure::AlreadyEnded
             });
@@ -110,6 +138,7 @@ impl Repository {
         let Some(target) = final_target(observed)? else {
             return Ok(BotDecisionClosure::Owed);
         };
+        let reason = needed_you_reason(observed);
         // The replay fence is the origin, or the consumer this very decision
         // installed; then the confirmed cleanup must name that consumer.
         let current = replay.fence.as_ref().ok_or(BotError::Storage)?;
@@ -144,7 +173,11 @@ impl Repository {
             .execute(
                 "UPDATE inference_attempts SET status='interrupted',completed_at_ms=max(queued_at_ms,?2),stop_reason=?3
                  WHERE id=?1 AND status IN ('pending','streaming') AND stop_reason IS NULL",
-                params![attempt.to_storage(), now.millis(), BOT_DECISION_NEEDED_YOU],
+                params![
+                    attempt.to_storage(),
+                    now.millis(),
+                    koru_ai_core::NeededYouReason::stop_code(reason)
+                ],
             )
             .map_err(bad)?;
         if changed != 1 {
@@ -168,7 +201,7 @@ impl Repository {
         )
         .map_err(|_| BotError::Storage)?;
         tx.commit().map_err(bad)?;
-        Ok(BotDecisionClosure::Closed)
+        Ok(BotDecisionClosure::Closed { reason })
     }
 }
 

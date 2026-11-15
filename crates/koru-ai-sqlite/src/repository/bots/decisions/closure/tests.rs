@@ -150,13 +150,16 @@ fn decision_closure_ends_needed_you_without_another_provider_event() {
     // No native terminal event was applied: the closure alone ends the task.
     assert_eq!(
         repo.close_bot_decision_needed_you(owner, &key, &observed, at()),
-        Ok(BotDecisionClosure::Closed)
+        Ok(BotDecisionClosure::Closed {
+            reason: Some(koru_ai_core::NeededYouReason::Declined)
+        })
     );
+    // A declined decision keeps that reason, readable after a reopen (O128).
     assert_eq!(
         ending(&repo, attempt),
         (
             "interrupted".to_owned(),
-            Some(BOT_DECISION_NEEDED_YOU.to_owned()),
+            Some(koru_ai_core::STOP_DECISION_DECLINED.to_owned()),
             "interrupted".to_owned()
         )
     );
@@ -192,13 +195,53 @@ fn decision_closure_ends_needed_you_without_another_provider_event() {
             &observed,
             Timestamp::from_millis(i64::MAX / 2)
         ),
-        Ok(BotDecisionClosure::Closed)
+        Ok(BotDecisionClosure::ClosedBefore)
     );
     assert_eq!(completed(&repo), first);
     assert_eq!(
         ending(&repo, attempt).1.as_deref(),
-        Some(BOT_DECISION_NEEDED_YOU)
+        Some(koru_ai_core::STOP_DECISION_DECLINED)
     );
+}
+
+#[test]
+fn decision_closure_records_only_the_reason_it_positively_knows() {
+    for (reason, authorization, expected, code) in [
+        (
+            DecisionClosureReason::Expired,
+            DecisionAuthorization::Expired,
+            Some(koru_ai_core::NeededYouReason::NotAnswered),
+            BOT_DECISION_NEEDED_YOU,
+        ),
+        (
+            DecisionClosureReason::Canceled,
+            DecisionAuthorization::Canceled,
+            Some(koru_ai_core::NeededYouReason::NotAnswered),
+            BOT_DECISION_NEEDED_YOU,
+        ),
+        // Not told apart from the person's answer: no reason is guessed.
+        (
+            DecisionClosureReason::AuthorityChanged,
+            DecisionAuthorization::Canceled,
+            None,
+            BOT_DECISION_NEEDED_YOU,
+        ),
+    ] {
+        let (mut repo, owner, key, qualified, attempt) = enrolled();
+        let observed = settled(&qualified, reason, authorization);
+        assert_eq!(
+            repo.close_bot_decision_needed_you(owner, &key, &observed, at()),
+            Ok(BotDecisionClosure::Closed { reason: expected }),
+            "{reason:?}"
+        );
+        assert_eq!(
+            ending(&repo, attempt).1.as_deref(),
+            Some(code),
+            "{reason:?}"
+        );
+        // The stored code is the one the transcript exposes after a reopen.
+        assert!(koru_ai_core::is_engine_stop_code(code));
+    }
 }
 
 #[test]
