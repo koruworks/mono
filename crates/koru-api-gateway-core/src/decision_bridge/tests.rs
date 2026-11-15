@@ -8,6 +8,7 @@ use koru_delegate_core::decisions::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::task::Poll;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 const DECISION_HEADER: &str =
     "Koru-Decision 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -240,4 +241,53 @@ fn decision_routes_are_disjoint_from_the_routine_bridge() {
     ] {
         assert!(!is_endpoint(path));
     }
+}
+
+#[tokio::test]
+async fn decision_routes_accept_only_the_derived_decision_authority() {
+    // The real delegate API authority, from the same parent as the Routine one.
+    let parent = koru_delegate_api::bots::BotDelegateAuthority::new(PARENT.into()).unwrap();
+    let state = Arc::new(HttpState::new(None));
+    assert!(state.install(Arc::new(parent.decision_bridge_authority())));
+    let decision = parent.decision_bridge_authority().authorization_header();
+    for path in [DECISION_ENROLL_ROUTE, DECISION_READ_ROUTE] {
+        let body = if path == DECISION_READ_ROUTE {
+            read_body_bytes()
+        } else {
+            enroll_body_bytes()
+        };
+        let response = send(
+            state.clone(),
+            request(path, Some(decision.as_str()), Body::from(body)),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        assert_eq!(json(response).await["payload"]["code"], "unavailable");
+        let polls = Arc::new(AtomicUsize::new(0));
+        let routine = routine_header();
+        let response = send(
+            state.clone(),
+            request(path, Some(routine.as_str()), unpolled(polls.clone())),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(polls.load(Ordering::SeqCst), 0, "{path}");
+    }
+    // Another parent's decision authority is not this one.
+    let other = koru_delegate_api::bots::BotDelegateAuthority::new(
+        "ANOTHER-DECISION-PARENT-0123456789012345".into(),
+    )
+    .unwrap()
+    .decision_bridge_authority()
+    .authorization_header();
+    let response = send(
+        state,
+        request(
+            DECISION_READ_ROUTE,
+            Some(other.as_str()),
+            Body::from(read_body_bytes()),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }

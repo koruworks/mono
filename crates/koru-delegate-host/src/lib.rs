@@ -36,9 +36,6 @@ mod actor;
 mod authority;
 mod bootstrap;
 mod context;
-// Built and driven by the decision resume driver's maintenance call, which the
-// runtime author lands; until then only its tests construct it.
-#[cfg_attr(not(test), allow(dead_code))]
 mod decision_bridge;
 mod documents;
 mod events;
@@ -230,6 +227,15 @@ fn serve(
     let schedule_event_authority = Arc::new(schedule_events::ScheduleEventAuthorityGate::new());
     let schedule_stopped = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let routine_bridge = routine_bridge::HostRoutineBridge::new(
+        &gateway.client,
+        bootstrap.bot_authority(),
+        Arc::clone(&schedule_stopped),
+    );
+    // The decision enrollment client, under its own credential domain and the
+    // same stop flag. INTEGRATION: hand it to the runtime's resume driver entry
+    // point (`&mut dyn DecisionEnrollmentBridge`) once that lands; it is
+    // composed here so that call is the one remaining wire.
+    let _decision_bridge = decision_bridge::HostDecisionBridge::new(
         &gateway.client,
         bootstrap.bot_authority(),
         Arc::clone(&schedule_stopped),
