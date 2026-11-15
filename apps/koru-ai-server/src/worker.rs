@@ -1235,6 +1235,10 @@ enum Envelope {
     RoutineOccurrence(Box<bots::occurrence::Incoming>),
     RoutineOccurrenceCompleted(Box<bots::occurrence::OccurrenceResult>),
     DecisionWait(Box<bots::decision_wait::Incoming>),
+    DecisionRecorded {
+        view: Box<koru_delegate_api::bots::DecisionReceiptView>,
+        reply: SyncSender<ApiResult<()>>,
+    },
     DecisionWaitCompleted(Box<bots::decision_wait::DecisionWaitResult>),
     /// Read-only observation of production recovery for spawned-worker tests.
     #[cfg(test)]
@@ -2215,6 +2219,9 @@ fn run_worker(
                 state.complete_routine_occurrence(*result)
             }
             Ok(Envelope::DecisionWait(incoming)) => state.begin_decision_wait(*incoming),
+            Ok(Envelope::DecisionRecorded { view, reply }) => {
+                state.record_bot_decision(*view, reply)
+            }
             Ok(Envelope::DecisionWaitCompleted(result)) => state.complete_decision_wait(*result),
             Ok(Envelope::BotCreationRead(result)) => state.complete_bot_creation_read(*result),
             Ok(Envelope::Provider(event)) => state.handle_provider_event(event),
