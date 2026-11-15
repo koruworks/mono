@@ -444,7 +444,21 @@ fn routine_live_claim_requires_exact_current_policy_and_writer_deadline() {
         } else {
             assert!(result.is_err());
         }
-        assert!(db.bot_admission(p.ids.run).unwrap().is_none());
+        // No admission row is ever written here. A refusal leaves nothing, so
+        // absence reads as absence; the late Missed skip retains the planned
+        // run id as a Routine marker, and with no admission `bot_admission`
+        // denies it rather than reading it as an ordinary Run (63c7e124).
+        let admission = db.bot_admission(p.ids.run);
+        if change == 4 {
+            assert_eq!(
+                admission,
+                Err(BotLedgerError::Ledger(
+                    LedgerError::InvalidScheduleAuthority
+                ))
+            );
+        } else {
+            assert_eq!(admission, Ok(None));
+        }
     }
 }
 
