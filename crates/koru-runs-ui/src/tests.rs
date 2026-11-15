@@ -537,9 +537,7 @@ fn manual_activity_never_invents_schedule_provenance() {
     f.surface.set_tab(Tab::Activity);
     assert!(f.shows(t(Lang::En, Key::RunActivityEmpty)));
     assert!(
-        !f.lines()
-            .iter()
-            .any(|line| line.contains("Scheduled firing")),
+        !f.lines().iter().any(|line| line.contains("Routine run")),
         "manual is a stored origin, not absence to guess through"
     );
 }
@@ -653,7 +651,9 @@ fn scheduled_provenance_uses_the_full_locale_and_all_eight_translations() {
             lang.tag()
         );
         if lang != Lang::En {
-            for english in ["Scheduled firing", "schedule ", "revision "] {
+            // French legitimately shares the noun "routine". Check complete
+            // English phrasing, not a noun common to both languages.
+            for english in ["Routine run", "revision "] {
                 assert!(
                     !expected.contains(english),
                     "{} leaked English {english:?}: {expected:?}",

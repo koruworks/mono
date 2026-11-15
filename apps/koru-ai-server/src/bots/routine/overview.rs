@@ -9,6 +9,29 @@ pub(in crate::bots) fn read(
     identity: &BotRoutineCreationIdentity,
     cancel: &Cancellation,
 ) -> Result<RoutineOverviewObservation, BotError> {
+    read_detail(adapter, owner, reader, identity, cancel).map(|observation| match observation {
+        RoutineDetailObservation::Current {
+            name,
+            definition_revision,
+            state,
+            ..
+        } => RoutineOverviewObservation::Current {
+            name,
+            definition_revision,
+            state,
+        },
+        RoutineDetailObservation::NotLive => RoutineOverviewObservation::NotLive,
+        RoutineDetailObservation::Unavailable => RoutineOverviewObservation::Unavailable,
+    })
+}
+
+pub(in crate::bots) fn read_detail(
+    adapter: &BotAuthorityAdapter,
+    owner: BotOwner,
+    reader: ProfileId,
+    identity: &BotRoutineCreationIdentity,
+    cancel: &Cancellation,
+) -> Result<RoutineDetailObservation, BotError> {
     identity.validate_digests()?;
     if identity.owner.user_scope != owner.user_scope
         || identity.owner.device != owner.device
@@ -56,7 +79,7 @@ pub(in crate::bots) fn read(
         })
         .map_err(|_| BotError::Unavailable);
     let result = match read {
-        Ok(Ok(None)) => Ok(RoutineOverviewObservation::NotLive),
+        Ok(Ok(None)) => Ok(RoutineDetailObservation::NotLive),
         Ok(Ok(Some((fork, origin)))) => {
             let projected = (|| {
                 cancelled(cancel)?;
@@ -70,7 +93,8 @@ pub(in crate::bots) fn read(
                 if !doc.version().includes_vv(&original.version()) {
                     return Err(BotError::Invalid);
                 }
-                let current = doc.routine_overview().map_err(|_| BotError::Invalid)?;
+                let projected = doc.routine_detail().map_err(|_| BotError::Invalid)?;
+                let current = projected.overview;
                 let seed = &identity.seed.header;
                 if current.schedule != identity.schedule
                     || current.created_at_ms != seed.created_at_ms
@@ -80,28 +104,30 @@ pub(in crate::bots) fn read(
                 {
                     return Err(BotError::Invalid);
                 }
-                Ok(RoutineOverviewObservation::Current {
+                Ok(RoutineDetailObservation::Current {
                     name: current.name,
                     definition_revision: current.definition_revision,
                     state: current.state,
+                    effective_at_ms: projected.effective_at_ms,
+                    recurrence: projected.recurrence,
                 })
             })();
-            Ok(projected.unwrap_or(RoutineOverviewObservation::Unavailable))
+            Ok(projected.unwrap_or(RoutineDetailObservation::Unavailable))
         }
         Ok(Err(BotError::Forbidden)) => Err(BotError::Forbidden),
-        _ => Ok(RoutineOverviewObservation::Unavailable),
+        _ => Ok(RoutineDetailObservation::Unavailable),
     };
     finish(adapter, owner, reader, identity.home, cancel, result)
 }
 
-fn finish(
+fn finish<T>(
     adapter: &BotAuthorityAdapter,
     owner: BotOwner,
     reader: ProfileId,
     home: WorkspaceId,
     cancel: &Cancellation,
-    result: Result<RoutineOverviewObservation, BotError>,
-) -> Result<RoutineOverviewObservation, BotError> {
+    result: Result<T, BotError>,
+) -> Result<T, BotError> {
     // Recheck even after an item refusal: late owner/Profile drift must not be
     // mistaken for a trusted per-item observation, including NotLive.
     let cancellation = cancel.clone();

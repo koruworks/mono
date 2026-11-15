@@ -124,6 +124,19 @@ fn not_subscribed_leads_with_the_sentence_lists_every_feature_and_subscribes() {
     let laid = cloud(&view);
     assert!(laid.subscription.card.is_some());
     assert_eq!(laid.subscription.bullets.len(), FEATURES.len());
+    assert!(
+        laid.subscription
+            .bullets
+            .iter()
+            .any(|(_, text)| text.contains("Routines"))
+    );
+    assert!(
+        !laid
+            .subscription
+            .bullets
+            .iter()
+            .any(|(_, text)| text.contains("Scheduled automations"))
+    );
     assert!(laid.dot.is_none(), "no dot until subscribed");
     let primary = view.laid.placed(Control::CloudPrimary).unwrap();
     assert_eq!(primary.label, "Subscribe to Koru Cloud");

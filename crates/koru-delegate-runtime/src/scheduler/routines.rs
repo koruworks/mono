@@ -130,6 +130,28 @@ fn route_header(
 }
 
 impl Routines {
+    /// Mutation classification shares evaluation's durable authored/physical
+    /// marker lookup. A stripped or orphan association is never ordinary.
+    fn mutation_route(
+        &self,
+        location: ScheduleEventRef,
+        header: &ScheduleHeader,
+    ) -> PortResult<Option<RoutineRouteIdentity>> {
+        match self.route_at(location)? {
+            None if header.schedule == location.schedule && header.definition.routine.is_none() => {
+                Ok(None)
+            }
+            Some(route)
+                if route_header(&route, location, header)
+                    && header.created_at_ms == route.created_at_ms
+                    && header.initial_owner == route.owner.device =>
+            {
+                Ok(Some(route))
+            }
+            _ => Err(refused("routine_catalog_identity")),
+        }
+    }
+
     fn route_at(&self, location: ScheduleEventRef) -> PortResult<Option<RoutineRouteIdentity>> {
         let authored = self
             .ledger
@@ -215,6 +237,35 @@ impl Routines {
 }
 
 impl ScheduleCoordinator {
+    pub(super) fn mutation_route(
+        &self,
+        location: ScheduleEventRef,
+        header: &ScheduleHeader,
+    ) -> PortResult<Option<RoutineRouteIdentity>> {
+        self.routines
+            .as_ref()
+            .ok_or_else(|| refused("routine_owner_unavailable"))?
+            .mutation_route(location, header)
+    }
+
+    /// Only immutable subject identity is compared here. The document retains
+    /// its existing owner/revision/handoff and mutable definition checks.
+    pub(super) fn mutation_header(
+        &self,
+        location: ScheduleEventRef,
+        expected: &ScheduleHeader,
+        current: &ScheduleHeader,
+    ) -> PortResult<Option<RoutineRouteIdentity>> {
+        if current.schedule != expected.schedule
+            || current.created_at_ms != expected.created_at_ms
+            || current.initial_owner != expected.initial_owner
+            || current.definition.routine != expected.definition.routine
+        {
+            return Err(refused("routine_catalog_identity"));
+        }
+        self.mutation_route(location, current)
+    }
+
     pub fn with_routines(
         mut self,
         ledger: Box<dyn RoutineLedger>,

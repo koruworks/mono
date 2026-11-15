@@ -1050,6 +1050,14 @@ impl BotView {
         let mut changed = false;
         for answer in answers {
             match answer {
+                Answer::RoutineDetail {
+                    seq,
+                    bot,
+                    schedule,
+                    result,
+                } => {
+                    changed |= self.routines.detail_answer(seq, bot, schedule, result);
+                }
                 Answer::Routines { seq, bot, result } => {
                     changed |= self.routines.answer(seq, bot, result);
                 }

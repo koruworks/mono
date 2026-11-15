@@ -13,9 +13,10 @@ mod repository;
 pub use db::write_at_schema;
 pub use db::{OpenError, SCHEMA_VERSION, SUPERSEDED_DEVELOPMENT_SCHEMA};
 pub use repository::{
-    BotBootSnapshot, BotCreationScan, BotHold, HistoricalBotRun, KnownAttachmentDirs,
-    LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
-    ParkedForOwner, RemovedAttachment, Repository, RoutineListCheckpoint, RoutineListSnapshot,
+    BotBootSnapshot, BotCreationScan, BotDecisionReplayRollover, BotHold, HistoricalBotRun,
+    KnownAttachmentDirs, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
+    LifecycleOperation, ParkedCursor, ParkedForOwner, RemovedAttachment, Repository,
+    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
     RoutineToolSubject,
 };
 

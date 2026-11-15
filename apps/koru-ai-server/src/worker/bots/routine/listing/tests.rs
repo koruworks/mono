@@ -6,6 +6,7 @@ use crate::bots::routine::fixture::Fixture;
 use koru_delegate_core::{BotRunKey, RunId};
 use std::sync::Mutex;
 use std::sync::mpsc::TryRecvError;
+mod detail;
 
 struct Gate {
     entered: SyncSender<()>,
@@ -57,6 +58,28 @@ impl Authority {
     }
 }
 impl BotAuthority for Authority {
+    fn read_routine_detail(
+        &self,
+        o: BotOwner,
+        p: ProfileId,
+        id: &BotRoutineCreationIdentity,
+        _at: i64,
+        c: &Cancellation,
+    ) -> Result<RoutineDetailObservation, BotError> {
+        if self.panic_once.swap(false, Ordering::AcqRel) {
+            panic!("deliberate detail adapter panic");
+        }
+        self.calls.lock().unwrap().push(id.schedule);
+        let result = self.adapter.read_routine_detail(o, p, id, 0, c);
+        if let Some(g) = self.gate.lock().unwrap().take() {
+            g.entered.send(()).unwrap();
+            g.release.recv_timeout(Duration::from_secs(10)).unwrap();
+        }
+        if *self.unavailable.lock().unwrap() == Some(id.schedule) {
+            return Ok(RoutineDetailObservation::Unavailable);
+        }
+        result
+    }
     fn owner(&self) -> Result<BotOwner, BotError> {
         let mut o = self.adapter.owner()?;
         if self.wrong_owner.load(Ordering::Acquire) {

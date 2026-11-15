@@ -12,6 +12,122 @@ fn read(f: &Fixture) -> Result<RoutineOverviewObservation, BotError> {
         &Cancellation::default(),
     )
 }
+
+#[test]
+fn routine_detail_live_origin_alias_person_and_notlive() {
+    let (f, _) = Fixture::new();
+    let cancel = Cancellation::default();
+    assert_eq!(
+        f.adapter
+            .read_routine_detail(f.owner, f.profile, &f.creation.identity, 0, &cancel)
+            .unwrap(),
+        RoutineDetailObservation::NotLive
+    );
+    let id = f.creation.identity.clone();
+    f.memory
+        .with_store(move |store| {
+            store
+                .create_seeded_document_with_origin(
+                    id.home,
+                    id.seed.name.as_str(),
+                    SCHEDULE_KIND,
+                    None,
+                    None,
+                    BOT_ROUTINE_SCOPE,
+                    &id.store_request.to_string(),
+                    &String::from(id.seed_hash),
+                    DocumentId::new(),
+                    ScheduleDocument::routine_seed_update(&id.seed.header, &id.seed.name).unwrap(),
+                    None,
+                    Timestamp::from_millis(3),
+                )
+                .unwrap();
+        })
+        .unwrap();
+    assert_eq!(
+        f.adapter
+            .read_routine_detail(f.owner, f.profile, &f.creation.identity, 0, &cancel)
+            .unwrap(),
+        RoutineDetailObservation::NotLive
+    );
+    let (f, _) = Fixture::new();
+    f.prepare().unwrap();
+    let observed = f
+        .adapter
+        .read_routine_detail(f.owner, f.profile, &f.creation.identity, 0, &cancel)
+        .unwrap();
+    let RoutineDetailObservation::Current {
+        ref recurrence,
+        effective_at_ms,
+        ..
+    } = observed
+    else {
+        panic!("real seed projection")
+    };
+    assert_eq!(
+        recurrence,
+        &f.creation.identity.seed.header.definition.recurrence
+    );
+    assert_eq!(
+        effective_at_ms,
+        f.creation.identity.seed.header.definition.effective_at_ms
+    );
+    let other = f.other;
+    update(&f, move |doc| {
+        let mut definition = doc.header().unwrap().definition;
+        definition.template.requested_by = ActorRef::Person { profile: other };
+        doc.doc()
+            .get_map("schedule")
+            .insert("definition", serde_json::to_value(definition).unwrap())
+            .unwrap();
+    });
+    assert_eq!(
+        f.adapter
+            .read_routine_detail(f.owner, f.profile, &f.creation.identity, 0, &cancel)
+            .unwrap(),
+        RoutineDetailObservation::Unavailable
+    );
+    assert_eq!(
+        f.adapter
+            .read_routine_detail(f.owner, f.other, &f.creation.identity, 0, &cancel),
+        Err(BotError::Forbidden)
+    );
+}
+
+#[test]
+fn routine_detail_common_authority_rechecked_after_item_refusal() {
+    for observation in [
+        RoutineDetailObservation::NotLive,
+        RoutineDetailObservation::Unavailable,
+    ] {
+        let (f, _) = Fixture::new();
+        let home = f.creation.identity.home;
+        let other = f.other;
+        f.memory
+            .with_store(move |store| store.move_workspace(home, other).unwrap())
+            .unwrap();
+        assert_eq!(
+            finish(
+                &f.adapter,
+                f.owner,
+                f.profile,
+                home,
+                &Cancellation::default(),
+                Ok(observation)
+            ),
+            Err(BotError::Forbidden)
+        );
+    }
+    let (f, _) = Fixture::new();
+    f.prepare().unwrap();
+    let cancel = Cancellation::default();
+    cancel.cancel();
+    assert_eq!(
+        f.adapter
+            .read_routine_detail(f.owner, f.profile, &f.creation.identity, 0, &cancel),
+        Err(BotError::Unavailable)
+    );
+}
 fn update(f: &Fixture, change: impl FnOnce(&ScheduleDocument) + Send + 'static) {
     let id = f.creation.identity.clone();
     f.memory

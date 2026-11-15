@@ -167,12 +167,12 @@ mod tests;
 // Serde's internally tagged unit variants accept extra fields even with the
 // enum's deny_unknown_fields. Empty struct variants close that hole while
 // preserving the exact JSON spelling (including nested pause reasons).
-mod state {
+pub(super) mod state {
     use super::*;
     #[derive(Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(tag = "state", rename_all = "snake_case", deny_unknown_fields)]
-    pub(super) enum StrictState {
+    pub(in crate::bots::routines) enum StrictState {
         Active {
             #[cfg_attr(feature = "schema", schemars(with = "String"))]
             owner: DeviceId,
@@ -193,7 +193,7 @@ mod state {
     #[derive(Serialize, Deserialize)]
     #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
     #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
-    pub(super) enum StrictReason {
+    pub(in crate::bots::routines) enum StrictReason {
         Manual {},
         ProviderNotDelegatable {},
         ScopeUnavailable {},

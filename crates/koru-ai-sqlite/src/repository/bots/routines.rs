@@ -3,9 +3,11 @@
 use super::*;
 use koru_delegate_core::{RoutineDigest32, ScheduleId};
 mod bounded;
+mod detail;
+pub use detail::RoutineDetailSnapshot;
 mod listing;
-pub use listing::{RoutineListCheckpoint, RoutineListSnapshot};
-mod model;
+pub use listing::{RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject};
+pub(super) mod model;
 pub use model::RoutineToolSubject;
 mod occurrence;
 mod page;

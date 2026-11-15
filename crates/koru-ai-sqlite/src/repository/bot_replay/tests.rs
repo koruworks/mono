@@ -119,7 +119,8 @@ fn fixture(repo: &mut Repository) -> (Bot, PendingTurn, BotSubmission) {
         VALUES (?1,?2,?3,'fixture','start','prepared',?4,1,1,1,?5,1,1)",params![bot.user_scope.to_string(),submission.provenance.submission.to_storage(),bot.id.to_storage(),submission.request.run.to_storage(),encoded]).unwrap();
     (bot, turn, submission)
 }
-fn prepared() -> (Repository, PendingTurn, BotSubmission, BotExecutionFence) {
+pub(in crate::repository) fn prepared()
+-> (Repository, PendingTurn, BotSubmission, BotExecutionFence) {
     let mut repo = Repository::in_memory().unwrap();
     let (_, turn, submission) = fixture(&mut repo);
     repo.prepare_bot_turn(&turn, &submission, at(1)).unwrap();

@@ -728,7 +728,7 @@ fn validate_fence_link(
     Ok(())
 }
 
-fn replay_on(
+pub(super) fn replay_on(
     connection: &Connection,
     attempt: InferenceAttemptId,
 ) -> Result<BotReplayState, AiError> {
@@ -839,4 +839,4 @@ fn validate_batch(batch: &BotReplayBatch) -> Result<(), AiError> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

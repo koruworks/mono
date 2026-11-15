@@ -27,6 +27,291 @@ fn read(
 }
 
 #[test]
+fn routine_detail_history_16_17_signed_keyset_and_queryplans() {
+    let (mut repo, mut input) = fixture();
+    let mut ids = Vec::new();
+    for _ in 0..17 {
+        ids.push(linked(&mut repo, &input).prepared.ids.run);
+        input.slot.occurrence_ms += 60_000;
+    }
+    let owner = owner(&input.slot);
+    let page = recent::read_page(
+        &repo,
+        owner,
+        input.slot.bot,
+        input.slot.schedule,
+        input.canonical.home,
+        None,
+        16,
+    )
+    .unwrap();
+    assert_eq!(page.history(0), Err(BotError::Invalid));
+    let RoutineLocalHistoryObservation::Available {
+        items,
+        next_before_occurrence_ms,
+    } = page.history(16).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(items.len(), 16);
+    assert_eq!(
+        items.iter().map(|r| r.run_id).collect::<Vec<_>>(),
+        ids.iter().rev().take(16).copied().collect::<Vec<_>>()
+    );
+    assert_eq!(next_before_occurrence_ms, Some(120_000));
+    let last = recent::read_page(
+        &repo,
+        owner,
+        input.slot.bot,
+        input.slot.schedule,
+        input.canonical.home,
+        next_before_occurrence_ms,
+        16,
+    )
+    .unwrap();
+    let RoutineLocalHistoryObservation::Available {
+        items,
+        next_before_occurrence_ms,
+    } = last.history(16).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].run_id, ids[0]);
+    assert_eq!(next_before_occurrence_ms, None);
+    for cursor in [None, Some(120_000)] {
+        let mut values: Vec<rusqlite::types::Value> = vec![
+            owner.user_scope.to_storage().into(),
+            owner.device.to_storage().into(),
+            input.slot.bot.to_storage().into(),
+            input.slot.schedule.to_storage().into(),
+        ];
+        if let Some(cursor) = cursor {
+            values.push(cursor.into());
+        }
+        values.push(17_i64.into());
+        let sql = format!(
+            "EXPLAIN QUERY PLAN {}",
+            recent::history_candidates_sql(cursor.is_some())
+        );
+        let plans: Vec<String> = repo
+            .connection
+            .prepare(&sql)
+            .unwrap()
+            .query_map(rusqlite::params_from_iter(values), |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(
+            plans
+                .iter()
+                .any(|p| p.contains("SEARCH") && p.contains("bot_routine_conversations")),
+            "{plans:?}"
+        );
+        assert!(
+            !plans.iter().any(|p| p.contains("TEMP B-TREE")),
+            "{plans:?}"
+        );
+    }
+    let exact = format!("EXPLAIN QUERY PLAN {}", recent::association_sql());
+    let identities = (0..11)
+        .map(|_| Uuid::new_v4().to_string())
+        .collect::<Vec<_>>();
+    let plans = repo
+        .connection
+        .prepare(&exact)
+        .unwrap()
+        .query_map(rusqlite::params_from_iter(identities), |r| {
+            r.get::<_, String>(3)
+        })
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert!(
+        !plans
+            .iter()
+            .any(|p| p.contains("SCAN ") || p.contains("TEMP B-TREE")),
+        "{plans:?}"
+    );
+    for alias in ["c", "h", "b", "a", "u", "m"] {
+        assert!(
+            plans
+                .iter()
+                .any(|p| p.starts_with(&format!("SEARCH {alias} "))),
+            "{plans:?}"
+        );
+    }
+    // Signed normalized occurrence identity; payload revalidation is deliberately
+    // the separate full authority reader's responsibility, as in the overview.
+    repo.connection
+        .execute(
+            "UPDATE bot_routine_preparations SET occurrence_ms=occurrence_ms-1080000",
+            [],
+        )
+        .unwrap();
+    let page = recent::read_page(
+        &repo,
+        owner,
+        input.slot.bot,
+        input.slot.schedule,
+        input.canonical.home,
+        None,
+        16,
+    )
+    .unwrap();
+    let RoutineLocalHistoryObservation::Available { items, .. } = page.history(16).unwrap() else {
+        panic!()
+    };
+    assert!(items.iter().all(|r| r.occurrence_ms < 0));
+    let empty = recent::read_page(
+        &repo,
+        owner,
+        input.slot.bot,
+        input.slot.schedule,
+        input.canonical.home,
+        Some(i64::MIN),
+        16,
+    )
+    .unwrap()
+    .history(16)
+    .unwrap();
+    assert_eq!(
+        empty,
+        RoutineLocalHistoryObservation::Available {
+            items: vec![],
+            next_before_occurrence_ms: None
+        }
+    );
+}
+
+#[test]
+fn routine_detail_corrupt_sentinel_missing_duplicate_association_refuses() {
+    for mutation in 0..5 {
+        let (mut repo, mut input) = fixture();
+        let mut rows = Vec::new();
+        for _ in 0..18 {
+            rows.push(linked(&mut repo, &input));
+            input.slot.occurrence_ms += 60_000;
+        }
+        let owner = owner(&input.slot);
+        let sentinel = &rows[1];
+        let donor = &rows[0];
+        let subject = repo.routine_read_subject(owner, input.slot.bot).unwrap();
+        let snapshot = repo
+            .routine_detail_snapshot(&subject, input.slot.schedule, None, 16)
+            .unwrap();
+        match mutation {
+            0 => {
+                repo.connection.execute("UPDATE bot_command_receipts SET captured_config_revision=captured_config_revision+1 WHERE request_id=?1",[sentinel.prepared.ids.submission.to_storage()]).unwrap();
+            }
+            1 => {
+                repo.connection
+                    .execute_batch("PRAGMA foreign_keys=OFF")
+                    .unwrap();
+                repo.connection
+                    .execute(
+                        "DELETE FROM bot_chats WHERE chat_id=?1",
+                        [sentinel.prepared.ids.chat.to_string()],
+                    )
+                    .unwrap();
+            }
+            2 => {
+                repo.connection
+                    .execute(
+                        "UPDATE bot_routine_preparations SET attempt_id=?1 WHERE attempt_id=?2",
+                        params![
+                            Uuid::new_v4().to_string(),
+                            donor.prepared.ids.attempt.to_string()
+                        ],
+                    )
+                    .unwrap();
+                repo.connection
+                    .execute(
+                        "UPDATE bot_routine_preparations SET attempt_id=?1 WHERE attempt_id=?2",
+                        params![
+                            donor.prepared.ids.attempt.to_string(),
+                            sentinel.prepared.ids.attempt.to_string()
+                        ],
+                    )
+                    .unwrap();
+            }
+            3 => {
+                let chat = ChatId::from_uuid(sentinel.prepared.ids.chat);
+                let operation = repo
+                    .capture_bot_lifecycle(&crate::LifecycleCapture {
+                        operation: BotRequestId::mint(),
+                        owner,
+                        bot: input.slot.bot,
+                        kind: BotLifecycleKind::TrashChat,
+                        chat: Some(chat),
+                        fingerprint: "a".repeat(64),
+                        expected_revision: input.canonical.config_revision,
+                        source: None,
+                        members: vec![],
+                        now: 70000,
+                    })
+                    .unwrap();
+                repo.fixture_trash_bot_chat(&operation, chat, 70001)
+                    .unwrap();
+            }
+            _ => {
+                // The inherited listing decoder retains a typed chat Profile;
+                // it does not equate it with captured requested_by. Movement
+                // still invalidates this in-flight exact snapshot.
+                repo.connection
+                    .execute(
+                        "UPDATE chats SET profile_id=?1 WHERE id=?2",
+                        params![
+                            ProfileId::new().to_storage(),
+                            sentinel.prepared.ids.chat.to_string()
+                        ],
+                    )
+                    .unwrap();
+            }
+        }
+        assert!(
+            repo.validate_routine_detail(&snapshot).is_err(),
+            "changed sentinel {mutation}"
+        );
+        let current = repo
+            .routine_detail_snapshot(&subject, input.slot.schedule, None, 16)
+            .unwrap();
+        let response = current
+            .response(0, RoutineDetailLive::Unavailable {})
+            .unwrap();
+        assert_eq!(
+            matches!(
+                response.local_history,
+                RoutineLocalHistoryObservation::Unavailable {}
+            ),
+            mutation < 3
+        );
+        // No normalization/corruption failure hides a candidate and backfills an
+        // older success. Overview retains its independently bounded four refs.
+        if mutation < 3 {
+            assert_eq!(
+                read(&repo, &input).unwrap(),
+                BotRoutineLocalConversations::Available {
+                    items: rows
+                        .iter()
+                        .rev()
+                        .take(4)
+                        .map(|r| BotRoutineLocalConversation {
+                            occurrence_ms: r.prepared.slot.occurrence_ms,
+                            run_id: r.prepared.ids.run,
+                            chat_id: r.prepared.ids.chat,
+                            attempt_id: r.prepared.ids.attempt,
+                            conversation: BotRoutineConversationVisibility::Available
+                        })
+                        .collect(),
+                    more: true
+                }
+            );
+        }
+    }
+}
+
+#[test]
 fn listing_recent_selects_five_before_joins_and_uses_existing_partial_index() {
     let (mut repo, mut input) = fixture();
     let mut ids = Vec::new();
