@@ -60,7 +60,7 @@ pub(super) fn source(h: &Harness, base: &DecisionPublicationBase, sequence: u64)
     }
 }
 
-fn prepared(record: &DecisionProjectionRecord) -> DecisionPreparedProjection {
+pub(super) fn prepared(record: &DecisionProjectionRecord) -> DecisionPreparedProjection {
     let delta = DecisionPreparedDelta::new(vec![5, 6]).unwrap();
     DecisionPreparedProjection {
         identity: record.identity.clone(),
