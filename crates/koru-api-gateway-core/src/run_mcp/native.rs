@@ -11,6 +11,7 @@ use std::sync::Arc;
 mod dispatch;
 mod memory;
 mod policy;
+pub(super) mod routines;
 pub(super) use dispatch::call;
 
 fn unavailable() -> ToolFailure {
@@ -74,6 +75,7 @@ pub(super) fn definitions() -> Vec<Tool> {
     if koru_ai_core::bots::memory::BOT_MEMORY_WRITES_AVAILABLE {
         tools.extend(memory::write_definitions());
     }
+    tools.extend(routines::definitions());
     tools
 }
 

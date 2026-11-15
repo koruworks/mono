@@ -1,6 +1,44 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+/// Sole retained Linked lookup, independent of the caller's current Bot guard.
+pub(in crate::repository::bots::routines) fn for_run_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    run: koru_delegate_core::RunId,
+) -> Result<Option<BotRoutineStoredPreparation>, BotError> {
+    let raw:Option<(String,String,String,String,i64)>=conn.query_row("SELECT
+            CASE WHEN typeof(user_scope_id)='text' AND length(CAST(user_scope_id AS BLOB))=36 THEN user_scope_id END,
+            CASE WHEN typeof(owner_device_id)='text' AND length(CAST(owner_device_id AS BLOB))=36 THEN owner_device_id END,
+            CASE WHEN typeof(bot_id)='text' AND length(CAST(bot_id AS BLOB))=36 THEN bot_id END,
+            CASE WHEN typeof(schedule_id)='text' AND length(CAST(schedule_id AS BLOB))=36 THEN schedule_id END,occurrence_ms
+            FROM bot_routine_preparations WHERE run_id=?1",[run.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(bad)?;
+    let Some((scope, device, subject, schedule, occurrence_ms)) = raw else {
+        return Ok(None);
+    };
+    if scope != owner.user_scope.to_storage()
+        || device != owner.device.to_storage()
+        || subject != bot.to_storage()
+    {
+        return Err(BotError::Forbidden);
+    }
+    let slot = RoutineSlot {
+        owner: koru_delegate_core::BotOwner {
+            user_scope: owner.user_scope,
+            device: owner.device,
+        },
+        bot,
+        schedule: schedule.parse().map_err(bad)?,
+        occurrence_ms,
+    };
+    let row = rows::read(conn, &slot)?.ok_or(BotError::Storage)?;
+    if row.prepared.ids.run != run || row.stage != BotRoutineStoredStage::Linked {
+        return Err(BotError::Conflict);
+    }
+    Ok(Some(row))
+}
+
 impl Repository {
     /// Canonical local materialization, not current delegate/native authority.
     /// All consumers share the bounded row/receipt/capture/association decoder.
@@ -11,35 +49,7 @@ impl Repository {
         run: koru_delegate_core::RunId,
     ) -> Result<Option<BotRoutineStoredPreparation>, BotError> {
         visible(&self.connection, owner, bot)?;
-        let raw:Option<(String,String,String,String,i64)>=self.connection.query_row("SELECT
-            CASE WHEN typeof(user_scope_id)='text' AND length(CAST(user_scope_id AS BLOB))=36 THEN user_scope_id END,
-            CASE WHEN typeof(owner_device_id)='text' AND length(CAST(owner_device_id AS BLOB))=36 THEN owner_device_id END,
-            CASE WHEN typeof(bot_id)='text' AND length(CAST(bot_id AS BLOB))=36 THEN bot_id END,
-            CASE WHEN typeof(schedule_id)='text' AND length(CAST(schedule_id AS BLOB))=36 THEN schedule_id END,occurrence_ms
-            FROM bot_routine_preparations WHERE run_id=?1",[run.to_storage()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).optional().map_err(bad)?;
-        let Some((scope, device, subject, schedule, occurrence_ms)) = raw else {
-            return Ok(None);
-        };
-        if scope != owner.user_scope.to_storage()
-            || device != owner.device.to_storage()
-            || subject != bot.to_storage()
-        {
-            return Err(BotError::Forbidden);
-        }
-        let slot = RoutineSlot {
-            owner: koru_delegate_core::BotOwner {
-                user_scope: owner.user_scope,
-                device: owner.device,
-            },
-            bot,
-            schedule: schedule.parse().map_err(bad)?,
-            occurrence_ms,
-        };
-        let row = rows::read(&self.connection, &slot)?.ok_or(BotError::Storage)?;
-        if row.prepared.ids.run != run || row.stage != BotRoutineStoredStage::Linked {
-            return Err(BotError::Conflict);
-        }
-        Ok(Some(row))
+        for_run_on(&self.connection, owner, bot, run)
     }
 
     pub fn routine_occurrence_recovery_page(

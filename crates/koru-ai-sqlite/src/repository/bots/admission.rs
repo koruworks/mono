@@ -394,6 +394,36 @@ pub(super) fn guard_any_lifecycle(
     ))
 }
 
+/// Retained identity decoding only. Each public entry owns its current guard.
+/// Tool observations use bounded metadata; ordinary readers keep their existing
+/// execution-field guard. Neither path supplies current Run authority.
+pub(super) fn readable_submission_for_run_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    run: koru_delegate_core::RunId,
+) -> Result<Option<BotSubmissionReceipt>, BotError> {
+    let request: Option<String> = conn.query_row(
+        "SELECT request_id FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND planned_run_id=?3",
+        params![owner.user_scope.to_storage(), bot.to_storage(), run.to_storage()], |row| row.get(0),
+    ).optional().map_err(bad)?;
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    let request = request.parse().map_err(bad)?;
+    let row = raw(conn, owner.user_scope, request)?.ok_or(BotError::Storage)?;
+    let receipt = decode_submission(row, owner.user_scope, request)?;
+    let provenance = &receipt.intent.submission.provenance;
+    if provenance.owner.user_scope != owner.user_scope
+        || provenance.owner.device != owner.device
+        || provenance.bot != bot
+        || receipt.intent.submission.request.run != run
+    {
+        return Err(BotError::Storage);
+    }
+    Ok(Some(receipt))
+}
+
 /// P1.5 composes this with its PendingTurn/association insert in one transaction.
 /// It does not open a connection or commit the caller's transaction.
 pub(crate) fn prepare_bot_submission_tx(
@@ -586,25 +616,7 @@ impl Repository {
         if guard_any_lifecycle(&self.connection, owner, bot)?.1 == BotLifecycle::Trashed {
             return Err(BotError::Forbidden);
         }
-        let request: Option<String> = self.connection.query_row(
-            "SELECT request_id FROM bot_command_receipts WHERE user_scope_id=?1 AND bot_id=?2 AND planned_run_id=?3",
-            params![owner.user_scope.to_storage(), bot.to_storage(), run.to_storage()], |row| row.get(0),
-        ).optional().map_err(bad)?;
-        let Some(request) = request else {
-            return Ok(None);
-        };
-        let request = request.parse().map_err(bad)?;
-        let row = raw(&self.connection, owner.user_scope, request)?.ok_or(BotError::Storage)?;
-        let receipt = decode_submission(row, owner.user_scope, request)?;
-        let provenance = &receipt.intent.submission.provenance;
-        if provenance.owner.user_scope != owner.user_scope
-            || provenance.owner.device != owner.device
-            || provenance.bot != bot
-            || receipt.intent.submission.request.run != run
-        {
-            return Err(BotError::Storage);
-        }
-        Ok(Some(receipt))
+        readable_submission_for_run_on(&self.connection, owner, bot, run)
     }
     /// One of `bot`'s tasks started through the API (`start`/`continue`,
     /// with no conversation attempt), whatever the Bot's lifecycle, by its

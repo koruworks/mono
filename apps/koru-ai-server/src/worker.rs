@@ -1232,6 +1232,11 @@ enum Envelope {
         deadline: Instant,
     },
     RoutineListingCompleted(bots::routine::listing::ListingResult),
+    RunRoutine {
+        request: bots::routine::model::RunRoutineRequest,
+        reply: SyncSender<ApiResult<bots::routine::model::RunRoutineResult>>,
+    },
+    RunRoutineCompleted(Box<bots::routine::model::RunRoutineCompletion>),
     RunMemoryRead {
         request: bots::memory::RunMemoryReadRequest,
         reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
@@ -2112,6 +2117,8 @@ fn run_worker(
                 deadline,
             }) => state.start_routine_listing(command, cancellation, deadline),
             Ok(Envelope::RoutineListingCompleted(result)) => state.complete_routine_listing(result),
+            Ok(Envelope::RunRoutine { request, reply }) => state.start_run_routine(request, reply),
+            Ok(Envelope::RunRoutineCompleted(result)) => state.complete_run_routine(result),
             Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
             Ok(Envelope::RunMemoryWrite {
                 request,
@@ -5937,6 +5944,7 @@ enum ProviderAdminJob {
     RoutineRead(bots::occurrence::OccurrenceJob),
     BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotRoutineListing(bots::routine::listing::ListingJob),
+    BotRoutineModel(Box<bots::routine::model::RunRoutineJob>),
     BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
     BotChatRecovery(bots::chat::StepJob),
@@ -6038,6 +6046,7 @@ impl ProviderAdminJob {
         match self {
             Self::BotPrepare(_)
             | Self::BotRoutineListing(_)
+            | Self::BotRoutineModel(_)
             | Self::BotMemoryRead(_)
             | Self::BotMemoryWrite(_)
             | Self::BotCreationPrepare(_)
@@ -6128,6 +6137,7 @@ impl ProviderAdminPool {
                         }
                         ProviderAdminJob::BotPrepare(_)
                         | ProviderAdminJob::BotRoutineListing(_)
+                        | ProviderAdminJob::BotRoutineModel(_)
                         | ProviderAdminJob::BotMemoryRead(_)
                         | ProviderAdminJob::BotMemoryWrite(_)
                         | ProviderAdminJob::BotCreationPrepare(_)
@@ -6724,6 +6734,7 @@ fn run_preparation(
 ) {
     let envelope = match job {
         ProviderAdminJob::BotRoutineListing(job) => Envelope::RoutineListingCompleted(job.run()),
+        ProviderAdminJob::BotRoutineModel(job) => Envelope::RunRoutineCompleted(job.run()),
         ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
         ProviderAdminJob::BotMemoryWrite(job) => Envelope::MemoryWriteCompleted(job.run()),
         ProviderAdminJob::BotPrepare(job) => {

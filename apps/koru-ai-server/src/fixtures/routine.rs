@@ -106,6 +106,16 @@ impl BotAuthority for Authority {
         self.adapter
             .verify_routine_definition(owner, profile, identity, definition, handoff, cancel)
     }
+    fn read_routine_overview(
+        &self,
+        owner: BotOwner,
+        profile: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        cancel: &Cancellation,
+    ) -> Result<RoutineOverviewObservation, BotError> {
+        self.adapter
+            .read_routine_overview(owner, profile, identity, cancel)
+    }
     fn capture(
         &self,
         owner: BotOwner,

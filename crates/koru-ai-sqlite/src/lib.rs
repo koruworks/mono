@@ -16,6 +16,7 @@ pub use repository::{
     BotBootSnapshot, BotCreationScan, BotHold, HistoricalBotRun, KnownAttachmentDirs,
     LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
     ParkedForOwner, RemovedAttachment, Repository, RoutineListCheckpoint, RoutineListSnapshot,
+    RoutineToolSubject,
 };
 
 pub const DATABASE_FILE: &str = "ai.db";

@@ -77,6 +77,9 @@ pub(in crate::run_mcp) async fn call(
     captured: CapturedBotPolicy,
     params: CallToolRequestParams,
 ) -> CallToolResult {
+    if super::routines::recognizes(params.name.as_ref()) {
+        return super::routines::call(state, record, provenance, captured, params).await;
+    }
     if super::memory::recognizes(params.name.as_ref()) {
         return super::memory::call(state, record, provenance, captured, params).await;
     }

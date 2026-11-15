@@ -123,7 +123,7 @@ async fn only_positive_owner_classification_selects_a_catalog() {
 }
 
 #[test]
-fn nine_bot_tools_publish_only_owner_supported_identity_and_creation_fields() {
+fn thirteen_bot_tools_publish_only_owner_supported_identity_and_creation_fields() {
     let tools = definitions();
     let names: std::collections::BTreeSet<_> = tools.iter().map(|t| t.name.as_ref()).collect();
     assert_eq!(
@@ -137,7 +137,11 @@ fn nine_bot_tools_publish_only_owner_supported_identity_and_creation_fields() {
             "read_memory",
             "remember_memory",
             "correct_memory",
-            "forget_memory"
+            "forget_memory",
+            "create_routine",
+            "read_routine_creation",
+            "retry_routine_creation",
+            "list_routines",
         ]
         .into()
     );
@@ -148,6 +152,28 @@ fn nine_bot_tools_publish_only_owner_supported_identity_and_creation_fields() {
             .iter()
             .any(|tool| memory::recognizes(tool.name.as_ref()))
     );
+    assert!(
+        !ordinary
+            .iter()
+            .any(|tool| routines::recognizes(tool.name.as_ref()))
+    );
+    for name in [
+        "create_routine",
+        "read_routine_creation",
+        "retry_routine_creation",
+        "list_routines",
+    ] {
+        assert!(routines::recognizes(name));
+    }
+    for name in [
+        "create",
+        "enable_routine",
+        "edit_routine",
+        "list_memory",
+        "unknown",
+    ] {
+        assert!(!routines::recognizes(name));
+    }
     for name in [
         "list_memory",
         "read_memory",
