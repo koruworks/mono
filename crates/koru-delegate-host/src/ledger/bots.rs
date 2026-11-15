@@ -7,6 +7,19 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn record_decision_source(
+        &mut self,
+        owner: BotOwner,
+        transition: DecisionTransitionId,
+        wait: BotWaitId,
+        base: &DecisionPublicationBase,
+        target: &RunProjectionTargetV1,
+    ) -> Result<DecisionProjectionRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .record_decision_source(owner, transition, wait, base, target)
+    }
     fn decision_projection(
         &self,
         owner: BotOwner,
