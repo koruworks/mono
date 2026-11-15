@@ -233,6 +233,8 @@ fn routine_dispatch_late_ack_after_stop_is_history_not_fresh_authority() {
 fn routine_firing_rejects_corrupt_launch_binding_without_repair() {
     for sql in [
         "UPDATE run_attempts SET session_id=NULL",
+        "UPDATE run_attempts SET session_id='invalid'",
+        "UPDATE run_attempts SET session_id='00000000-0000-0000-0000-000000000000'",
         "UPDATE run_attempts SET session_key=NULL",
         "UPDATE run_attempts SET host_instance_id=NULL",
         "UPDATE run_attempts SET host_instance_id='invalid'",

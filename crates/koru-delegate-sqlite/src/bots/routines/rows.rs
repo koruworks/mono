@@ -318,6 +318,7 @@ pub(super) fn observation_with_admission(
         && document
             .as_ref()
             .and_then(|d| DocumentId::parse(d))
+            .filter(|id| !id.as_uuid().is_nil())
             .is_none())
         || (state == "satisfied" && document_null)
         || !match record.link_state {

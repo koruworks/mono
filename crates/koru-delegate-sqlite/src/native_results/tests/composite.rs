@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Real SQLite backend proofs with explicitly seeded executing attempts. Public
-//! Routine dispatch remains closed; these fixtures do not prove a live worker.
+//! Real SQLite backend proofs with explicitly seeded executing attempts. These
+//! fixtures do not themselves prove a live worker or authorize dispatch.
 use super::*;
 use rusqlite::params;
 
