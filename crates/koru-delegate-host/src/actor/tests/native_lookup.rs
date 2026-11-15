@@ -7,6 +7,36 @@ use koru_delegate_sqlite::{AttemptPhase, BotInitialSend, BotLedger};
 
 struct ReadOnlyDocument(RunDocument);
 impl RunDocumentHandle for ReadOnlyDocument {
+    fn prepare_decision_projection(
+        &mut self,
+        _: &koru_delegate_document::RunProjectionIntent,
+    ) -> PortResult<koru_delegate_core::decisions::DecisionPreparedProjection> {
+        Err(PortError::new(
+            koru_delegate_runtime::Port::Documents,
+            "projection_unavailable",
+            "ordinary fixture does not own decision publication",
+        ))
+    }
+    fn apply_prepared_projection(
+        &mut self,
+        _: &koru_delegate_core::decisions::DecisionPreparedProjection,
+    ) -> PortResult<koru_delegate_document::AppliedRunProjection> {
+        Err(PortError::new(
+            koru_delegate_runtime::Port::Documents,
+            "projection_unavailable",
+            "ordinary fixture does not own decision publication",
+        ))
+    }
+    fn discard_prepared_projection(
+        &mut self,
+        _: koru_delegate_core::decisions::DecisionTransitionId,
+    ) -> PortResult<()> {
+        Err(PortError::new(
+            koru_delegate_runtime::Port::Documents,
+            "projection_unavailable",
+            "ordinary fixture does not own decision publication",
+        ))
+    }
     fn document(&self) -> &RunDocument {
         &self.0
     }
