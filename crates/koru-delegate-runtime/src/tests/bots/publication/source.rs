@@ -897,6 +897,9 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
         let mut completed = summary(ManagedState::Completed, None);
         completed.id = session;
         script.summaries.insert(session, completed);
+        // The fake host answers one observation for any session; the
+        // successor session's own stream holds only its events.
+        script.observation.events.clear();
         script.observation.events.push(SequencedAgentEvent {
             session_id: session,
             sequence: StreamSequence::new(60).unwrap(),
@@ -904,11 +907,12 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
         });
     }
     let receipt = successor_receipt(&s, run, attempt, generation);
-    assert!(pending_code(
-        h.orchestrator
-            .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
-            .unwrap_err()
-    ));
+    let error = h
+        .orchestrator
+        .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
+        .unwrap_err();
+    let shown = error.to_string();
+    assert!(pending_code(error), "{shown}");
     let control = latest(&h, &fence);
     assert!(matches!(
         &control.target,
