@@ -55,6 +55,7 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
             }])
             .unwrap(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: DecisionFence {
             owner: bot.owner,
@@ -70,6 +71,8 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::DecisionWaiting {},
         retained_bookkeeping: None,
+        flush: DecisionList::default(),
+        delivery: None,
     };
     RunProjectionIntent {
         identity: DecisionProjectionIdentity {
@@ -119,13 +122,16 @@ fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> R
             economics_at_ms: None,
             steps: DecisionList::default(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: *previous.target.fence(),
         disposition: None,
         wait_phase: BotWaitPhase::CleanupPending,
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::Stop {},
-        retained_bookkeeping: previous.target.bookkeeping().cloned(),
+        retained_bookkeeping: previous.target.resulting_bookkeeping().unwrap(),
+        flush: DecisionList::default(),
+        delivery: None,
     };
     value.identity.target_digest = value.target.digest().unwrap();
     value

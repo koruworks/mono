@@ -7,6 +7,15 @@ use super::*;
 use crate::{ModelIdentity, RunEvent, RunFailureReason, RunStatus, TimelineEntry, transition_bot};
 use std::collections::BTreeSet;
 
+mod facts;
+pub use facts::DecisionProjectionPublication;
+mod flush;
+pub use flush::DecisionControlFlush;
+mod marker;
+pub use marker::DecisionProjectionMarker;
+mod delivery;
+pub use delivery::{DecisionDeliveryOutcome, DecisionProjectionDelivery};
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DecisionProjectionPrior {
@@ -42,6 +51,9 @@ pub struct DecisionProjectionEffects {
     pub steps: DecisionList<TimelineEntry, 65_536>,
     #[serde(deserialize_with = "strict_leaf")]
     pub models: DecisionList<ModelIdentity, 65_536>,
+    /// Stable exact facts retained before preparation. Ordinary RunFact's
+    /// compatibility codec is unchanged; this new envelope is locally strict.
+    pub publications: DecisionList<DecisionProjectionPublication, 65_536>,
 }
 impl std::fmt::Debug for DecisionProjectionEffects {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -64,6 +76,7 @@ pub enum DecisionControlAction {
     HandoverRequested {},
     ControlTaken { discovered: bool },
     ControlReturned {},
+    Delivery { outcome: DecisionDeliveryOutcome },
 }
 impl DecisionControlAction {
     fn mapping(self) -> (Option<RunEvent>, Option<crate::StepKind>) {
@@ -91,6 +104,22 @@ impl DecisionControlAction {
                 (Some(E::ControlTaken), Some(S::ControlTaken { discovered }))
             }
             Self::ControlReturned {} => (Some(E::ControlReturned), Some(S::ControlReturned)),
+            Self::Delivery {
+                outcome: DecisionDeliveryOutcome::Retained,
+            } => (None, None),
+            Self::Delivery {
+                outcome: DecisionDeliveryOutcome::Completed,
+            } => (Some(E::BotResponseDelivered), Some(S::Completed)),
+            Self::Delivery {
+                outcome: DecisionDeliveryOutcome::InterruptedUnknown,
+            } => (
+                Some(E::Interrupt {
+                    prior_attempt: crate::PriorAttempt::Unknown,
+                }),
+                Some(S::Interrupted {
+                    prior_attempt: crate::PriorAttempt::Unknown,
+                }),
+            ),
         }
     }
     fn validate_effects(
@@ -133,6 +162,8 @@ pub enum RunProjectionTargetV1 {
         reason: BotWaitReason,
         action: DecisionControlAction,
         retained_bookkeeping: Option<DecisionSourceBookkeeping>,
+        flush: DecisionList<DecisionControlFlush, 65_536>,
+        delivery: Option<DecisionProjectionDelivery>,
     },
 }
 impl std::fmt::Debug for RunProjectionTargetV1 {
@@ -157,6 +188,15 @@ impl RunProjectionTargetV1 {
             Self::Source { effects, .. } | Self::Control { effects, .. } => effects,
         }
     }
+    pub fn publications(&self) -> &[DecisionProjectionPublication] {
+        self.effects().publications.as_slice()
+    }
+    pub fn delivery(&self) -> Option<&DecisionProjectionDelivery> {
+        match self {
+            Self::Control { delivery, .. } => delivery.as_ref(),
+            _ => None,
+        }
+    }
     pub fn fence(&self) -> &DecisionFence {
         match self {
             Self::Source { bookkeeping, .. } => &bookkeeping.boundary.fence,
@@ -177,6 +217,19 @@ impl RunProjectionTargetV1 {
             Self::Source { bookkeeping, .. } => Some(bookkeeping),
             Self::Control { .. } => None,
         }
+    }
+    /// The applied marker's bookkeeping, distinct from Control's input snapshot.
+    pub fn resulting_bookkeeping(
+        &self,
+    ) -> Result<Option<DecisionSourceBookkeeping>, DecisionError> {
+        flush::derive(self).map(|(bookkeeping, _)| bookkeeping)
+    }
+    /// Accepted tally facts precede the later control step, even when the status
+    /// itself is terminal and absorbs Stop. This never synthesizes source events.
+    pub fn projected_steps(&self) -> Result<Vec<TimelineEntry>, DecisionError> {
+        let (_, mut steps) = flush::derive(self)?;
+        steps.extend_from_slice(self.effects().steps.as_slice());
+        Ok(steps)
     }
     pub fn canonical_bytes(&self) -> Result<DecisionPayload, DecisionError> {
         self.validate()?;
@@ -311,6 +364,9 @@ impl DecisionValidate for RunProjectionTargetV1 {
                 }
             }
         }
+        flush::derive(self)?;
+        delivery::validate(self)?;
+        facts::validate(self)?;
         // Count with the existing bounded streaming digest owner before copying.
         crate::routine_digest_json(
             b"koru.bot.decision.projection.target.v1",

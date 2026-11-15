@@ -60,6 +60,7 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
             economics_at_ms: None,
             steps: DecisionList::default(),
             models: DecisionList::default(),
+            publications: DecisionList::default(),
         },
         fence: DecisionFence {
             owner,
@@ -75,6 +76,8 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
         reason: BotWaitReason::Capacity {},
         action: DecisionControlAction::DecisionWaiting {},
         retained_bookkeeping: None,
+        flush: DecisionList::default(),
+        delivery: None,
     };
     let intent = RunProjectionIntent {
         identity: DecisionProjectionIdentity {

@@ -5,7 +5,6 @@
 
 use super::*;
 use koru_delegate_core::decisions::*;
-use serde::{Deserialize, Serialize};
 
 const K_PROJECTION: &str = "decision_projection";
 const BOT_PROJECTION_SCHEMA: i64 = 5;
@@ -40,15 +39,7 @@ impl AppliedRunProjection {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Marker {
-    identity: DecisionProjectionIdentity,
-    status: RunStatus,
-    bookkeeping: Option<DecisionSourceBookkeeping>,
-    timeline_start: u64,
-    timeline_end: u64,
-}
+type Marker = DecisionProjectionMarker;
 
 /// Lives in the sole connected handle, not in a separate per-Run cache. The
 /// first initialization copies current state (including retained timeline), not
@@ -311,7 +302,22 @@ impl RunDocument {
         self.check_projection_predecessor(&intent.target)?;
         let effects = intent.target.effects();
         let start = self.timeline().len();
-        for step in effects.steps.as_slice() {
+        // Shared neutral shape preflight precedes every staging mutation. The
+        // SQL source owner performs this same check before frontier acceptance.
+        let marker =
+            Marker::for_target(&intent.identity, &intent.target, start as u64).map_err(invalid)?;
+        if let Some(delivery) = intent.target.delivery() {
+            let header = self.checked_bot_delivery_identity(&delivery.receipt)?;
+            for publication in intent.target.publications() {
+                if let koru_delegate_core::RunFact::Completed { artifacts, .. } = publication.fact {
+                    require_document(
+                        artifacts == u32::try_from(header.artifacts.len()).unwrap_or(u32::MAX),
+                    )?;
+                }
+            }
+        }
+        let steps = intent.target.projected_steps().map_err(invalid)?;
+        for step in &steps {
             self.timeline()
                 .push(to_stored(&StoredItem::Step(step.clone()), Part::Timeline)?)?;
         }
@@ -336,6 +342,10 @@ impl RunDocument {
                 to_stored(&self.economics(now), Part::Economics)?,
             )?;
         }
+        if let Some(delivery) = intent.target.delivery() {
+            self.run()
+                .insert("chat_delivery", to_stored(&delivery.receipt, Part::Header)?)?;
+        }
         self.run()
             .insert(K_STATUS, to_stored(&effects.status, Part::Header)?)?;
         if let Some(reason) = effects.failure_reason {
@@ -344,19 +354,7 @@ impl RunDocument {
         } else {
             self.run().delete("failure_reason")?;
         }
-        let marker = Marker {
-            identity: intent.identity.clone(),
-            status: effects.status.clone(),
-            bookkeeping: intent.target.bookkeeping().cloned(),
-            timeline_start: start as u64,
-            timeline_end: self.timeline().len() as u64,
-        };
-        koru_delegate_core::routine_digest_json(
-            b"koru.bot.decision.projection.marker-shape.v1",
-            &marker,
-            DECISION_PAYLOAD_BYTES,
-        )
-        .map_err(invalid)?;
+        require_document(marker.timeline_end == self.timeline().len() as u64)?;
         self.run()
             .insert(K_PROJECTION, to_stored(&marker, Part::Header)?)?;
         self.run().insert(K_SCHEMA, BOT_PROJECTION_SCHEMA)?;
@@ -376,15 +374,20 @@ impl RunDocument {
         )?;
         let marker = self.marker()?.ok_or_else(|| invalid(()))?;
         let effects = target.effects();
+        if let Some(delivery) = target.delivery() {
+            self.checked_bot_delivery_identity(&delivery.receipt)?;
+            require_document(self.header()?.chat_delivery.as_ref() == Some(&delivery.receipt))?;
+        }
         require_document(
             marker.identity == prepared.identity
                 && marker.status == effects.status
-                && marker.bookkeeping.as_ref() == target.bookkeeping()
+                && marker.bookkeeping == target.resulting_bookkeeping().map_err(invalid)?
                 && self.header()?.status == effects.status
                 && self.header()?.failure_reason == effects.failure_reason,
         )?;
         let start = usize::try_from(marker.timeline_start).map_err(invalid)?;
-        let count = effects.steps.as_slice().len()
+        let steps = target.projected_steps().map_err(invalid)?;
+        let count = steps.len()
             + usize::from(
                 target
                     .source_bookkeeping()
@@ -394,7 +397,7 @@ impl RunDocument {
             start.checked_add(count) == usize::try_from(marker.timeline_end).ok()
                 && marker.timeline_end <= self.timeline().len() as u64,
         )?;
-        for (offset, step) in effects.steps.as_slice().iter().enumerate() {
+        for (offset, step) in steps.iter().enumerate() {
             require_document(
                 self.timeline()
                     .get(start + offset)
