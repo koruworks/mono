@@ -123,7 +123,10 @@ fn wrong_exact_identity_schema_and_nonfile_targets_are_unavailable_without_mutat
     assert!(remove_file(detached(&cloud), &wrong, &file.to_storage(), 42).is_err());
     assert!(remove_file(detached(&cloud), &selection, &root.to_storage(), 42).is_err());
     let future = detached(&cloud);
-    future.get_map("meta").insert("schema", 999).unwrap();
+    future
+        .get_map("meta")
+        .insert("schema_version", 999)
+        .unwrap();
     assert!(project(future, selection).is_err());
     assert_eq!(cloud.version(), original);
 }
@@ -377,4 +380,166 @@ fn embedded_attachment_discloses_both_slots_and_removes_only_attachment_leaf() {
         cloud.read(root).unwrap().content.as_text(),
         Some("Keep this note")
     );
+}
+
+fn raw_meta(doc: &loro::LoroDoc, id: NodeId) -> loro::LoroMap {
+    let tree = doc.get_tree("nodes");
+    let tid = tree
+        .nodes()
+        .into_iter()
+        .find(|tid| {
+            tree.get_meta(*tid)
+                .unwrap()
+                .get("id")
+                .and_then(|v| v.as_value().cloned())
+                == Some(loro::LoroValue::String(id.to_storage().into()))
+        })
+        .unwrap();
+    tree.get_meta(tid).unwrap()
+}
+#[test]
+fn text_node_slot_removal_preserves_note_children_embed_and_inherited_trash_recovery() {
+    let (mut cloud, selection, root, child) = fixture();
+    let embedded = cloud
+        .insert(
+            Parent::Root,
+            Node::document("Separate embedded body").unwrap(),
+        )
+        .unwrap();
+    let meta = raw_meta(cloud.doc(), root);
+    meta.insert("blob", format!("b3:{}", "b".repeat(64)))
+        .unwrap();
+    meta.insert("mime", "application/octet-stream").unwrap();
+    meta.insert("width", 123).unwrap();
+    meta.insert("embed", embedded.to_storage()).unwrap();
+    // Existing trash moves the whole note; slot removal must not restore,
+    // delete, or move that recoverable body or any child.
+    cloud.trash(root, 17, None).unwrap();
+    let before_parent = cloud.parent(root).unwrap();
+    let view = project(detached(&cloud), selection.clone()).unwrap();
+    let block = view
+        .document
+        .blocks
+        .iter()
+        .find(|b| b.id == root.to_storage())
+        .unwrap();
+    assert_eq!(block.rich_text.as_ref().unwrap().text, "Keep this note");
+    assert!(block.blob.is_some() && block.reference.is_some() && block.in_trash);
+    let control = view
+        .removable_files
+        .iter()
+        .find(|f| f.node_id == root.to_storage())
+        .unwrap();
+    assert_eq!(control.mode, FileRemovalMode::RetainedSlot);
+    let delta = remove_file(detached(&cloud), &selection, &root.to_storage(), 42).unwrap();
+    cloud.import(&delta).unwrap();
+    assert_eq!(cloud.parent(root).unwrap(), before_parent);
+    assert_eq!(cloud.parent(child).unwrap(), Parent::Node(root));
+    assert!(cloud.is_trashed(root));
+    assert_eq!(
+        cloud.attachment_context(root).unwrap().content.as_text(),
+        Some("Keep this note")
+    );
+    assert!(matches!(
+        cloud.read(root).unwrap().content,
+        koru_core::Content::Embed { .. }
+    ));
+    assert_eq!(
+        cloud.read(embedded).unwrap().content.as_text(),
+        Some("Separate embedded body")
+    );
+    assert_eq!(
+        hashes(&cloud).unwrap(),
+        BTreeSet::from([format!("b3:{}", "a".repeat(64))])
+    );
+    cloud.restore(root, None).unwrap();
+    assert!(!cloud.in_trash(child));
+    let meta = raw_meta(cloud.doc(), root);
+    for key in ["blob", "mime", "width", "height"] {
+        assert!(meta.get(key).is_none());
+    }
+}
+#[test]
+fn forbidden_blob_children_are_unavailable_and_not_destructively_repaired() {
+    let (cloud, selection, _, file) = fixture();
+    let source = detached(&cloud);
+    let tree = source.get_tree("nodes");
+    let parent = tree
+        .nodes()
+        .into_iter()
+        .find(|tid| {
+            tree.get_meta(*tid)
+                .unwrap()
+                .get("id")
+                .and_then(|v| v.as_value().cloned())
+                == Some(loro::LoroValue::String(file.to_storage().into()))
+        })
+        .unwrap();
+    let child = tree.create(loro::TreeParentId::Node(parent)).unwrap();
+    let meta = tree.get_meta(child).unwrap();
+    meta.insert("id", NodeId::new().to_storage()).unwrap();
+    meta.insert("kind", "paragraph").unwrap();
+    meta.ensure_mergeable_text("text")
+        .unwrap()
+        .insert(0, "Must survive")
+        .unwrap();
+    let before = source.oplog_vv();
+    assert!(project(source.clone(), selection.clone()).is_err());
+    assert!(remove_file(source.clone(), &selection, &file.to_storage(), 42).is_err());
+    assert_eq!(source.oplog_vv(), before);
+    assert!(!tree.is_node_deleted(&child).unwrap());
+}
+#[test]
+fn concurrent_same_slot_replacement_merges_normally_without_a_freed_bytes_claim() {
+    let (cloud, selection, root, _) = fixture();
+    raw_meta(cloud.doc(), root)
+        .insert("blob", format!("b3:{}", "b".repeat(64)))
+        .unwrap();
+    let source = detached(&cloud);
+    let base = source.oplog_vv();
+    let delta = remove_file(detached(&cloud), &selection, &root.to_storage(), 42).unwrap();
+    let concurrent = detached(&cloud);
+    raw_meta(&concurrent, root)
+        .insert("blob", format!("b3:{}", "c".repeat(64)))
+        .unwrap();
+    let concurrent_delta = concurrent.export(loro::ExportMode::updates(&base)).unwrap();
+    source.import(&delta).unwrap();
+    source.import(&concurrent_delta).unwrap();
+    concurrent.import(&delta).unwrap();
+    assert_eq!(source.get_deep_value(), concurrent.get_deep_value());
+    assert_eq!(
+        inspect_file_references(&source, budget()).unwrap().blobs(),
+        inspect_file_references(&concurrent, budget())
+            .unwrap()
+            .blobs()
+    );
+    let model = WorkspaceDoc::adopt(source).unwrap();
+    assert_eq!(
+        model.attachment_context(root).unwrap().content.as_text(),
+        Some("Keep this note")
+    );
+}
+
+#[test]
+fn passive_projection_never_creates_a_missing_text_slot() {
+    let (_, selection, _, _) = fixture();
+    let source = loro::LoroDoc::new();
+    source
+        .get_map("meta")
+        .insert("id", selection.workspace_id.clone())
+        .unwrap();
+    source
+        .get_map("meta")
+        .insert("document", selection.document_id.clone())
+        .unwrap();
+    let tree = source.get_tree("nodes");
+    let tid = tree.create(loro::TreeParentId::Root).unwrap();
+    let meta = tree.get_meta(tid).unwrap();
+    meta.insert("id", NodeId::new().to_storage()).unwrap();
+    meta.insert("kind", "document").unwrap();
+    let before = source.oplog_vv();
+    let view = project(source.clone(), selection).unwrap();
+    assert_eq!(view.document.blocks[0].rich_text.as_ref().unwrap().text, "");
+    assert_eq!(source.oplog_vv(), before);
+    assert!(meta.get("text").is_none());
 }

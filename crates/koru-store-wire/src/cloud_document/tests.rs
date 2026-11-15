@@ -23,7 +23,7 @@ fn fixture() -> CloudDocumentInspectionV1 {
             }]
         },
         "can_request_removal":true,
-        "removable_files":[{"node_id":"00000000-0000-0000-0000-000000000006","in_trash":false}]
+        "removable_files":[{"mode":"attachment_leaf","node_id":"00000000-0000-0000-0000-000000000006","in_trash":false}]
     })).unwrap()
 }
 #[test]
@@ -135,4 +135,22 @@ fn removal_controls_match_visible_trash_and_actual_write_presentation_gate() {
     assert!(value.to_json().is_err());
     value.removable_files.clear();
     assert!(value.to_json().is_ok());
+}
+
+#[test]
+fn retained_slot_mode_can_preserve_text_parent_but_cannot_claim_a_blob_leaf() {
+    let mut value = fixture();
+    value.document.blocks[0].kind = "document".into();
+    value.removable_files[0].mode = FileRemovalMode::RetainedSlot;
+    let mut child = value.document.blocks[0].clone();
+    child.id = "00000000-0000-0000-0000-000000000007".into();
+    child.parent_id = Some(value.document.blocks[0].id.clone());
+    child.blob = None;
+    value.document.blocks.push(child);
+    assert!(value.to_json().is_ok());
+    value.removable_files[0].mode = FileRemovalMode::AttachmentLeaf;
+    assert!(value.to_json().is_err());
+    let mut value = fixture();
+    value.removable_files[0].mode = FileRemovalMode::RetainedSlot;
+    assert!(value.to_json().is_err());
 }

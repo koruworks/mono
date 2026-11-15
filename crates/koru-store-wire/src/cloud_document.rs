@@ -64,10 +64,18 @@ impl CloudDocumentSelection {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileRemovalMode {
+    AttachmentLeaf,
+    RetainedSlot,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FileRemovalControl {
     pub node_id: String,
+    pub mode: FileRemovalMode,
     pub in_trash: bool,
 }
 
@@ -78,7 +86,7 @@ pub struct CloudDocumentInspectionV1 {
     pub document: DocumentProjection,
     /// Presentation hint only; the worker rechecks current write permission.
     pub can_request_removal: bool,
-    /// Exact eligible File/Image/Canvas leaves. Never a note/page or subtree purge.
+    /// Native-proven leaf or attachment-slot operations. Never a note/page purge.
     pub removable_files: Vec<FileRemovalControl>,
 }
 impl std::fmt::Debug for CloudDocumentInspectionV1 {
@@ -133,8 +141,28 @@ impl CloudDocumentInspectionV1 {
             if let Some(parent) = &block.parent_id {
                 parents.insert(parent.as_str());
             }
-            if matches!(block.kind.as_str(), "file" | "image" | "canvas") && block.blob.is_some() {
-                eligible.insert(block.id.as_str(), block.in_trash);
+            if block.blob.is_some() {
+                let mode = if matches!(block.kind.as_str(), "file" | "image" | "canvas") {
+                    FileRemovalMode::AttachmentLeaf
+                } else if matches!(
+                    block.kind.as_str(),
+                    "task"
+                        | "paragraph"
+                        | "quote"
+                        | "callout"
+                        | "document"
+                        | "listblock"
+                        | "table"
+                        | "code"
+                        | "contact"
+                        | "divider"
+                        | "trash"
+                ) {
+                    FileRemovalMode::RetainedSlot
+                } else {
+                    return Err("invalid attachment kind");
+                };
+                eligible.insert(block.id.as_str(), (block.in_trash, mode));
             }
             text.add(&block.kind)?;
             let p = &block.properties;
@@ -189,8 +217,9 @@ impl CloudDocumentInspectionV1 {
         let mut controls = HashSet::new();
         for file in &self.removable_files {
             if !controls.insert(file.node_id.as_str())
-                || parents.contains(file.node_id.as_str())
-                || eligible.get(file.node_id.as_str()) != Some(&file.in_trash)
+                || (file.mode == FileRemovalMode::AttachmentLeaf
+                    && parents.contains(file.node_id.as_str()))
+                || eligible.get(file.node_id.as_str()) != Some(&(file.in_trash, file.mode))
             {
                 return Err("invalid inspection removal target");
             }

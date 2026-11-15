@@ -147,3 +147,13 @@ fn every_traversal_limit_fails_without_partial_results() {
         );
     }
 }
+
+#[test]
+fn blob_kind_with_children_is_unknown_not_a_safe_leaf_or_subtree_purge() {
+    for kind in ["file", "image", "canvas"] {
+        let doc = LoroDoc::new();
+        let (parent, _) = node(&doc, TreeParentId::Root, kind, Some("b3:retained"));
+        node(&doc, TreeParentId::Node(parent), "paragraph", None);
+        refusal(&doc, StrictReferenceError::Shape);
+    }
+}

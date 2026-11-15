@@ -861,6 +861,76 @@ impl WorkspaceDoc {
         Ok(ws)
     }
 
+    /// Read existing rich text without creating a missing text container.
+    /// Detached inspection must not use the editor's ensure-on-access path.
+    pub fn existing_runs(&self, target: NodeId) -> Result<Vec<TextRun>> {
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        match meta.get(K_TEXT) {
+            None => Ok(Vec::new()),
+            Some(ValueOrContainer::Container(container)) => {
+                let text = container
+                    .into_text()
+                    .map_err(|_| StoreError::Malformed("invalid existing text"))?;
+                Ok(runs_from_text(&text))
+            }
+            _ => Err(StoreError::Malformed("invalid existing text")),
+        }
+    }
+
+    /// Passive original text/attributes for a text-shaped node whose raw blob
+    /// slot may coexist after concurrent edits. The ordinary reader is unchanged.
+    /// An embed is separately visible through `read`; neither slot authorizes
+    /// navigation or mutation of an embedded target.
+    pub fn attachment_context(&self, target: NodeId) -> Result<Node> {
+        let mut node = self.read(target)?;
+        if node.kind.shape() == crate::node::Shape::Text {
+            let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+            let text = match meta.get(K_TEXT) {
+                None => String::new(),
+                Some(ValueOrContainer::Container(container)) => container
+                    .into_text()
+                    .map_err(|_| StoreError::Malformed("invalid retained text"))?
+                    .to_string(),
+                _ => return Err(StoreError::Malformed("invalid retained text")),
+            };
+            node.content = Content::Text {
+                text,
+                attrs: read_attrs(&meta),
+            };
+        }
+        Node::check(node.kind, &node.content)?;
+        Ok(node)
+    }
+
+    /// Explicitly remove only a retained attachment slot from a text-shaped
+    /// node. The original text, attributes, embed, children, identity and Trash
+    /// position remain recoverable. A blob-shaped node uses its ordinary leaf
+    /// removal instead; this never leaves an image/file without required content.
+    pub fn remove_retained_blob_slot(
+        &mut self,
+        target: NodeId,
+        budget: file_references::ReferenceBudget,
+    ) -> Result<()> {
+        file_references::inspect_file_references(&self.doc, budget)
+            .map_err(|_| StoreError::Malformed("unsupported retained source"))?;
+        let node = self.attachment_context(target)?;
+        if node.kind.shape() != crate::node::Shape::Text || self.retained_blob(target)?.is_none() {
+            return Err(StoreError::Malformed("not a retained text attachment"));
+        }
+        let meta = self.nodes().get_meta(self.tree_id(target)?)?;
+        for key in [K_BLOB, K_MIME, K_WIDTH, K_HEIGHT] {
+            if meta.get(key).is_some() {
+                meta.delete(key)?;
+            }
+        }
+        self.doc.commit();
+        if let Some(locator) = self.index.get_mut(&target) {
+            locator.blob_hash = None;
+        }
+        self.blob_nodes.retain(|id| *id != target);
+        Ok(())
+    }
+
     /// Read the actual blob slot even when a legacy embed coexists with it.
     /// Unlike the forgiving content projection, malformed slot fields fail.
     /// This does not expand an embed or authorize editing its target. Callers
