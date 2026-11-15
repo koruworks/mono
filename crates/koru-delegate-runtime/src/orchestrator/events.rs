@@ -47,6 +47,15 @@ impl Orchestrator {
         if self.run_publication_pending(run) {
             return Err(crate::publication_pending().into());
         }
+        let source_identity = self
+            .runs
+            .get(&run)
+            .and_then(|state| state.attempt.as_ref())
+            .and_then(|attempt| {
+                attempt
+                    .session
+                    .map(|session| (attempt.id, attempt.generation, session))
+            });
         let (agent, session, gap) = match &update {
             SessionUpdate::Agent(event) => (Some(event.sequence), None, false),
             SessionUpdate::Session(event) => (None, Some(event.sequence), false),
@@ -89,6 +98,11 @@ impl Orchestrator {
         };
         if outcome.is_ok() {
             let state = self.open(run)?;
+            if source_identity.is_some() && state.source_identity != source_identity {
+                state.source_frontiers.agent_after = None;
+                state.source_frontiers.session_after = None;
+                state.source_identity = source_identity;
+            }
             if let Some(sequence) = agent {
                 state.source_frontiers.agent_after = Some(
                     state

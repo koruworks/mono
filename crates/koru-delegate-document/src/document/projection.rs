@@ -200,6 +200,24 @@ impl RunProjectionStaging {
 }
 
 impl RunDocument {
+    /// Read-only requalification after the worker physically returned the sole
+    /// handle. The proof still comes from the real durable acknowledgment;
+    /// checking the current marker prevents a stale return from ending a later
+    /// publication interval. This performs no Store operation or history copy.
+    pub fn check_returned_projection(
+        &self,
+        prepared: &DecisionPreparedProjection,
+        proof: &AppliedRunProjection,
+    ) -> Result<()> {
+        require_document(proof.identity == prepared.identity)?;
+        require_document(covers(
+            &decode_vv(&proof.observed_version)?,
+            &decode_vv(&prepared.result_version)?,
+        ))?;
+        let target = checked_prepared(prepared)?;
+        self.check_applied(prepared, &target)
+    }
+
     fn check_projection_subject(
         &self,
         identity: &DecisionProjectionIdentity,
@@ -235,7 +253,7 @@ impl RunDocument {
         Ok(())
     }
 
-    fn marker(&self) -> Result<Option<Marker>> {
+    pub(super) fn marker(&self) -> Result<Option<Marker>> {
         match self.run().get(K_PROJECTION) {
             None => Ok(None),
             Some(ValueOrContainer::Value(value)) => {

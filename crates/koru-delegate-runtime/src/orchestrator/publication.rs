@@ -14,7 +14,13 @@ use koru_delegate_core::decisions::{
 };
 use koru_delegate_document::{RunDocument, RunDocumentError};
 mod cleanup;
-mod source;
+pub(crate) mod source;
+
+/// Only this module constructs this value, after actual handle installation.
+/// An acknowledgment DTO alone never proves physical document ownership.
+pub(crate) struct ReturnedRunProjection {
+    proof: crate::AppliedRunProjection,
+}
 
 pub(crate) enum RunDocumentOwner {
     /// Retained placement is known, but no document handle has been opened.
@@ -192,6 +198,26 @@ impl Orchestrator {
             return Err(publication_pending().into());
         }
         let prepared = retained.prepared().ok_or_else(publication_pending)?;
+        // SQL must not acknowledge a worker result while that worker still
+        // owns the handle. This also rechecks the marker after physical return.
+        let state = self
+            .runs
+            .get_mut(&identity.run)
+            .ok_or_else(publication_pending)?;
+        match &state.doc {
+            RunDocumentOwner::Attached {
+                handle,
+                exclusive: true,
+            } if handle.durable() => {
+                handle
+                    .document()
+                    .check_returned_projection(prepared, proof)?;
+            }
+            _ => return Err(publication_pending().into()),
+        }
+        state.publication_returned = Some(ReturnedRunProjection {
+            proof: proof.clone(),
+        });
         let ack = DecisionProjectionAcknowledgment {
             identity: identity.clone(),
             delta_digest: prepared.delta_digest,
@@ -203,6 +229,9 @@ impl Orchestrator {
         if !matches!(applied.state, DecisionProjectionState::Applied { .. }) {
             return Err(publication_pending().into());
         }
+        // Install this Source's bookkeeping while its exact returned marker is
+        // still current, before the next carried Control can replace it.
+        self.retry_decision_source(identity.run)?;
         Ok(())
     }
 
@@ -235,6 +264,9 @@ impl Orchestrator {
             run,
             epoch: uuid::Uuid::new_v4(),
         };
+        if let Some(state) = self.runs.get_mut(&run) {
+            state.publication_returned = None;
+        }
         if let Some(state) = self.runs.get(&run) {
             if identity.workspace != state.workspace || identity.document != state.document {
                 return Err(publication_pending().into());

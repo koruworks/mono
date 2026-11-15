@@ -82,10 +82,13 @@ impl BotLedger for RecordingStore {
         base: &DecisionPublicationBase,
         target: &RunProjectionTargetV1,
     ) -> Result<DecisionProjectionRecord, BotLedgerError> {
-        self.inner
+        self.check("decision_source_before")?;
+        let record = self.inner
             .lock()
             .unwrap()
-            .record_decision_source(owner, transition, wait, base, target)
+            .record_decision_source(owner, transition, wait, base, target)?;
+        self.check("decision_source_after")?;
+        Ok(record)
     }
     fn decision_projection(
         &self,

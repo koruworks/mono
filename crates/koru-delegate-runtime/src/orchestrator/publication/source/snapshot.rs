@@ -18,7 +18,7 @@ use std::collections::HashMap;
 /// Only source bookkeeping, not capture, document history, controller ownership
 /// or process/capacity authority. Physical control fields are never restored
 /// from an earlier staged observation after a concurrent Stop.
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SourceMemory {
     pub attempt: RunAttemptId,

@@ -41,6 +41,10 @@ pub struct RunState {
     /// A noncontiguous sequence is legal; only an explicit gap invalidates it.
     pub source_frontiers: koru_delegate_core::decisions::DecisionSourceFrontiers,
     pub source_gap: bool,
+    pub(crate) source_identity: Option<(RunAttemptId, AttemptGeneration, SessionId)>,
+    pub(crate) source_epoch: Option<uuid::Uuid>,
+    pub(crate) decision_source: Option<super::publication::source::DecisionSourceRetry>,
+    pub(crate) publication_returned: Option<super::publication::ReturnedRunProjection>,
     /// Bounded volatile retry identity for the retained decision cleanup CAS.
     /// Unknown SQL outcomes reuse this exact request; restart reads its row.
     pub(crate) decision_cleanup: Option<DecisionCleanupRetry>,
@@ -79,6 +83,10 @@ impl RunState {
                 session_after: None,
             },
             source_gap: false,
+            source_identity: None,
+            source_epoch: None,
+            decision_source: None,
+            publication_returned: None,
             decision_cleanup: None,
         }
     }

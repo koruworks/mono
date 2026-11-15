@@ -65,6 +65,7 @@ mod schedule;
 pub use codec::{Part, RunDocumentError, TimelineItem};
 pub use document::RunDocument;
 pub use document::projection::{AppliedRunProjection, RunProjectionIntent, RunProjectionStaging};
+pub use document::source::{DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage};
 pub use schedule::{
     RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOverview, ScheduleClaimAuthority,
     ScheduleClaimPlan, ScheduleDocument, ScheduleDocumentError, ScheduleRunClaim,
