@@ -35,6 +35,44 @@ pub(crate) fn acknowledged_continuation_on(
     ))
 }
 
+impl RunsDb {
+    /// The durably acknowledged continuation of the Run's current attempt
+    /// when that attempt is a recorded decision successor: its attempt,
+    /// generation, bound session and the acknowledged input turn. `None` when
+    /// the current attempt is not a recorded successor or its input was never
+    /// acknowledged. Read-only history: it grants no execution authority.
+    pub fn decision_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionAcknowledgedContinuation>, BotLedgerError> {
+        authority::owner(self.conn(), owner, run)?;
+        let Some(attempt) = self.current_attempt(run)? else {
+            return Ok(None);
+        };
+        let Some(record) = consumer_record(self.conn(), run, &attempt)? else {
+            return Ok(None);
+        };
+        require(record.wait.origin.owner == owner && record.wait.origin.run == run)?;
+        let resume = record.resume.as_ref().ok_or(BotLedgerError::Fenced)?;
+        let acknowledgment = match &resume.state {
+            DecisionResumeState::InputAcknowledged { acknowledgment }
+            | DecisionResumeState::Closed {
+                acknowledgment: Some(acknowledgment),
+            } => acknowledgment,
+            _ => return Ok(None),
+        };
+        let (attempt, generation, session, _) = resume.consumer_identity();
+        Ok(Some(DecisionAcknowledgedContinuation {
+            decision: record.receipt.decision,
+            attempt,
+            generation,
+            session: session.ok_or(BotLedgerError::Fenced)?,
+            turn: acknowledgment.turn,
+        }))
+    }
+}
+
 fn consumer_record(
     conn: &Connection,
     run: RunId,

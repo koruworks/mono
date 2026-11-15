@@ -64,6 +64,18 @@ pub struct DecisionRecord {
     pub native_response: Option<DecisionNativeResponse>,
 }
 
+/// The durably acknowledged continuation of a recorded decision successor:
+/// the consumer identity and the input turn C recorded on the host's positive
+/// answer. History only; it is not permission to send input or execute.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DecisionAcknowledgedContinuation {
+    pub decision: DecisionId,
+    pub attempt: RunAttemptId,
+    pub generation: AttemptGeneration,
+    pub session: SessionId,
+    pub turn: AgentTurnId,
+}
+
 /// Historical evidence, not an occupancy discount or permission to stop.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecisionWaitRecord {

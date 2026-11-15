@@ -600,6 +600,21 @@ impl BotLedger for RunsDb {
     ) -> Result<Option<crate::DecisionWaitExecution>, BotLedgerError> {
         RunsDb::decision_wait_execution(self, owner, run)
     }
+    fn bot_decision(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<crate::DecisionRecord>, BotLedgerError> {
+        RunsDb::bot_decision(self, owner, run, decision)
+    }
+    fn decision_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::DecisionAcknowledgedContinuation>, BotLedgerError> {
+        RunsDb::decision_acknowledged_continuation(self, owner, run)
+    }
     fn read_bot_decision_wait(
         &self,
         owner: BotOwner,

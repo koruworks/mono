@@ -54,6 +54,25 @@ impl BotLedger for SharedLedger {
             .unwrap()
             .decision_retained_effect(owner, run, decision)
     }
+    fn bot_decision(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<Option<koru_delegate_sqlite::DecisionRecord>, BotLedgerError> {
+        self.0.lock().unwrap().bot_decision(owner, run, decision)
+    }
+    fn decision_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<koru_delegate_sqlite::DecisionAcknowledgedContinuation>, BotLedgerError>
+    {
+        self.0
+            .lock()
+            .unwrap()
+            .decision_acknowledged_continuation(owner, run)
+    }
     fn read_bot_decision_wait(
         &self,
         owner: BotOwner,
