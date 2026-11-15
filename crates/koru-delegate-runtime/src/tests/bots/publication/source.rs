@@ -974,3 +974,103 @@ fn decision_successor_delivery_is_refused_while_its_input_is_unacknowledged() {
         "no receipt was recorded"
     );
 }
+
+#[test]
+fn native_decision_answer_is_forwarded_with_the_journaled_key_and_replays_it() {
+    let (mut h, s, fence, policy, _) = native_results::active();
+    h.orchestrator
+        .synchronize_native_policy(policy.clone(), fence.owner.device)
+        .unwrap();
+    let offered = vec![super::super::decisions::choice("allow"), super::super::decisions::choice("reject")];
+    let approval = super::super::decisions::prompt(&mut h, &fence, offered.clone());
+    let proof = FreshBotPolicyProof {
+        global: policy,
+        routine: None,
+    };
+    let boot = DelegateBootId::mint();
+    let prepared = h
+        .orchestrator
+        .bot_prepare_native_decision(&fence, fence.owner.device, approval, &proof, boot)
+        .unwrap();
+    // The decision is answerable only once its initial projection is
+    // published; drive it through real staging as the worker would.
+    {
+        use crate::orchestrator::publication::RunDocumentOwner;
+        let state = h.orchestrator.runs.get_mut(&fence.run).unwrap();
+        let RunDocumentOwner::Attached { handle, .. } =
+            std::mem::replace(&mut state.doc, RunDocumentOwner::Unopened)
+        else {
+            panic!("attached")
+        };
+        state.doc = RunDocumentOwner::Attached {
+            exclusive: false,
+            handle: Box::new(ProjectionHandle {
+                inner: handle,
+                staging: koru_delegate_document::RunProjectionStaging::default(),
+            }),
+        };
+    }
+    publish_owed(&mut h, fence.run);
+    let DecisionBindingV1::NativeApproval(binding) = &prepared.receipt.binding else {
+        panic!("native binding")
+    };
+    assert_eq!(binding.prompt, approval);
+    assert_eq!(binding.choices.as_slice().len(), 2);
+    assert_eq!(
+        binding.native_deadline_at_ms, None,
+        "O116: no native expiry"
+    );
+    // A second preparation for the same Run is owned by the open decision.
+    let ActorRef::Person { profile } = s.request.requested_by else {
+        panic!("person")
+    };
+    let input = AnswerDecision {
+        owner: fence.owner,
+        run: fence.run,
+        decision: prepared.receipt.decision,
+        expected_revision: prepared.receipt.state.revision,
+        binding_digest: prepared.receipt.binding_digest,
+        request: DecisionAnswerId::mint(),
+        human: profile,
+        choice: DecisionAnswerChoice::Native {
+            offered: binding.choices.as_slice()[0].clone(),
+        },
+        authority_digest: DecisionDigest::from_bytes([9; 32]),
+    };
+    let answered = h
+        .orchestrator
+        .bot_answer_decision(&input, fence.owner.device, &proof, boot)
+        .unwrap();
+    let Some(DecisionNativeResponse::Acknowledged { key, .. }) = answered.native_response else {
+        panic!("acknowledged native answer")
+    };
+    let forwarded: Vec<_> = h
+        .sessions
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .filter_map(|call| match call {
+            Call::AnswerApproval {
+                key, approval: a, ..
+            } if *a == approval => Some(*key),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(forwarded, vec![key.response_key]);
+    // The legacy unkeyed route cannot bypass the decision owner while the
+    // Run's publication is held for it.
+    if h.orchestrator.run_publication_pending(fence.run) {
+        assert!(
+            h.orchestrator
+                .bot_answer_approval(
+                    &fence,
+                    fence.owner.device,
+                    approval,
+                    ApprovalDecision::Approve,
+                    None
+                )
+                .is_err()
+        );
+    }
+}
