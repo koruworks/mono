@@ -362,12 +362,13 @@ impl Actor {
             },
             BotCommand::AnswerApproval {
                 fence,
+                request,
                 approval,
                 decision,
                 choice,
             } => {
                 self.orchestrator
-                    .bot_answer_approval(&fence, device, approval, decision, choice)
+                    .bot_answer_approval_keyed(&fence, device, request, approval, decision, choice)
                     .map_err(bot_failure)?;
                 BotReply::Applied
             }

@@ -197,8 +197,12 @@ pub enum BotCommand {
         key: BotRunKey,
         fence: Option<BotExecutionFence>,
     },
+    /// IPC 16 (O124): `request` is the caller's stable key for this one
+    /// answer, forwarded unchanged to the session host so a retry of the same
+    /// answer is the same request. Refused while a decision owns the Run.
     AnswerApproval {
         fence: BotExecutionFence,
+        request: koru_delegate_core::IdempotencyKey,
         approval: ApprovalId,
         decision: ApprovalDecision,
         choice: Option<ApprovalChoiceId>,

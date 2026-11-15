@@ -348,3 +348,32 @@ fn ipc16_decision_wait_read_helper_never_turns_unknown_or_foreign_into_missing()
         "no budget, no call"
     );
 }
+
+#[test]
+fn ipc16_native_answer_carries_a_stable_request_key_and_refuses_the_ipc15_shape() {
+    let owner = owner();
+    let command = BotCommand::AnswerApproval {
+        fence: fence(owner),
+        request: koru_delegate_core::IdempotencyKey::mint(),
+        approval: ApprovalId::mint(),
+        decision: ApprovalDecision::Approve,
+        choice: None,
+    };
+    assert_eq!(command.owner(), Some(&owner));
+    let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
+    let (_, decoded): (u8, BotCommand) =
+        koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
+    assert_eq!(decoded, command);
+    let json = serde_json::to_value(&command).unwrap();
+    // The IPC15 shape had no key: it no longer decodes, so an older caller
+    // cannot have its answer re-keyed per call silently.
+    let mut ipc15 = json.clone();
+    ipc15.as_object_mut().unwrap().remove("request");
+    assert!(serde_json::from_value::<BotCommand>(ipc15).is_err());
+    let mut forged = json.clone();
+    forged["undeclared_authority"] = true.into();
+    assert!(serde_json::from_value::<BotCommand>(forged).is_err());
+    let mut malformed = json;
+    malformed["request"] = serde_json::json!("not-a-key");
+    assert!(serde_json::from_value::<BotCommand>(malformed).is_err());
+}
