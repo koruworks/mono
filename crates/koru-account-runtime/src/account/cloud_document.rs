@@ -9,6 +9,12 @@ use koru_store_wire::cloud_document::{
 /// The account service admits only a bounded exact selector from its current
 /// trusted inventory page. Hosts independently bind it to their current
 /// account, Workspace/incarnation and enabled ordinary content session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CloudDocumentContext {
+    pub owner_scope: u64,
+    pub account_generation: u64,
+}
+
 pub trait CloudDocumentPort: Send + Sync {
     /// `can_write` is a current account entitlement gate, combined with the
     /// host's live content permit; it is never read from a caller's DTO.
@@ -16,6 +22,7 @@ pub trait CloudDocumentPort: Send + Sync {
     /// removal returns OutcomeUnknown and must be followed by a Cloud reread.
     fn run(
         &self,
+        context: CloudDocumentContext,
         selection: CloudDocumentSelection,
         action: CloudDocumentAction,
         can_write: bool,
