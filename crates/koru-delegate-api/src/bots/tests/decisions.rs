@@ -222,15 +222,26 @@ fn ipc16_edit_proposal_bounds_and_redacts_its_content() {
 }
 
 #[test]
-fn ipc16_decision_replies_are_closed_and_redacted() {
-    let reply = BotReply::Missing;
-    let mut json = serde_json::to_value(&reply).unwrap();
-    assert_eq!(json, serde_json::json!({"result":"missing"}));
-    json["observation"] = serde_json::json!(null);
-    assert!(serde_json::from_value::<BotReply>(json).is_err());
-    let unknown =
-        serde_json::json!({"result":"decision_wait","observation":null,"resume":null,"extra":1});
-    assert!(serde_json::from_value::<BotReply>(unknown).is_err());
+fn ipc16_decision_wait_reply_is_closed_and_redacted() {
+    let reply = BotReply::DecisionWait {
+        observation: observation(),
+        resume: None,
+    };
+    let json = serde_json::to_value(&reply).unwrap();
+    assert_eq!(json["result"], "decision_wait");
+    assert_eq!(
+        serde_json::from_value::<BotReply>(json.clone()).unwrap(),
+        reply
+    );
+    for pointer in ["", "/observation", "/observation/key"] {
+        let mut changed = json.clone();
+        changed.pointer_mut(pointer).unwrap()["undeclared_authority"] = true.into();
+        assert!(
+            serde_json::from_value::<BotReply>(changed).is_err(),
+            "{pointer}"
+        );
+    }
+    assert_eq!(format!("{reply:?}"), "BotReply([REDACTED])");
 }
 
 struct OnePort(std::sync::Mutex<Option<Result<BotReply, crate::Failure>>>);
