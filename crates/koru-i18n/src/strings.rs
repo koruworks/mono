@@ -2289,6 +2289,10 @@ pub enum Key {
     BotsMoreWork,
     /// A Bot task the agent stopped because it refused the task's pictures, from the owner's stable code (QUESTIONS O36), in place of the provider's message. Information only: what the surface receives cannot tell whether the pictures were then sent as files. Non-English columns machine-written, awaiting a native read.
     BotsPicturesRefused,
+    /// A Bot turn's quiet closing line when the person declined its decision, so the work did not continue ("Needed you", QUESTIONS O128). Not a failure. Non-English columns machine-written, awaiting a native read.
+    BotsNeededYouDeclined,
+    /// A Bot turn's quiet closing line when its decision was not answered in time, or when the reason cannot be told apart ("Needed you", QUESTIONS O128). Not a failure. Non-English columns machine-written, awaiting a native read.
+    BotsNeededYouUnanswered,
     /// A size, as a person reads one. The unit words `crate::number::bytes` fills; the digits and the separators are that function's.
     SizeBytes,
     SizeKilobytes,
@@ -3894,7 +3898,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2652] = [
+    pub const ALL: [Key; 2654] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5454,6 +5458,8 @@ impl Key {
         Key::BotsOtherConversation,
         Key::BotsMoreWork,
         Key::BotsPicturesRefused,
+        Key::BotsNeededYouDeclined,
+        Key::BotsNeededYouUnanswered,
         Key::SizeBytes,
         Key::SizeKilobytes,
         Key::SizeMegabytes,
@@ -18198,6 +18204,28 @@ pub const ROWS: &[Row] = &[
         ar: "رفض الوكيل الصور.",
         zh_hans: "代理拒绝了这些图片。",
         ja: "エージェントが画像を拒否しました。",
+    },
+    Row {
+        key: Key::BotsNeededYouDeclined,
+        en: "You declined this, so the Bot stopped.",
+        es: "Rechazaste esto, así que el bot se detuvo.",
+        pt_br: "Você recusou isto, então o bot parou.",
+        de: "Sie haben das abgelehnt, deshalb hat der Bot angehalten.",
+        fr: "Vous avez refusé, donc le bot s'est arrêté.",
+        ar: "رفضت هذا، لذلك توقف البوت.",
+        zh_hans: "你拒绝了此操作，所以机器人已停止。",
+        ja: "これを拒否したため、ボットは停止しました。",
+    },
+    Row {
+        key: Key::BotsNeededYouUnanswered,
+        en: "The Bot stopped because it needed your decision.",
+        es: "El bot se detuvo porque necesitaba tu decisión.",
+        pt_br: "O bot parou porque precisava da sua decisão.",
+        de: "Der Bot hat angehalten, weil er Ihre Entscheidung brauchte.",
+        fr: "Le bot s'est arrêté, car il avait besoin de votre décision.",
+        ar: "توقف البوت لأنه كان بحاجة إلى قرارك.",
+        zh_hans: "机器人已停止，因为它需要你的决定。",
+        ja: "判断が必要だったため、ボットは停止しました。",
     },
     Row {
         key: Key::SizeBytes,

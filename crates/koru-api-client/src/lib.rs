@@ -1456,6 +1456,7 @@ fn decode_ai_event(data: &str) -> AiResult<Option<StreamEvent>> {
             | "completed"
             | "failed"
             | "cancelled"
+            | "needed_you"
     ) {
         return Ok(None);
     }
@@ -1895,6 +1896,37 @@ mod tests {
             decode_ai_event(malformed).unwrap_err().code,
             "invalid_response"
         );
+    }
+
+    /// O128: the "Needed you" closing event reaches the chat as a terminal
+    /// event, a reason this client does not know reads as none, and an older
+    /// client (one that does not list the type) skips it like any other
+    /// additive variant.
+    #[test]
+    fn a_needed_you_closing_event_reaches_the_chat() {
+        let attempt = InferenceAttemptId::new();
+        for (reason, expected) in [
+            (
+                r#","reason":"declined""#,
+                Some(koru_ai_wire::NeededYouReason::Declined),
+            ),
+            (r#","reason":"from_a_newer_server""#, None),
+            ("", None),
+        ] {
+            let frame = format!(
+                r#"{{"version":1,"sequence":3,"event":{{"type":"needed_you","attempt_id":"{attempt}"{reason},"at":1}}}}"#
+            );
+            let event = decode_ai_event(&frame).unwrap().unwrap();
+            assert!(event.event.is_terminal());
+            assert_eq!(
+                event.event,
+                koru_ai_wire::PublicAiEvent::NeededYou {
+                    attempt_id: attempt,
+                    reason: expected,
+                    at: koru_ai_core::Timestamp::from_millis(1),
+                }
+            );
+        }
     }
 
     #[test]

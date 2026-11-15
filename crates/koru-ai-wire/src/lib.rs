@@ -22,6 +22,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use koru_ai_core::NeededYouReason;
 pub use koru_ai_core::{
     AttachmentKind, AttachmentSource, ChatAttachment, ChatAttachmentId, ListChatsToolRequest,
     ListChatsToolResponse, ReadChatToolRequest, ReadChatToolResponse, SearchChatsToolRequest,
@@ -270,10 +271,12 @@ pub struct MessageUsage {
     /// The latest active-context report from the attempt for this reply.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context: Option<ReportedContextUsage>,
-    /// Why the engine refused this reply, as the same stable code the live
-    /// `failed` event carried (O36): one of the closed `bot_input_*` codes,
-    /// never provider text. Absent on every other reply. A refused reply
-    /// reports no usage, so an entry may carry only this.
+    /// Why the engine ended this reply, as a closed stable code, never
+    /// provider text: one of the `bot_input_*` codes the live `failed` event
+    /// carried (O36), or `bot_decision_declined` / `bot_decision_needed_you`
+    /// for a Bot turn that ended as "Needed you" (O128, the live `needed_you`
+    /// event). Absent on every other reply. Such a reply may report no usage,
+    /// so an entry may carry only this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stop_code: Option<String>,
     /// For a Bot conversation's owner, the Run that wrote this reply, as
@@ -711,6 +714,31 @@ pub enum PublicAiEvent {
         attempt_id: InferenceAttemptId,
         at: Timestamp,
     },
+    /// A Bot turn ended because its decision wait closed without the work
+    /// continuing ("Needed you", O128). Terminal and **not a failure**.
+    /// `reason` is only what the closure positively knows: absent when it
+    /// could not tell the reasons apart, and read as absent when a newer
+    /// server sends a reason this client does not know.
+    NeededYou {
+        attempt_id: InferenceAttemptId,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "known_needed_you_reason"
+        )]
+        #[schemars(with = "Option<NeededYouReason>")]
+        reason: Option<NeededYouReason>,
+        at: Timestamp,
+    },
+}
+
+/// A reason this client does not know reads as absent, never as an error:
+/// the event stays the closing event it is.
+fn known_needed_you_reason<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<NeededYouReason>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
 }
 
 impl PublicAiEvent {
@@ -729,14 +757,18 @@ impl PublicAiEvent {
             | Self::Citation { attempt_id, .. }
             | Self::Completed { attempt_id, .. }
             | Self::Failed { attempt_id, .. }
-            | Self::Cancelled { attempt_id, .. } => *attempt_id,
+            | Self::Cancelled { attempt_id, .. }
+            | Self::NeededYou { attempt_id, .. } => *attempt_id,
         }
     }
 
     pub const fn is_terminal(&self) -> bool {
         matches!(
             self,
-            Self::Completed { .. } | Self::Failed { .. } | Self::Cancelled { .. }
+            Self::Completed { .. }
+                | Self::Failed { .. }
+                | Self::Cancelled { .. }
+                | Self::NeededYou { .. }
         )
     }
 }
@@ -1604,5 +1636,78 @@ mod tests {
         let back: PublicAiEvent = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(back, event);
         assert_eq!(value["text"], "plan");
+    }
+
+    /// O128: the "Needed you" closing event is terminal, is not a failure,
+    /// and round-trips with its positively known reason.
+    #[test]
+    fn needed_you_is_a_terminal_closing_event_not_a_failure() {
+        let attempt_id = InferenceAttemptId::new();
+        let event = PublicAiEvent::NeededYou {
+            attempt_id,
+            reason: Some(NeededYouReason::Declined),
+            at: Timestamp::from_millis(7),
+        };
+        assert!(event.is_terminal());
+        assert_eq!(event.attempt_id(), attempt_id);
+        assert!(!matches!(event, PublicAiEvent::Failed { .. }));
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(value["type"], "needed_you");
+        assert_eq!(value["reason"], "declined");
+        assert_eq!(
+            serde_json::from_value::<PublicAiEvent>(value).unwrap(),
+            event
+        );
+        let unknown = PublicAiEvent::NeededYou {
+            attempt_id,
+            reason: None,
+            at: Timestamp::from_millis(7),
+        };
+        assert!(
+            serde_json::to_value(&unknown)
+                .unwrap()
+                .get("reason")
+                .is_none()
+        );
+    }
+
+    /// A reason this client does not know, or none at all, still decodes as
+    /// the closing event, with no reason: never an invalid stream event.
+    #[test]
+    fn needed_you_with_an_unknown_or_absent_reason_still_decodes() {
+        let attempt_id = InferenceAttemptId::new();
+        for reason in [
+            Some(serde_json::json!("a_reason_from_a_newer_server")),
+            Some(serde_json::json!(null)),
+            None,
+        ] {
+            let mut value = serde_json::json!({
+                "type": "needed_you",
+                "attempt_id": attempt_id,
+                "at": 7,
+            });
+            if let Some(reason) = reason {
+                value["reason"] = reason;
+            }
+            assert_eq!(
+                serde_json::from_value::<PublicAiEvent>(value).unwrap(),
+                PublicAiEvent::NeededYou {
+                    attempt_id,
+                    reason: None,
+                    at: Timestamp::from_millis(7),
+                }
+            );
+        }
+        let value = serde_json::json!({
+            "type": "needed_you", "attempt_id": attempt_id, "reason": "not_answered", "at": 7,
+        });
+        assert_eq!(
+            serde_json::from_value::<PublicAiEvent>(value).unwrap(),
+            PublicAiEvent::NeededYou {
+                attempt_id,
+                reason: Some(NeededYouReason::NotAnswered),
+                at: Timestamp::from_millis(7),
+            }
+        );
     }
 }
