@@ -25,9 +25,10 @@
 //! **Closed in this build** ([`EDIT_DECISIONS_AVAILABLE`]): the delivery lead
 //! reviews the coupled exposure candidate before any availability change.
 use super::dispatch::failure;
+use koru_ai_server::native_effect::probe_boot;
 use koru_artifact_wire::run_tools::ToolFailure;
 use koru_delegate_api::bots::{
-    BotBootScan, BotCommand, BotDelegatePort, BotReply, DecisionEditProposal, DecisionReceiptView,
+    BotCommand, BotDelegatePort, BotReply, DecisionEditProposal, DecisionReceiptView,
 };
 use koru_delegate_core::decisions::{
     DecisionAuthorization, DecisionBindingV1, DecisionEditAction, DecisionPayload, DecisionPhase,
@@ -197,18 +198,6 @@ pub(super) fn decide(
         Sent::Owned => Err(in_progress(edit.key)),
         Sent::Conflict => Err(failure("native_operation_conflict")),
         Sent::Unknown => Err(status_unknown(edit.key)),
-    }
-}
-
-fn probe_boot(port: &dyn BotDelegatePort, owner: BotOwner) -> Option<DelegateBootId> {
-    match port.execute(BotCommand::Hello {
-        owner,
-        scan: BotBootScan::Probe {},
-    }) {
-        Ok(BotReply::Hello { hello }) if hello.entries.is_empty() && hello.next.is_none() => {
-            Some(hello.boot)
-        }
-        _ => None,
     }
 }
 
