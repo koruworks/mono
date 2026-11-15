@@ -271,6 +271,7 @@ impl Fixture {
             self.owner.policy.clone(),
             tool,
             arguments,
+            EditDecisions::Closed,
         )
     }
     fn retain_prepared(&self, tool: &str, mut arguments: Value, held: bool) -> PreparedNativeWrite {
@@ -528,3 +529,5 @@ fn commit_time_placement_refusal_settles_without_saved_or_store_write() {
             .is_empty()
     );
 }
+
+mod decisions;
