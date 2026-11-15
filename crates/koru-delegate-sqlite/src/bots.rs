@@ -4,6 +4,7 @@
 //! records are local reconciliation evidence, never canonical Run status.
 use crate::LedgerError;
 mod repository;
+pub(crate) use repository::bounded_owned_executions;
 pub(crate) mod routines;
 pub use routines::RoutinePolicyRecord;
 pub use routines::{
@@ -26,6 +27,29 @@ use koru_delegate_core::{
 pub const BOT_ACTIVE_BUDGET_MS: u64 = 600_000;
 pub const BOT_PENDING_LIMIT: usize = 50;
 pub const BOT_HOST_EXECUTION_LIMIT: usize = 2;
+
+/// Ownership and physical capacity are separate projections of the same rows.
+/// A released wait still owns its Bot and remains visible to restart recovery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotExecutionInventory {
+    pub owned: Vec<BotOwnedExecution>,
+    pub occupied: usize,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct BotOwnedExecution {
+    pub execution: BotExecutionRecord,
+    pub capacity: BotExecutionCapacity,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BotExecutionCapacity {
+    Occupied,
+    QualifiedDecisionRelease {
+        wait: BotWaitId,
+        decision: koru_delegate_core::decisions::DecisionId,
+        revision: koru_delegate_core::decisions::DecisionRevision,
+        origin: koru_delegate_core::decisions::DecisionFence,
+    },
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct BotInitialSend {
@@ -276,6 +300,10 @@ pub trait BotLedger {
         &self,
         device: koru_delegate_core::DeviceId,
     ) -> Result<Vec<BotExecutionRecord>, BotLedgerError>;
+    fn bot_execution_inventory(
+        &self,
+        device:koru_delegate_core::DeviceId,
+    )->Result<BotExecutionInventory,BotLedgerError>;
     /// Atomically insert the ordinary Run intent and Bot admission. Exact
     /// retries return the original row; changed full typed payload conflicts.
     /// Enforce 50 queued jobs/Bot before inserting either row; a rejected call

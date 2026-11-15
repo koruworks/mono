@@ -57,7 +57,8 @@ mod schedule_publications;
 pub use attempts::AttemptRow;
 pub use bots::{
     BOT_ACTIVE_BUDGET_MS, BOT_HOST_EXECUTION_LIMIT, BOT_PENDING_LIMIT, BotAdmissionRecord,
-    BotExecutionRecord, BotInitialSend, BotLedger, BotLedgerError, BotReservation, BotSettlement,
+    BotExecutionCapacity, BotExecutionInventory, BotExecutionRecord, BotOwnedExecution,
+    BotInitialSend, BotLedger, BotLedgerError, BotReservation, BotSettlement,
     QueuedBotAdmission, RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutinePolicyRecord,
     RoutineQueuedCursor, RoutineRecoveryEntry, RoutineSlotCursor,
 };

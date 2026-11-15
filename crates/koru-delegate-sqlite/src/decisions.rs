@@ -8,7 +8,10 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Serialize, de::DeserializeOwned};
 
 mod authority;
+mod drain;
 mod observation;
+mod occupancy;
+pub(crate) use occupancy::inventory as execution_inventory_on;
 mod publication;
 mod rows;
 // These transaction bodies deliberately have no public committing wrapper yet.
