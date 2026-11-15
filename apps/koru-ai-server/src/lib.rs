@@ -23,6 +23,9 @@ pub use store_context::StoreContextAdapter;
 pub use store_tools::{
     NativeStoreAuthority, StoreToolAdapter, native_document_title, native_store_backend,
 };
+pub use worker::bots::decision_wait::{
+    DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject,
+};
 pub use worker::bots::memory::{
     MemoryBaseEvidence, MemoryBaseSelection, MemoryEditBaseRequest, MemoryWriteAuthorityEvidence,
     MemoryWriteAuthorityRequest, MemoryWriteSubjectEvidence, RunMemoryEnsureRequest,
