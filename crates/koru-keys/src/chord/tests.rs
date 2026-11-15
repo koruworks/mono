@@ -75,7 +75,7 @@ fn a_chord_can_ask_for_the_literal_control_key() {
     assert!(cycle.matches(&key(NamedKey::Tab), None, ModifiersState::CONTROL));
 }
 
-/// Digits pass through unchanged, which is what lets `Ctrl+1` select a tab.
+/// Digits pass through unchanged, which is what lets `Ctrl+1` select a workspace.
 #[test]
 fn digits_and_punctuation_arrive_verbatim() {
     assert_eq!(letter(&ch("1"), Some("1")), Some('1'));

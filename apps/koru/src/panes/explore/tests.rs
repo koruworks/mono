@@ -1027,7 +1027,7 @@ fn a_long_switcher_caps_at_its_max_and_scrolls_only_its_list() {
     let new = find(&after, PopoverRow::WorkspaceAction(MenuAction::New));
     assert_eq!(
         new.y - (band.y + band.h),
-        theme::Space::S1.px(theme::Profile::Desktop) * 2.0 + theme::BORDER_W as f32
+        theme::Space::S1.px(theme::Profile::Desktop)
     );
 }
 
@@ -1053,11 +1053,11 @@ fn a_profile_row_is_one_line_and_the_linked_count_is_set_from_outside() {
     let h = |want: PopoverRow| rects.iter().find(|(row, _)| *row == want).map(|(_, r)| r.h);
     assert_eq!(
         h(PopoverRow::Profile(0)),
-        Some(theme::metrics::ROW_MIN.value)
+        Some(theme::metrics::ROW_MIN.value + 4.0)
     );
     assert_eq!(
         h(PopoverRow::Profile(0)),
-        h(PopoverRow::ProfileAction(ProfileAction::New))
+        h(PopoverRow::ProfileAction(ProfileAction::Sync))
     );
     assert!(v.set_linked_count(2), "a new count is a change");
     assert!(!v.set_linked_count(2), "the same count is not");
@@ -1597,7 +1597,7 @@ fn the_pieces_of_a_workspace_row_do_not_overlap() {
 #[test]
 fn workspace_rows_keep_the_shared_trailing_lane_and_use_the_approved_tile() {
     let (v, _, _) = with_context(1);
-    let row = Rect::new(20.0, 40.0, 300.0, theme::ROW_H);
+    let row = Rect::new(20.0, 40.0, 300.0, theme::ROW_H + 4.0);
     let workspace = v.workspace_row_parts(PopoverRow::Workspace(0), row);
     let picker = koru_ui::profile_picker::row_parts(row);
     assert_eq!(picker.chip.x, workspace.chip.x);
@@ -1605,7 +1605,7 @@ fn workspace_rows_keep_the_shared_trailing_lane_and_use_the_approved_tile() {
     assert_eq!(workspace.chip.centre().1, row.centre().1);
     assert!(workspace.name.x >= workspace.chip.x + workspace.chip.w);
     assert!(workspace.name.x + workspace.name.w <= workspace.trailing.x);
-    assert_eq!(picker.trailing, workspace.pin);
+    assert_eq!(trailing_lane(row), workspace.pin);
     assert_eq!(workspace.trailing.w, workspace.pin.w);
     assert!(workspace.trailing.x + workspace.trailing.w <= workspace.pin.x);
     assert_eq!(koru_ui::profile_picker::ROW_H, theme::ROW_H);
@@ -1723,31 +1723,14 @@ fn the_popover_rows_run_top_to_bottom_inside_the_panel() {
         let panel = v.popover_panel(a, VIEW).expect("open");
         let rects = v.popover_rects(a, VIEW);
         for pair in rects.windows(2) {
-            use workspace_menu_elements::MenuAction;
-            if pair[0].0 == PopoverRow::WorkspaceAction(MenuAction::Sync)
-                && pair[1].0 == PopoverRow::ProfileAction(ProfileAction::Sync)
-            {
-                assert_eq!(pair[0].1.y, pair[1].1.y, "channel and label share a row");
-                assert_eq!(pair[0].1.h, pair[1].1.h);
-                assert!(
-                    (pair[0].1.x + pair[0].1.w + theme::Space::S2.px(theme::Profile::Desktop)
-                        - pair[1].1.x)
-                        .abs()
-                        < 0.01,
-                    "channel and label have separate targets with the row gap"
-                );
-                continue;
-            }
-            let divider = pair[0].0 == PopoverRow::WorkspaceAction(MenuAction::Sync)
-                || pair[0].0 == PopoverRow::ProfileAction(ProfileAction::New)
-                || matches!(
-                    pair[1].0,
-                    PopoverRow::WorkspaceAction(MenuAction::New | MenuAction::Trash)
-                );
+            let divider = pair[0].0 == PopoverRow::WorkspacesHeading
+                || pair[1].0 == PopoverRow::ProfileAction(ProfileAction::Sync);
             let gap = if divider {
                 theme::Space::S1.px(theme::Profile::Desktop) * 2.0 + theme::BORDER_W as f32
+            } else if pair[0].0 == PopoverRow::ProfilesHeading {
+                theme::Space::S2.px(theme::Profile::Desktop)
             } else {
-                0.0
+                theme::Space::S1.px(theme::Profile::Desktop)
             };
             assert!(
                 (pair[0].1.y + pair[0].1.h + gap - pair[1].1.y).abs() < 0.01,
@@ -1943,13 +1926,10 @@ fn the_arrows_walk_the_profiles_and_fixed_actions() {
 
 /// Fixed Profile menu actions retain their destination regardless of Cloud state.
 #[test]
-fn the_profile_actions_offer_creation_and_global_sync() {
+fn the_profile_sync_action_keeps_its_destination() {
     let a = area();
     for cloud in [false, true] {
-        for (action, outcome) in [
-            (ProfileAction::New, Outcome::NewProfile),
-            (ProfileAction::Sync, Outcome::OpenSyncSettings),
-        ] {
+        for (action, outcome) in [(ProfileAction::Sync, Outcome::OpenSyncSettings)] {
             let (mut v, profiles, _) = with_context(0);
             if cloud {
                 v.set_account_state(&syncing(&profiles[1]));
@@ -2098,8 +2078,8 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     let action = v
         .popover_rows()
         .iter()
-        .position(|row| *row == PopoverRow::ProfileAction(ProfileAction::New))
-        .expect("Add new Profile");
+        .position(|row| *row == PopoverRow::ProfileAction(ProfileAction::Sync))
+        .expect("Sync");
     v.popover.as_mut().expect("open").hover = Some(action);
     v.popover_part = None;
     assert_eq!(v.popover_key(&Key::Named(NamedKey::ArrowLeft)), None);
@@ -2107,8 +2087,8 @@ fn left_and_right_fall_through_on_the_profiles_page() {
     assert!(v.popover_open(), "and neither dismissed it");
     assert_eq!(
         v.popover_key(&Key::Named(NamedKey::Enter)),
-        Some(Outcome::NewProfile),
-        "Enter activates Add new Profile"
+        Some(Outcome::OpenSyncSettings),
+        "Enter activates Sync"
     );
 }
 
@@ -2233,20 +2213,17 @@ fn choosing_a_workspace_reports_it_and_closes_the_popover() {
     assert!(!v.popover_open(), "and it shut behind itself");
 }
 
-/// Add new Profile reports creation and closes the menu.
+/// Profile creation belongs to Manage; the compact menu offers Sync only.
 #[test]
-fn the_profile_creation_row_reports_new_profile() {
+fn the_profile_menu_has_no_creation_row() {
     let a = area();
     let (mut v, _, _) = with_context(0);
     v.toggle_popover(PopoverKind::Profiles);
-    let (_, action) = v
-        .popover_rects(a, VIEW)
-        .into_iter()
-        .find(|(row, _)| *row == PopoverRow::ProfileAction(ProfileAction::New))
-        .expect("Add new Profile");
-    let (x, y) = action.centre();
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::NewProfile);
-    assert!(!v.popover_open());
+    assert!(
+        v.popover_rects(a, VIEW)
+            .into_iter()
+            .all(|(row, _)| row != PopoverRow::ProfileAction(ProfileAction::New))
+    );
 }
 
 /// Each page's rows, in the order the artboard lists them.
@@ -2261,11 +2238,9 @@ fn each_page_lists_its_head_list_and_footer_in_order() {
             PopoverRow::Profile(0),
             PopoverRow::Profile(1),
             PopoverRow::Profile(2),
-            PopoverRow::ProfileAction(ProfileAction::New),
-            PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Sync),
             PopoverRow::ProfileAction(ProfileAction::Sync),
         ],
-        "PROFILES, every Profile, Add new Profile, device control, Global sync"
+        "PROFILES, every Profile, Sync"
     );
     // The `…`'s page: the heading, the workspaces, New and Import — no
     // sync control and no Trash.
@@ -2452,7 +2427,7 @@ fn a_chip_colour_follows_the_email_and_not_the_name() {
 
 // ---------------------------------------------------- folder-profile rows
 
-/// The Profile menu exposes exactly its two fixed navigation rows. App
+/// The Profile menu exposes only Sync below the profiles. App
 /// settings is the rail's square, not a row here.
 #[test]
 fn the_profiles_page_offers_no_folder_actions() {
@@ -2470,7 +2445,7 @@ fn the_profiles_page_offers_no_folder_actions() {
             _ => None,
         })
         .collect();
-    assert_eq!(actions, [ProfileAction::New, ProfileAction::Sync]);
+    assert_eq!(actions, [ProfileAction::Sync]);
 }
 
 // ------------------------------------------------------------------ the fade
