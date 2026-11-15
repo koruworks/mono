@@ -174,6 +174,10 @@ pub(crate) enum Control {
     CloudInventoryWorkspace(uuid::Uuid, uuid::Uuid),
     CloudInventoryDetails(uuid::Uuid),
     CloudInventoryProfileDetails(uuid::Uuid),
+    CloudInventoryDocument(uuid::Uuid),
+    CloudCopyBack,
+    CloudCopyReload,
+    CloudCopyRemove(uuid::Uuid),
     CloudPrimary,
     CloudLearnMore,
     /// A Profile's Cloud sync switch on *Which profiles sync*.
@@ -869,6 +873,10 @@ impl ManageView {
             | Control::CloudInventoryWorkspace(..)
             | Control::CloudInventoryDetails(_)
             | Control::CloudInventoryProfileDetails(_)
+            | Control::CloudInventoryDocument(_)
+            | Control::CloudCopyBack
+            | Control::CloudCopyReload
+            | Control::CloudCopyRemove(_)
             | Control::CloudPrimary
             | Control::CloudLearnMore
             | Control::ProfileSync(_)

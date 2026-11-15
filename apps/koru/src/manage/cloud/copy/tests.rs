@@ -20,14 +20,14 @@ fn view() -> CloudDocumentInspectionV1 {
                 "properties":{"name":"Canvas file","done":false,"alignment":"start"},
                 "blob":{"id":"b3:abc","mime_type":"image/png","size":null,"width":null,"height":null},
                 "reference":{"kind":"label","value":"Retained target"}
-            }]},"can_request_removal":true,"removable_files":[{"node_id":"00000000-0000-0000-0000-000000000006","in_trash":true}]
+            }]},"can_request_removal":true,"removable_files":[{"node_id":"00000000-0000-0000-0000-000000000006","in_trash":true,"mode":"attachment_leaf"}]
     })).unwrap()
 }
 fn ready() -> (Presentation, ViewKey, String) {
     let view = view();
     let key = ViewKey {
         owner_scope: 1,
-        account_generation: 7,
+        view_epoch: 7,
         selection: view.selection.clone(),
     };
     let node = view.removable_files[0].node_id.clone();

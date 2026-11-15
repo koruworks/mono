@@ -4303,6 +4303,8 @@ impl<H: Host> OnboardingApp<H> {
                 | koru_agent_wire::AccountOperationResult::CloudPlan { .. }
                 | koru_agent_wire::AccountOperationResult::CloudUsageWorkspaces { .. }
                 | koru_agent_wire::AccountOperationResult::CloudUsageDocuments { .. }
+                | koru_agent_wire::AccountOperationResult::CloudDocumentInspection { .. }
+                | koru_agent_wire::AccountOperationResult::CloudFileRemoval { .. }
                 | koru_agent_wire::AccountOperationResult::CloudSync { .. } => {}
             }
         }

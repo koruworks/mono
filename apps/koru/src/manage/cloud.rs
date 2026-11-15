@@ -323,6 +323,9 @@ impl ManageView {
     // ---- layout --------------------------------------------------------------
 
     pub(super) fn lay_cloud_page(&mut self) -> profile_page::Laid {
+        if self.c.cloud_copy().visible() {
+            return self.lay_cloud_copy();
+        }
         if self.c.cloud_inventory().visible {
             return self.lay_inventory();
         }

@@ -2051,6 +2051,9 @@ pub enum Key {
     CloudCopyRemoveExplanation,
     CloudCopyBlockReference,
     CloudCopyPreviewUnavailable,
+    CloudCopyRemoveAttachment,
+    CloudCopyRemoveAttachmentQuestion,
+    CloudCopyRemoveAttachmentExplanation,
     CloudStorageRefresh,
     CloudStorageTitle,
     CloudStorageAvailable,
@@ -3284,7 +3287,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2308] = [
+    pub const ALL: [Key; 2311] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4727,6 +4730,9 @@ impl Key {
         Key::CloudCopyRemoveExplanation,
         Key::CloudCopyBlockReference,
         Key::CloudCopyPreviewUnavailable,
+        Key::CloudCopyRemoveAttachment,
+        Key::CloudCopyRemoveAttachmentQuestion,
+        Key::CloudCopyRemoveAttachmentExplanation,
         Key::CloudStorageRefresh,
         Key::CloudStorageTitle,
         Key::CloudStorageAvailable,
@@ -15768,6 +15774,9 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudCopyRemoveExplanation, en: "This removes the selected file item. An embedded target is not deleted. Other references may keep the file in Cloud storage.", es: "Se elimina el elemento de archivo seleccionado. No se elimina el destino incrustado. Otras referencias pueden mantener el archivo en el almacenamiento de Cloud.", pt_br: "O item de arquivo selecionado será removido. Um destino incorporado não será excluído. Outras referências podem manter o arquivo no armazenamento da Cloud.", de: "Das ausgewählte Dateielement wird entfernt. Ein eingebettetes Ziel wird nicht gelöscht. Andere Verweise können die Datei weiterhin im Cloud-Speicher halten.", fr: "L’élément de fichier sélectionné sera supprimé. Une cible intégrée ne sera pas supprimée. D’autres références peuvent conserver le fichier dans le stockage Cloud.", ar: "ستتم إزالة عنصر الملف المحدد. لن يتم حذف الهدف المضمّن. قد تُبقي مراجع أخرى الملف في مساحة تخزين Cloud.", zh_hans: "将移除选中的文件项，但不会删除嵌入的目标。其他引用可能会使文件继续保留在 Cloud 存储中。", ja: "選択したファイル項目を削除します。埋め込み先は削除されません。他の参照がある場合、ファイルは Cloud ストレージに保持されます。" },
     Row { key: Key::CloudCopyBlockReference, en: "Block reference", es: "Referencia a un bloque", pt_br: "Referência a bloco", de: "Blockverweis", fr: "Référence à un bloc", ar: "مرجع كتلة", zh_hans: "块引用", ja: "ブロック参照" },
     Row { key: Key::CloudCopyPreviewUnavailable, en: "File preview unavailable", es: "Vista previa del archivo no disponible", pt_br: "Prévia do arquivo indisponível", de: "Dateivorschau nicht verfügbar", fr: "Aperçu du fichier indisponible", ar: "معاينة الملف غير متاحة", zh_hans: "文件预览不可用", ja: "ファイルのプレビューを利用できません" },
+    Row { key: Key::CloudCopyRemoveAttachment, en: "Remove attachment", es: "Eliminar adjunto", pt_br: "Remover anexo", de: "Anhang entfernen", fr: "Retirer la pièce jointe", ar: "إزالة المرفق", zh_hans: "移除附件", ja: "添付ファイルを削除" },
+    Row { key: Key::CloudCopyRemoveAttachmentQuestion, en: "Remove this attachment from the Cloud copy?", es: "¿Eliminar este adjunto de la copia en la nube?", pt_br: "Remover este anexo da cópia na nuvem?", de: "Diesen Anhang aus der Cloud-Kopie entfernen?", fr: "Retirer cette pièce jointe de la copie Cloud ?", ar: "هل تريد إزالة هذا المرفق من النسخة السحابية؟", zh_hans: "要从云端副本中移除此附件吗？", ja: "クラウドコピーからこの添付ファイルを削除しますか？" },
+    Row { key: Key::CloudCopyRemoveAttachmentExplanation, en: "Only the attachment is removed. Text, other content and embedded targets stay. Other references may keep the file in Cloud storage.", es: "Solo se elimina el adjunto. El texto, los demás contenidos y los destinos incrustados se conservan. Otras referencias pueden mantener el archivo en la nube.", pt_br: "Somente o anexo será removido. O texto, os outros conteúdos e os destinos incorporados permanecem. Outras referências podem manter o arquivo na nuvem.", de: "Nur der Anhang wird entfernt. Text, andere Inhalte und eingebettete Ziele bleiben erhalten. Andere Verweise können die Datei im Cloud-Speicher halten.", fr: "Seule la pièce jointe est retirée. Le texte, les autres contenus et les cibles intégrées sont conservés. D’autres références peuvent maintenir le fichier dans le stockage Cloud.", ar: "تتم إزالة المرفق فقط. يبقى النص والمحتوى الآخر والعناصر المشار إليها. قد تُبقي مراجع أخرى الملف في التخزين السحابي.", zh_hans: "仅移除附件。文字、其他内容和嵌入目标将保留。其他引用可能使文件继续保留在云端存储中。", ja: "添付ファイルのみを削除します。テキスト、その他の内容、埋め込み先は残ります。他の参照がある場合、ファイルはクラウドストレージに残ります。" },
     Row { key: Key::CloudStorageRefresh, en: "Refresh", es: "Actualizar", pt_br: "Atualizar", de: "Aktualisieren", fr: "Actualiser", ar: "تحديث", zh_hans: "刷新", ja: "更新" },
     Row { key: Key::CloudStorageTitle, en: "Cloud storage", es: "Almacenamiento en la nube", pt_br: "Armazenamento na nuvem", de: "Cloud-Speicher", fr: "Stockage Cloud", ar: "التخزين السحابي", zh_hans: "云端存储", ja: "クラウドストレージ" },
     Row { key: Key::CloudStorageAvailable, en: "Available: {} of {} bytes", es: "Disponible: {} de {} bytes", pt_br: "Disponível: {} de {} bytes", de: "Verfügbar: {} von {} Bytes", fr: "Disponible : {} sur {} octets", ar: "المتاح: {} من {} بايت", zh_hans: "可用：{} 字节，共 {} 字节", ja: "空き容量：{} バイト / {} バイト" },

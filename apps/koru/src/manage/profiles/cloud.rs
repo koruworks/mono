@@ -17,6 +17,7 @@
 //! subscription read and the per-Profile read share a state struct rather than
 //! sitting in two modules that would have to agree.
 use super::*;
+pub(crate) mod inspection;
 pub(crate) mod inventory;
 mod storage;
 use crate::mainview::cloud_sync::Connection;
@@ -52,6 +53,7 @@ pub(super) struct SyncPending {
 pub(super) struct State {
     storage: storage::Storage,
     pub(super) inventory: inventory::Inventory,
+    pub(super) inspection: inspection::Inspection,
     pub(super) status: Status,
     access: Option<bool>,
     due: bool,
@@ -73,6 +75,7 @@ impl Default for State {
         Self {
             storage: Default::default(),
             inventory: Default::default(),
+            inspection: Default::default(),
             status: Status::Unknown,
             access: None,
             due: true,
@@ -106,6 +109,7 @@ impl ProfilesController {
     pub fn set_cloud_visible(&mut self, visible: bool) {
         if self.cloud_visible && !visible {
             self.cloud.inventory.suspend();
+            self.cloud.inspection.close();
         }
         if visible && !self.cloud_visible {
             self.refresh_cloud();
@@ -128,16 +132,25 @@ impl ProfilesController {
             && self.account.active_account_id.is_some()
     }
     pub(super) fn take_cloud_request(&mut self) -> Option<AccountCommand> {
+        if let Some(cancel) = self.cloud.inspection.take_cancel() {
+            return Some(cancel);
+        }
         if let Some(cancel) = self.cloud.inventory.take_cancel() {
             return Some(cancel);
         }
         if !self.cloud_readable() {
             return None;
         }
+        if let Some(request) = self.cloud.inspection.take(
+            std::time::Instant::now(),
+            self.inventory_cancellations.len() + self.cloud.inventory.backlog(),
+        ) {
+            return Some(request);
+        }
         if self
             .cloud
             .inventory
-            .capacity(self.inventory_cancellations.len())
+            .capacity(self.inventory_cancellations.len() + self.cloud.inspection.backlog())
             && let Some(request) = self.cloud.inventory.take(std::time::Instant::now())
         {
             return Some(request);
@@ -188,6 +201,10 @@ impl ProfilesController {
     }
     pub(super) fn cloud_submission(&self, command: &AccountCommand) -> Option<CommandSubmissionId> {
         match command {
+            AccountCommand::InspectCloudDocument { request_id, .. }
+            | AccountCommand::RemoveCloudFile { request_id, .. } => {
+                self.cloud.inspection.submission(*request_id)
+            }
             AccountCommand::InspectCloudUsageWorkspaces { request_id, .. }
             | AccountCommand::InspectCloudUsageDocuments { request_id, .. } => {
                 self.cloud.inventory.submission(*request_id)
@@ -218,6 +235,9 @@ impl ProfilesController {
         if self.cloud.storage.admit(admission) {
             return true;
         }
+        if self.cloud.inspection.admit(admission) {
+            return true;
+        }
         if self.cloud.inventory.admit(admission) {
             return true;
         }
@@ -242,6 +262,9 @@ impl ProfilesController {
         false
     }
     pub(super) fn cloud_failed(&mut self, failure: CommandFailure) -> bool {
+        if self.cloud.inspection.fail(failure) {
+            return true;
+        }
         if self.cloud.inventory.fail(failure) {
             return true;
         }
@@ -291,6 +314,13 @@ impl ProfilesController {
         generation: u64,
         result: &AccountOperationResult,
     ) -> bool {
+        if let Some(refresh_usage) = self.cloud.inspection.result(generation, result) {
+            if refresh_usage {
+                self.cloud.storage.usage_changed();
+                self.cloud.inventory.workspaces();
+            }
+            return true;
+        }
         if self.cloud.inventory.result(generation, result) {
             return true;
         }

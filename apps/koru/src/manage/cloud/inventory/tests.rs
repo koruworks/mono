@@ -92,6 +92,160 @@ fn semantics(view: &ManageView) -> Vec<SemanticNode> {
     flatten(&view.semantics(&cx), &mut nodes);
     nodes
 }
+
+fn mounted_copy() -> (ManageView, uuid::Uuid) {
+    let mut view = view();
+    view.c.set_account(AccountState {
+        active_scope: 1,
+        active_account_id: Some(uuid::Uuid::from_u128(1).to_string()),
+        stage: AccountStage::SignedIn,
+        ..Default::default()
+    });
+    view.c.cloud_inventory_mut().open();
+    let doc = fixture(true);
+    view.c.cloud_inventory_mut().selection = Selection::Documents {
+        workspace: ReadUuid(uuid::Uuid::parse_str(doc["workspace_id"].as_str().unwrap()).unwrap()),
+        incarnation: ReadUuid(
+            uuid::Uuid::parse_str(doc["incarnation_id"].as_str().unwrap()).unwrap(),
+        ),
+    };
+    respond(&mut view, doc);
+    let unit = match &view.c.cloud_inventory().page {
+        Some(PageData::Documents(page)) => {
+            page.items
+                .iter()
+                .find(|r| {
+                    r.membership.state != MembershipState::Structural
+                        && r.document_id.is_some()
+                        && r.source_head_digest.is_some()
+                })
+                .unwrap()
+                .cloud_unit_id
+                .0
+        }
+        _ => panic!(),
+    };
+    assert!(
+        view.laid
+            .placed(Control::CloudInventoryDocument(unit))
+            .is_some()
+    );
+    assert!(view.activate_control(Control::CloudInventoryDocument(unit)));
+    let profiles::AccountCommand::InspectCloudDocument {
+        request_id,
+        selection,
+    } = view.c.cloud_copy_mut().take(Instant::now(), 0).unwrap()
+    else {
+        panic!()
+    };
+    let selected: koru_store_wire::cloud_document::CloudDocumentSelection =
+        serde_json::from_str(selection.as_str()).unwrap();
+    let node = uuid::Uuid::from_u128(999);
+    let payload = json!({"selection":selected,"document":{"id":selected.document_id,"workspace_id":selected.workspace_id,
+        "title":"Exact Cloud copy","revision":1,"blocks":[{"id":node.to_string(),"parent_id":null,"kind":"file","in_trash":false,
+        "properties":{"name":"Only this file","done":false,"alignment":"start"},"blob":{"id":"hash","mime_type":"image/png","size":null,"width":null,"height":null}}]},
+        "can_request_removal":true,"removable_files":[{"node_id":node.to_string(),"in_trash":false,"mode":"attachment_leaf"}]});
+    assert!(view.c.complete_scoped(
+        1,
+        10,
+        AccountOperationResult::CloudDocumentInspection {
+            request_id,
+            selection,
+            payload: Some(
+                koru_agent_wire::CloudDocumentInspectionPayload::new(payload.to_string()).unwrap()
+            ),
+            failure: None
+        }
+    ));
+    view.sync();
+    (view, node)
+}
+
+#[test]
+fn mounted_cloud_copy_routes_real_confirmation_and_ack_to_authoritative_refresh() {
+    let (mut view, node) = mounted_copy();
+    assert!(view.laid.placed(Control::CloudCopyRemove(node)).is_some());
+    let nodes = semantics(&view);
+    assert!(
+        nodes
+            .iter()
+            .any(|n| n.label.as_deref() == Some("Exact Cloud copy"))
+    );
+    assert!(view.activate_control(Control::CloudCopyRemove(node)));
+    assert!(matches!(
+        view.dialog(),
+        Some(dialogs::Dialog::CloudFile { .. })
+    ));
+    view.dialog_key(&Key::Named(NamedKey::Enter));
+    assert_eq!(
+        view.c.cloud_copy().view.phase(),
+        super::super::copy::Phase::Ready
+    );
+    view.dialog_key(&Key::Named(NamedKey::Tab));
+    view.dialog_key(&Key::Named(NamedKey::Enter));
+    assert!(view.dialog().is_none());
+    let profiles::AccountCommand::RemoveCloudFile {
+        request_id,
+        selection,
+        node_id,
+    } = view.c.cloud_copy_mut().take(Instant::now(), 0).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(node_id, node.to_string());
+    assert_eq!(
+        view.c.cloud_copy().view.phase(),
+        super::super::copy::Phase::Removing
+    );
+    assert!(view.c.complete_scoped(
+        1,
+        11,
+        AccountOperationResult::CloudFileRemoval {
+            request_id,
+            selection,
+            node_id,
+            removed: true,
+            failure: None
+        }
+    ));
+    view.sync();
+    assert_eq!(
+        view.c.cloud_copy().view.phase(),
+        super::super::copy::Phase::Acknowledged
+    );
+    assert!(view.laid.placed(Control::CloudCopyRemove(node)).is_none());
+    assert!(matches!(
+        view.c.cloud_inventory().selection,
+        Selection::Workspaces
+    ));
+    assert!(matches!(
+        view.c.cloud_inventory_mut().take(Instant::now()),
+        Some(profiles::AccountCommand::InspectCloudUsageWorkspaces { cursor: None, .. })
+    ));
+}
+
+#[test]
+fn mounted_confirmation_disappears_on_account_switch_and_cannot_target_identical_copy() {
+    let (mut view, node) = mounted_copy();
+    assert!(view.activate_control(Control::CloudCopyRemove(node)));
+    let old = view.c.cloud_copy().view.key().unwrap().clone();
+    view.c.set_account(AccountState {
+        active_scope: 2,
+        active_account_id: Some(uuid::Uuid::from_u128(2).to_string()),
+        stage: AccountStage::SignedIn,
+        ..Default::default()
+    });
+    view.sync();
+    assert!(view.dialog().is_none());
+    assert!(!view.c.cloud_copy().visible());
+    assert!(
+        view.c
+            .cloud_copy_mut()
+            .view
+            .answer(&old, ConfirmOutcome::Confirm)
+            .is_none()
+    );
+}
 #[test]
 fn actual_workspace_navigation_uses_incarnation_and_one_frame_for_every_control() {
     let mut view = view();

@@ -371,6 +371,8 @@ impl ProfilesController {
             AccountOperationResult::CloudPlan { .. }
             | AccountOperationResult::CloudUsageWorkspaces { .. }
             | AccountOperationResult::CloudUsageDocuments { .. }
+            | AccountOperationResult::CloudDocumentInspection { .. }
+            | AccountOperationResult::CloudFileRemoval { .. }
             | AccountOperationResult::CloudSubscription { .. }
             | AccountOperationResult::CloudSync { .. } => return false,
             AccountOperationResult::AccountCreationRequired => {

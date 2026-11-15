@@ -340,6 +340,8 @@ impl ProfilesController {
             AccountOperationResult::CloudPlan { .. }
                 | AccountOperationResult::CloudUsageWorkspaces { .. }
                 | AccountOperationResult::CloudUsageDocuments { .. }
+                | AccountOperationResult::CloudDocumentInspection { .. }
+                | AccountOperationResult::CloudFileRemoval { .. }
         ) && owner_scope != self.account.active_scope
         {
             return false;
@@ -353,6 +355,8 @@ impl ProfilesController {
             AccountOperationResult::CloudPlan { .. }
                 | AccountOperationResult::CloudUsageWorkspaces { .. }
                 | AccountOperationResult::CloudUsageDocuments { .. }
+                | AccountOperationResult::CloudDocumentInspection { .. }
+                | AccountOperationResult::CloudFileRemoval { .. }
                 | AccountOperationResult::CloudSubscription { .. }
                 | AccountOperationResult::CloudSync { .. }
         );

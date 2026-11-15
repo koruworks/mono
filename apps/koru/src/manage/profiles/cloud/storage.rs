@@ -42,6 +42,7 @@ pub(crate) struct Storage {
     due: bool,
     expiry_refresh_used: bool,
     pending: Option<Request>,
+    discard_pending: bool,
 }
 impl Default for Storage {
     fn default() -> Self {
@@ -51,10 +52,18 @@ impl Default for Storage {
             due: true,
             expiry_refresh_used: false,
             pending: None,
+            discard_pending: false,
         }
     }
 }
 impl Storage {
+    pub(super) fn usage_changed(&mut self) {
+        self.snapshot = None;
+        self.failed = false;
+        self.due = true;
+        self.expiry_refresh_used = false;
+        self.discard_pending = self.pending.is_some();
+    }
     pub fn refresh(&mut self) {
         if self.pending.is_none() {
             self.due = true;
@@ -129,6 +138,7 @@ impl Storage {
             return false;
         }
         self.pending = None;
+        self.discard_pending = false;
         self.failed = true;
         if let Some(snapshot) = self.snapshot.as_mut() {
             snapshot.stale = true;
@@ -156,6 +166,11 @@ impl Storage {
         }
         // Includes UI queueing, HTTP and result delivery. The worker duration
         // prevents a platform adapter from accidentally shortening that budget.
+        if self.discard_pending {
+            self.pending = None;
+            self.discard_pending = false;
+            return true;
+        }
         let elapsed = now
             .saturating_duration_since(request.started)
             .max(Duration::from_millis(elapsed_millis));

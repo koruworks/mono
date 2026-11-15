@@ -11,7 +11,7 @@ use koru_draw::{
 use koru_i18n::Key as TextKey;
 use koru_store_wire::cloud_document::{
     CloudDocumentFailure, CloudDocumentInspectionV1, CloudDocumentSelection, EntityReference,
-    RichText,
+    FileRemovalMode, RichText,
 };
 use koru_ui::confirm::{Confirm, Outcome};
 use std::collections::{HashMap, HashSet};
@@ -19,7 +19,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ViewKey {
     pub owner_scope: u64,
-    pub account_generation: u64,
+    pub view_epoch: u64,
     pub selection: CloudDocumentSelection,
 }
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -48,7 +48,7 @@ pub(crate) enum Control {
 struct PendingConfirmation {
     key: ViewKey,
     node: String,
-    dialog: Confirm,
+    dialog: Option<Confirm>,
 }
 #[derive(Default)]
 pub(crate) struct Presentation {
@@ -137,16 +137,35 @@ impl Presentation {
                 Some(Intent::Reload(key.clone()))
             }
             Control::Remove(node) if self.eligible(key, node) => {
+                let slot = self
+                    .view
+                    .as_ref()
+                    .and_then(|v| v.removable_files.iter().find(|f| &f.node_id == node))
+                    .is_some_and(|f| f.mode == FileRemovalMode::RetainedSlot);
                 self.confirmation = Some(PendingConfirmation {
                     key: key.clone(),
                     node: node.clone(),
-                    dialog: Confirm::localized(
-                        t(TextKey::CloudCopyRemoveQuestion),
-                        t(TextKey::CloudCopyRemoveExplanation),
-                        t(TextKey::CloudCopyRemove),
-                        t(TextKey::ProfileRemoveCancel),
-                    )
-                    .declaring_no_default(),
+                    dialog: Some(
+                        Confirm::localized(
+                            t(if slot {
+                                TextKey::CloudCopyRemoveAttachmentQuestion
+                            } else {
+                                TextKey::CloudCopyRemoveQuestion
+                            }),
+                            t(if slot {
+                                TextKey::CloudCopyRemoveAttachmentExplanation
+                            } else {
+                                TextKey::CloudCopyRemoveExplanation
+                            }),
+                            t(if slot {
+                                TextKey::CloudCopyRemoveAttachment
+                            } else {
+                                TextKey::CloudCopyRemove
+                            }),
+                            t(TextKey::ProfileRemoveCancel),
+                        )
+                        .declaring_no_default(),
+                    ),
                 });
                 None
             }
@@ -154,7 +173,11 @@ impl Presentation {
         }
     }
     pub fn confirmation(&mut self) -> Option<&mut Confirm> {
-        self.confirmation.as_mut().map(|p| &mut p.dialog)
+        self.confirmation.as_mut().and_then(|p| p.dialog.as_mut())
+    }
+    pub fn take_dialog(&mut self) -> Option<(ViewKey, Confirm)> {
+        let pending = self.confirmation.as_mut()?;
+        Some((pending.key.clone(), pending.dialog.take()?))
     }
     pub fn answer(&mut self, key: &ViewKey, answer: Outcome) -> Option<Intent> {
         if answer == Outcome::Keep {
@@ -280,11 +303,20 @@ impl Presentation {
                         ));
                 }
                 if view.can_request_removal && eligible.contains(block.id.as_str()) {
+                    let slot = view
+                        .removable_files
+                        .iter()
+                        .find(|f| f.node_id == block.id)
+                        .is_some_and(|f| f.mode == FileRemovalMode::RetainedSlot);
                     row = row.child(action(
                         engine,
                         &mut controls,
                         Control::Remove(block.id.clone()),
-                        TextKey::CloudCopyRemove,
+                        if slot {
+                            TextKey::CloudCopyRemoveAttachment
+                        } else {
+                            TextKey::CloudCopyRemove
+                        },
                         self.phase == Phase::Ready,
                     ));
                 }

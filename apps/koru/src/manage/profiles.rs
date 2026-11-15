@@ -606,6 +606,7 @@ impl ProfilesController {
             self.progress.deadline(),
             self.cloud_storage_deadline(),
             self.cloud.inventory.deadline(),
+            self.cloud.inspection.deadline(),
         ]
         .into_iter()
         .flatten()
@@ -617,6 +618,7 @@ impl ProfilesController {
             | self.maintain_cloud_progress(now)
             | self.maintain_cloud_storage(now)
             | self.cloud.inventory.maintain(now)
+            | self.cloud.inspection.maintain(now)
     }
 }
 
