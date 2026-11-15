@@ -281,3 +281,44 @@ fn runs_nine_failure_rolls_back_alter_new_objects_stamp_and_all_eight_rows() {
     );
     assert_fk(&conn);
 }
+
+#[test]
+fn decision_migration_runs10_preserves_result_memory_schedule_and_routine_history_cohorts() {
+    let mut conn = populated_eight();
+    koru_sqlite::prepare(&nine(), &mut conn).unwrap();
+    conn.execute_batch("INSERT INTO bot_routine_routes(schedule_id,user_scope,device_id,bot_id,workspace_id,creation_request_id,seed_hash,created_at_ms) VALUES('schedule-fixture','scope-fixture','device-fixture','bot-fixture','workspace-fixture','creation-fixture',zeroblob(32),-100);
+      INSERT INTO bot_routine_policy_barriers(user_scope,device_id,bot_id,schedule_id,request_id,grant_revision,payload_digest,effects_allowed,state,created_at_ms,updated_at_ms) VALUES('scope-fixture','device-fixture','bot-fixture','schedule-fixture','policy-fixture',1,zeroblob(32),0,'pending',-100,-90);").unwrap();
+    let before = snapshot(&conn);
+    let old_objects: Vec<(String,String)> = conn.prepare("SELECT name,coalesce(sql,'') FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name").unwrap()
+        .query_map([],|r|Ok((r.get(0)?,r.get(1)?))).unwrap().collect::<Result<_,_>>().unwrap();
+    koru_sqlite::prepare(
+        &koru_sqlite::Schema {
+            database: crate::DATABASE_NAME,
+            understood: 10,
+            migrations: &crate::db::MIGRATIONS[..10],
+        },
+        &mut conn,
+    )
+    .unwrap();
+    for (table, cols, data) in before {
+        assert_eq!(rows(&conn, &table, &cols), data, "old bytes: {table}");
+    }
+    for (name, sql) in old_objects {
+        assert_eq!(
+            conn.query_row(
+                "SELECT coalesce(sql,'') FROM sqlite_master WHERE name=?1",
+                [&name],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            sql,
+            "old object: {name}"
+        );
+    }
+    assert_eq!(
+        conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
+            .unwrap(),
+        10
+    );
+    assert_fk(&conn);
+}

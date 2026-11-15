@@ -2,10 +2,18 @@
 use super::*;
 use rusqlite::Connection;
 
+fn schema_nine() -> Schema {
+    Schema {
+        database: DATABASE_NAME,
+        understood: 9,
+        migrations: &MIGRATIONS[..9],
+    }
+}
+
 #[test]
 fn runs_nine_registers_exact_routine_tables_indexes_and_triggers_in_memory() {
     let mut conn = Connection::open_in_memory().unwrap();
-    koru_sqlite::prepare(&SCHEMA, &mut conn).unwrap();
+    koru_sqlite::prepare(&schema_nine(), &mut conn).unwrap();
     let names: Vec<String> = conn
         .prepare("SELECT name FROM sqlite_master WHERE name LIKE '%routine%' ORDER BY name")
         .unwrap()
@@ -56,7 +64,7 @@ fn runs_nine_registers_exact_routine_tables_indexes_and_triggers_in_memory() {
 #[test]
 fn runs_eight_reader_refuses_nine_before_preflight_or_configuration() {
     let mut conn = Connection::open_in_memory().unwrap();
-    koru_sqlite::prepare(&SCHEMA, &mut conn).unwrap();
+    koru_sqlite::prepare(&schema_nine(), &mut conn).unwrap();
     conn.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF;")
         .unwrap();
     let called = std::cell::Cell::new(false);
