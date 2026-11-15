@@ -18,7 +18,7 @@ fn fixture() -> CloudDocumentInspectionV1 {
             "title":"Cloud copy", "revision":1,
             "blocks":[{
                 "id":"00000000-0000-0000-0000-000000000006", "kind":"image",
-                "parent_id":null, "properties":{"done":false,"alignment":"start"},
+                "parent_id":null, "in_trash":false, "properties":{"done":false,"alignment":"start"},
                 "blob":{"id":format!("b3:{}","a".repeat(64)),"mime_type":"image/png","size":null,"width":null,"height":null}
             }]
         },
