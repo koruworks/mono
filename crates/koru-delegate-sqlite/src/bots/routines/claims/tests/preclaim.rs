@@ -112,5 +112,22 @@ fn routine_preclaim_sql_expired_prepared_path_remains_policy_free_and_nonexecuti
         }
     ));
     assert!(f.db.intents().unwrap().is_empty());
-    assert!(f.db.bot_admission(f.prepared.ids.run).unwrap().is_none());
+    // No admission row exists. The skipped claim retains the planned identity
+    // as a Routine marker, so absence never reads as an ordinary Run at this
+    // tool-authority boundary (`bot_admission` denies it, since 63c7e124).
+    let admissions: i64 =
+        f.db.conn()
+            .query_row(
+                "SELECT count(*) FROM bot_admissions WHERE run_id=?1",
+                [f.prepared.ids.run.to_storage()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert_eq!(admissions, 0);
+    assert_eq!(
+        f.db.bot_admission(f.prepared.ids.run),
+        Err(BotLedgerError::Ledger(
+            crate::LedgerError::InvalidScheduleAuthority
+        ))
+    );
 }

@@ -241,8 +241,14 @@ fn recovery_reads_identity_columns_without_deserializing_task_payloads() {
     let mut h = Harness::new();
     h.prepare();
     h.lease();
+    // Keep only the bounded provenance object the Routine-downgrade guard
+    // projects (b2f219f5); the task/context body is gone, so any full
+    // submission decode on this path would fail.
     h.db.conn()
-        .execute("UPDATE bot_admissions SET payload_json='{}'", [])
+        .execute(
+            "UPDATE bot_admissions SET payload_json=json_object('provenance',json_extract(payload_json,'$.provenance'))",
+            [],
+        )
         .unwrap();
     assert_eq!(
         h.db.pending_native_effects(h.fence.owner, Some(h.fence.bot), None, 1)
