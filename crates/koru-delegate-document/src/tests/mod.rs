@@ -20,6 +20,7 @@ mod bots;
 mod dependency;
 mod economics;
 mod gate;
+mod projection;
 mod schedule;
 mod shape;
 mod subject;

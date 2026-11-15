@@ -9,6 +9,7 @@ mod binding;
 mod codec;
 mod golden;
 mod lifecycle;
+mod projection;
 mod publication;
 
 fn uuid(n: u32) -> Uuid {

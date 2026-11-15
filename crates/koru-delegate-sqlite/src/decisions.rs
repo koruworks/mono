@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! Retained decision ownership. Public methods only read; mutation bodies stay
+//! crate-private until the publication owner composes the same transaction.
+use crate::{BotLedgerError, LedgerError, RunsDb};
+use koru_delegate_core::{decisions::*, *};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
+use serde::{Serialize, de::DeserializeOwned};
+
+mod authority;
+mod rows;
+// These transaction bodies deliberately have no public committing wrapper yet.
+// C3 must add the control projection before committing their transaction.
+#[cfg(test)]
+mod tests;
+#[allow(dead_code)]
+mod write;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionRecord {
+    pub receipt: DecisionReceipt,
+    pub wait: DecisionWaitRecord,
+    pub resume: Option<DecisionResume>,
+    pub native_response: Option<DecisionNativeResponse>,
+}
+
+/// Historical evidence, not an occupancy discount or permission to stop.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DecisionWaitRecord {
+    pub wait: BotWaitId,
+    pub origin: DecisionFence,
+    pub reason: BotWaitReason,
+    pub phase: BotWaitPhase,
+    pub revision: DecisionRevision,
+    pub observed_sequence: Option<u64>,
+    pub enrollment_request: Option<EnrollBotWaitCleanup>,
+    pub enrollment: Option<BotWaitEnrollmentReply>,
+    pub release: Option<OriginWaitStop>,
+    pub cleanup: Option<ConsumerCleanup>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+    pub settled_at_ms: Option<i64>,
+}
+
+fn sql(error: rusqlite::Error) -> BotLedgerError {
+    LedgerError::sql("decision ledger", error).into()
+}
+fn corrupt(table: &'static str, column: &'static str) -> BotLedgerError {
+    LedgerError::Corrupt { table, column }.into()
+}
+fn require(ok: bool) -> Result<(), BotLedgerError> {
+    if ok {
+        Ok(())
+    } else {
+        Err(BotLedgerError::Conflict)
+    }
+}
+fn valid<T: DecisionValidate>(value: &T) -> Result<(), BotLedgerError> {
+    value.validate().map_err(|_| BotLedgerError::Invalid)
+}
+fn encoded<T: Serialize>(value: &T, limit: usize) -> Result<String, BotLedgerError> {
+    let bytes = encode_decision_value(value, limit).map_err(|_| BotLedgerError::Invalid)?;
+    String::from_utf8(bytes).map_err(|_| BotLedgerError::Invalid)
+}
+fn token<T: Serialize>(value: T) -> Result<String, BotLedgerError> {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_owned))
+        .ok_or(BotLedgerError::Invalid)
+}
+fn next(value: DecisionRevision) -> Result<DecisionRevision, BotLedgerError> {
+    value
+        .get()
+        .checked_add(1)
+        .and_then(|n| DecisionRevision::new(n).ok())
+        .ok_or(BotLedgerError::Stale)
+}
+
+impl RunsDb {
+    /// Exact retained history, without fresh policy/clock qualification.
+    /// Authentication is a caller obligation; the stored subject is rechecked.
+    pub fn bot_decision(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: DecisionId,
+    ) -> Result<Option<DecisionRecord>, BotLedgerError> {
+        authority::owner(self.conn(), owner, run)?;
+        rows::read(self.conn(), owner, run, decision)
+    }
+
+    pub fn bot_decision_for_operation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        operation: uuid::Uuid,
+    ) -> Result<Option<DecisionRecord>, BotLedgerError> {
+        authority::owner(self.conn(), owner, run)?;
+        let id = rows::operation(self.conn(), run, operation)?;
+        id.map(|id| {
+            rows::read(self.conn(), owner, run, id)?
+                .ok_or_else(|| corrupt("bot_decisions", "identity"))
+        })
+        .transpose()
+    }
+}
