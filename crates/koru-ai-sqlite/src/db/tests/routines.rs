@@ -4,11 +4,23 @@ use super::library::{foreign_keys_held, snapshot};
 use super::memory_identity::{ai20, populated_v19};
 use super::*;
 
-fn populated_v20() -> Connection {
+pub(super) fn populated_v20() -> Connection {
     let mut c = populated_v19();
     koru_sqlite::prepare_with_preflight(&ai20(), &mut c, refuse_superseded_18).unwrap();
     c.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,expected_revision,outcome_json,created_at_ms,updated_at_ms) VALUES('scope','knowledge-receipt','bot','retained','set_knowledge','completed',1,'{ \"retained\": true }',1,2)",[]).unwrap();
     c
+}
+
+pub(super) fn ai21() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 21,
+        migrations: &MIGRATIONS[..21],
+    }
+}
+
+fn prepare_ai21(c: &mut Connection) {
+    koru_sqlite::prepare_with_preflight(&ai21(), c, refuse_superseded_18).unwrap();
 }
 
 #[test]
@@ -16,7 +28,7 @@ fn ai21_preserves_populated_ai20_receipts_children_and_indexes() {
     let mut c = populated_v20();
     println!("Rust-linked SQLite {}", rusqlite::version());
     let before = snapshot(&c);
-    prepare(&mut c).unwrap();
+    prepare_ai21(&mut c);
     assert_eq!(user_version(&c).unwrap(), 21);
     let after = snapshot(&c);
     for (name, (sql, rows)) in &before {
@@ -61,7 +73,7 @@ fn ai21_preserves_populated_ai20_receipts_children_and_indexes() {
         )
         .is_err()
     );
-    prepare(&mut c).unwrap();
+    prepare_ai21(&mut c);
     assert_eq!(snapshot(&c), after);
 }
 
@@ -120,7 +132,7 @@ fn ai21_rebuild_and_post_structure_faults_roll_back_rows_schema_and_stamp() {
 #[test]
 fn ai20_refuses_ai21_before_preflight_or_connection_configuration() {
     let mut c = populated_v20();
-    prepare(&mut c).unwrap();
+    prepare_ai21(&mut c);
     let before = snapshot(&c);
     c.pragma_update(None, "foreign_keys", false).unwrap();
     c.pragma_update(None, "synchronous", 0).unwrap();
@@ -149,7 +161,7 @@ fn ai20_refuses_ai21_before_preflight_or_connection_configuration() {
     );
 }
 
-fn routine_rows(c: &Connection) {
+pub(super) fn routine_rows(c: &Connection) {
     c.execute_batch("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,expected_revision,outcome_json,created_at_ms,updated_at_ms) VALUES('scope','routine-create','bot','retained','create_routine','prepared',1,'{}',1,2);
       INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,outcome_json,created_at_ms,updated_at_ms) VALUES('scope','routine-draft','bot','retained','routine_draft','prepared','{}',1,2);
       INSERT INTO bot_routines(schedule_id,user_scope_id,owner_device_id,bot_id,workspace_id,creation_request_id,store_request_id,seed_json,seed_hash,seed_title,source_bot_policy_revision,grant_revision,grant_json,grant_digest,creation_state,created_at_ms,updated_at_ms) VALUES('schedule','scope','device','bot','home','routine-create','store-request','{}',zeroblob(32),'Routine',1,1,'{}',zeroblob(32),'prepared',1,2);
@@ -159,7 +171,7 @@ fn routine_rows(c: &Connection) {
 #[test]
 fn ai21_routine_cohorts_enforce_null_groups_storage_types_bounds_and_links() {
     let mut c = populated_v20();
-    prepare(&mut c).unwrap();
+    prepare_ai21(&mut c);
     routine_rows(&c);
     for sql in [
         "UPDATE bot_command_receipts SET submission_version=2 WHERE command_kind='start'",
