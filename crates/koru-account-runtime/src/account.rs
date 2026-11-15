@@ -829,6 +829,26 @@ fn command_failure(command: &AccountCommand, code: &str) -> AccountOperationResu
             payload: None,
             failure: Some(koru_agent_wire::CloudInventoryFailure::Unavailable),
         },
+        AccountCommand::InspectCloudDocument {
+            request_id,
+            selection,
+        } => AccountOperationResult::CloudDocumentInspection {
+            request_id: *request_id,
+            selection: selection.clone(),
+            payload: None,
+            failure: Some(koru_agent_wire::CloudInspectionFailure::Unavailable),
+        },
+        AccountCommand::RemoveCloudFile {
+            request_id,
+            selection,
+            node_id,
+        } => AccountOperationResult::CloudFileRemoval {
+            request_id: *request_id,
+            selection: selection.clone(),
+            node_id: node_id.clone(),
+            removed: false,
+            failure: Some(koru_agent_wire::CloudInspectionFailure::Unavailable),
+        },
         AccountCommand::InspectCloudPlan { request_id } => AccountOperationResult::CloudPlan {
             request_id: *request_id,
             payload: None,
@@ -951,6 +971,7 @@ pub struct ProductionAccountService {
     local_profiles: Arc<dyn lifecycle::LocalProfileInventory>,
     cloud_sync: Option<Arc<dyn cloud_sync::CloudSyncPort>>,
     cloud_document: Option<Arc<dyn cloud_document::CloudDocumentPort>>,
+    cloud_document_page: Option<cloud_document::InventoryPage>,
     /// Whether an account has Koru Cloud, as last answered. Memory only, and
     /// read by one thing: a Profile waiting to start syncing
     /// (`cloud_sync::cloud_access_known`).
@@ -1047,6 +1068,7 @@ impl ProductionAccountService {
             local_profiles: ports.local_profiles,
             cloud_sync: ports.cloud_sync,
             cloud_document: None,
+            cloud_document_page: None,
             cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
@@ -2396,6 +2418,7 @@ impl AccountService for ProductionAccountService {
             local_profiles: self.local_profiles.clone(),
             cloud_sync: self.cloud_sync.clone(),
             cloud_document: self.cloud_document.clone(),
+            cloud_document_page: None,
             cloud_access: None,
             session_checked_at_millis: None,
             cloud_opened: std::collections::BTreeSet::new(),
@@ -2541,6 +2564,8 @@ impl AccountService for ProductionAccountService {
                 | AccountCommand::InspectCloudPlan { .. }
                 | AccountCommand::InspectCloudUsageWorkspaces { .. }
                 | AccountCommand::InspectCloudUsageDocuments { .. }
+                | AccountCommand::InspectCloudDocument { .. }
+                | AccountCommand::RemoveCloudFile { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
         ) && restored.is_none()
@@ -2554,6 +2579,8 @@ impl AccountService for ProductionAccountService {
                 | AccountCommand::InspectCloudPlan { .. }
                 | AccountCommand::InspectCloudUsageWorkspaces { .. }
                 | AccountCommand::InspectCloudUsageDocuments { .. }
+                | AccountCommand::InspectCloudDocument { .. }
+                | AccountCommand::RemoveCloudFile { .. }
                 | AccountCommand::SetProfileCloudSync { .. }
                 | AccountCommand::InspectCloudSync { .. }
                 | AccountCommand::ListProfiles
@@ -2615,6 +2642,21 @@ impl AccountService for ProductionAccountService {
                 workspace_id,
                 incarnation_id,
                 cursor,
+                cancel,
+            ),
+            AccountCommand::InspectCloudDocument {
+                request_id,
+                selection,
+            } => self.cloud_document_command(generation, request_id, selection, None, cancel),
+            AccountCommand::RemoveCloudFile {
+                request_id,
+                selection,
+                node_id,
+            } => self.cloud_document_command(
+                generation,
+                request_id,
+                selection,
+                Some(node_id),
                 cancel,
             ),
             AccountCommand::InspectCloudPlan { request_id } => {
@@ -3573,6 +3615,13 @@ fn validate_command(command: &AccountCommand) -> Result<(), ServiceError> {
                 .map(|_| ())
                 .map_err(|_| ServiceError::terminal("invalid_request"))
         }
+        AccountCommand::InspectCloudDocument { selection, .. } | AccountCommand::RemoveCloudFile { selection, .. } => {
+            koru_store_wire::cloud_document::CloudDocumentSelection::from_json(selection.as_str()).map_err(|_| ServiceError::terminal("invalid_request"))?;
+            if let AccountCommand::RemoveCloudFile { node_id, .. } = command {
+                cloud_inventory::read_uuid(node_id)?;
+            }
+            Ok(())
+        },
         AccountCommand::InspectCloudUsageWorkspaces { cursor, .. } => cloud_inventory::validate_cursor(cursor),
         AccountCommand::InspectCloudUsageDocuments { workspace_id, incarnation_id, cursor, .. } => {
             cloud_inventory::read_uuid(workspace_id)?;

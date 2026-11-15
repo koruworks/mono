@@ -274,4 +274,89 @@ public interface MobileAccountResultOrBuilder extends
    */
   com.google.protobuf.ByteString
       getCloudIncarnationIdBytes();
+
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return Whether the cloudDocumentSelectionJson field is set.
+   */
+  boolean hasCloudDocumentSelectionJson();
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The cloudDocumentSelectionJson.
+   */
+  java.lang.String getCloudDocumentSelectionJson();
+  /**
+   * <pre>
+   * Echoed on inspection/removal success and failure.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The bytes for cloudDocumentSelectionJson.
+   */
+  com.google.protobuf.ByteString
+      getCloudDocumentSelectionJsonBytes();
+
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @return Whether the cloudDocumentInspectionJson field is set.
+   */
+  boolean hasCloudDocumentInspectionJson();
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @return The cloudDocumentInspectionJson.
+   */
+  java.lang.String getCloudDocumentInspectionJson();
+  /**
+   * <pre>
+   * Validated detached passive projection, &lt;=1 MiB UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];</code>
+   * @return The bytes for cloudDocumentInspectionJson.
+   */
+  com.google.protobuf.ByteString
+      getCloudDocumentInspectionJsonBytes();
+
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @return Whether the cloudFileNodeId field is set.
+   */
+  boolean hasCloudFileNodeId();
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @return The cloudFileNodeId.
+   */
+  java.lang.String getCloudFileNodeId();
+  /**
+   * <code>optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];</code>
+   * @return The bytes for cloudFileNodeId.
+   */
+  com.google.protobuf.ByteString
+      getCloudFileNodeIdBytes();
+
+  /**
+   * <pre>
+   * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+   * </pre>
+   *
+   * <code>bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];</code>
+   * @return The cloudFileRemoved.
+   */
+  boolean getCloudFileRemoved();
 }

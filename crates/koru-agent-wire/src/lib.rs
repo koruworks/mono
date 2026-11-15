@@ -53,7 +53,11 @@
 //! arrival order is wrong the first time somebody presses the hotkey during a
 //! workspace switch.
 
+mod cloud_document;
 mod cloud_inventory;
+pub use cloud_document::{
+    CloudDocumentInspectionPayload, CloudDocumentSelectionPayload, CloudInspectionFailure,
+};
 mod cloud_plan;
 pub use cloud_inventory::{
     CloudInventoryFailure, CloudInventoryPayload, MAX_CLOUD_INVENTORY_BYTES,
@@ -243,7 +247,8 @@ use serde::{Deserialize, Serialize};
 /// and states only; the window words it.
 /// 47 adds the account-owned, bounded Cloud plan read and monotonic request duration.
 /// 48 adds bounded retained Workspace/document inventory reads with exact selectors.
-pub const PROTOCOL_VERSION: u32 = 48;
+/// 49 adds exact-scoped detached Cloud inspection and explicit attachment removal.
+pub const PROTOCOL_VERSION: u32 = 49;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -1293,6 +1298,16 @@ pub enum AccountCommand {
         #[serde(default, deserialize_with = "cloud_inventory::deserialize_cursor")]
         cursor: Option<String>,
     },
+    InspectCloudDocument {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+    },
+    RemoveCloudFile {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+        #[serde(deserialize_with = "cloud_inventory::deserialize_id")]
+        node_id: String,
+    },
     /// Turn Koru Cloud on or off for every Workspace this device holds for
     /// one Profile of the current account, and remember the choice for
     /// Workspaces created later. Answered by `CloudSync` for the same id.
@@ -1398,6 +1413,8 @@ impl std::fmt::Debug for AccountCommand {
                 "AccountCommand::InspectCloudUsageWorkspaces"
             }
             Self::InspectCloudUsageDocuments { .. } => "AccountCommand::InspectCloudUsageDocuments",
+            Self::InspectCloudDocument { .. } => "AccountCommand::InspectCloudDocument",
+            Self::RemoveCloudFile { .. } => "AccountCommand::RemoveCloudFile",
             Self::InspectCloudSubscription { .. } => "AccountCommand::InspectCloudSubscription",
             Self::SetProfileCloudSync { .. } => "AccountCommand::SetProfileCloudSync(<redacted>)",
             Self::InspectCloudSync { .. } => "AccountCommand::InspectCloudSync",
@@ -1787,6 +1804,19 @@ pub enum AccountOperationResult {
         payload: Option<CloudInventoryPayload>,
         failure: Option<CloudInventoryFailure>,
     },
+    CloudDocumentInspection {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+        payload: Option<CloudDocumentInspectionPayload>,
+        failure: Option<CloudInspectionFailure>,
+    },
+    CloudFileRemoval {
+        request_id: u64,
+        selection: CloudDocumentSelectionPayload,
+        node_id: String,
+        removed: bool,
+        failure: Option<CloudInspectionFailure>,
+    },
     /// Card-only decision. No Stripe identifier, email, credential or URL.
     CloudSubscription {
         request_id: u64,
@@ -1874,6 +1904,8 @@ impl std::fmt::Debug for AccountOperationResult {
             Self::CloudPlan { .. } => "CloudPlan(<redacted>)",
             Self::CloudUsageWorkspaces { .. } => "CloudUsageWorkspaces(<redacted>)",
             Self::CloudUsageDocuments { .. } => "CloudUsageDocuments(<redacted>)",
+            Self::CloudDocumentInspection { .. } => "CloudDocumentInspection(<redacted>)",
+            Self::CloudFileRemoval { .. } => "CloudFileRemoval(<redacted>)",
             Self::CloudSubscription { .. } => "CloudSubscription(<redacted>)",
             Self::CloudSync { .. } => "CloudSync(<redacted>)",
             Self::AccountSelected { .. } => "AccountSelected(<redacted>)",

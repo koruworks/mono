@@ -615,6 +615,127 @@ public object MobileAccountResultKt {
     public fun hasCloudIncarnationId(): kotlin.Boolean {
       return _builder.hasCloudIncarnationId()
     }
+
+    /**
+     * ```
+     * Echoed on inspection/removal success and failure.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];`
+     */
+    public var cloudDocumentSelectionJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudDocumentSelectionJson")
+        get() = _builder.cloudDocumentSelectionJson
+      @kotlin.jvm.JvmName("setCloudDocumentSelectionJson")
+        set(value) {
+        _builder.cloudDocumentSelectionJson = value
+      }
+    /**
+     * ```
+     * Echoed on inspection/removal success and failure.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];`
+     */
+    public fun clearCloudDocumentSelectionJson() {
+      _builder.clearCloudDocumentSelectionJson()
+    }
+    /**
+     * ```
+     * Echoed on inspection/removal success and failure.
+     * ```
+     *
+     * `optional string cloud_document_selection_json = 19 [json_name = "cloudDocumentSelectionJson"];`
+     * @return Whether the cloudDocumentSelectionJson field is set.
+     */
+    public fun hasCloudDocumentSelectionJson(): kotlin.Boolean {
+      return _builder.hasCloudDocumentSelectionJson()
+    }
+
+    /**
+     * ```
+     * Validated detached passive projection, <=1 MiB UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];`
+     */
+    public var cloudDocumentInspectionJson: kotlin.String
+      @kotlin.jvm.JvmName("getCloudDocumentInspectionJson")
+        get() = _builder.cloudDocumentInspectionJson
+      @kotlin.jvm.JvmName("setCloudDocumentInspectionJson")
+        set(value) {
+        _builder.cloudDocumentInspectionJson = value
+      }
+    /**
+     * ```
+     * Validated detached passive projection, <=1 MiB UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];`
+     */
+    public fun clearCloudDocumentInspectionJson() {
+      _builder.clearCloudDocumentInspectionJson()
+    }
+    /**
+     * ```
+     * Validated detached passive projection, <=1 MiB UTF-8 bytes.
+     * ```
+     *
+     * `optional string cloud_document_inspection_json = 20 [json_name = "cloudDocumentInspectionJson"];`
+     * @return Whether the cloudDocumentInspectionJson field is set.
+     */
+    public fun hasCloudDocumentInspectionJson(): kotlin.Boolean {
+      return _builder.hasCloudDocumentInspectionJson()
+    }
+
+    /**
+     * `optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];`
+     */
+    public var cloudFileNodeId: kotlin.String
+      @kotlin.jvm.JvmName("getCloudFileNodeId")
+        get() = _builder.cloudFileNodeId
+      @kotlin.jvm.JvmName("setCloudFileNodeId")
+        set(value) {
+        _builder.cloudFileNodeId = value
+      }
+    /**
+     * `optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];`
+     */
+    public fun clearCloudFileNodeId() {
+      _builder.clearCloudFileNodeId()
+    }
+    /**
+     * `optional string cloud_file_node_id = 21 [json_name = "cloudFileNodeId"];`
+     * @return Whether the cloudFileNodeId field is set.
+     */
+    public fun hasCloudFileNodeId(): kotlin.Boolean {
+      return _builder.hasCloudFileNodeId()
+    }
+
+    /**
+     * ```
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * ```
+     *
+     * `bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];`
+     */
+    public var cloudFileRemoved: kotlin.Boolean
+      @kotlin.jvm.JvmName("getCloudFileRemoved")
+        get() = _builder.cloudFileRemoved
+      @kotlin.jvm.JvmName("setCloudFileRemoved")
+        set(value) {
+        _builder.cloudFileRemoved = value
+      }
+    /**
+     * ```
+     * True only after the ordinary remote durable Ack; never bytes-freed evidence.
+     * ```
+     *
+     * `bool cloud_file_removed = 22 [json_name = "cloudFileRemoved"];`
+     */
+    public fun clearCloudFileRemoved() {
+      _builder.clearCloudFileRemoved()
+    }
   }
 }
 public inline fun app.koru.contract.api.v1.MobileAccountResult.copy(block: `app.koru.contract.api.v1`.MobileAccountResultKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.MobileAccountResult =
