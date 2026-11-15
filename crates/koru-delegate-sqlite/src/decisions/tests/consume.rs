@@ -15,6 +15,8 @@ pub(super) fn ready()->(Harness,DecisionRecord,PrepareNativeResult,BotExecutionF
     let (attempt,generation,_,creation)=resume.consumer_identity();
     let session=SessionId::mint();
     let record=h.db.bind_decision_successor(&expected(&record),DecisionTransitionId::mint(),creation,host,session).unwrap();
+    // The attempt ladder is walked one rung at a time.
+    h.db.advance(h.origin().run,generation,crate::AttemptPhase::Starting).unwrap();
     h.db.advance(h.origin().run,generation,crate::AttemptPhase::Running).unwrap();
     let resume=record.resume.as_ref().unwrap();
     let turn=AgentTurnId::mint();
