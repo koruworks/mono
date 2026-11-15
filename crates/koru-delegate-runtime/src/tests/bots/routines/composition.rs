@@ -295,6 +295,9 @@ impl ScheduleEffects for Effects {
 #[derive(Clone)]
 struct Ledger(RecordingStore);
 impl RoutineLedger for Ledger {
+    fn routine_firing(&self, slot: &RoutineSlot) -> Result<Option<SlotClaim>, BotLedgerError> {
+        self.0.inner.lock().unwrap().routine_firing(slot)
+    }
     fn routine_route(
         &self,
         id: ScheduleId,
@@ -596,8 +599,13 @@ impl Composition {
     fn no_launch(&self) {
         let mut db = self.h.schedule_store.inner.lock().unwrap();
         assert!(db.pending_intents().unwrap().is_empty());
-        assert!(db.queued_bots(0, 16).unwrap().is_empty());
-        assert!(db.reserve_bot(self.prepared.ids.run).is_err());
+        assert!(
+            db.queued_bots(0, 16)
+                .unwrap()
+                .iter()
+                .all(|candidate| candidate.run == self.prepared.ids.run)
+        );
+        assert!(db.reserve_bot(self.prepared.ids.run, None).is_err());
         assert!(self.h.sessions.lock().unwrap().calls.is_empty());
     }
 }

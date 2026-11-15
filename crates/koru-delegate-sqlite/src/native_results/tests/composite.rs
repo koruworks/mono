@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Real SQLite backend proofs with explicitly seeded executing attempts. Public
-//! Routine dispatch remains closed; these fixtures do not prove a live worker.
+//! Real SQLite backend proofs with explicitly seeded executing attempts. These
+//! fixtures do not themselves prove a live worker or authorize dispatch.
 use super::*;
 use rusqlite::params;
 
@@ -124,11 +124,12 @@ fn next(h: &mut Harness) {
     h.db.satisfy_intent(s.request.run, DocumentId::from_uuid(Uuid::new_v4()))
         .unwrap();
     assert_eq!(
-        h.db.reserve_bot(s.request.run).unwrap(),
+        h.db.reserve_bot(s.request.run, None).unwrap(),
         BotReservation::Acquired
     );
     let a = fixtures::running_attempt(&mut h.db, s.request.run, 2);
-    h.db.activate_bot(a.run, a.attempt, a.generation).unwrap();
+    h.db.activate_bot(a.run, a.attempt, a.generation, None)
+        .unwrap();
     let mut send = BotInitialSend {
         attempt: a.attempt,
         generation: a.generation,
@@ -136,7 +137,7 @@ fn next(h: &mut Harness) {
         fingerprint: [9; 32],
         turn: None,
     };
-    h.db.prepare_bot_initial_send(a.run, &send).unwrap();
+    h.db.prepare_bot_initial_send(a.run, &send, None).unwrap();
     send.turn = Some(AgentTurnId::mint());
     h.db.acknowledge_bot_initial_send(a.run, &send).unwrap();
     h.fence = BotExecutionFence {
@@ -451,7 +452,10 @@ fn routine_native_global_pages_do_not_supply_routine_permission() {
     h.request.expected_revision = Some(vec![1]);
     h.prepare();
     assert_eq!(lease(&mut h, &proof), Err(BotLedgerError::Fenced));
-    assert_eq!(h.db.reserve_bot(h.fence.run), Err(BotLedgerError::Fenced));
+    assert_eq!(
+        h.db.reserve_bot(h.fence.run, None),
+        Ok(crate::BotReservation::AlreadyOwned)
+    );
     assert!(h.db.open_attempt(h.fence.run).is_err());
 }
 

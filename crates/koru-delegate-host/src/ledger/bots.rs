@@ -108,19 +108,31 @@ impl BotLedger for SharedLedger {
     ) -> Result<BotAdmissionBarrier, BotLedgerError> {
         self.0.lock().unwrap().apply_bot_barrier(barrier)
     }
-    fn reserve_bot(&mut self, run: RunId) -> Result<BotReservation, BotLedgerError> {
-        self.0.lock().unwrap().reserve_bot(run)
+    fn reserve_bot(
+        &mut self,
+        run: RunId,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
+    ) -> Result<BotReservation, BotLedgerError> {
+        self.0.lock().unwrap().reserve_bot(run, proof)
+    }
+    fn open_bot_attempt(
+        &mut self,
+        run: RunId,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
+    ) -> Result<koru_delegate_sqlite::AttemptRow, BotLedgerError> {
+        self.0.lock().unwrap().open_bot_attempt(run, proof)
     }
     fn activate_bot(
         &mut self,
         run: RunId,
         attempt: RunAttemptId,
         generation: AttemptGeneration,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError> {
         self.0
             .lock()
             .unwrap()
-            .activate_bot(run, attempt, generation)
+            .activate_bot(run, attempt, generation, proof)
     }
     fn set_bot_active(
         &mut self,
@@ -128,11 +140,12 @@ impl BotLedger for SharedLedger {
         attempt: RunAttemptId,
         generation: AttemptGeneration,
         active: bool,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
     ) -> Result<(), BotLedgerError> {
         self.0
             .lock()
             .unwrap()
-            .set_bot_active(run, attempt, generation, active)
+            .set_bot_active(run, attempt, generation, active, proof)
     }
     fn settle_bot(&mut self, run: RunId, outcome: BotSettlement) -> Result<(), BotLedgerError> {
         self.0.lock().unwrap().settle_bot(run, outcome)
@@ -141,8 +154,12 @@ impl BotLedger for SharedLedger {
         &mut self,
         run: RunId,
         send: &BotInitialSend,
+        proof: Option<&koru_delegate_core::FreshBotPolicyProof>,
     ) -> Result<BotInitialSend, BotLedgerError> {
-        self.0.lock().unwrap().prepare_bot_initial_send(run, send)
+        self.0
+            .lock()
+            .unwrap()
+            .prepare_bot_initial_send(run, send, proof)
     }
     fn acknowledge_bot_initial_send(
         &mut self,

@@ -485,12 +485,22 @@ impl Orchestrator {
     ) -> Result<Started, RunError> {
         let run = row.run;
         let mut attempt = Attempt::new(row.attempt, row.generation);
-        attempt.is_bot = self.header(run)?.bot.is_some();
+        let provenance = self.header(run)?.bot;
+        attempt.is_bot = provenance.is_some();
         let is_bot = attempt.is_bot;
         let bot_send = if is_bot {
-            self.bot_ledger()?
-                .bot_execution(run)?
-                .and_then(|record| record.initial_send)
+            // Reattachment consumes retained authority, not the cheap execution
+            // projection. Decode every Bot version so a JSON-only downgrade
+            // cannot reissue authority or recover a provider under v1.
+            let admitted = self
+                .bot_ledger()?
+                .bot_admission(run)?
+                .ok_or_else(|| super::bots::refused("bot_fenced"))?;
+            if provenance.as_ref() != Some(&admitted.submission.provenance) {
+                return Err(super::bots::refused("bot_provenance_mismatch"));
+            }
+            self.linked_routine_admission(&admitted)?;
+            admitted.initial_send
         } else {
             None
         };

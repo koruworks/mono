@@ -124,7 +124,7 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
     assert!(reader.bots().unwrap().bot_execution(run).unwrap().is_some());
     shared.satisfy_intent(run, DocumentId::new()).unwrap();
     assert_eq!(
-        shared.bots().unwrap().reserve_bot(run).unwrap(),
+        shared.bots().unwrap().reserve_bot(run, None).unwrap(),
         BotReservation::Acquired
     );
     let row = shared.open_attempt(run).unwrap();
@@ -149,7 +149,7 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
     shared
         .bots()
         .unwrap()
-        .activate_bot(run, row.attempt, row.generation)
+        .activate_bot(run, row.attempt, row.generation, None)
         .unwrap();
     let mut send = BotInitialSend {
         attempt: row.attempt,
@@ -161,7 +161,7 @@ fn actual_shared_owner_forwards_admission_policy_and_native_intent_on_one_memory
     shared
         .bots()
         .unwrap()
-        .prepare_bot_initial_send(run, &send)
+        .prepare_bot_initial_send(run, &send, None)
         .unwrap();
     send.turn = Some(AgentTurnId::mint());
     shared

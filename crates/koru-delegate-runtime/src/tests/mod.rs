@@ -169,6 +169,8 @@ pub(crate) struct LedgerScript {
     pub ops: Vec<&'static str>,
     /// The next call named here fails with `Storage`.
     pub fail: Option<&'static str>,
+    /// Arm a one-shot failure only after the named physical phase is reached.
+    pub arm_failure_after: Option<(&'static str, &'static str)>,
     /// Corrupt both retained/current policy read results after real SQL install.
     pub corrupt_native_policy_digest: bool,
 }
@@ -189,6 +191,12 @@ impl RecordingStore {
                 operation: op,
                 detail: "injected".into(),
             });
+        }
+        if let Some((after, fail)) = script.arm_failure_after
+            && after == op
+        {
+            script.arm_failure_after = None;
+            script.fail = Some(fail);
         }
         Ok(())
     }

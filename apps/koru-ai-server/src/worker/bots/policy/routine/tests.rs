@@ -8,6 +8,8 @@ use koru_delegate_core::{
     DocumentVersionId, RoutineClaimIdentity, RoutineClaimRecord, RoutineDigest32, RoutineSlot,
 };
 use std::sync::{Mutex, atomic::AtomicUsize};
+mod dispatch;
+pub(in crate::worker::bots) use dispatch::dispatch_job_fixture;
 
 struct Fixture {
     repository: Repository,

@@ -180,7 +180,9 @@ impl Orchestrator {
                     )
                 })?
                 .filter(|record| {
-                    record.submission.valid()
+                    record
+                        .submission
+                        .valid_for_version(u32::from(record.submission_version))
                         && record.submission.request == request
                         && record.submission.workspace == workspace
                 })
@@ -191,6 +193,13 @@ impl Orchestrator {
                         "A matching durable Bot admission is required.",
                     )
                 })?;
+            self.linked_routine_admission(&admission).map_err(|_| {
+                crate::PortError::new(
+                    crate::Port::Store,
+                    "bot_routine_link_required",
+                    "Routine linkage is unavailable.",
+                )
+            })?;
             Some(admission.submission.provenance)
         } else {
             None

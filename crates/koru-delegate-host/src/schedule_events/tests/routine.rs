@@ -291,3 +291,135 @@ fn routine_publication_positive_ordinary_negative_keeps_exact_skip_delivery() {
         body
     );
 }
+
+#[test]
+fn routine_publication_acknowledged_initial_turn_survives_terminal_policy_and_retirement() {
+    use koru_delegate_runtime::RunStore;
+    use koru_delegate_sqlite::{
+        AttemptPhase, BotInitialSend, BotLedger, BotSettlement, NativeResultLedger,
+    };
+    let seed = crate::actor::tests::routine::Fixture::new();
+    let p = seed.prepared;
+    let proof = seed.proof;
+    let admission = seed.admission;
+    let mut db = RunsDb::open_with_clock(
+        std::path::Path::new(":memory:"),
+        Box::new(MutableClock(Arc::new(AtomicI64::new(1000)))),
+    )
+    .unwrap();
+    let route = RoutineRouteIdentity {
+        owner: p.slot.owner,
+        bot: p.slot.bot,
+        schedule: p.slot.schedule,
+        workspace: p.submission.workspace,
+        creation_request: BotRequestId::mint(),
+        seed_hash: RoutineDigest32::from_bytes([9; 32]),
+        created_at_ms: 0,
+    };
+    db.register_routine_route(&route).unwrap();
+    db.apply_bot_barrier(&admission).unwrap();
+    db.install_native_policy(&proof.global).unwrap();
+    db.install_routine_policy(proof.routine.as_ref().unwrap())
+        .unwrap();
+    let facts = RoutineClaimFacts::from_consumed_authority(
+        p.clone(),
+        p.slot,
+        p.definition,
+        route.workspace,
+        route.creation_request,
+        None,
+    )
+    .unwrap();
+    let RoutineClaimObservation::Claimed { record } =
+        db.claim_bot_routine(facts, &admission, &proof).unwrap().0
+    else {
+        panic!("claim")
+    };
+    db.acknowledge_routine_link(&RoutineLinkAcknowledgement {
+        claim: record.claim.clone(),
+        outcome: RoutineLinkOutcome::Linked {},
+    })
+    .unwrap();
+    db.reserve_bot(p.ids.run, Some(&proof)).unwrap();
+    db.satisfy_intent(p.ids.run, DocumentId::new()).unwrap();
+    let a = db.open_bot_attempt(p.ids.run, Some(&proof)).unwrap();
+    db.activate_bot(a.run, a.attempt, a.generation, Some(&proof))
+        .unwrap();
+    db.bind_session(
+        a.run,
+        a.generation,
+        ProviderSessionKey {
+            idempotency: IdempotencyKey::mint(),
+            session: Some(SessionId::mint()),
+        },
+        HostInstanceId::from_uuid(uuid::Uuid::new_v4()),
+    )
+    .unwrap();
+    let send = BotInitialSend {
+        attempt: a.attempt,
+        generation: a.generation,
+        key: IdempotencyKey::mint(),
+        fingerprint: [8; 32],
+        turn: None,
+    };
+    db.prepare_bot_initial_send(a.run, &send, Some(&proof))
+        .unwrap();
+    let mut ledger = SharedLedger::new(db);
+    let location = ScheduleEventRef {
+        schedule: p.slot.schedule,
+        workspace: route.workspace,
+        document: DocumentId::from_uuid(p.slot.schedule.as_uuid()),
+    };
+    let fact = ScheduleOccurrenceEvent {
+        schedule: location,
+        revision: p.definition.revision,
+        occurrence_ms: p.slot.occurrence_ms,
+        run: p.ids.run,
+        outcome: ScheduleFiringOutcome::Fired,
+        busy_holder: None,
+        claimed_at_ms: record.claim.claimed_at_ms,
+    };
+    let mut events = BusScheduleEvents::new(
+        koru_api_client::Client::new(koru_api_client::Discovery {
+            port: 0,
+            token: String::new(),
+            expires_at_millis: i64::MAX,
+        }),
+        ledger.clone(),
+    );
+    let mut header = header(p.slot.schedule, ProfileId::new());
+    header.initial_owner = p.slot.owner.device;
+    header.definition.routine = Some(
+        koru_delegate_schedule::RoutineAssociation::new(
+            route.owner,
+            route.bot,
+            route.workspace,
+            route.creation_request,
+        )
+        .unwrap(),
+    );
+    events.existing_created(location, &header).unwrap();
+    assert!(events.prepare_occurrence(fact).is_err());
+    let mut ack = send;
+    ack.turn = Some(AgentTurnId::mint());
+    ledger.acknowledge_bot_initial_send(a.run, &ack).unwrap();
+    let prepared = events.prepare_occurrence(fact).unwrap().unwrap();
+    events.ready(prepared).unwrap();
+    ledger
+        .advance(a.run, a.generation, AttemptPhase::Interrupted)
+        .unwrap();
+    ledger.retire(a.run, a.generation).unwrap();
+    ledger.settle_bot(a.run, BotSettlement::Settled).unwrap();
+    let mut newer = proof.global;
+    newer.key.request = BotRequestId::mint().into();
+    newer.config_revision += 1;
+    newer.effects_allowed = false;
+    ledger.install_native_policy(&newer).unwrap();
+    events.validate_occurrence_authority(fact).unwrap();
+    for publication in ledger.ready_schedule_publications(16).unwrap() {
+        events.validate_publication_authority(&publication).unwrap();
+    }
+    let mut changed = fact;
+    changed.run = RunId::mint();
+    assert!(events.validate_occurrence_authority(changed).is_err());
+}

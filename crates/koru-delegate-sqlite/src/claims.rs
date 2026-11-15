@@ -431,7 +431,9 @@ impl RunsDb {
             return Err(LedgerError::InvalidSettlementOutcome);
         }
         self.write(WriteOp::RecordOutcome, |tx, _| {
+            crate::bots::routines::deny_schedule(tx, schedule)?;
             let claim = read(tx, schedule, occurrence_ms)?.ok_or(LedgerError::UnknownSlot)?;
+            crate::bots::routines::deny_run(tx, claim.run)?;
             match claim.state {
                 SlotState::Claimed => {
                     tx.execute(

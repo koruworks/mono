@@ -45,7 +45,7 @@ fn synchronize(h: &mut Harness, fresh: &FreshBotPolicyProof) {
 }
 
 #[test]
-fn routine_policy_cache_requires_both_subjects_and_keeps_execution_closed() {
+fn routine_policy_cache_requires_both_subjects_and_missing_offered_proof_refuses() {
     let (mut h, p, fresh) = linked();
     assert!(
         h.orchestrator
@@ -76,8 +76,8 @@ fn routine_policy_cache_requires_both_subjects_and_keeps_execution_closed() {
             .is_err()
     );
     let mut db = h.schedule_store.inner.lock().unwrap();
-    assert!(db.reserve_bot(p.ids.run).is_err());
-    assert!(db.queued_bots(0, 16).unwrap().is_empty());
+    assert!(db.reserve_bot(p.ids.run, None).is_err());
+    assert_eq!(db.queued_bots(0, 16).unwrap().len(), 1);
     assert!(h.sessions.lock().unwrap().calls.is_empty());
 }
 
