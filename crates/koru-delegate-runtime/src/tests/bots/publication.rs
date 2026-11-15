@@ -173,6 +173,7 @@ fn apply_next(h: &mut Harness, run: RunId) {
                 .unwrap()
         }
         crate::RunPublicationOperation::Apply(prepared) => prepared,
+        crate::RunPublicationOperation::ObserveSource(_) => panic!("projection"),
     };
     let proof = handle.apply_prepared_projection(&prepared).unwrap();
     assert!(
@@ -193,7 +194,7 @@ fn source_tool(turn: AgentTurnId, sequence: u64) -> SessionUpdate {
         sequence: StreamSequence::new(sequence).unwrap(),
         event: AgentEvent::ToolCompleted {
             turn_id: turn,
-            tool_call_id: ToolCallId::mint(),
+            tool_call_id: koru_session_protocol::ToolCallId::mint(),
             succeeded: true,
             tool: None,
             failure: None,

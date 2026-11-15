@@ -225,12 +225,10 @@ fn decision_source_applied_installs_before_carried_control_replaces_marker() {
     assert_eq!(tally(&h, run, turn), 0);
     // Until the Applied Source installs, the carried Control cannot start.
     h.ledger.lock().unwrap().fail = Some("decision_projection_read");
-    assert!(
-        h.orchestrator
-            .next_run_publication(run)
-            .unwrap_err()
-            .publication_pending()
-    );
+    let Err(refused) = h.orchestrator.next_run_publication(run) else {
+        panic!("a carried Control cannot overtake an uninstalled Source")
+    };
+    assert!(refused.publication_pending());
     h.orchestrator.retry_decision_source(run).unwrap();
     assert!(h.orchestrator.runs[&run].decision_source.is_none());
     assert_eq!(

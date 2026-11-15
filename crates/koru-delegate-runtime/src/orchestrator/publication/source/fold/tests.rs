@@ -22,7 +22,7 @@ fn fixture() -> (
     let boundary = DecisionSourceBoundary {
         fence: DecisionFence {
             owner: BotOwner {
-                user_scope: koru_store_core::UserScopeId::from_uuid(uuid::Uuid::new_v4()),
+                user_scope: serde_json::from_value(serde_json::json!(uuid::Uuid::new_v4())).unwrap(),
                 device: DeviceId::from_uuid(uuid::Uuid::new_v4()),
             },
             bot: BotId::mint(),
