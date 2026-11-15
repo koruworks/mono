@@ -309,3 +309,6 @@ impl RunFact {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
