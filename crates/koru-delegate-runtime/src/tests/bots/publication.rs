@@ -81,7 +81,8 @@ fn waiting_with(
         action: DecisionEditAction::EditDocument,
         operation_id: Uuid::new_v4(),
         edit_fingerprint: [3; 32],
-        expected_revision: DecisionBytes::new(vec![1]).unwrap(),
+        // A real semantic version vector: consume compares it semantically.
+        expected_revision: DecisionBytes::new(vec![2, 1, 2, 2, 4]).unwrap(),
         payload_version: DecisionVersionV1,
         payload: DecisionBytes::new(b"private".to_vec()).unwrap(),
         captured_policy: submission.policy.clone(),

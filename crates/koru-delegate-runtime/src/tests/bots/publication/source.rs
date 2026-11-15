@@ -658,3 +658,294 @@ fn decision_cleanup_with_a_drained_effect_completes_but_a_held_lease_keeps_occup
         );
     }
 }
+
+/// Drive the real ledger from the applied waiting decision to a recorded
+/// successor through C's shared builders: enrollment, origin stop, AllowOnce,
+/// reservation, binding and, when `turn` is given, the acknowledged input.
+/// Mirrors the successor into working memory as each builder documents.
+fn successor(
+    h: &mut Harness,
+    fence: &BotExecutionFence,
+    proof: &FreshBotPolicyProof,
+    boot: DelegateBootId,
+    turn: Option<AgentTurnId>,
+) -> (DecisionRecord, SessionId, RunAttemptId, AttemptGeneration) {
+    use koru_delegate_sqlite::test_support as build;
+    let run = fence.run;
+    let decision = latest(h, fence).identity.decision.unwrap().decision;
+    let host = h.sessions.lock().unwrap().host;
+    let session = SessionId::mint();
+    let now = h.schedule_clock.load(Ordering::Acquire);
+    let record = {
+        let mut db = h.schedule_store.inner.lock().unwrap();
+        let record = db
+            .bot_decision(fence.owner, run, decision)
+            .unwrap()
+            .unwrap();
+        let record = build::request_enrollment(&mut db, &record).unwrap();
+        let record = build::record_enrollment(&mut db, &record).unwrap();
+        let record = build::stop_origin(&mut db, &record, now).unwrap();
+        let record = build::bind_successor(&mut db, &record, host, session, proof, boot).unwrap();
+        match turn {
+            Some(turn) => {
+                build::acknowledge_successor(&mut db, &record, turn)
+                    .unwrap()
+                    .0
+            }
+            None => record,
+        }
+    };
+    let (attempt, generation, _, _) = record.resume.as_ref().unwrap().consumer_identity();
+    let state = h.orchestrator.runs.get_mut(&run).unwrap();
+    let memory = state.attempt.as_mut().unwrap();
+    memory.id = attempt;
+    memory.generation = generation;
+    memory.session = Some(session);
+    memory.orchestrator_turn = turn;
+    memory.turns.clear();
+    memory.pending_approvals.clear();
+    memory.bot_terminal_turn = None;
+    memory.holds_lease = true;
+    memory.release_owed = false;
+    (record, session, attempt, generation)
+}
+
+fn successor_receipt(
+    s: &BotSubmission,
+    run: RunId,
+    attempt: RunAttemptId,
+    generation: AttemptGeneration,
+) -> BotDeliveryReceipt {
+    BotDeliveryReceipt {
+        run,
+        attempt,
+        generation,
+        chat_id: s.provenance.chat_id,
+        ai_attempt_id: s.provenance.ai_attempt_id.unwrap(),
+        assistant_message_id: s.provenance.assistant_message_id.unwrap(),
+        confirmed_at_ms: 1000,
+    }
+}
+
+#[test]
+fn decision_consumed_edit_cleanup_completes_but_an_unresolved_effect_keeps_occupancy() {
+    use koru_delegate_sqlite::test_support as build;
+    for resolved in [true, false] {
+        let (mut h, _, fence, proof, boot) = waiting_with(true, false, None);
+        let run = fence.run;
+        apply_next(&mut h, run);
+        let turn = AgentTurnId::mint();
+        let (record, _, attempt, generation) = successor(&mut h, &fence, &proof, boot, Some(turn));
+        let consumer = BotExecutionFence {
+            attempt,
+            generation,
+            session: h.orchestrator.runs[&run]
+                .attempt
+                .as_ref()
+                .unwrap()
+                .session
+                .unwrap(),
+            turn: Some(turn),
+            ..fence
+        };
+        {
+            let mut db = h.schedule_store.inner.lock().unwrap();
+            if resolved {
+                build::consumed_for_cleanup(&mut db, &record, &consumer, &proof, boot).unwrap();
+            } else {
+                // Consumed but never observed: the lease stays held.
+                let DecisionBindingV1::KoruEdit(edit) = &record.receipt.binding else {
+                    panic!("edit")
+                };
+                let request = build::consume_request(&record, &consumer).unwrap();
+                db.consume_decision_edit(
+                    &build::expected(&record),
+                    DecisionTransitionId::mint(),
+                    &request,
+                    edit.payload.as_slice(),
+                    &consumer,
+                    &proof,
+                    boot,
+                )
+                .unwrap();
+                let ticket = db
+                    .decision_wait_execution(fence.owner, run)
+                    .unwrap()
+                    .unwrap()
+                    .expected;
+                db.request_decision_cleanup(
+                    &ticket,
+                    DecisionTransitionId::mint(),
+                    DecisionClosureReason::Canceled,
+                )
+                .unwrap();
+            }
+        }
+        // The runtime adopts the retained owner and runs its cleanup tick.
+        h.orchestrator
+            .request_publication_cleanup(run, DecisionClosureReason::Canceled)
+            .unwrap();
+        let _ = h.orchestrator.bot_budget_tick(run);
+        let execution = h
+            .schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .decision_wait_execution(fence.owner, run)
+            .unwrap()
+            .unwrap();
+        if resolved {
+            let Some(ConsumerCleanup::Confirmed {
+                retained_effect_outcome,
+                native_drain,
+                ..
+            }) = execution.wait.cleanup
+            else {
+                panic!("final cleanup recorded")
+            };
+            assert!(matches!(
+                retained_effect_outcome,
+                Some(DecisionRetainedEffect::NotApplied { .. })
+            ));
+            assert!(native_drain.effects.as_slice().is_empty());
+            assert!(h.attempt(run).retired, "the successor is retired");
+        } else {
+            assert!(execution.wait.cleanup.is_none());
+            assert!(!h.attempt(run).retired);
+        }
+        assert_eq!(
+            h.schedule_store.bot_execution(run).unwrap().unwrap().state,
+            BotAdmissionState::Executing
+        );
+    }
+}
+
+#[test]
+fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation() {
+    use koru_delegate_sqlite::test_support as build;
+    let (mut h, s, fence, proof, boot) = waiting_with(true, false, None);
+    let run = fence.run;
+    apply_next(&mut h, run);
+    let turn = AgentTurnId::mint();
+    let (record, session, attempt, generation) =
+        successor(&mut h, &fence, &proof, boot, Some(turn));
+    let consumer = BotExecutionFence {
+        attempt,
+        generation,
+        session,
+        turn: Some(turn),
+        ..fence
+    };
+    // The one-use edit resolves NotApplied and settles logically, so the
+    // decision is Settled with no cleanup owed.
+    {
+        let mut db = h.schedule_store.inner.lock().unwrap();
+        let DecisionBindingV1::KoruEdit(edit) = &record.receipt.binding else {
+            panic!("edit")
+        };
+        let request = build::consume_request(&record, &consumer).unwrap();
+        let consumed = db
+            .consume_decision_edit(
+                &build::expected(&record),
+                DecisionTransitionId::mint(),
+                &request,
+                edit.payload.as_slice(),
+                &consumer,
+                &proof,
+                boot,
+            )
+            .unwrap();
+        drop(consumed);
+        db.confirm_native_result(&ConfirmNativeResult {
+            key: request.key.clone(),
+            request_fingerprint: request.request_fingerprint,
+            observation: NativeResultObservation::NotApplied {
+                code: NativeResultRefusal::Conflict,
+            },
+        })
+        .unwrap();
+        let current = db
+            .bot_decision(fence.owner, run, record.receipt.decision)
+            .unwrap()
+            .unwrap();
+        let effect = db
+            .decision_retained_effect(fence.owner, run, record.receipt.decision)
+            .unwrap()
+            .unwrap();
+        let settled = db
+            .settle_decision_effect(
+                &build::expected(&current),
+                DecisionTransitionId::mint(),
+                &effect,
+            )
+            .unwrap();
+        assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+    }
+    // The successor turn completed natively.
+    {
+        let memory = h
+            .orchestrator
+            .runs
+            .get_mut(&run)
+            .unwrap()
+            .attempt
+            .as_mut()
+            .unwrap();
+        memory.orchestrator_turn = None;
+        memory.bot_terminal_turn = Some(turn);
+        let mut script = h.sessions.lock().unwrap();
+        script
+            .summaries
+            .insert(session, summary(ManagedState::Completed, None));
+        script.observation.events.push(SequencedAgentEvent {
+            session_id: session,
+            sequence: StreamSequence::new(60).unwrap(),
+            event: AgentEvent::TurnCompleted { turn_id: turn },
+        });
+    }
+    let receipt = successor_receipt(&s, run, attempt, generation);
+    assert!(pending_code(
+        h.orchestrator
+            .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
+            .unwrap_err()
+    ));
+    let control = latest(&h, &fence);
+    assert!(matches!(
+        &control.target,
+        RunProjectionTargetV1::Control {
+            action: DecisionControlAction::Delivery {
+                outcome: DecisionDeliveryOutcome::Completed
+            },
+            delivery: Some(delivery),
+            ..
+        } if delivery.receipt == receipt
+    ));
+}
+
+#[test]
+fn decision_successor_delivery_is_refused_while_its_input_is_unacknowledged() {
+    let (mut h, s, fence, proof, boot) = waiting_with(true, false, None);
+    let run = fence.run;
+    apply_next(&mut h, run);
+    let (_, _, attempt, generation) = successor(&mut h, &fence, &proof, boot, None);
+    let before = latest(&h, &fence);
+    let receipt = successor_receipt(&s, run, attempt, generation);
+    let refused = h
+        .orchestrator
+        .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
+        .unwrap_err();
+    assert!(matches!(refused, RunError::Port(error) if error.code == "bot_fenced"));
+    assert_eq!(latest(&h, &fence), before, "no Control was inserted");
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_admission(run)
+            .unwrap()
+            .unwrap()
+            .delivery_publication
+            .is_none(),
+        "no receipt was recorded"
+    );
+}
