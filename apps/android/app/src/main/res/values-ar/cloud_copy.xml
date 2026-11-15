@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_copy_title">نسخة Cloud</string>
+    <string name="cloud_copy_passive">هذه نسخة Cloud. معاينات الملفات والتنقل عبر المراجع غير متاحين هنا.</string>
+    <string name="cloud_copy_loading">جارٍ التحقق من نسخة Cloud…</string>
+    <string name="cloud_copy_unavailable">نسخة Cloud غير متاحة.</string>
+    <string name="cloud_copy_changed">تغيّرت نسخة Cloud. أعد تحميلها قبل إجراء تغييرات.</string>
+    <string name="cloud_copy_removing">جارٍ إزالة مرجع الملف…</string>
+    <string name="cloud_copy_unknown">النتيجة غير معروفة. أعد تحميل نسخة Cloud قبل المحاولة مجددًا.</string>
+    <string name="cloud_copy_acknowledged">أكدت Cloud التغيير. حدّث استخدام الملفات للاطلاع على القيمة الحالية.</string>
+    <string name="cloud_copy_no_actions">لا يمكن إزالة أي مراجع ملفات من هذه النسخة حاليًا.</string>
+    <string name="cloud_copy_reload">إعادة تحميل نسخة Cloud</string>
+    <string name="cloud_copy_remove">إزالة مرجع الملف</string>
+    <string name="cloud_copy_remove_question">هل تريد إزالة مرجع الملف هذا من نسخة Cloud؟</string>
+    <string name="cloud_copy_remove_explanation">ستتم إزالة مرجع الملف هذا فقط. قد تُبقي مراجع أخرى الملف في مساحة تخزين Cloud.</string>
+    <string name="cloud_copy_block_reference">مرجع كتلة</string>
+    <string name="cloud_copy_preview_unavailable">معاينة الملف غير متاحة</string>
+</resources>

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_copy_title">Cloud-Kopie</string>
+    <string name="cloud_copy_passive">Dies ist die Cloud-Kopie. Dateivorschauen und das Öffnen von Verweisen sind hier nicht verfügbar.</string>
+    <string name="cloud_copy_loading">Cloud-Kopie wird geprüft…</string>
+    <string name="cloud_copy_unavailable">Die Cloud-Kopie ist nicht verfügbar.</string>
+    <string name="cloud_copy_changed">Die Cloud-Kopie hat sich geändert. Lade sie vor Änderungen erneut.</string>
+    <string name="cloud_copy_removing">Dateiverweis wird entfernt…</string>
+    <string name="cloud_copy_unknown">Das Ergebnis ist unbekannt. Lade die Cloud-Kopie erneut, bevor du es noch einmal versuchst.</string>
+    <string name="cloud_copy_acknowledged">Cloud hat die Änderung bestätigt. Aktualisiere die Dateinutzung, um den aktuellen Wert zu sehen.</string>
+    <string name="cloud_copy_no_actions">Aus dieser Kopie können derzeit keine Dateiverweise entfernt werden.</string>
+    <string name="cloud_copy_reload">Cloud-Kopie neu laden</string>
+    <string name="cloud_copy_remove">Dateiverweis entfernen</string>
+    <string name="cloud_copy_remove_question">Diesen Dateiverweis aus der Cloud-Kopie entfernen?</string>
+    <string name="cloud_copy_remove_explanation">Nur dieser Dateiverweis wird entfernt. Andere Verweise können die Datei weiterhin im Cloud-Speicher halten.</string>
+    <string name="cloud_copy_block_reference">Blockverweis</string>
+    <string name="cloud_copy_preview_unavailable">Dateivorschau nicht verfügbar</string>
+</resources>

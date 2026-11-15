@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_copy_title">Cloud のコピー</string>
+    <string name="cloud_copy_passive">これは Cloud のコピーです。ここではファイルのプレビューや参照先への移動はできません。</string>
+    <string name="cloud_copy_loading">Cloud のコピーを確認中…</string>
+    <string name="cloud_copy_unavailable">Cloud のコピーを利用できません。</string>
+    <string name="cloud_copy_changed">Cloud のコピーが変更されました。変更する前に再読み込みしてください。</string>
+    <string name="cloud_copy_removing">ファイル参照を削除中…</string>
+    <string name="cloud_copy_unknown">結果を確認できません。再試行する前に Cloud のコピーを再読み込みしてください。</string>
+    <string name="cloud_copy_acknowledged">Cloud が変更を確認しました。ファイル使用量を更新して現在の値を確認してください。</string>
+    <string name="cloud_copy_no_actions">現在、このコピーから削除できるファイル参照はありません。</string>
+    <string name="cloud_copy_reload">Cloud のコピーを再読み込み</string>
+    <string name="cloud_copy_remove">ファイル参照を削除</string>
+    <string name="cloud_copy_remove_question">Cloud のコピーからこのファイル参照を削除しますか？</string>
+    <string name="cloud_copy_remove_explanation">削除されるのはこのファイル参照だけです。他の参照がある場合、ファイルは Cloud ストレージに保持されます。</string>
+    <string name="cloud_copy_block_reference">ブロック参照</string>
+    <string name="cloud_copy_preview_unavailable">ファイルのプレビューを利用できません</string>
+</resources>

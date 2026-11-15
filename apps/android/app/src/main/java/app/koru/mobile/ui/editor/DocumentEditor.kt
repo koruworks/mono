@@ -765,7 +765,7 @@ internal fun rememberReferenceFallback(passive: Boolean = false): (EntityReferen
  */
 internal fun referenceFallback(resources: Resources, passive: Boolean = false): (EntityReference) -> String {
     val document = resources.getString(if (passive) R.string.document_subtitle else R.string.open_document)
-    val block = resources.getString(if (passive) R.string.insert_reference else R.string.open_block)
+    val block = resources.getString(if (passive) R.string.cloud_copy_block_reference else R.string.open_block)
     val person = resources.getString(R.string.person)
     val run = resources.getString(R.string.run_pill_fallback)
     return { reference: EntityReference ->
