@@ -36,6 +36,7 @@ mod attempt;
 pub mod bot_wire;
 mod bots;
 mod context;
+pub mod decisions;
 mod deletion;
 mod economics;
 mod failure;
