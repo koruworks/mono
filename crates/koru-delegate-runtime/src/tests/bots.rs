@@ -12,10 +12,22 @@ use koru_delegate_core::decisions::*;
 use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 impl BotLedger for RecordingStore {
+    fn owned_bot_execution_page(
+        &self,
+        device: DeviceId,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .owned_bot_execution_page(device, after, through)
+    }
     fn bot_execution_inventory(
         &self,
         device: DeviceId,
     ) -> Result<BotExecutionInventory, BotLedgerError> {
+        self.check("bot_execution_inventory_read")?;
         self.inner.lock().unwrap().bot_execution_inventory(device)
     }
     fn prepare_bot_decision(

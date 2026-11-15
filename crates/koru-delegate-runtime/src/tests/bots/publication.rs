@@ -351,3 +351,40 @@ fn decision_unknown_scope_blocks_fresh_work_until_positive_reconciliation() {
     assert!(recovered.claims.kept.contains(&(fence.run, fence.attempt)));
     assert!(h.orchestrator.ensure_scope_recovery().is_ok());
 }
+
+#[test]
+fn decision_bad_cold_owner_does_not_block_identity_page_neighbor_reservation_recovery() {
+    let (mut h, _, fence) = waiting();
+    let mut unused = submission(3);
+    unused.provenance.bot = BotId::mint();
+    h.orchestrator
+        .bot_submit(unused.clone(), fence.owner.device)
+        .unwrap();
+    h.schedule_store
+        .reserve_bot(unused.request.run, None)
+        .unwrap();
+    {
+        let mut script = h.ledger.lock().unwrap();
+        script.unavailable_decision_run = Some(fence.run);
+        script.ops.clear();
+    }
+    h.orchestrator
+        .recover_unused_bot_reservations(fence.owner.device)
+        .unwrap();
+    assert_eq!(
+        h.schedule_store
+            .bot_execution(unused.request.run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Queued
+    );
+    assert!(
+        !h.ledger
+            .lock()
+            .unwrap()
+            .ops
+            .contains(&"bot_execution_inventory_read")
+    );
+    assert!(!h.attempt(fence.run).retired);
+}

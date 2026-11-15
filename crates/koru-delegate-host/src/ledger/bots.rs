@@ -7,6 +7,17 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::*;
 
 impl BotLedger for SharedLedger {
+    fn owned_bot_execution_page(
+        &self,
+        device: DeviceId,
+        after: u64,
+        through: Option<u64>,
+    ) -> Result<BotBootPage, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .owned_bot_execution_page(device, after, through)
+    }
     fn bot_execution_inventory(
         &self,
         device: DeviceId,

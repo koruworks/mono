@@ -255,20 +255,51 @@ impl Orchestrator {
         if device.as_uuid().is_nil() {
             return Err(refused("bot_owner_mismatch"));
         }
-        let inventory = self.bot_ledger()?.bot_execution_inventory(device)?;
-        for owned in inventory.owned {
-            let record = owned.execution;
-            self.restore_publication_owner(record.run)?;
-            if self.run_publication_pending(record.run) {
-                continue;
+        let mut after = 0;
+        let mut through = None;
+        loop {
+            // Discovery has no capacity/release decoder. One corrupt release
+            // can refuse fresh dispatch without hiding another Run's cleanup.
+            let page = self
+                .bot_ledger()?
+                .owned_bot_execution_page(device, after, through)?;
+            for identity in page.entries {
+                let result = (|| -> Result<(), RunError> {
+                    self.restore_publication_owner(identity.run)?;
+                    if self.run_publication_pending(identity.run) {
+                        return Ok(());
+                    }
+                    let Some(record) = self.bot_ledger()?.bot_execution(identity.run)? else {
+                        return Ok(());
+                    };
+                    if record.owner != identity.owner || record.bot != identity.bot {
+                        return Err(refused("bot_owner_mismatch"));
+                    }
+                    if record.state == BotAdmissionState::Reserved {
+                        self.bot_ledger()?.recover_bot_reservation(&BotRunKey {
+                            owner: identity.owner,
+                            bot: identity.bot,
+                            run: identity.run,
+                        })?;
+                    }
+                    Ok(())
+                })();
+                if let Err(error) = result {
+                    self.trace(
+                        identity.run,
+                        "bot_boot_recovery_pending",
+                        format_args!("{error}"),
+                    );
+                }
             }
-            if record.state == BotAdmissionState::Reserved {
-                self.bot_ledger()?.recover_bot_reservation(&BotRunKey {
-                    owner: record.owner,
-                    bot: record.bot,
-                    run: record.run,
-                })?;
+            if !page.more {
+                break;
             }
+            if page.scanned_through <= after {
+                return Err(refused("bot_boot_cursor_stale"));
+            }
+            after = page.scanned_through;
+            through = Some(page.through);
         }
         Ok(())
     }
