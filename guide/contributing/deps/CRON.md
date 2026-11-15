@@ -90,9 +90,10 @@ error.
 The crate never calls `Utc::now`, `Local::now`, `SystemTime`, or an OS timezone
 detector. Both the reference epoch millisecond and the floating rule's IANA
 rules are arguments.
-# The explorer has a finite year domain
 
-The locked `cron` 0.17.0 `Years` owner ranges from1970 through2100 inclusive.
+## The explorer has a finite year domain
+
+The locked `cron` 0.17.0 `Years` owner ranges from 1970 through 2100 inclusive.
 Koru's five-field dialect supplies `*` for that year field; it does not widen
 the range. A signed pre-epoch observation is a valid input, but the next
 every-minute UTC occurrence after `-60001` is `0`, not `-60000`. Preserve this
