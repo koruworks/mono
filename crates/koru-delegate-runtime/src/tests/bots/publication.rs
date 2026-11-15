@@ -46,7 +46,11 @@ fn waiting_with(
     let base = DecisionPublicationBase {
         workspace: state.workspace,
         document: state.document,
-        source_schema: 3u8.try_into().unwrap(),
+        // The format the Bot Run was created at (BotRun5), read from the document.
+        source_schema: u8::try_from(state.doc.document().unwrap().schema_version().unwrap())
+            .unwrap()
+            .try_into()
+            .unwrap(),
         observed_created_at_ms: header.created_at_ms,
         timeline_len: state.doc.document().unwrap().timeline_len() as u64,
         subject_digest: decision_projection_subject_digest(&header).unwrap(),
