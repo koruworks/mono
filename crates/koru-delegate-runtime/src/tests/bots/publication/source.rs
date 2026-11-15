@@ -401,12 +401,16 @@ fn publish_owed(h: &mut Harness, run: RunId) {
     panic!("owed publications did not drain within the bound");
 }
 
-#[test]
-fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
-    let (mut h, _, fence, proof, boot) = waiting_with(true, true);
+/// Answer the open native approval with Allow and record its exact
+/// acknowledgment through the C writers; the decision is then Settled.
+fn settle_native(
+    h: &mut Harness,
+    fence: &BotExecutionFence,
+    proof: &FreshBotPolicyProof,
+    boot: DelegateBootId,
+) -> DecisionId {
     let run = fence.run;
-    apply_next(&mut h, run);
-    let decision = latest(&h, &fence).identity.decision.unwrap().decision;
+    let decision = latest(h, fence).identity.decision.unwrap().decision;
     let record = h
         .schedule_store
         .inner
@@ -436,7 +440,7 @@ fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
         .inner
         .lock()
         .unwrap()
-        .answer_bot_decision(&input, DecisionTransitionId::mint(), &proof, boot)
+        .answer_bot_decision(&input, DecisionTransitionId::mint(), proof, boot)
         .unwrap();
     let Some(DecisionNativeResponse::Prepared { key }) = answered.native_response else {
         panic!("prepared native response")
@@ -458,6 +462,15 @@ fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
         )
         .unwrap();
     assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+    decision
+}
+
+#[test]
+fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
+    let (mut h, _, fence, proof, boot) = waiting_with(true, true);
+    let run = fence.run;
+    apply_next(&mut h, run);
+    let decision = settle_native(&mut h, &fence, &proof, boot);
     publish_owed(&mut h, run);
     // The native Allow continues execution; its publication fence is still
     // held. The whole-Run execution budget then expires.
@@ -508,4 +521,102 @@ fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
         BotAdmissionState::Executing,
         "the budget Stop retains admission until cleanup and publication"
     );
+}
+
+fn pending_code(error: RunError) -> bool {
+    matches!(error, RunError::Port(error) if error.code == "bot_delivery_pending")
+}
+
+#[test]
+fn decision_delivery_while_exclusive_records_receipt_then_publishes_owed_completion() {
+    let (mut h, s, fence, proof, boot) = waiting_with(true, true);
+    let run = fence.run;
+    let turn = fence.turn.unwrap();
+    apply_next(&mut h, run);
+    settle_native(&mut h, &fence, &proof, boot);
+    publish_owed(&mut h, run);
+    let receipt = BotDeliveryReceipt {
+        run,
+        attempt: fence.attempt,
+        generation: fence.generation,
+        chat_id: s.provenance.chat_id,
+        ai_attempt_id: s.provenance.ai_attempt_id.unwrap(),
+        assistant_message_id: s.provenance.assistant_message_id.unwrap(),
+        confirmed_at_ms: 1000,
+    };
+    // Before the native turn is proven complete nothing is written.
+    let before = latest(&h, &fence);
+    assert!(pending_code(
+        h.orchestrator
+            .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
+            .unwrap_err()
+    ));
+    assert_eq!(latest(&h, &fence), before);
+    // The native turn completes through the decision Source producer.
+    let epoch = Uuid::new_v4();
+    h.orchestrator.register_source_producer(run, epoch);
+    h.orchestrator
+        .handle_from_producer(
+            run,
+            epoch,
+            SessionUpdate::Agent(SequencedAgentEvent {
+                session_id: session(1),
+                sequence: StreamSequence::new(8).unwrap(),
+                event: AgentEvent::TurnCompleted { turn_id: turn },
+            }),
+        )
+        .unwrap();
+    publish_owed(&mut h, run);
+    {
+        let mut script = h.sessions.lock().unwrap();
+        script
+            .summaries
+            .insert(fence.session, summary(ManagedState::Completed, None));
+        script.observation.events.push(SequencedAgentEvent {
+            session_id: fence.session,
+            sequence: StreamSequence::new(50).unwrap(),
+            event: AgentEvent::TurnCompleted { turn_id: turn },
+        });
+    }
+    // The receipt and its owed header publication commit together; delivery
+    // is not durable until that Control is acknowledged.
+    assert!(pending_code(
+        h.orchestrator
+            .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
+            .unwrap_err()
+    ));
+    let control = latest(&h, &fence);
+    assert!(matches!(control.state, DecisionProjectionState::Pending));
+    assert!(matches!(
+        &control.target,
+        RunProjectionTargetV1::Control {
+            action: DecisionControlAction::Delivery {
+                outcome: DecisionDeliveryOutcome::Completed
+            },
+            delivery: Some(delivery),
+            ..
+        } if delivery.receipt == receipt
+    ));
+    // An exact retry replays the same transition; no second Control.
+    assert!(pending_code(
+        h.orchestrator
+            .bot_acknowledge_delivery(&key(&s), fence.owner.device, &receipt)
+            .unwrap_err()
+    ));
+    assert_eq!(latest(&h, &fence), control);
+    // The owed projection publishes like any other; the header now carries
+    // the exact receipt and the Completed status.
+    publish_owed(&mut h, run);
+    assert!(matches!(
+        latest(&h, &fence).state,
+        DecisionProjectionState::Applied { .. }
+    ));
+    let header = h.orchestrator.runs[&run]
+        .doc
+        .document()
+        .unwrap()
+        .header()
+        .unwrap();
+    assert_eq!(header.status, RunStatus::Completed);
+    assert_eq!(header.chat_delivery, Some(receipt));
 }
