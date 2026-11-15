@@ -147,8 +147,18 @@ pub(super) fn correlate(
     receipt: &DecisionReceipt,
     wait: &DecisionWaitRecord,
     resume: Option<&DecisionResume>,
+    ai_attempt: Option<uuid::Uuid>,
 ) -> Result<(), BotLedgerError> {
     let bad = || corrupt("bot_wait_runtime", "evidence");
+    if let Some(BotWaitEnrollmentReply::Enrolled {
+        ai_attempt: enrolled,
+        ..
+    }) = &wait.enrollment
+    {
+        if ai_attempt != Some(*enrolled) {
+            return Err(corrupt("bot_wait_runtime", "enrollment_ai_attempt"));
+        }
+    }
     if let Some(request) = &wait.enrollment_request {
         if receipt.state.kind != DecisionKind::KoruEdit
             || request.key.decision_revision > receipt.state.revision

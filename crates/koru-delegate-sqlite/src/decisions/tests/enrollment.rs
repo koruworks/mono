@@ -187,6 +187,84 @@ fn decision_enrollment_late_ack_records_history_without_reopening_stop() {
     assert!(completed.wait.enrollment.is_some());
     assert!(completed.wait.release.is_none());
 }
+
+#[test]
+fn decision_enrollment_requires_exact_retained_ai_attempt_and_preserves_unrelated_reads() {
+    let mut h = Harness::new();
+    let id = h.prepare().receipt.decision;
+    h.published(id, false);
+    let pending = request(&mut h, id);
+    let f = h.origin();
+    let key = pending
+        .wait
+        .enrollment_request
+        .as_ref()
+        .unwrap()
+        .key
+        .clone();
+    let reply = |ai_attempt| BotWaitEnrollmentReply::Enrolled {
+        key: key.clone(),
+        receipt_digest: key.receipt_digest,
+        ai_attempt,
+    };
+    {
+        let tx = h.db.conn().unchecked_transaction().unwrap();
+        assert!(matches!(
+            record_enrollment_on(&tx, f.owner, f.run, id, &reply(fixtures::v4(220)), 1002),
+            Err(BotLedgerError::Conflict)
+        ));
+    }
+    assert!(h.read(id).unwrap().wait.enrollment.is_none());
+    let mut submission = h.db.bot_admission(f.run).unwrap().unwrap().submission;
+    let original = submission.clone();
+    submission.provenance.ai_attempt_id = None;
+    submission.provenance.assistant_message_id = None;
+    h.db.conn()
+        .execute(
+            "UPDATE bot_admissions SET payload_json=?1",
+            [serde_json::to_string(&submission).unwrap()],
+        )
+        .unwrap();
+    // Pending history still reads without pretending an AI owner exists.
+    assert!(h.read(id).unwrap().wait.enrollment.is_none());
+    {
+        let tx = h.db.conn().unchecked_transaction().unwrap();
+        assert!(matches!(
+            record_enrollment_on(&tx, f.owner, f.run, id, &reply(fixtures::v4(210)), 1002),
+            Err(BotLedgerError::Conflict)
+        ));
+    }
+    h.db.conn()
+        .execute(
+            "UPDATE bot_admissions SET payload_json=?1",
+            [serde_json::to_string(&original).unwrap()],
+        )
+        .unwrap();
+    ack(&mut h, id);
+    h.db.conn()
+        .execute_batch("DROP TRIGGER bot_wait_runtime_immutable")
+        .unwrap();
+    h.db.conn()
+        .execute(
+            "UPDATE bot_wait_runtime SET ai_cleanup_receipt_json=?1",
+            [encoded(&reply(fixtures::v4(220)), DECISION_EVIDENCE_BYTES).unwrap()],
+        )
+        .unwrap();
+    assert!(h.read(id).is_err());
+    h.db.conn()
+        .execute(
+            "UPDATE bot_wait_runtime SET ai_cleanup_receipt_json=?1",
+            [encoded(&reply(fixtures::v4(210)), DECISION_EVIDENCE_BYTES).unwrap()],
+        )
+        .unwrap();
+    h.db.conn()
+        .execute(
+            "UPDATE bot_admissions SET payload_json=?1",
+            [serde_json::to_string(&submission).unwrap()],
+        )
+        .unwrap();
+    assert!(h.read(id).is_err());
+}
 #[test]
 fn decision_phase_cas_fences_fresh_work_and_keeps_capacity_debt() {
     let mut h = Harness::new();

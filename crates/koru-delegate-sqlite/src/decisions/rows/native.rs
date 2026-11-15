@@ -92,6 +92,7 @@ fn decode(
                 c.same(
                     k == &key
                         && acknowledgment == &key
+                        && *observed_at_ms >= answer.answered_at_ms
                         && *observed_at_ms <= c.get::<i64>("updated_at_ms")?,
                 )?;
             }

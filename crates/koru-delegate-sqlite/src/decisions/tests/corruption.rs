@@ -218,6 +218,30 @@ fn decision_reader_native_journal_is_exact_choice_key_not_generic_resolved() {
         )
         .unwrap();
     assert!(h.read(id).is_err());
+    let mut h = Harness::new();
+    h.native();
+    let id = h.prepare().receipt.decision;
+    h.published(id, true);
+    let input = h.answer_input(&h.read(id).unwrap(), true);
+    let accepted = h.answer(&input, 1001).unwrap().record;
+    let Some(DecisionNativeResponse::Prepared { key }) = accepted.native_response else {
+        panic!("prepared native response")
+    };
+    for (observed, expected_ok) in [(1000, false), (1001, true)] {
+        let ack = DecisionNativeResponse::Acknowledged {
+            acknowledgment: key.clone(),
+            key: key.clone(),
+            observed_at_ms: observed,
+        };
+        h.db.conn().execute("UPDATE bot_decision_native_answers SET state='acknowledged',acknowledgment_json=?1",[encoded(&ack,DECISION_RECEIPT_BYTES).unwrap()]).unwrap();
+        assert_eq!(h.read(id).is_ok(), expected_ok);
+        // Deliberately mutate a retained acknowledgment only in this corruption fixture.
+        if !expected_ok {
+            h.db.conn()
+                .execute_batch("DROP TRIGGER bot_decision_native_answers_immutable")
+                .unwrap();
+        }
+    }
 }
 #[test]
 fn decision_reader_resume_reuses_owning_attempt_and_requires_exact_ack_group() {
@@ -236,6 +260,16 @@ fn decision_reader_resume_reuses_owning_attempt_and_requires_exact_ack_group() {
         .execute("UPDATE bot_decisions SET phase='resume_prepared'", [])
         .unwrap();
     assert!(h.read(r.receipt.decision).unwrap().resume.is_some());
+    h.db.conn()
+        .execute_batch("DROP TRIGGER bot_decision_resumes_immutable")
+        .unwrap();
+    h.db.conn()
+        .execute("UPDATE bot_decision_resumes SET created_at_ms=1004", [])
+        .unwrap();
+    assert!(h.read(r.receipt.decision).is_err());
+    h.db.conn()
+        .execute("UPDATE bot_decision_resumes SET created_at_ms=1005", [])
+        .unwrap();
     h.db.conn()
         .execute_batch("PRAGMA ignore_check_constraints=ON")
         .unwrap();

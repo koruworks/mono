@@ -94,6 +94,14 @@ fn decode(
         state,
     };
     result.validate().map_err(|_| corrupt(c.table, "resume"))?;
+    let answer = receipt
+        .answer
+        .as_ref()
+        .ok_or_else(|| corrupt(c.table, "answer"))?;
+    c.same(
+        matches!(answer.choice, DecisionAnswerChoice::AllowOnce {})
+            && c.get::<i64>("created_at_ms")? >= answer.answered_at_ms,
+    )?;
     let retained = crate::attempts::retained_bounded(conn, origin.run, generation)?
         .ok_or_else(|| corrupt(c.table, "consumer_attempt"))?;
     c.same(

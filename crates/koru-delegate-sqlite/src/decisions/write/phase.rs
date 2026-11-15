@@ -144,6 +144,11 @@ pub(crate) fn record_enrollment_on(
             outcome: crate::WriteOutcome::AlreadyApplied,
         });
     }
+    let BotWaitEnrollmentReply::Enrolled { ai_attempt, .. } = reply else {
+        return Err(BotLedgerError::Conflict);
+    };
+    let admitted = authority::retained(tx, &old.receipt.binding)?;
+    require(admitted.submission.provenance.ai_attempt_id == Some(*ai_attempt))?;
     let body = encoded(reply, DECISION_EVIDENCE_BYTES)?;
     let changed=tx.execute("UPDATE bot_wait_runtime SET ai_cleanup_receipt_json=?2,revision=?3,updated_at_ms=max(updated_at_ms,?4) WHERE wait_id=?1 AND revision=?5 AND ai_cleanup_receipt_json IS NULL",params![old.wait.wait.to_storage(),body,next(old.wait.revision)?.get(),now,old.wait.revision.get()]).map_err(sql)?;
     if changed != 1 {

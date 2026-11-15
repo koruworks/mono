@@ -171,11 +171,17 @@ pub(super) fn read(
             |r| Ok(decode(r)),
         )
         .map_err(sql)??;
-    authority::retained(conn, &receipt.binding)?;
+    let admission = authority::retained(conn, &receipt.binding)?;
     let wait = read_wait(conn, run, id, &receipt)?;
     let resume = resume::read(conn, &receipt)?;
     let native_response = native::read(conn, &receipt)?;
-    wait::correlate(conn, &receipt, &wait, resume.as_ref())?;
+    wait::correlate(
+        conn,
+        &receipt,
+        &wait,
+        resume.as_ref(),
+        admission.submission.provenance.ai_attempt_id,
+    )?;
     companions(&receipt, &wait, resume.as_ref(), native_response.as_ref())?;
     Ok(Some(DecisionRecord {
         receipt,
