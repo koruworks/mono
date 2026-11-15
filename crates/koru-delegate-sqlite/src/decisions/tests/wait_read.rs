@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The delegate-owned `ReadBotDecisionWait` observation. Authored, not yet run.
+//! The delegate-owned `ReadBotDecisionWait` observation.
 use super::*;
 use lifecycle::expected;
 
@@ -225,4 +225,241 @@ fn decision_wait_read_has_no_observation_for_a_native_wait() {
         .is_err(),
         "the subject is checked before the missing intent"
     );
+}
+
+fn ack(record: &DecisionProjectionRecord) -> DecisionProjectionAcknowledgment {
+    DecisionProjectionAcknowledgment {
+        identity: record.identity.clone(),
+        delta_digest: projection::prepared(record).delta_digest,
+        observed_version: DecisionVersionVector::new(vec![3]).unwrap(),
+    }
+}
+
+#[test]
+fn decision_wait_read_is_stale_once_a_later_wait_owns_the_newest_projection() {
+    // An enrolled Koru wait resumes on the recorded successor, consumes, settles
+    // its effect and releases only its wait while the successor continues.
+    let (mut h, record, request, fence, payload) = consume::ready();
+    let f = h.origin();
+    h.db.consume_decision_edit(
+        &expected(&record),
+        DecisionTransitionId::mint(),
+        &request,
+        &payload,
+        &fence,
+        &h.proof,
+        h.boot,
+    )
+    .unwrap();
+    h.db.confirm_native_result(&ConfirmNativeResult {
+        key: request.key.clone(),
+        request_fingerprint: request.request_fingerprint,
+        observation: NativeResultObservation::NotApplied {
+            code: NativeResultRefusal::Conflict,
+        },
+    })
+    .unwrap();
+    let consumed = h.read(record.receipt.decision).unwrap();
+    let settle = DecisionTransitionId::mint();
+    h.db.settle_decision_effect(
+        &expected(&consumed),
+        settle,
+        &DecisionRetainedEffect::NotApplied {
+            key: request.key.clone(),
+            code: NativeResultRefusal::Conflict,
+        },
+    )
+    .unwrap();
+    let last =
+        h.db.decision_projection(f.owner, f.run, settle)
+            .unwrap()
+            .unwrap();
+    let ticket =
+        h.db.decision_wait_execution(f.owner, f.run)
+            .unwrap()
+            .unwrap()
+            .expected;
+    let applied = projection::apply(&mut h, &last);
+    h.db.settle_decision_wait(&ticket, &ack(&last)).unwrap();
+    let settled = read(&h, &record).unwrap().unwrap();
+    assert_eq!(
+        settled.fresh_stop_eligibility,
+        FreshWaitStopEligibility::Terminal
+    );
+    assert!(matches!(
+        settled.publication,
+        DecisionPublication::Applied { transition, .. } if transition == settle
+    ));
+    // A later native prompt on the acknowledged successor opens the next wait.
+    h.native();
+    let DecisionBindingV1::NativeApproval(mut later) = h.binding.clone() else {
+        panic!("native")
+    };
+    later.origin_attempt = fence.attempt;
+    later.origin_generation = fence.generation;
+    later.origin_session = fence.session;
+    later.origin_turn = fence.turn.unwrap();
+    h.binding = DecisionBindingV1::NativeApproval(later);
+    let mut base = projection::base(&h);
+    projection::advance_base(&mut base, &applied);
+    let next =
+        h.db.prepare_bot_decision(&h.binding, &h.proof, h.boot, &base)
+            .unwrap();
+    assert_ne!(next.wait.wait, record.wait.wait);
+    // The older wait's final target is no longer reachable by a bounded read:
+    // the reader reports that instead of walking history or guessing.
+    assert_eq!(
+        h.db.read_bot_decision_wait(
+            f.owner,
+            f.bot,
+            f.run,
+            record.wait.wait,
+            record.receipt.decision
+        ),
+        Err(BotLedgerError::Stale)
+    );
+    assert_eq!(
+        h.db.read_bot_decision_wait(f.owner, f.bot, f.run, next.wait.wait, next.receipt.decision)
+            .unwrap(),
+        None,
+        "the later native wait has no cleanup intent"
+    );
+}
+
+#[test]
+fn decision_wait_read_refuses_an_origin_drain_that_omits_a_retained_effect() {
+    for complete in [true, false] {
+        let mut h = Harness::new();
+        let f = h.origin();
+        // A drained-unknown native effect of the original attempt.
+        let admission = h.db.bot_admission(f.run).unwrap().unwrap();
+        let request = PrepareNativeResult {
+            key: NativeResultKey {
+                run: f.run,
+                attempt: f.attempt,
+                generation: f.generation,
+                turn: f.turn,
+                operation_id: uuid::Uuid::new_v4(),
+            },
+            kind: NativeResultOperation::CreatePage,
+            destination: admission.submission.policy.destination,
+            target: None,
+            request_fingerprint: [6; 32],
+            expected_revision: None,
+            config_revision: h.proof.global.config_revision,
+            policy_revision: h.proof.global.policy_revision,
+            title: "PRIVATE-DRAIN".into(),
+        };
+        h.db.prepare_native_result(&request).unwrap();
+        let effect =
+            h.db.lease_native_result(
+                &request.key,
+                request.request_fingerprint,
+                &BotExecutionFence {
+                    owner: f.owner,
+                    bot: f.bot,
+                    run: f.run,
+                    attempt: f.attempt,
+                    generation: f.generation,
+                    session: f.session,
+                    turn: Some(f.turn),
+                },
+                &h.proof,
+            )
+            .unwrap()
+            .intent;
+        let drain = NativeEffectDrainReceipt {
+            binding: effect.pending_effect().unwrap().binding,
+            fenced_at: NativeEffectTimestamp::from_millis(999),
+            drained_at: NativeEffectTimestamp::from_millis(1000),
+        };
+        h.db.confirm_native_result(&ConfirmNativeResult {
+            key: request.key,
+            request_fingerprint: request.request_fingerprint,
+            observation: NativeResultObservation::DrainedUnknown {
+                receipt: drain.clone(),
+            },
+        })
+        .unwrap();
+        h.db.prepare_bot_decision(&h.binding, &h.proof, h.boot, &projection::base(&h))
+            .unwrap();
+        let initial =
+            h.db.next_decision_projection(f.owner, f.run)
+                .unwrap()
+                .unwrap();
+        projection::apply(&mut h, &initial);
+        let ticket =
+            h.db.decision_wait_execution(f.owner, f.run)
+                .unwrap()
+                .unwrap()
+                .expected;
+        let record =
+            h.db.enroll_decision_cleanup(&ticket, DecisionTransitionId::mint())
+                .unwrap();
+        let record = lifecycle::enrolled(&mut h, &record);
+        let OriginWaitStop::Confirmed {
+            origin_fence,
+            wait_id,
+            intent_digest,
+            enrollment_digest,
+            cause,
+            creation_retirement,
+            mut native_drain,
+        } = lifecycle::origin_release(&mut h, &record, 1000)
+        else {
+            unreachable!()
+        };
+        if complete {
+            native_drain.effects = DecisionList::new(vec![drain]).unwrap();
+        }
+        let release = OriginWaitStop::Confirmed {
+            origin_fence,
+            wait_id,
+            intent_digest,
+            enrollment_digest,
+            cause,
+            creation_retirement,
+            native_drain,
+        };
+        if complete {
+            h.db.record_decision_origin_stop(
+                &expected(&record),
+                DecisionTransitionId::mint(),
+                &release,
+            )
+            .unwrap();
+            let observed = read(&h, &record).unwrap().unwrap();
+            assert_eq!(observed.origin_stop, release);
+        } else {
+            assert!(
+                h.db.record_decision_origin_stop(
+                    &expected(&record),
+                    DecisionTransitionId::mint(),
+                    &release
+                )
+                .is_err(),
+                "the writer refuses an incomplete drain"
+            );
+            // Damaged storage: the same incomplete release written directly.
+            h.db.conn()
+                .execute(
+                    "UPDATE bot_wait_runtime SET phase='retired',revision=revision+1,release_evidence_json=?2 WHERE wait_id=?1",
+                    params![
+                        record.wait.wait.to_storage(),
+                        encoded(&release, DECISION_EVIDENCE_BYTES).unwrap()
+                    ],
+                )
+                .unwrap();
+            h.db.conn()
+                .execute(
+                    "UPDATE bot_decisions SET phase='held',revision=revision+1 WHERE decision_id=?1",
+                    [record.receipt.decision.to_storage()],
+                )
+                .unwrap();
+            assert!(
+                read(&h, &record).is_err(),
+                "an origin drain omitting a retained effect is never reported"
+            );
+        }
+    }
 }
