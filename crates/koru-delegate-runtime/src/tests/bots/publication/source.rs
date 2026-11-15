@@ -1011,6 +1011,15 @@ fn native_decision_answer_is_forwarded_with_the_journaled_key_and_replays_it() {
         };
     }
     publish_owed(&mut h, fence.run);
+    // Publication advances the decision; answer its current revision.
+    let prepared = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .bot_decision(fence.owner, fence.run, prepared.receipt.decision)
+        .unwrap()
+        .unwrap();
     let DecisionBindingV1::NativeApproval(binding) = &prepared.receipt.binding else {
         panic!("native binding")
     };
