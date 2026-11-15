@@ -69,6 +69,7 @@ use koru_ui::text_paragraph::KoruTextParagraph;
 use koru_ui::toggle::Toggle;
 use profiles::{CloudStatus, ProgressOwner, SyncAvailability};
 
+pub(crate) mod copy;
 pub(crate) mod inventory;
 pub(crate) mod progress;
 #[cfg(test)]

@@ -99,11 +99,20 @@ fn action(
     enabled: bool,
 ) -> El {
     let label = koru_i18n::t(crate::format::lang(), key).to_owned();
-    let width = ActionButton::new(&label, ActionStyle::Ghost, None).width(engine);
     controls.push((control, label.clone()));
-    leaf("Cloud inventory action", ButtonLeaf { label, width })
+    button(
+        engine,
+        control_key(control).expect("inventory control"),
+        key,
+        enabled,
+    )
+}
+pub(super) fn button(engine: &mut TextEngine, id: el::Key, key: TextKey, enabled: bool) -> El {
+    let label = koru_i18n::t(crate::format::lang(), key).to_owned();
+    let width = ActionButton::new(&label, ActionStyle::Ghost, None).width(engine);
+    leaf("Cloud action", ButtonLeaf { label, width })
         .semantic()
-        .id(control_key(control).expect("inventory control"))
+        .id(id)
         .hit()
         .focusable()
         .disabled(!enabled)
@@ -112,7 +121,7 @@ fn action(
         .action(el::Action::Click)
         .action(el::Action::Focus)
 }
-fn words(id: el::Key, label: String, heading: bool) -> El {
+pub(super) fn words(id: el::Key, label: String, heading: bool) -> El {
     text(&label)
         .id(id)
         .role(if heading { roles::SUBTITLE } else { roles::UI })
