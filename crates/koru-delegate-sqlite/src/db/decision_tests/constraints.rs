@@ -540,6 +540,16 @@ fn decision_migration_runs10_resume_full_key_nullability_receipt_and_lease_forei
         ("accepted_turn_id", text(id(33))),
         ("receipt_json", text("{}")),
     ]);
+    for column in ["accepted_turn_id", "receipt_json"] {
+        row_case(
+            &c,
+            "bot_decision_resumes",
+            &acknowledged,
+            column,
+            Value::Null,
+            false,
+        );
+    }
     for value in [
         text(""),
         text("bad"),

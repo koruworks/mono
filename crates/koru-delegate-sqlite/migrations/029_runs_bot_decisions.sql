@@ -117,7 +117,7 @@ CREATE TABLE bot_decision_resumes (
      OR (kind='recorded_successor' AND consumer_attempt_id<>origin_attempt_id AND consumer_generation=origin_generation+1)),
   CHECK(state IN ('prepared','closed') OR consumer_session_id IS NOT NULL),
   CHECK((state='input_acknowledged' AND accepted_turn_id IS NOT NULL AND receipt_json IS NOT NULL)
-     OR (state='closed') OR (accepted_turn_id IS NULL AND receipt_json IS NULL))
+     OR (state='closed') OR (state<>'input_acknowledged' AND accepted_turn_id IS NULL AND receipt_json IS NULL))
 );
 CREATE UNIQUE INDEX bot_decision_successor_generation ON bot_decision_resumes(run_id,consumer_generation) WHERE kind='recorded_successor';
 CREATE UNIQUE INDEX bot_decision_consumer_turn ON bot_decision_resumes(run_id,consumer_attempt_id,accepted_turn_id) WHERE accepted_turn_id IS NOT NULL;
