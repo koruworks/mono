@@ -477,6 +477,9 @@ impl BotLedger for RunsDb {
     fn bot_execution_inventory(&self,device:DeviceId)->Result<BotExecutionInventory,BotLedgerError>{
         RunsDb::bot_execution_inventory(self,device)
     }
+    fn owned_bot_execution_page(&self, device:DeviceId, after:u64, through:Option<u64>)->Result<BotBootPage,BotLedgerError>{
+        boot::owned_page(self,device,after,through)
+    }
     fn admit_bot(
         &mut self,
         submission: &BotSubmission,
