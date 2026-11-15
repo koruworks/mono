@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 //! One selected page; hidden observations and stale bytes never authorize open.
 use super::*;
-use koru_ai_core::bots::routines::*;
 use koru_delegate_core::ScheduleId;
 
 #[derive(Default)]

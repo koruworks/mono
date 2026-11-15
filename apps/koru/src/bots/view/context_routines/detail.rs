@@ -5,8 +5,8 @@ use crate::bots::routines::detail::Data;
 use crate::schedule_words::{ScheduleProjection, schedule_words};
 use koru_i18n::time::LocaleFormat;
 
-pub(super) const REFRESH_DETAIL: Key = Key::surface(SURFACE, "detail-refresh");
-pub(super) const NEXT_HISTORY: Key = Key::surface(SURFACE, "detail-history-next");
+pub(crate) const REFRESH_DETAIL: Key = Key::surface(SURFACE, "detail-refresh");
+pub(crate) const NEXT_HISTORY: Key = Key::surface(SURFACE, "detail-history-next");
 pub(super) fn heading(data: &Data, schedule: ScheduleId, lang: Lang) -> Option<(String, Words)> {
     let detail = data.held.as_ref().filter(|d| d.schedule_id == schedule)?;
     Some(match &detail.live {
