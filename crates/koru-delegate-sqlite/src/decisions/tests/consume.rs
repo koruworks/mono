@@ -9,7 +9,7 @@ pub(super) fn ready()->(Harness,DecisionRecord,PrepareNativeResult,BotExecutionF
     let record=h.db.record_decision_origin_stop(&expected(&record),DecisionTransitionId::mint(),&release).unwrap();
     let input=h.answer_input(&record,true);
     let record=h.db.answer_bot_decision(&input,DecisionTransitionId::mint(),&h.proof,h.boot).unwrap();
-    let host=HostInstanceId::mint();
+    let host=HostInstanceId::from_uuid(uuid::Uuid::new_v4());
     let record=h.db.reserve_decision_successor(&expected(&record),DecisionTransitionId::mint(),host,[42;32],&h.proof,h.boot).unwrap();
     let resume=record.resume.as_ref().unwrap();
     let (attempt,generation,_,creation)=resume.consumer_identity();

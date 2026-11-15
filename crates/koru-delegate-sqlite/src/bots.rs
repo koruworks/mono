@@ -14,8 +14,9 @@ pub use routines::{
 #[cfg(test)]
 mod tests;
 use koru_delegate_core::decisions::{
-    BotWaitEnrollmentReply, BotWaitId, ConsumerCleanup, DecisionBindingV1, DecisionClosureReason,
-    DecisionExpected, DecisionInputAcknowledgment, DecisionNativeResponse,
+    BotWaitEnrollmentReply, BotWaitId, BotWaitReason, ConsumerCleanup, DecisionBindingV1,
+    DecisionClosureReason, DecisionExpected, DecisionFence, DecisionInputAcknowledgment,
+    DecisionNativeResponse, DecisionRetainedEffect,
     DecisionPreparedProjection, DecisionProjectionAcknowledgment, DecisionProjectionRecord,
     DecisionPublicationBase, DecisionTransitionId, DecisionWaitExpected, OriginWaitStop,
     RunProjectionTargetV1,

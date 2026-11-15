@@ -328,7 +328,7 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
 pub(super) fn decode_historical(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
     decode(row)
 }
-pub(super) fn read(
+pub(crate) fn read(
     conn: &Connection,
     key: &NativeResultKey,
 ) -> Result<Option<NativeIntentRecord>, BotLedgerError> {

@@ -57,7 +57,7 @@ pub(crate) fn origin_stop_on(
         old.receipt.state.phase == DecisionPhase::StopPending
     })?;
     let admitted = authority::retained(tx, &old.receipt.binding)?;
-    require(admitted.state == crate::BotAdmissionState::Executing)?;
+    require(admitted.state == BotAdmissionState::Executing)?;
     // Physical release ends the previous active interval. Neither a decision
     // nor a successor resets accumulated execution time.
     let elapsed = admitted.active_elapsed_at(now).min(i64::MAX as u64) as i64;
