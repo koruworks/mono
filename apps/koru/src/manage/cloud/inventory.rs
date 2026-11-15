@@ -18,6 +18,7 @@ pub(crate) struct InventoryLaid {
 }
 #[derive(Clone, PartialEq)]
 struct Stamp {
+    copy: bool,
     revision: u64,
     scope: u64,
     account: Option<String>,
@@ -61,6 +62,14 @@ pub(crate) fn control_key(control: Control) -> Option<el::Key> {
         Control::CloudInventoryProfileDetails(id) => {
             return Some(el::Key::model(id.as_u128(), "inventory-profile-details"));
         }
+        Control::CloudInventoryDocument(id) => {
+            return Some(el::Key::model(id.as_u128(), "inventory-document"));
+        }
+        Control::CloudCopyBack => return Some(el::Key::surface("cloud-copy", "back")),
+        Control::CloudCopyReload => return Some(el::Key::surface("cloud-copy", "reload")),
+        Control::CloudCopyRemove(id) => {
+            return Some(el::Key::model(id.as_u128(), "cloud-copy-remove"));
+        }
         _ => return None,
     };
     Some(el::Key::surface("manage", part))
@@ -99,11 +108,20 @@ fn action(
     enabled: bool,
 ) -> El {
     let label = koru_i18n::t(crate::format::lang(), key).to_owned();
-    let width = ActionButton::new(&label, ActionStyle::Ghost, None).width(engine);
     controls.push((control, label.clone()));
-    leaf("Cloud inventory action", ButtonLeaf { label, width })
+    button(
+        engine,
+        control_key(control).expect("inventory control"),
+        key,
+        enabled,
+    )
+}
+pub(super) fn button(engine: &mut TextEngine, id: el::Key, key: TextKey, enabled: bool) -> El {
+    let label = koru_i18n::t(crate::format::lang(), key).to_owned();
+    let width = ActionButton::new(&label, ActionStyle::Ghost, None).width(engine);
+    leaf("Cloud action", ButtonLeaf { label, width })
         .semantic()
-        .id(control_key(control).expect("inventory control"))
+        .id(id)
         .hit()
         .focusable()
         .disabled(!enabled)
@@ -112,7 +130,7 @@ fn action(
         .action(el::Action::Click)
         .action(el::Action::Focus)
 }
-fn words(id: el::Key, label: String, heading: bool) -> El {
+pub(super) fn words(id: el::Key, label: String, heading: bool) -> El {
     text(&label)
         .id(id)
         .role(if heading { roles::SUBTITLE } else { roles::UI })
@@ -172,6 +190,7 @@ impl ManageView {
         };
         let cx = FrameCx::root();
         let stamp = Stamp {
+            copy: false,
             revision: state.revision,
             scope: self.c.account().active_scope,
             account: self.c.account().active_account_id.clone(),
@@ -454,6 +473,18 @@ impl ManageView {
                                 ));
                             }
                         }
+                        if row.document_id.is_some()
+                            && row.source_head_digest.is_some()
+                            && membership != MembershipState::Structural
+                        {
+                            group = group.child(action(
+                                &mut self.engine,
+                                &mut controls,
+                                Control::CloudInventoryDocument(id),
+                                TextKey::CloudCopyTitle,
+                                !checking,
+                            ));
+                        }
                         tree = tree.child(group);
                     }
                 }
@@ -555,6 +586,30 @@ impl ManageView {
         if self.laid.disabled.contains(&control) {
             return Some(true);
         }
+        if let Control::CloudInventoryDocument(unit) = control {
+            self.c.open_cloud_copy(unit);
+            self.page_scroll = 0.0;
+            self.sync();
+            return Some(true);
+        }
+        let copy_control = match control {
+            Control::CloudCopyBack => Some(super::copy::Control::Back),
+            Control::CloudCopyReload => Some(super::copy::Control::Reload),
+            Control::CloudCopyRemove(node) => Some(super::copy::Control::Remove(node.to_string())),
+            _ => None,
+        };
+        if let Some(control) = copy_control {
+            let key = self.c.cloud_copy().view.key()?.clone();
+            if let Some(intent) = self.c.cloud_copy_mut().view.activate(&key, &control) {
+                self.c.cloud_copy_intent(intent);
+            }
+            if let Some((key, confirm)) = self.c.cloud_copy_mut().view.take_dialog() {
+                self.dialog = Some(dialogs::Dialog::CloudFile { key, confirm });
+            }
+            self.page_scroll = 0.0;
+            self.sync();
+            return Some(true);
+        }
         let state = self.c.cloud_inventory_mut();
         match control {
             Control::CloudInventory => state.open(),
@@ -578,6 +633,92 @@ impl ManageView {
         }
         self.sync();
         Some(true)
+    }
+}
+
+impl ManageView {
+    pub(super) fn lay_cloud_copy(&mut self) -> profile_page::Laid {
+        let cx = FrameCx::root();
+        let stamp = Stamp {
+            copy: true,
+            revision: self.c.cloud_copy().revision,
+            scope: self.c.account().active_scope,
+            account: self.c.account().active_account_id.clone(),
+            column: self.column(),
+            lang: crate::format::lang(),
+            theme: cx.theme.key,
+            contrast: cx.contrast,
+            styles: [
+                theme::role::ui(),
+                theme::role::subtitle(),
+                theme::role::row(),
+            ],
+            names: Vec::new(),
+        };
+        if self
+            .laid
+            .inventory
+            .as_ref()
+            .is_some_and(|laid| laid.stamp == stamp)
+        {
+            return self.laid.clone();
+        }
+        let composition = self.c.cloud_copy().view.compose(&mut self.engine);
+        let column = self.column();
+        let mut cache = TextCache::default();
+        let provisional =
+            composition
+                .tree
+                .layout(&mut self.engine, &mut cache, column, FrameCx::root());
+        let height = provisional
+            .nodes
+            .iter()
+            .skip(1)
+            .map(|n| n.rect.y + n.rect.h - column.y)
+            .fold(0.0f32, f32::max);
+        let frame = composition.tree.layout(
+            &mut self.engine,
+            &mut cache,
+            Rect::new(column.x, column.y, column.w, height),
+            FrameCx::root(),
+        );
+        let mut controls = Vec::new();
+        let mut disabled = Vec::new();
+        for (control, key) in composition.controls {
+            let control = match control {
+                super::copy::Control::Back => Control::CloudCopyBack,
+                super::copy::Control::Reload => Control::CloudCopyReload,
+                super::copy::Control::Remove(node) => {
+                    Control::CloudCopyRemove(uuid::Uuid::parse_str(&node).expect("validated node"))
+                }
+            };
+            let node = frame.node(key).expect("copy control laid out");
+            if node.disabled {
+                disabled.push(control);
+            }
+            let label = match &node.label {
+                Some(el::Name::Key(key)) => koru_i18n::t(crate::format::lang(), *key).to_owned(),
+                Some(el::Name::Text(text)) => text.clone(),
+                None => String::new(),
+            };
+            controls.push(Placed {
+                control,
+                label,
+                rect: node.rect,
+                look: Look::Action(ActionStyle::Ghost),
+            });
+        }
+        profile_page::Laid {
+            inventory: Some(InventoryLaid {
+                frame: Rc::new(RefCell::new(frame)),
+                tree: Rc::new(composition.tree),
+                stamp,
+            }),
+            controls,
+            disabled,
+            height,
+            ..Default::default()
+        }
     }
 }
 

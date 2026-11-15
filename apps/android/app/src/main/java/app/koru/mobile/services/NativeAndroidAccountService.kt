@@ -61,6 +61,19 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         },
         cancel = { owner, generation -> adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation, expectedOwnerScope = owner) })
     val cloudInventoryState = cloudInventory.state
+    private val cloudCopy = CloudCopyPresentation(scope,
+        command = { owner, selection, node -> adapter.command(
+            if (node == null) AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT else AccountAction.ACCOUNT_ACTION_REMOVE_CLOUD_FILE,
+            expectedOwnerScope = owner, cloudDocumentSelection = selection, cloudFileNodeId = node?.value) },
+        cancel = { owner, generation ->
+            val reply = adapter.command(AccountAction.ACCOUNT_ACTION_CANCEL, generation, expectedOwnerScope = owner)
+            check(!reply.hasErrorCode())
+        },
+        refreshUsage = {
+            cloudStorage.usageChanged(adapter.status.value)
+            cloudInventory.workspaces(adapter.status.value.activeScope)
+        }, pollBoundary = adapter::pollBoundary)
+    internal val cloudCopyState = cloudCopy.state
     private val cycle = AccountPresentationCycle(presentation) {
         try {
             if (adapter.tick()) AccountObservation(adapter.status.value, adapter.results.value) else null
@@ -102,6 +115,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
                 cloudSync.observe(adapter.status.value, adapter.results.value)
                 cloudStorage.observe(adapter.status.value, adapter.results.value)
                 cloudInventory.observe(adapter.status.value, adapter.results.value)
+                cloudCopy.observe(adapter.status.value, adapter.results.value)
                 cloudSync.inspect(adapter.status.value)
                 delay(200)
             }
@@ -127,6 +141,25 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
     fun cloudInventoryPrevious(owner: Long) { scope.launch { cloudInventory.previous(owner) } }
     fun cloudInventoryWorkspaces(owner: Long) { scope.launch { cloudInventory.workspaces(owner) } }
     fun cloudInventoryDocuments(row: CloudWorkspaceRow, owner: Long) { scope.launch { cloudInventory.documents(row, owner) } }
+    internal fun openCloudCopy(row: CloudDocumentRow, epoch: CloudDocumentEpoch, owner: Long) { scope.launch {
+        val status = adapter.status.value
+        val current = cloudInventory.state.value.forAccount(owner, status.activeAccountId)
+        val page = current.page as? CloudInventoryPage.Documents ?: return@launch
+        if (status.activeScope != owner || page.epoch != epoch || row !in page.rows ||
+            row.membership == CloudDocumentMembership.Structural || row.document == null || row.head == null) return@launch
+        val account = status.activeAccountId ?: return@launch
+        cloudCopy.open(CloudCopySelection(account, epoch.workspace, epoch.incarnation, row.unit, row.document, row.head), status)
+    } }
+    internal fun closeCloudCopy() { scope.launch { cloudCopy.close() } }
+    internal fun reloadCloudCopy(key: app.koru.mobile.ui.editor.CloudCopyViewKey) { scope.launch {
+        if (cloudCopy.state.value.key != key || adapter.status.value.activeScope != key.ownerScope) return@launch
+        cloudCopy.close()
+        cloudInventory.workspaces(key.ownerScope)
+        cloudStorage.retry(adapter.status.value)
+    } }
+    internal fun removeCloudFile(key: app.koru.mobile.ui.editor.CloudCopyViewKey, node: app.koru.mobile.domain.BlockId) {
+        scope.launch { cloudCopy.remove(key, node) }
+    }
 
     fun act(intent: AccountIntent, ownerScope: Long, locale: String = "", profile: ProfileId? = null, accountId: String? = null, profiles: List<ProfileId> = emptyList()) {
         if (intent == AccountIntent.RelinkDevices && !presentation.queueRelink(ownerScope)) return
@@ -146,6 +179,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
         adapter.foreground(true)
         scope.launch { cloudStorage.foreground(true, adapter.status.value) }
         scope.launch { cloudInventory.foreground(true, adapter.status.value) }
+        scope.launch { cloudCopy.foreground(true, adapter.status.value) }
         if (returning) scope.launch { cycle.foregrounded() }
     }
 
@@ -157,6 +191,7 @@ class NativeAndroidAccountService(context: Context, deviceLink: NativeDeviceLink
             adapter.foreground(false)
             scope.launch { cloudStorage.foreground(false, adapter.status.value) }
             scope.launch { cloudInventory.foreground(false, adapter.status.value) }
+            scope.launch { cloudCopy.foreground(false, adapter.status.value) }
         }
     }
 }

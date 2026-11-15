@@ -135,6 +135,14 @@ internal class CloudStoragePresentation(
         request()
     }
 
+    /** A remote Cloud acknowledgement invalidates the whole cached snapshot.
+     * One event-driven read also runs when the meter is behind the files page. */
+    suspend fun usageChanged(next: AndroidAccountStatus) = lock.withLock {
+        align(next); retire(); transitRetryUsed = false
+        mutableState.value = CloudStorageState(next.activeScope, next.activeAccountId)
+        request(afterAcknowledgement = true)
+    }
+
     private fun expireBeforePaint() {
         mutableState.value = mutableState.value.forAccount(status.activeScope, status.activeAccountId, nowMillis())
     }
@@ -144,8 +152,8 @@ internal class CloudStoragePresentation(
             stale = mutableState.value.snapshot != null)
     }
 
-    private suspend fun request() {
-        if (!visible || !foreground || pending != null || status.activeAccountId == null ||
+    private suspend fun request(afterAcknowledgement: Boolean = false) {
+        if ((!visible && !afterAcknowledgement) || !foreground || pending != null || status.activeAccountId == null ||
             status.worker.stage != "signed_in") return
         expireBeforePaint()
         mutableState.value = mutableState.value.copy(loading = true, failed = false)

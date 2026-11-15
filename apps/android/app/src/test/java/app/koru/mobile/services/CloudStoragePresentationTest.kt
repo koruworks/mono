@@ -51,6 +51,20 @@ class CloudStoragePresentationTest {
         foreground(true, status())
     }
 
+    @Test fun remoteAcknowledgementClearsCacheAndReadsOnceWhileMeterIsHidden() = runTest {
+        val calls = Calls(); val state = presenter(calls); state.enter()
+        state.observe(status(), listOf(result()))
+        assertEquals(7L, state.state.value.snapshot!!.used)
+        state.visibility(false, status())
+        state.usageChanged(status())
+        assertNull(state.state.value.snapshot)
+        assertEquals(2, calls.reads.size)
+        state.observe(status(), listOf(result(sequence = 2, generation = 11, json = payload("3"))))
+        assertEquals(3L, state.state.value.snapshot!!.used)
+        advanceTimeBy(60_000); runCurrent()
+        assertEquals(2, calls.reads.size)
+    }
+
     @Test fun exactIntegersAndOverageNeverUseFloatingPoint() {
         val value = CloudStorageSnapshot.decode(payload("9007199254740993", "9007199254740992"))!!
         assertEquals(9007199254740993L, value.used)

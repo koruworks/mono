@@ -254,6 +254,8 @@ impl Context {
         match control {
             Control::CloudInventoryWorkspace(id, _)
             | Control::CloudInventoryDetails(id)
+            | Control::CloudInventoryDocument(id)
+            | Control::CloudCopyRemove(id)
             | Control::CloudInventoryProfileDetails(id) => {
                 Occurrence::model(self.window, self.view, id, part)
             }

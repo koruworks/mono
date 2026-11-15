@@ -52,13 +52,17 @@ struct Request {
     pending: Pending,
     deadline: Instant,
 }
-struct Retired {
-    pending: Pending,
-    cancelled: bool,
+pub(super) struct Retired {
+    pub(super) pending: Pending,
+    pub(super) cancelled: bool,
 }
 #[derive(Default)]
 pub(crate) struct Cancellations(Vec<(u64, Retired)>);
 impl Cancellations {
+    pub(super) fn capture_rows(&mut self, owner: u64, rows: impl Iterator<Item = Retired>) {
+        self.0.extend(rows.map(|row| (owner, row)));
+        debug_assert!(self.0.len() <= 64);
+    }
     pub(crate) fn capture(&mut self, owner: u64, inventory: &mut Inventory) {
         inventory.hide();
         self.0
@@ -107,7 +111,9 @@ impl Cancellations {
     ) -> bool {
         let id = match result {
             AccountOperationResult::CloudUsageWorkspaces { request_id, .. }
-            | AccountOperationResult::CloudUsageDocuments { request_id, .. } => Some(*request_id),
+            | AccountOperationResult::CloudUsageDocuments { request_id, .. }
+            | AccountOperationResult::CloudDocumentInspection { request_id, .. }
+            | AccountOperationResult::CloudFileRemoval { request_id, .. } => Some(*request_id),
             _ => None,
         };
         let before = self.0.len();
@@ -137,6 +143,9 @@ pub(crate) struct Inventory {
     history: Vec<Option<String>>,
 }
 impl Inventory {
+    pub(super) fn backlog(&self) -> usize {
+        self.retired.len() + usize::from(self.pending.is_some())
+    }
     pub fn checking(&self) -> bool {
         self.due || self.pending.is_some()
     }
@@ -504,6 +513,7 @@ impl Inventory {
 
 impl ProfilesController {
     pub(crate) fn retire_cloud_inventory(&mut self) {
+        self.retire_cloud_copy();
         self.inventory_cancellations
             .capture(self.account.active_scope, &mut self.cloud.inventory);
     }

@@ -25,6 +25,12 @@ internal object MobileAccountContract {
             if (command.hasCloudCursor()) CloudInventoryDecoder.requireCursor(command.cloudCursor)
         } else require(!command.hasCloudCursor())
         if (command.action == AccountAction.ACCOUNT_ACTION_CANCEL) require(command.generation != 0L)
+        if (command.action in setOf(AccountAction.ACCOUNT_ACTION_INSPECT_CLOUD_DOCUMENT, AccountAction.ACCOUNT_ACTION_REMOVE_CLOUD_FILE)) {
+            require(command.hasCloudDocumentSelectionJson() && CloudCopySelection.decode(command.cloudDocumentSelectionJson) != null)
+            if (command.action == AccountAction.ACCOUNT_ACTION_REMOVE_CLOUD_FILE) {
+                require(command.hasCloudFileNodeId() && UUID.fromString(command.cloudFileNodeId).toString() == command.cloudFileNodeId)
+            } else require(!command.hasCloudFileNodeId())
+        } else require(!command.hasCloudDocumentSelectionJson() && !command.hasCloudFileNodeId())
         if (command.action == AccountAction.ACCOUNT_ACTION_SELECT_PROFILES) {
             require(command.profileIdsList == command.profileIdsList.distinct().sorted())
             command.profileIdsList.forEach(::requireProfileId)
