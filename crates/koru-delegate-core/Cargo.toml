@@ -22,7 +22,7 @@ description = "The shared vocabulary of delegated runs and content-free schedule
 # `/v1/runs` enables it there.
 [features]
 default = []
-schema = ["dep:schemars", "koru-store-core/schema"]
+schema = ["dep:schemars", "schemars/uuid1", "koru-store-core/schema"]
 
 [dependencies]
 # `DeviceId` — the executing device, the device that holds a result.
