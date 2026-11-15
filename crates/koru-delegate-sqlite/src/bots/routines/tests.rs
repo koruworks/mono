@@ -321,12 +321,16 @@ fn routine_linked_fixture_without_current_proof_refuses_dispatch_but_history_sur
         .execute("UPDATE bot_admissions SET state='reserved'", [])
         .unwrap();
     assert!(
-        !db.recover_bot_reservation(&koru_delegate_core::BotRunKey {
+        db.recover_bot_reservation(&koru_delegate_core::BotRunKey {
             owner: s.provenance.owner,
             bot: s.provenance.bot,
             run: s.request.run
         })
         .unwrap()
+    );
+    assert_eq!(
+        db.bot_admission(s.request.run).unwrap().unwrap().state,
+        koru_delegate_core::BotAdmissionState::Queued
     );
     assert_eq!(
         db.reserve_bot(s.request.run, None),
