@@ -11,6 +11,22 @@ fn waiting() -> (Harness, BotSubmission, BotExecutionFence) {
 }
 
 fn waiting_with_memory(keep_memory: bool) -> (Harness, BotSubmission, BotExecutionFence) {
+    let (h, submission, fence, _, _) = waiting_with(keep_memory, false);
+    (h, submission, fence)
+}
+
+/// The waiting fixture, optionally with a native approval decision, plus the
+/// exact fresh policy proof and delegate boot its later answer must present.
+fn waiting_with(
+    keep_memory: bool,
+    native: bool,
+) -> (
+    Harness,
+    BotSubmission,
+    BotExecutionFence,
+    FreshBotPolicyProof,
+    DelegateBootId,
+) {
     let (mut h, submission, fence, policy, _) = native_results::active();
     h.orchestrator
         .synchronize_native_policy(policy.clone(), fence.owner.device)
@@ -73,16 +89,48 @@ fn waiting_with_memory(keep_memory: bool) -> (Harness, BotSubmission, BotExecuti
         },
         routine_policy: None,
     });
-    db.prepare_bot_decision(
-        &binding,
-        &FreshBotPolicyProof {
-            global: policy,
-            routine: None,
-        },
-        DelegateBootId::mint(),
-        &base,
-    )
-    .unwrap();
+    let binding = match (native, binding) {
+        (true, DecisionBindingV1::KoruEdit(v)) => {
+            DecisionBindingV1::NativeApproval(DecisionNativeBinding {
+                version: v.version,
+                owner: v.owner,
+                bot: v.bot,
+                run: v.run,
+                origin_attempt: v.origin_attempt,
+                origin_generation: v.origin_generation,
+                origin_session: v.origin_session,
+                origin_turn: v.origin_turn,
+                submission: v.submission,
+                routine: v.routine,
+                human_profile: v.human_profile,
+                workspace: v.workspace,
+                prompt: ApprovalId::mint(),
+                choices: DecisionList::new(vec![
+                    DecisionNativeChoice {
+                        id: ApprovalChoiceId::mint(),
+                        intent: serde_json::from_str("\"allow\"").unwrap(),
+                    },
+                    DecisionNativeChoice {
+                        id: ApprovalChoiceId::mint(),
+                        intent: serde_json::from_str("\"reject\"").unwrap(),
+                    },
+                ])
+                .unwrap(),
+                native_deadline_at_ms: None,
+                captured_policy: v.captured_policy,
+                global_policy: v.global_policy,
+                routine_policy: v.routine_policy,
+            })
+        }
+        (_, binding) => binding,
+    };
+    let proof = FreshBotPolicyProof {
+        global: policy,
+        routine: None,
+    };
+    let boot = DelegateBootId::mint();
+    db.prepare_bot_decision(&binding, &proof, boot, &base)
+        .unwrap();
     drop(db);
     if keep_memory {
         use crate::orchestrator::publication::RunDocumentOwner;
@@ -103,7 +151,7 @@ fn waiting_with_memory(keep_memory: bool) -> (Harness, BotSubmission, BotExecuti
         // Simulate a cold actor without opening a replacement handle.
         h.orchestrator.runs.remove(&fence.run);
     }
-    (h, submission, fence)
+    (h, submission, fence, proof, boot)
 }
 
 /// Real projection staging over the ordinary in-memory document fixture. This

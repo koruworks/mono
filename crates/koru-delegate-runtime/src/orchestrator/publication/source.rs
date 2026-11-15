@@ -588,11 +588,13 @@ impl Orchestrator {
             memory.generation,
             memory.session.ok_or_else(publication_pending)?,
         );
+        let mut installed = false;
         if let Some(attempt) = state.attempt.as_mut().filter(|attempt| {
             attempt.id == memory.attempt
                 && attempt.generation == memory.generation
                 && attempt.session == memory.session
         }) {
+            installed = true;
             attempt.orchestrator_turn = memory.orchestrator_turn;
             attempt.bot_terminal_turn = memory.terminal_turn;
             attempt.turns = memory
@@ -667,6 +669,12 @@ impl Orchestrator {
         }
         if let Some((key, model)) = retry.ordinary_model {
             state.models.entry(key).or_insert(model);
+        }
+        // The durable active-budget interval follows installed working memory
+        // exactly as the ordinary owner does after an approval or turn change.
+        // A failed refresh is retried by the next installed observation.
+        if installed && let Err(error) = self.bot_refresh_active_clock(run) {
+            self.trace(run, "active_clock_refresh_failed", format_args!("{error}"));
         }
         Ok(())
     }

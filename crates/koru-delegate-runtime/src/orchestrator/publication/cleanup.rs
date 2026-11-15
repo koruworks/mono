@@ -275,6 +275,14 @@ impl Orchestrator {
                     return Ok(false);
                 }
                 let (attempt, generation) = execution.cleanup_target.attempt();
+                // Both proofs are gathered before anything is retired, so an
+                // unavailable one changes nothing and occupancy stays held.
+                let Some(effect) = self.decision_retained_effect(&execution)? else {
+                    return Ok(false);
+                };
+                let Some(drained) = self.decision_native_drain(run, attempt, generation)? else {
+                    return Ok(false);
+                };
                 let row = &execution.current_attempt;
                 if row.attempt != attempt
                     || row.generation != generation
@@ -308,10 +316,6 @@ impl Orchestrator {
                     return Ok(false);
                 }
                 let now = self.ports.clock.now_ms();
-                // An empty drain list: the C correlation refuses it whenever
-                // any fenced or drained effect exists for this attempt, so a
-                // Run that drained effects stays occupied until a bounded
-                // drained-receipt reader supplies the complete list.
                 let cleanup = ConsumerCleanup::Confirmed {
                     cleanup_revision: current.expected.revision,
                     target: current.cleanup_target.clone(),
@@ -327,10 +331,9 @@ impl Orchestrator {
                         attempt,
                         generation,
                         observed_at_ms: now,
-                        effects: DecisionList::new(Vec::new())
-                            .map_err(|_| publication_pending())?,
+                        effects: DecisionList::new(drained).map_err(|_| publication_pending())?,
                     },
-                    retained_effect_outcome: None,
+                    retained_effect_outcome: effect,
                 };
                 let transition = DecisionTransitionId::mint();
                 if let Some(retry) = self
@@ -385,6 +388,37 @@ impl Orchestrator {
             state.source_obligation = Some(super::source::SourceObligation::ProcessEnded);
         }
         Ok(true)
+    }
+
+    /// The complete drained native receipts of exactly this attempt, or None
+    /// while that proof is unavailable. Join point for the C bounded reader:
+    /// until it exists only the empty list is offered, and the C correlation
+    /// refuses it whenever any effect of the attempt was fenced or drained,
+    /// so such a Run stays occupied rather than claiming a complete drain.
+    fn decision_native_drain(
+        &mut self,
+        _run: RunId,
+        _attempt: koru_delegate_core::RunAttemptId,
+        _generation: koru_delegate_core::AttemptGeneration,
+    ) -> Result<Option<Vec<koru_delegate_core::NativeEffectDrainReceipt>>, RunError> {
+        Ok(Some(Vec::new()))
+    }
+
+    /// The retained effect outcome the final record must carry. `None` means
+    /// the proof is unavailable and occupancy stays held; `Some(None)` means
+    /// no outcome applies (the decision did not consume a Koru edit). Join
+    /// point for the C accessor of a consumed Koru edit's retained outcome.
+    fn decision_retained_effect(
+        &mut self,
+        execution: &koru_delegate_sqlite::DecisionWaitExecution,
+    ) -> Result<Option<Option<koru_delegate_core::decisions::DecisionRetainedEffect>>, RunError>
+    {
+        use koru_delegate_core::decisions::{DecisionAuthorization, DecisionKind};
+        let consumed_edit = execution.decision_state.as_ref().is_some_and(|state| {
+            state.kind == DecisionKind::KoruEdit
+                && state.authorization == DecisionAuthorization::Consumed
+        });
+        Ok(if consumed_edit { None } else { Some(None) })
     }
 
     /// Permission to reconcile an existing Held effect while canonical status

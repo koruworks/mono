@@ -389,3 +389,123 @@ fn decision_cleanup_confirms_retired_consumer_then_settles_only_the_wait() {
         "wait settlement never settles the admission"
     );
 }
+
+fn publish_owed(h: &mut Harness, run: RunId) {
+    for _ in 0..4 {
+        let Some(start) = h.orchestrator.next_run_publication(run).unwrap() else {
+            return;
+        };
+        h.orchestrator.cancel_unstarted_publication(start);
+        apply_next(h, run);
+    }
+    panic!("owed publications did not drain within the bound");
+}
+
+#[test]
+fn decision_settled_native_answer_still_stops_on_the_execution_budget() {
+    let (mut h, _, fence, proof, boot) = waiting_with(true, true);
+    let run = fence.run;
+    apply_next(&mut h, run);
+    let decision = latest(&h, &fence).identity.decision.unwrap().decision;
+    let record = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .bot_decision(fence.owner, run, decision)
+        .unwrap()
+        .unwrap();
+    let DecisionBindingV1::NativeApproval(binding) = &record.receipt.binding else {
+        panic!("native approval")
+    };
+    let input = AnswerDecision {
+        owner: fence.owner,
+        run,
+        decision,
+        expected_revision: record.receipt.state.revision,
+        binding_digest: record.receipt.binding_digest,
+        request: DecisionAnswerId::mint(),
+        human: binding.human_profile,
+        choice: DecisionAnswerChoice::Native {
+            offered: binding.choices.as_slice()[0].clone(),
+        },
+        authority_digest: DecisionDigest::from_bytes([9; 32]),
+    };
+    let answered = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .answer_bot_decision(&input, DecisionTransitionId::mint(), &proof, boot)
+        .unwrap();
+    let Some(DecisionNativeResponse::Prepared { key }) = answered.native_response else {
+        panic!("prepared native response")
+    };
+    let settled = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .record_decision_native_answer(
+            fence.owner,
+            run,
+            DecisionTransitionId::mint(),
+            &DecisionNativeResponse::Acknowledged {
+                key: key.clone(),
+                acknowledgment: key,
+                observed_at_ms: 1000,
+            },
+        )
+        .unwrap();
+    assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+    publish_owed(&mut h, run);
+    // The native Allow continues execution; its publication fence is still
+    // held. The whole-Run execution budget then expires.
+    h.schedule_clock.fetch_add(
+        koru_delegate_sqlite::BOT_ACTIVE_BUDGET_MS as i64 + 1_000,
+        Ordering::AcqRel,
+    );
+    let creation = h.attempt(run).provider_session.unwrap().idempotency;
+    let _ = h.orchestrator.bot_budget_tick(run);
+    // A settled answer does not make the Run unstoppable: the exact Canceled
+    // request is retained against the settled disposition and the current
+    // consumer is retired physically.
+    let latest = latest(&h, &fence);
+    assert!(matches!(
+        latest.target,
+        RunProjectionTargetV1::Control {
+            action: DecisionControlAction::CleanupRequested {
+                cause: DecisionClosureReason::Canceled,
+                ..
+            },
+            disposition: Some(DecisionDisposition::Settled { .. }),
+            ..
+        }
+    ));
+    assert!(
+        h.sessions
+            .lock()
+            .unwrap()
+            .calls
+            .contains(&Call::Retire(creation))
+    );
+    assert_eq!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_decision(fence.owner, run, decision)
+            .unwrap()
+            .unwrap()
+            .receipt
+            .state
+            .phase,
+        DecisionPhase::Settled,
+        "the settled answer is preserved, never reopened"
+    );
+    assert_eq!(
+        h.schedule_store.bot_execution(run).unwrap().unwrap().state,
+        BotAdmissionState::Executing,
+        "the budget Stop retains admission until cleanup and publication"
+    );
+}
