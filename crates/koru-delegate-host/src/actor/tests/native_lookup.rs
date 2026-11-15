@@ -12,7 +12,7 @@ impl RunDocumentHandle for ReadOnlyDocument {
         _: &koru_delegate_document::RunProjectionIntent,
     ) -> PortResult<koru_delegate_core::decisions::DecisionPreparedProjection> {
         Err(PortError::new(
-            Port::Documents,
+            koru_delegate_runtime::Port::Documents,
             "projection_unavailable",
             "ordinary fixture does not own decision publication",
         ))
@@ -22,7 +22,7 @@ impl RunDocumentHandle for ReadOnlyDocument {
         _: &koru_delegate_core::decisions::DecisionPreparedProjection,
     ) -> PortResult<koru_delegate_document::AppliedRunProjection> {
         Err(PortError::new(
-            Port::Documents,
+            koru_delegate_runtime::Port::Documents,
             "projection_unavailable",
             "ordinary fixture does not own decision publication",
         ))
@@ -32,7 +32,7 @@ impl RunDocumentHandle for ReadOnlyDocument {
         _: koru_delegate_core::decisions::DecisionTransitionId,
     ) -> PortResult<()> {
         Err(PortError::new(
-            Port::Documents,
+            koru_delegate_runtime::Port::Documents,
             "projection_unavailable",
             "ordinary fixture does not own decision publication",
         ))

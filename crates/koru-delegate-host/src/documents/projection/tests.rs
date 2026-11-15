@@ -7,11 +7,13 @@ fn id<T: std::str::FromStr>() -> T {
     uuid::Uuid::new_v4().to_string().parse().ok().unwrap()
 }
 fn fixture() -> (RunDocument, RunProjectionIntent) {
-    let device: DeviceId = id();
+    let device = DeviceId::from_uuid(uuid::Uuid::new_v4());
     let mut header = RunHeader::from_request(
         DelegationRequest {
             run: id(),
-            requested_by: ActorRef::Person { profile: id() },
+            requested_by: ActorRef::Person {
+                profile: ProfileId::from_uuid(uuid::Uuid::new_v4()),
+            },
             objective: Objective::new("projection fixture").unwrap(),
             agent: SessionProfileKey::BuiltIn("codex".parse().unwrap()),
             requested_model: None,
@@ -26,7 +28,7 @@ fn fixture() -> (RunDocument, RunProjectionIntent) {
         1,
     );
     let owner = BotOwner {
-        user_scope: id(),
+        user_scope: koru_store_core::UserScopeId::new(),
         device,
     };
     let bot: BotId = id();
