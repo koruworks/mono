@@ -160,6 +160,9 @@ closed_vocabulary! {
         RunReference => "run_reference",
         OwnedRole => "owned_role",
         AttachmentCopy => "attachment_copy",
+        // ai.db 23. For a Routine, `hide` means paused: its Schedule
+        // document is not moved to Trash.
+        Routine => "routine",
     }
 }
 
@@ -176,6 +179,7 @@ closed_vocabulary! {
         RunOfConversation => "run_of_conversation",
         RoleCreationReceipt => "role_creation_receipt",
         ExclusiveAttachment => "exclusive_attachment",
+        OwnedRoutine => "owned_routine",
     }
 }
 
@@ -248,6 +252,12 @@ pub enum BotLifecycleSubject {
         chat_id: ChatId,
         attachment_id: ChatAttachmentId,
     },
+    /// One Routine of the Bot. `document_id` is the Routine's Schedule
+    /// document, whose id is its Schedule id, so it names the Routine.
+    Routine {
+        workspace_id: WorkspaceId,
+        document_id: DocumentId,
+    },
 }
 
 impl BotLifecycleSubject {
@@ -258,6 +268,7 @@ impl BotLifecycleSubject {
             Self::RunReference { .. } => BotLifecycleMemberKind::RunReference,
             Self::OwnedRole { .. } => BotLifecycleMemberKind::OwnedRole,
             Self::AttachmentCopy { .. } => BotLifecycleMemberKind::AttachmentCopy,
+            Self::Routine { .. } => BotLifecycleMemberKind::Routine,
         }
     }
     /// The owner that applies this member's effect. Fixed by kind, so a
@@ -265,7 +276,8 @@ impl BotLifecycleSubject {
     pub fn owner(&self) -> BotLifecycleOwner {
         match self {
             Self::Bot | Self::Chat { .. } | Self::AttachmentCopy { .. } => BotLifecycleOwner::Ai,
-            Self::RunReference { .. } => BotLifecycleOwner::Delegate,
+            // A Routine is paused by the delegate's schedule coordinator.
+            Self::RunReference { .. } | Self::Routine { .. } => BotLifecycleOwner::Delegate,
             Self::OwnedRole { .. } => BotLifecycleOwner::Store,
         }
     }

@@ -28,6 +28,33 @@ impl BotRoutineCanonical {
     }
 }
 
+/// The lifecycle a caller expects a captured Schedule definition to have.
+/// A scheduled occurrence is captured from an Active definition, which is the
+/// default and what every caller that states nothing gets. Only the owner
+/// Test captures a definition that is exactly Paused(Manual), and it must say
+/// so: a paused capture is never accepted because it merely arrived.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BotRoutineCaptureLifecycle {
+    #[default]
+    Active,
+    TestPausedManual,
+}
+impl BotRoutineCaptureLifecycle {
+    fn admits(self, lifecycle: &ScheduleLifecycle) -> bool {
+        Self::of(lifecycle) == Some(self)
+    }
+    /// The expectation a stored definition's lifecycle satisfies, if any.
+    pub fn of(lifecycle: &ScheduleLifecycle) -> Option<Self> {
+        match lifecycle {
+            ScheduleLifecycle::Active => Some(Self::Active),
+            ScheduleLifecycle::Paused {
+                reason: SchedulePauseReason::Manual,
+            } => Some(Self::TestPausedManual),
+            _ => None,
+        }
+    }
+}
+
 /// Private capture_json envelope. It is never sent over the reverse bridge.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -48,7 +75,28 @@ impl std::fmt::Debug for BotRoutineCaptureV1 {
     }
 }
 impl BotRoutineCaptureV1 {
+    /// A capture of a scheduled occurrence: its definition must be Active.
     pub fn validate(&self, prepared: &RoutinePrepared) -> Result<(), BotError> {
+        self.validate_expecting(prepared, BotRoutineCaptureLifecycle::Active)
+    }
+
+    /// A capture that was already retained. The check that it was expected
+    /// was made when it was written ([`BotRoutineCapturedSources::freeze`]),
+    /// and its digest binds the definition, so it is read back under the
+    /// lifecycle it holds. Any lifecycle other than Active or exactly
+    /// Paused(Manual) is refused: no writer produces one.
+    pub fn validate_retained(&self, prepared: &RoutinePrepared) -> Result<(), BotError> {
+        let expected = BotRoutineCaptureLifecycle::of(&self.schedule_definition.lifecycle)
+            .ok_or(BotError::Invalid)?;
+        self.validate_expecting(prepared, expected)
+    }
+
+    /// The same validation with the lifecycle the caller expects stated.
+    pub fn validate_expecting(
+        &self,
+        prepared: &RoutinePrepared,
+        expected: BotRoutineCaptureLifecycle,
+    ) -> Result<(), BotError> {
         let submission = &prepared.submission;
         let p = &submission.provenance;
         let home = self.canonical.home;
@@ -69,7 +117,7 @@ impl BotRoutineCaptureV1 {
             || submission.workspace != home
             || self.schedule_definition.revision != prepared.definition.revision
             || self.schedule_definition.effective_at_ms > prepared.slot.occurrence_ms
-            || self.schedule_definition.lifecycle != ScheduleLifecycle::Active
+            || !expected.admits(&self.schedule_definition.lifecycle)
             || self.canonical.config_revision != p.config_revision
             || self.canonical.policy_revision != p.policy_revision
             || self.grant.policy != submission.policy
@@ -197,7 +245,7 @@ pub struct BotRoutinePreparation {
 }
 impl BotRoutinePreparation {
     pub fn validate(&self) -> Result<(), BotError> {
-        self.capture.validate(&self.prepared)?;
+        self.capture.validate_retained(&self.prepared)?;
         if let BotRoutinePreparationStage::Linked { acknowledgement } = &self.stage {
             if !acknowledgement.claim.matches_prepared(&self.prepared) {
                 return Err(BotError::Invalid);

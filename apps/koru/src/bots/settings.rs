@@ -272,7 +272,8 @@ impl Settings {
             BotOperationKind::Start
             | BotOperationKind::Continue
             | BotOperationKind::RoutineDraft
-            | BotOperationKind::RoutineOccurrence => Words::BotsErrOperationPending,
+            | BotOperationKind::RoutineOccurrence
+            | BotOperationKind::UpdateRoutineAccess => Words::BotsErrOperationPending,
         })
     }
 

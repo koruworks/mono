@@ -24,6 +24,10 @@ pub struct BotRoutineDetail {
     pub bot_revision: u64,
     pub observed_at_ms: i64,
     pub creation: BotRoutineCreationObservation,
+    /// The grant the Routine runs under now: the one it was set up with
+    /// until its access is edited, the edited one after.
+    pub access: BotRoutineGrantSummary,
+    /// The original grant, frozen at creation.
     pub access_at_setup: BotRoutineGrantSummary,
     pub configured_model: BotRoutineModelObservation,
     pub destination: RoutineDestinationObservation,

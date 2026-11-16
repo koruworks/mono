@@ -31,6 +31,9 @@ pub struct RoutineListCheckpoint {
     expected: u64,
     fingerprint: RoutineDigest32,
     grant_digest: RoutineDigest32,
+    /// The grant the row showed, with the request that produced it, so an
+    /// access edit between the read and its validation is a conflict.
+    current_grant: (RoutineDigest32, BotRequestId),
     origin: Option<Vec<u8>>,
     state: BotRoutineCreationState,
     refusal: Option<BotRoutineCreationRefusal>,
@@ -160,6 +163,9 @@ impl Repository {
         } else {
             Err(BotError::Unavailable)
         };
+        // The row shows the grant the Routine runs under now. The creation
+        // grant is what the detail calls access at setup.
+        let current = access::current_on(&self.connection, &c)?;
         let item = BotRoutineListItem {
             schedule_id: c.identity.schedule,
             creation: BotRoutineCreationObservation {
@@ -168,22 +174,7 @@ impl Repository {
                 refusal: c.refusal,
                 updated_at_ms: c.updated_at_ms,
             },
-            grant: BotRoutineGrantSummary {
-                source_bot_policy_revision: c.identity.grant.source_bot_policy_revision,
-                grant_revision: c.identity.grant.grant_revision,
-                access: match c.identity.grant.policy.access {
-                    koru_delegate_core::BotAccess::Default => BotAccess::Default,
-                    koru_delegate_core::BotAccess::Workspace => BotAccess::Workspace,
-                },
-                selected_page_count: c
-                    .identity
-                    .grant
-                    .policy
-                    .selected_pages
-                    .len()
-                    .try_into()
-                    .map_err(bad)?,
-            },
+            grant: current.grant.summary().map_err(|_| BotError::Storage)?,
             live: BotRoutineLiveObservation::Unavailable {},
             local_conversations: recent
                 .as_ref()
@@ -196,6 +187,7 @@ impl Repository {
             expected: c.identity.expected_bot_revision,
             fingerprint: c.identity.command_fingerprint,
             grant_digest: c.identity.grant.digest,
+            current_grant: (current.grant.digest, current.request),
             origin: c.origin_edit_revision.clone(),
             state: c.state,
             refusal: c.refusal,

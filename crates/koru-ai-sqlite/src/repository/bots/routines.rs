@@ -2,6 +2,8 @@
 //! Routine creation on the existing writer; no Store, worker or launch effects.
 use super::*;
 use koru_delegate_core::{RoutineDigest32, ScheduleId};
+mod access;
+pub use access::RoutineAccessRecoveryPage;
 mod bounded;
 mod detail;
 pub use detail::RoutineDetailSnapshot;

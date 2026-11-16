@@ -6,6 +6,7 @@ use super::*;
 mod decisions;
 mod library;
 mod memory_identity;
+mod routine_controls;
 mod routines;
 
 #[test]

@@ -92,8 +92,13 @@ fn fresh(conn: &Connection, input: &BotRoutineCapturedSources) -> Result<(), Bot
     .ok_or(BotError::NotFound)?;
     if creation.state != BotRoutineCreationState::Bound
         || creation.identity.route() != input.creation
-        || creation.identity.grant != input.grant
     {
+        return Err(BotError::Conflict);
+    }
+    // The grant an occurrence captures is the one the Routine runs under
+    // now: its creation grant until its access is edited, the edited grant
+    // after. The creation grant is refused once an edit exists.
+    if access::current_on(conn, &creation)?.grant != input.grant {
         return Err(BotError::Conflict);
     }
     input.grant.validate(current.home)?;
@@ -205,11 +210,28 @@ impl Repository {
         }
         Ok((creation.identity, current, profile))
     }
+    /// A scheduled occurrence: the captured definition must be Active.
     pub fn prepare_routine_occurrence(
         &mut self,
         input: &BotRoutineCapturedSources,
         now: i64,
     ) -> Result<BotRoutinePreparationAdmission, BotError> {
+        self.prepare_routine_occurrence_expecting(input, BotRoutineCaptureLifecycle::Active, now)
+    }
+
+    /// The same preparation with the definition lifecycle the caller expects
+    /// stated. Only the owner Test passes `TestPausedManual`, after matching
+    /// its own expectation; a paused definition offered to any other caller
+    /// is refused before anything is written.
+    pub fn prepare_routine_occurrence_expecting(
+        &mut self,
+        input: &BotRoutineCapturedSources,
+        expected: BotRoutineCaptureLifecycle,
+        now: i64,
+    ) -> Result<BotRoutinePreparationAdmission, BotError> {
+        if BotRoutineCaptureLifecycle::of(&input.definition.lifecycle) != Some(expected) {
+            return Err(BotError::Invalid);
+        }
         let hash = input.semantic_hash()?;
         let tx = self.connection.transaction().map_err(bad)?;
         visible(&tx, owner(&input.slot), input.slot.bot)?;
@@ -232,7 +254,7 @@ impl Repository {
             user_message: uuid::Uuid::new_v4(),
             assistant_message: uuid::Uuid::new_v4(),
         };
-        let row = input.freeze(ids, now)?;
+        let row = input.freeze_expecting(ids, now, expected)?;
         rows::insert(&tx, &row)?;
         tx.commit().map_err(bad)?;
         Ok(BotRoutinePreparationAdmission::Ready(Box::new(row)))

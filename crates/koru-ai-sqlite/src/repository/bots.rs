@@ -13,7 +13,7 @@ pub(crate) mod lifecycle;
 pub use branch::HistoricalBotRun;
 pub use lifecycle::{
     BotHold, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
-    ParkedCursor, ParkedForOwner,
+    LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner,
 };
 mod creation;
 pub use creation::BotCreationScan;
@@ -26,8 +26,8 @@ pub use decisions::{
 };
 mod routines;
 pub use routines::{
-    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
-    RoutineToolSubject,
+    RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
+    RoutineReadSubject, RoutineToolSubject,
 };
 
 fn bad(_: impl std::fmt::Display) -> BotError {
@@ -416,6 +416,7 @@ impl BotRepository for Repository {
                         | "create_routine"
                         | "routine_draft"
                         | "routine_occurrence"
+                        | "update_routine_access"
                 ) =>
             {
                 Err(BotError::Conflict)

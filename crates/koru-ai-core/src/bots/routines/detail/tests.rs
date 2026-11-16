@@ -15,6 +15,12 @@ fn detail() -> BotRoutineDetail {
             refusal: None,
             updated_at_ms: -100,
         },
+        access: BotRoutineGrantSummary {
+            source_bot_policy_revision: 2,
+            grant_revision: 2,
+            access: BotAccess::Workspace,
+            selected_page_count: 3,
+        },
         access_at_setup: BotRoutineGrantSummary {
             source_bot_policy_revision: 1,
             grant_revision: 1,
@@ -58,6 +64,7 @@ fn routine_detail_wire_is_closed_and_counts_complete_response() {
         vec![],
         vec!["detail"],
         vec!["detail", "creation"],
+        vec!["detail", "access"],
         vec!["detail", "access_at_setup"],
         vec!["detail", "configured_model"],
         vec!["detail", "destination"],

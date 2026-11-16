@@ -35,9 +35,9 @@ pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
     BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotCreationScan, BotDecisionCard, BotDecisionClosure,
     BotDecisionReplayRollover, BotHold, BotNativeDecisionLink, HistoricalBotRun, LifecycleCapture,
-    LifecycleMember, LifecycleMemberDraft, LifecycleOperation, ParkedCursor, ParkedForOwner,
-    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
-    RoutineToolSubject,
+    LifecycleMember, LifecycleMemberDraft, LifecycleOperation, LifecycleRoutineAnswer,
+    ParkedCursor, ParkedForOwner, RoutineAccessRecoveryPage, RoutineDetailSnapshot,
+    RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
 };
 
 pub struct Repository {

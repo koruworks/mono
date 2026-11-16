@@ -91,6 +91,39 @@ fn every_vocabulary_round_trips_and_refuses_unknown_tokens() {
 }
 
 #[test]
+fn lifecycle_routine_subject_is_a_delegate_member_named_by_its_schedule_document() {
+    use crate::{DocumentId, WorkspaceId};
+    let subject = BotLifecycleSubject::Routine {
+        workspace_id: WorkspaceId::new(),
+        document_id: DocumentId::new(),
+    };
+    assert_eq!(subject.kind(), BotLifecycleMemberKind::Routine);
+    assert_eq!(subject.owner(), BotLifecycleOwner::Delegate);
+    assert_eq!(BotLifecycleMemberKind::Routine.token(), "routine");
+    assert_eq!(BotLifecycleReason::OwnedRoutine.token(), "owned_routine");
+    let json = serde_json::to_value(&subject).unwrap();
+    assert_eq!(json["subject"], serde_json::json!("routine"));
+    assert_eq!(
+        serde_json::from_value::<BotLifecycleSubject>(json.clone()).unwrap(),
+        subject
+    );
+    // Strict: a Routine member carries no conversation or Run identity.
+    let mut extra = json;
+    extra["chat_id"] = serde_json::json!(crate::ChatId::new());
+    assert!(serde_json::from_value::<BotLifecycleSubject>(extra).is_err());
+    // Every other kind keeps the owner it had.
+    assert_eq!(BotLifecycleSubject::Bot.owner(), BotLifecycleOwner::Ai);
+    assert_eq!(
+        BotLifecycleSubject::OwnedRole {
+            workspace_id: WorkspaceId::new(),
+            document_id: DocumentId::new()
+        }
+        .owner(),
+        BotLifecycleOwner::Store
+    );
+}
+
+#[test]
 fn kind_rules_match_the_stored_constraints() {
     use BotLifecycleKind::*;
     for kind in BotLifecycleKind::ALL {

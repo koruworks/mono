@@ -109,8 +109,11 @@ impl LifecycleOperation {
 fn allowed_members(kind: BotLifecycleKind) -> &'static [BotLifecycleMemberKind] {
     use BotLifecycleMemberKind as M;
     match kind {
-        BotLifecycleKind::Archive => &[M::Bot, M::Chat],
-        BotLifecycleKind::Trash => &[M::Bot, M::Chat, M::RunReference, M::OwnedRole],
+        // Archive and Trash pause the Bot's Routines (ai.db 23).
+        BotLifecycleKind::Archive => &[M::Bot, M::Chat, M::Routine],
+        BotLifecycleKind::Trash => {
+            &[M::Bot, M::Chat, M::RunReference, M::OwnedRole, M::Routine]
+        }
         BotLifecycleKind::TrashChat => &[M::Chat, M::RunReference],
         BotLifecycleKind::Restore | BotLifecycleKind::RestoreChat => &[],
         BotLifecycleKind::PurgeBot => &[M::Bot, M::Chat, M::AttachmentCopy],
@@ -517,9 +520,153 @@ fn revision_held(current: u64, barrier: Option<u64>) -> bool {
     barrier.is_some_and(|barrier| current >= barrier)
 }
 
+/// What the delegate's schedule coordinator answered when asked to pause one
+/// captured Routine. Only its answer settles a Routine member: the driver's
+/// own read of the Schedule never does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LifecycleRoutineAnswer {
+    /// The coordinator paused it, or found it already paused.
+    Paused,
+    /// The coordinator found no live Schedule: it was deleted or retired.
+    Gone,
+    /// Another device owns it, a handoff is pending, or no answer came.
+    Unavailable,
+}
+
+/// A whole-Bot Archive or Trash completes only once every captured Routine
+/// is confirmed paused (`acknowledged`) or kept (`retained`). A Routine that
+/// is still `pending` or `unavailable` may still be on.
+fn require_routines_settled(
+    tx: &Connection,
+    scope: UserScopeId,
+    operation: BotRequestId,
+) -> Result<(), BotError> {
+    let unsettled: bool = tx
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM bot_lifecycle_members WHERE user_scope_id=?1 AND operation_id=?2
+             AND kind='routine' AND stage NOT IN ('acknowledged','retained'))",
+            params![scope.to_storage(), operation.to_storage()],
+            |r| r.get(0),
+        )
+        .map_err(bad)?;
+    if unsettled {
+        return Err(BotError::Conflict);
+    }
+    Ok(())
+}
+
 /// The driver's writes (P1.7 S4). Each is one short transaction on the AI
 /// writer; every owner call happens before or after, never inside.
 impl Repository {
+    /// Every Routine of a Bot, with its home and whether its creation is
+    /// bound: what a whole-Bot Archive or Trash captures. Column-only; no
+    /// seed or grant is read.
+    pub fn lifecycle_bot_routines(
+        &self,
+        bot: BotId,
+    ) -> Result<Vec<(koru_delegate_core::ScheduleId, WorkspaceId, bool)>, BotError> {
+        let mut query = self
+            .connection
+            .prepare(
+                "SELECT CASE WHEN typeof(schedule_id)='text' AND length(CAST(schedule_id AS BLOB))=36 THEN schedule_id END,
+                 CASE WHEN typeof(workspace_id)='text' AND length(CAST(workspace_id AS BLOB))=36 THEN workspace_id END,
+                 creation_state='bound' FROM bot_routines WHERE bot_id=?1 ORDER BY schedule_id",
+            )
+            .map_err(bad)?;
+        let rows = query
+            .query_map([bot.to_storage()], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, bool>(2)?,
+                ))
+            })
+            .map_err(bad)?;
+        rows.map(|row| {
+            let (schedule, workspace, bound) = row.map_err(bad)?;
+            Ok((
+                schedule.parse().map_err(bad)?,
+                WorkspaceId::parse(&workspace).ok_or(BotError::Storage)?,
+                bound,
+            ))
+        })
+        .collect()
+    }
+
+    /// Record the coordinator's answer for one captured Routine of a moving
+    /// Archive or Trash. `Paused` acknowledges it; `Gone` keeps it as
+    /// already trashed; `Unavailable` leaves it for a retry, and the caller
+    /// parks the operation. A member that is already acknowledged or
+    /// retained is final and is returned as stored: a late answer never
+    /// turns a confirmed pause back into a doubt.
+    pub fn settle_bot_lifecycle_routine(
+        &mut self,
+        scope: UserScopeId,
+        operation: BotRequestId,
+        document: DocumentId,
+        answer: LifecycleRoutineAnswer,
+        now: i64,
+    ) -> Result<LifecycleMember, BotError> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(bad)?;
+        let op = read_operation(&tx, scope, operation)?.ok_or(BotError::NotFound)?;
+        let member = |op: &LifecycleOperation| {
+            op.members
+                .iter()
+                .find(|member| {
+                    matches!(&member.subject, BotLifecycleSubject::Routine { document_id, .. }
+                        if *document_id == document)
+                })
+                .cloned()
+        };
+        let stored = member(&op).ok_or(BotError::NotFound)?;
+        if matches!(
+            stored.stage,
+            BotLifecycleMemberStage::Acknowledged | BotLifecycleMemberStage::Retained
+        ) {
+            return Ok(stored);
+        }
+        if !matches!(op.kind, BotLifecycleKind::Archive | BotLifecycleKind::Trash)
+            || !op.stage.moving()
+        {
+            return Err(BotError::Conflict);
+        }
+        let (stage, retained) = match answer {
+            LifecycleRoutineAnswer::Paused => (BotLifecycleMemberStage::Acknowledged, None),
+            LifecycleRoutineAnswer::Gone => (
+                BotLifecycleMemberStage::Retained,
+                Some(BotLifecycleRetained::AlreadyTrashed),
+            ),
+            LifecycleRoutineAnswer::Unavailable => (BotLifecycleMemberStage::Unavailable, None),
+        };
+        let changed = tx
+            .execute(
+                "UPDATE bot_lifecycle_members SET stage=?4,retained_reason=?5,updated_at_ms=?6
+                 WHERE user_scope_id=?1 AND operation_id=?2 AND ordinal=?3 AND kind='routine'
+                 AND stage IN ('pending','unavailable')",
+                params![
+                    scope.to_storage(),
+                    operation.to_storage(),
+                    stored.ordinal,
+                    stage.token(),
+                    retained.map(BotLifecycleRetained::token),
+                    now
+                ],
+            )
+            .map_err(bad)?;
+        if changed != 1 {
+            return Err(BotError::Conflict);
+        }
+        let done = read_operation(&tx, scope, operation)?
+            .as_ref()
+            .and_then(member)
+            .ok_or(BotError::Storage)?;
+        tx.commit().map_err(bad)?;
+        Ok(done)
+    }
+
     /// Every conversation of a Bot, with whether it is in Trash: what a
     /// whole-Bot operation captures.
     pub fn lifecycle_bot_chats(&self, bot: BotId) -> Result<Vec<(ChatId, bool)>, BotError> {
@@ -739,6 +886,7 @@ impl Repository {
         {
             return Err(BotError::Conflict);
         }
+        require_routines_settled(&tx, scope, operation)?;
         let (current, prior) = admission::guard_any_lifecycle(&tx, op.owner, op.bot)?;
         if prior != BotLifecycle::Active {
             return Err(BotError::Conflict);
@@ -752,9 +900,11 @@ impl Repository {
             params![op.bot.to_storage(), revision, now, current.revision],
         )
         .map_err(bad)?;
+        // A Routine member is settled only by the coordinator's answer
+        // (`settle_bot_lifecycle_routine`), never by completion.
         tx.execute(
             "UPDATE bot_lifecycle_members SET stage='acknowledged',updated_at_ms=?3
-             WHERE user_scope_id=?1 AND operation_id=?2 AND stage='pending'",
+             WHERE user_scope_id=?1 AND operation_id=?2 AND stage='pending' AND kind<>'routine'",
             params![scope.to_storage(), operation.to_storage(), now],
         )
         .map_err(bad)?;
@@ -851,6 +1001,7 @@ impl Repository {
         {
             return Err(BotError::Conflict);
         }
+        require_routines_settled(&tx, scope, operation)?;
         let (current, prior) = admission::guard_any_lifecycle(&tx, op.owner, op.bot)?;
         if prior != op.prior_lifecycle || prior == BotLifecycle::Trashed {
             return Err(BotError::Conflict);
@@ -1071,8 +1222,10 @@ fn reverse_source(
     Ok(())
 }
 
-/// Acknowledge every pending member and complete the operation, which must
-/// still be at `from`; anything else rolls the caller's transaction back.
+/// Acknowledge every pending member the AI owner itself settles and
+/// complete the operation, which must still be at `from`; anything else rolls
+/// the caller's transaction back. A Routine member is settled only by the
+/// coordinator's answer (`settle_bot_lifecycle_routine`), never here.
 fn complete_operation(
     tx: &Connection,
     scope: UserScopeId,
@@ -1082,7 +1235,7 @@ fn complete_operation(
 ) -> Result<(), BotError> {
     tx.execute(
         "UPDATE bot_lifecycle_members SET stage='acknowledged',updated_at_ms=?3
-         WHERE user_scope_id=?1 AND operation_id=?2 AND stage='pending'",
+         WHERE user_scope_id=?1 AND operation_id=?2 AND stage='pending' AND kind<>'routine'",
         params![scope.to_storage(), operation.to_storage(), now],
     )
     .map_err(bad)?;
@@ -1366,6 +1519,8 @@ fn validate_capture(capture: &LifecycleCapture) -> Result<(), BotError> {
         let kind = member.subject.kind();
         if !kinds.contains(&kind)
             || (member.intended == BotLifecycleIntended::Retain) != member.retained.is_some()
+            || (kind == BotLifecycleMemberKind::Routine)
+                != (member.reason == BotLifecycleReason::OwnedRoutine)
         {
             return Err(BotError::Invalid);
         }
@@ -1487,6 +1642,36 @@ fn insert_member(
             None,
             Some(attachment_id.to_storage()),
         ),
+        BotLifecycleSubject::Routine {
+            workspace_id,
+            document_id,
+        } => {
+            // The member names one of this Bot's own Routines, in its home.
+            let owned: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM bot_routines WHERE schedule_id=?1 AND user_scope_id=?2
+                     AND owner_device_id=?3 AND bot_id=?4 AND workspace_id=?5)",
+                    params![
+                        document_id.to_storage(),
+                        capture.owner.user_scope.to_storage(),
+                        capture.owner.device.to_storage(),
+                        capture.bot.to_storage(),
+                        workspace_id.to_storage()
+                    ],
+                    |r| r.get(0),
+                )
+                .map_err(bad)?;
+            if !owned {
+                return Err(BotError::Invalid);
+            }
+            (
+                None,
+                None,
+                Some(workspace_id.to_storage()),
+                Some(document_id.to_storage()),
+                None,
+            )
+        }
     };
     let stage = if member.retained.is_some() {
         BotLifecycleMemberStage::Retained
@@ -1678,6 +1863,10 @@ fn read_members(
             BotLifecycleMemberKind::AttachmentCopy => BotLifecycleSubject::AttachmentCopy {
                 chat_id: chat(need(r.2)?)?,
                 attachment_id: ChatAttachmentId::parse(&need(r.6)?).ok_or(BotError::Storage)?,
+            },
+            BotLifecycleMemberKind::Routine => BotLifecycleSubject::Routine {
+                workspace_id: workspace(need(r.4)?)?,
+                document_id: document(need(r.5)?)?,
             },
         };
         Ok(LifecycleMember {

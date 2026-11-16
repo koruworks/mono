@@ -47,12 +47,28 @@ impl BotRoutineCapturedSources {
         )
     }
     /// Called only after the writer has resolved the existing slot and cap.
+    /// A scheduled occurrence: the definition must be Active.
     pub fn freeze(
         &self,
         ids: RoutineExecutionIds,
         now: i64,
     ) -> Result<BotRoutineStoredPreparation, BotError> {
+        self.freeze_expecting(ids, now, BotRoutineCaptureLifecycle::Active)
+    }
+
+    /// The same freeze with the definition lifecycle the caller expects
+    /// stated. This is the only place a capture's lifecycle is admitted;
+    /// a retained row is read back under the lifecycle it was admitted with.
+    pub fn freeze_expecting(
+        &self,
+        ids: RoutineExecutionIds,
+        now: i64,
+        expected: BotRoutineCaptureLifecycle,
+    ) -> Result<BotRoutineStoredPreparation, BotError> {
         self.canonical.validate()?;
+        if BotRoutineCaptureLifecycle::of(&self.definition.lifecycle) != Some(expected) {
+            return Err(BotError::Invalid);
+        }
         if !self.creation.matches_slot(&self.slot)
             || !ids.valid()
             || self.definition.template.requested_by
@@ -211,6 +227,7 @@ impl BotRoutineCapturedSources {
             created_at_ms: now,
             updated_at_ms: now,
         };
+        row.capture.validate_expecting(&row.prepared, expected)?;
         row.validate()?;
         Ok(row)
     }
@@ -247,7 +264,9 @@ pub fn bot_routine_preparation_digest(
     prepared: &RoutinePrepared,
     capture: &BotRoutineCaptureV1,
 ) -> Result<RoutineDigest32, BotError> {
-    capture.validate(prepared)?;
+    // A digest is taken of a capture that is being, or was, retained. Which
+    // lifecycle a new capture may have is decided before this, at freeze.
+    capture.validate_retained(prepared)?;
     if capture.grant.canonical_digest()? != capture.grant.digest {
         return Err(BotError::Invalid);
     }

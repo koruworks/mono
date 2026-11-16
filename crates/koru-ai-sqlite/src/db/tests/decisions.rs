@@ -67,6 +67,22 @@ fn populated_ai21() -> Connection {
     c.execute_batch("INSERT INTO tool_invocations(id,attempt_id,chat_id,tool_name,read_only,status,approval,proposed_at_ms) VALUES('invocation','attempt','chat','fixture',0,'running','approved',-10);").unwrap();
     c
 }
+pub(super) fn ai22() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 22,
+        migrations: &MIGRATIONS[..22],
+    }
+}
+fn prepare_ai22(c: &mut Connection) {
+    koru_sqlite::prepare_with_preflight(&ai22(), c, refuse_superseded_18).unwrap();
+}
+/// Populated ai21 migrated to ai22 and no further: what the ai22 step itself left.
+pub(super) fn populated_ai22() -> Connection {
+    let mut c = populated_ai21();
+    prepare_ai22(&mut c);
+    c
+}
 fn current() -> Connection {
     let mut c = populated_ai21();
     prepare(&mut c).unwrap();
@@ -127,7 +143,7 @@ fn decision_migration_ai22_preserves_populated_ai21_receipts_children_raw_rows_o
     let mut c = populated_ai21();
     let before = snapshot(&c);
     let old_objects = objects(&c);
-    prepare(&mut c).unwrap();
+    prepare_ai22(&mut c);
     println!("Rust-linked SQLite {}", rusqlite::version());
     assert_eq!(user_version(&c).unwrap(), 22);
     let after = snapshot(&c);
@@ -155,7 +171,7 @@ fn decision_migration_ai22_preserves_populated_ai21_receipts_children_raw_rows_o
         assert_eq!(nullable, 0, "nullable PK: {table}");
     }
     foreign_keys_held(&c);
-    prepare(&mut c).unwrap();
+    prepare_ai22(&mut c);
     assert_eq!(snapshot(&c), after);
 }
 
@@ -193,7 +209,7 @@ fn decision_migration_ai22_precommit_fk_failure_rolls_back_schema_rows_and_stamp
 
 #[test]
 fn decision_migration_ai21_refuses22_before_preflight_or_configuration() {
-    let mut c = current();
+    let mut c = populated_ai22();
     let before = snapshot(&c);
     c.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF")
         .unwrap();

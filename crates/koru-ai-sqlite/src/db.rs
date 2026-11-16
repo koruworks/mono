@@ -11,7 +11,7 @@ use rusqlite::Connection;
 
 pub use koru_sqlite::OpenError;
 
-pub const SCHEMA_VERSION: i64 = 22;
+pub const SCHEMA_VERSION: i64 = 23;
 
 pub(crate) const MIGRATIONS: &[Migration] = &[
     Migration {
@@ -146,6 +146,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/022_ai_bot_decisions.sql"),
         columns: &[],
     },
+    Migration {
+        to: 23,
+        name: "023_ai_bot_routine_controls.sql",
+        sql: include_str!("../migrations/023_ai_bot_routine_controls.sql"),
+        columns: &[],
+    },
 ];
 
 const SCHEMA: Schema = Schema {
@@ -198,7 +204,9 @@ const AMENDED_18: [(&str, &str, &str); 3] = [
 /// Refuse, by [`SUPERSEDED_DEVELOPMENT_SCHEMA`], a database stamped 18 or
 /// later that lacks the amended ai18's objects. Three `sqlite_master`
 /// lookups at open; nothing is written. A later migration that drops or
-/// rebuilds one of these objects must update [`AMENDED_18`].
+/// rebuilds one of these objects must update [`AMENDED_18`]. Migration 023
+/// rebuilds `bot_command_receipts` and `bot_lifecycle_members`, neither of
+/// which is one of them.
 fn refuse_superseded_18(connection: &Connection) -> Result<(), OpenError> {
     if user_version(connection)? < 18 {
         return Ok(());

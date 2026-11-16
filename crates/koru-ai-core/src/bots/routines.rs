@@ -10,6 +10,7 @@ use koru_delegate_schedule::{
 };
 use serde::{Deserialize, Serialize};
 
+mod access;
 mod creation;
 mod detail;
 mod listing;
@@ -17,6 +18,7 @@ mod occurrence;
 mod overview;
 mod owner;
 mod preparation;
+pub use access::*;
 pub use creation::*;
 pub use detail::*;
 /// Existing recurrence owner, reused without adding an adapter dependency edge.

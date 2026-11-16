@@ -6,6 +6,7 @@ use std::collections::BTreeSet;
 mod archive;
 mod migration;
 mod plans;
+mod routines;
 mod trash;
 mod visibility;
 
@@ -190,6 +191,41 @@ fn every_stored_vocabulary_equals_its_one_rust_enum() {
         },
     ] {
         assert_eq!(subject.owner(), BotLifecycleOwner::Ai);
+    }
+    // A Routine is paused by the delegate (ai.db 23): its member kind and
+    // reason are in the stored lists compared above.
+    let routine = BotLifecycleSubject::Routine {
+        workspace_id: WorkspaceId::new(),
+        document_id: DocumentId::new(),
+    };
+    assert_eq!(routine.owner(), BotLifecycleOwner::Delegate);
+    assert_eq!(routine.kind(), BotLifecycleMemberKind::Routine);
+    assert!(check_list(c, "bot_lifecycle_members", "kind").contains("routine"));
+    assert!(check_list(c, "bot_lifecycle_members", "reason").contains("owned_routine"));
+    // The receipt kinds the typed readers name are in the stored list too.
+    let kinds = {
+        let sql: String = c
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='bot_command_receipts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let start = sql.find("CHECK(command_kind IN").unwrap();
+        sql[start..start + sql[start..].find("))").unwrap()].to_owned()
+    };
+    for kind in [
+        BotOperationKind::UpdateAccess,
+        BotOperationKind::Start,
+        BotOperationKind::Continue,
+        BotOperationKind::Pause,
+        BotOperationKind::Resume,
+        BotOperationKind::RoutineDraft,
+        BotOperationKind::RoutineOccurrence,
+        BotOperationKind::UpdateRoutineAccess,
+    ] {
+        assert!(kinds.contains(&format!("'{}'", kind.token())), "{kind:?}");
+        assert_eq!(BotOperationKind::parse(kind.token()), Some(kind));
     }
 }
 

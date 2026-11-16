@@ -9,6 +9,9 @@ use occurrence::recent::RecentSnapshot;
 pub struct RoutineDetailSnapshot {
     pub subject: RoutineReadSubject,
     pub creation: BotRoutineCreation,
+    /// The grant the Routine runs under now, from the one reader. Held in
+    /// the snapshot so an access edit after the read is a conflict.
+    pub current: BotRoutineCurrentGrant,
     pub destination: RoutineDestinationObservation,
     before: Option<i64>,
     limit: u8,
@@ -40,22 +43,8 @@ impl RoutineDetailSnapshot {
                 refusal: c.refusal,
                 updated_at_ms: c.updated_at_ms,
             },
-            access_at_setup: BotRoutineGrantSummary {
-                source_bot_policy_revision: c.identity.grant.source_bot_policy_revision,
-                grant_revision: c.identity.grant.grant_revision,
-                access: match c.identity.grant.policy.access {
-                    koru_delegate_core::BotAccess::Default => BotAccess::Default,
-                    koru_delegate_core::BotAccess::Workspace => BotAccess::Workspace,
-                },
-                selected_page_count: c
-                    .identity
-                    .grant
-                    .policy
-                    .selected_pages
-                    .len()
-                    .try_into()
-                    .map_err(bad)?,
-            },
+            access: self.current.grant.summary().map_err(|_| BotError::Storage)?,
+            access_at_setup: c.identity.grant.summary().map_err(|_| BotError::Storage)?,
             configured_model: self.subject.model.clone(),
             destination: self.destination.clone(),
             readiness: routine_readiness(
@@ -95,6 +84,7 @@ impl Repository {
         if creation.identity.home != metadata.home_workspace {
             return Err(BotError::Forbidden);
         }
+        let current = access::current_on(&self.connection, &creation)?;
         let receipt = bounded::receipt(
             &self.connection,
             metadata.owner,
@@ -127,6 +117,7 @@ impl Repository {
         Ok(RoutineDetailSnapshot {
             subject: subject.clone(),
             creation,
+            current,
             destination,
             before,
             limit,

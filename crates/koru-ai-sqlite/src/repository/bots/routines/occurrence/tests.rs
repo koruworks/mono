@@ -4,6 +4,7 @@
 use super::*;
 use koru_delegate_core::{DocumentVersionId, RoutineClaimIdentity};
 
+mod access;
 mod listing;
 mod model;
 mod preclaim;

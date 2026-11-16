@@ -154,6 +154,7 @@ fn detail_page(bot: &Bot, page: &BotRoutineListPage, id: ScheduleId) -> BotRouti
         bot_revision: bot.revision,
         observed_at_ms: 0,
         creation: item.creation.clone(),
+        access: item.grant.clone(),
         access_at_setup: item.grant.clone(),
         configured_model: page.effective_model.clone(),
         destination: RoutineDestinationObservation::Unavailable {},

@@ -47,6 +47,9 @@ pub enum BotOperationKind {
     /// Identity reservation only, never an executable submission.
     RoutineDraft,
     RoutineOccurrence,
+    /// An edit of one Routine's own access (ai.db 23). Its receipt is read by
+    /// the Routine access owner, never as a Bot's pending change.
+    UpdateRoutineAccess,
 }
 impl BotOperationKind {
     pub fn token(self) -> &'static str {
@@ -58,6 +61,7 @@ impl BotOperationKind {
             Self::Resume => "resume",
             Self::RoutineDraft => "routine_draft",
             Self::RoutineOccurrence => "routine_occurrence",
+            Self::UpdateRoutineAccess => "update_routine_access",
         }
     }
     pub fn parse(value: &str) -> Option<Self> {
@@ -69,6 +73,7 @@ impl BotOperationKind {
             "resume" => Some(Self::Resume),
             "routine_draft" => Some(Self::RoutineDraft),
             "routine_occurrence" => Some(Self::RoutineOccurrence),
+            "update_routine_access" => Some(Self::UpdateRoutineAccess),
             _ => None,
         }
     }

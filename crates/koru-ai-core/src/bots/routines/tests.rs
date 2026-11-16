@@ -4,6 +4,7 @@ use super::super::{BotCapturedMemory, BotKnowledgeCapture, BotPage};
 use super::*;
 use koru_delegate_schedule::{DelegationTemplate, RecurrenceRule, ScheduleContextPointer};
 use uuid::Uuid;
+mod access;
 
 fn id(n: u8) -> Uuid {
     format!("00000000-0000-4000-8000-0000000000{n:02x}")
