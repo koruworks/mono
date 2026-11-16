@@ -125,6 +125,33 @@ pub const VOICE: &str = if cfg!(windows) {
     "koru-voice-worker"
 };
 
+/// The read worker. It parses the files and pictures Koru reads words out of —
+/// untrusted bytes in, words out — in a process of its own, so a file that
+/// breaks the parser takes nothing else with it.
+///
+/// **Supervised by the Store, never started by a person or by the updater.**
+/// The Store daemon runs it through `koru-agent-worker` as a sibling program
+/// resolved beside its own executable (never through `PATH`), inside a
+/// kill-on-close Job Object with a memory ceiling. It has no `stop` verb, so it
+/// is deliberately absent from the updater's stop sequence: it ends when the
+/// Store that supervises it ends, and the quiesce probe is what proves its
+/// image free.
+///
+/// **In [`ALL`] on every platform, Linux included.** It reads text-layer PDFs
+/// and plain-text files with pure Rust, so it builds and ships wherever Koru
+/// does; only recognition is absent where no ONNX Runtime archive is pinned,
+/// and the worker says so itself. `apps/koru-read` builds it (OCR roadmap Plan
+/// 1.3), and `koru-release`'s `CHANNEL_BINARIES` and macOS notices list pair
+/// it. Keep this constant synchronized with the package and `[[bin]]` name
+/// `koru-read-worker`, the release/signing inventories, the Store's sibling
+/// resolution, launchers, stop scripts, logs and docs, as [`VOICE`]'s comment
+/// says for its worker.
+pub const READ: &str = if cfg!(windows) {
+    "koru-read-worker.exe"
+} else {
+    "koru-read-worker"
+};
+
 /// The retired standalone terminal window (TERMINATAB W5): sessions run as
 /// Koru Workspace tabs now, and no current package ships this binary. The
 /// name is kept because the frozen v2-v4 inventories require it and the
@@ -278,13 +305,14 @@ pub const INVENTORY_VERSION: u32 = 10;
 /// **Linux carries no [`VOICE`] yet**: the worker is not built there until
 /// Linux rung 3 (`docs/features/linux/`), and requiring it would refuse every
 /// Linux package. That arm is deleted when voice lands on Linux, together with
-/// the Linux arm of `koru-release`'s `CHANNEL_BINARIES`.
+/// the Linux arm of `koru-release`'s `CHANNEL_BINARIES`. [`READ`] is in every
+/// arm: see its comment.
 #[cfg(windows)]
-pub const ALL: &[&str] = &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, READ, UPDATER];
 #[cfg(target_os = "linux")]
-pub const ALL: &[&str] = &[APP, AGENT, MCP, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, MCP, READ, UPDATER];
 #[cfg(not(any(windows, target_os = "linux")))]
-pub const ALL: &[&str] = &[APP, AGENT, MCP, VOICE, UPDATER];
+pub const ALL: &[&str] = &[APP, AGENT, MCP, VOICE, READ, UPDATER];
 
 pub const NOTIFICATION_OWNER_INFO_PLIST: &str =
     "Koru.app/Contents/Library/LoginItems/Koru Agent.app/Contents/Info.plist";
@@ -370,6 +398,7 @@ mod tests {
             assert_eq!(LEGACY_VOICE, "koru-voice.exe");
             assert_eq!(MCP, "koru-mcp.exe");
             assert_eq!(VOICE, "koru-voice-worker.exe");
+            assert_eq!(READ, "koru-read-worker.exe");
             assert_eq!(UPDATER, "koru-updater.exe");
             assert_eq!(TERMINAL, "koru-terminal.exe");
             assert_eq!(SESSION_HOST, "koru-session-host.exe");
@@ -380,6 +409,7 @@ mod tests {
             assert_eq!(COM_NOTIFICATION, "koru-com-notification");
             assert_eq!(LEGACY_VOICE, "koru-voice");
             assert_eq!(VOICE, "koru-voice-worker");
+            assert_eq!(READ, "koru-read-worker");
             assert_eq!(UPDATER, "koru-updater");
             for name in ALL {
                 assert!(!name.ends_with(".exe"), "{name} carries a Windows suffix");
@@ -397,23 +427,24 @@ mod tests {
     #[test]
     fn every_executable_is_in_the_list_exactly_once() {
         let expected: &[&str] = if cfg!(windows) {
-            &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, UPDATER]
+            &[APP, AGENT, COM_NOTIFICATION, MCP, VOICE, READ, UPDATER]
         } else if cfg!(target_os = "linux") {
-            &[APP, AGENT, MCP, UPDATER]
+            &[APP, AGENT, MCP, READ, UPDATER]
         } else {
-            &[APP, AGENT, MCP, VOICE, UPDATER]
+            &[APP, AGENT, MCP, VOICE, READ, UPDATER]
         };
         assert_eq!(ALL, expected);
         assert_eq!(
             ALL.len(),
             if cfg!(windows) {
-                6
+                7
             } else if cfg!(target_os = "linux") {
-                4
-            } else {
                 5
+            } else {
+                6
             }
         );
+        assert_ne!(READ, VOICE);
         assert_eq!(
             ALL.iter().collect::<std::collections::HashSet<_>>().len(),
             ALL.len()

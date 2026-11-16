@@ -370,15 +370,37 @@ async fn answering_twice_writes_nothing_the_second_time() {
         .transport_mode(TransportSubject::Profile(fixture.profile))
         .unwrap()
         .revision;
+    let children_before = fixture
+        .state
+        .store
+        .lock()
+        .unwrap()
+        .transport_mode_group(fixture.profile)
+        .unwrap()
+        .children;
 
     let (status, body) = fixture.choose("cloud", true).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["profile_changed"], false);
     assert_eq!(body["mode"], "cloud");
     assert_eq!(
-        body["workspaces_left_alone"], 3,
-        "they are explicit now, so the group leaves them alone",
+        body["workspaces_left_alone"], 0,
+        "inherited Workspaces remain defaults rather than explicit choices",
     );
+    assert_eq!(body["workspaces_moved"], 0);
+    let children_after = fixture
+        .state
+        .store
+        .lock()
+        .unwrap()
+        .transport_mode_group(fixture.profile)
+        .unwrap()
+        .children;
+    assert_eq!(
+        children_before, children_after,
+        "a retry writes no child row"
+    );
+    assert!(children_after.iter().all(|row| !row.explicit_choice));
     assert_eq!(
         fixture
             .state

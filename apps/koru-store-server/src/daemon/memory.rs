@@ -41,6 +41,8 @@ pub struct MemoryStore {
     requests: tokio::sync::mpsc::Sender<WorkerCommand>,
     sweeps: Option<Sweeps>,
     stop: Arc<AtomicBool>,
+    /// Woken on close, so the readings mirror's thread sees the stop at once.
+    readings: Option<Arc<crate::readings::Inbox>>,
     shutdown: Option<tokio::sync::oneshot::Sender<()>>,
     threads: Vec<std::thread::JoinHandle<()>>,
     /// Held for the composition's lifetime: the read model and the index live
@@ -58,7 +60,8 @@ impl MemoryStore {
     pub fn open(channel: &str) -> Result<Self, Error> {
         let catalog =
             SqliteCatalog::in_named_memory(&koru_sqlite::MemoryName::fresh("catalog.db"))?;
-        let store = Store::open(catalog, SqliteBackend::in_memory())?;
+        let store = Store::open(catalog, SqliteBackend::in_memory())?
+            .with_unversioned_kinds(koru_projection::model::UNVERSIONED);
         let state = Arc::new(AppState::new(
             store,
             "memory".into(),
@@ -76,12 +79,24 @@ impl MemoryStore {
 
         // The daemon's order: the index's consumer before the projector's first
         // tick, the projector, its read ports, then the indexer on its sweeps.
-        let (prepared, consumers) = match crate::search::prepare(&derived) {
+        let (prepared, mut consumers) = match crate::search::prepare(&derived) {
             Some((feed, prepared)) => (Some(prepared), vec![feed]),
             None => (None, Vec::new()),
         };
-        let projection =
-            crate::projection::spawn(Arc::clone(&state), &derived, consumers, Arc::clone(&stop));
+        // The readings mirror, so words read on a device are found here too.
+        // No coordinator: a replica holds no file bytes and reads nothing.
+        let readings = crate::readings::prepare(&derived);
+        if let Some(readings) = readings.as_ref() {
+            consumers.push(readings.consumer());
+        }
+        let readings_inbox = readings.as_ref().map(crate::readings::Prepared::inbox);
+        let projection = crate::projection::spawn(
+            Arc::clone(&state),
+            &derived,
+            consumers,
+            readings.as_ref().map(crate::readings::Prepared::tee),
+            Arc::clone(&stop),
+        );
         let mut sweeps = None;
         if let Some((handle, projected)) = projection {
             threads.push(handle);
@@ -100,15 +115,30 @@ impl MemoryStore {
             if let Some(port) = crate::tasks::task_port(&derived, projected.clone(), &state) {
                 let _ = state.set_task_service(port);
             }
+            let search_queue = prepared.as_ref().map(crate::search::Prepared::queue);
             if let Some(prepared) = prepared
                 && let Some(handle) = crate::search::spawn(
                     prepared,
                     Arc::clone(&state),
                     projected.clone(),
+                    readings
+                        .as_ref()
+                        .and_then(crate::readings::Prepared::source),
+                    readings.as_ref().map(crate::readings::Prepared::hub),
                     Arc::clone(&stop),
                 )
             {
                 threads.push(handle);
+            }
+            if let Some(readings) = readings {
+                threads.extend(readings.spawn(
+                    &state,
+                    search_queue,
+                    None,
+                    None,
+                    None,
+                    Arc::clone(&stop),
+                ));
             }
             sweeps = Some(projected);
         }
@@ -148,6 +178,7 @@ impl MemoryStore {
             requests,
             sweeps,
             stop,
+            readings: readings_inbox,
             shutdown: Some(shutdown),
             threads,
             _derived: derived,
@@ -225,6 +256,9 @@ impl MemoryStore {
 
     fn stop_and_join(&mut self) {
         self.stop.store(true, Ordering::Release);
+        if let Some(readings) = self.readings.as_ref() {
+            readings.stop();
+        }
         if let Some(shutdown) = self.shutdown.take() {
             let _ = shutdown.send(());
         }

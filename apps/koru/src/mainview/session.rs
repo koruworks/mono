@@ -131,7 +131,7 @@ impl MainView {
                     // document read through the gateway; a result tab shows an
                     // artifact version, which is immutable. There is nothing in
                     // `Settings` that is about either.
-                    TabView::Run(_) | TabView::Result(_) => {}
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => {}
                     // The camera will be the surface's (`DocViewPrefs`, P1.5);
                     // the placeholder reads nothing.
                     TabView::Canvas(c) => View::restore(c, workspace, settings),
@@ -218,7 +218,7 @@ impl MainView {
                     TabView::AiChat(_) => {}
                     TabView::Socials(_) => {}
                     TabView::Session(_) => {}
-                    TabView::Run(_) | TabView::Result(_) => {}
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => {}
                     TabView::Canvas(c) => View::capture(c, settings),
                     TabView::Feedback(f) => View::capture(f, settings),
                     TabView::Diff(_) => {}
@@ -701,7 +701,7 @@ impl MainView {
             // anybody had asked to look at it. The run itself is
             // durable and is reopened from wherever it was reached,
             // and so is a result: it is reopened from its run.
-            TabView::Run(_) | TabView::Result(_) => return None,
+            TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => return None,
             // **A canvas persists as a document**, like a page: the
             // settings format does not change, and the kind is read
             // again from the manifest when it comes back.

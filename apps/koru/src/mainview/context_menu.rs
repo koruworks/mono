@@ -311,6 +311,8 @@ pub enum MenuAction {
     /// *Import files…* — the file picker, files kept as files. The first
     /// row of the New… launcher's Import list, above the content formats.
     ImportFiles,
+    OcrSettings(Option<bool>),
+    RescanAllFiles,
     /// **One of a run's results**, by its position in the snapshot the menu
     /// opened with. Picking it opens that version as a tab — the same
     /// primitive the run's own Result view and the Artifacts column reach.
@@ -455,6 +457,18 @@ pub enum MenuAction {
     AddNote,
     /// Open the note the file already has. Shown for one file that has one.
     OpenNote,
+    /// Save what was read out of the file to a text file — OCR TECHNICAL §9's
+    /// debugging entry, **shown only with `KORU_READ_DEBUG=1`**, for one file
+    /// under Explore → Files ([`explore_file_items`]).
+    ViewExtractedText,
+    /// *Read all pages* (OCR Plan 3.2, EXPERIENCE §4): read the rest of a
+    /// file that stopped at the page limit. Shown for one file under Explore
+    /// → Files where the Store offers it ([`explore_file_items`]).
+    ReadAllPages,
+    /// *Read again*: read one file's words once more. Shown where the Store
+    /// offers it — the file has been read, or reading it failed.
+    ReadAgain,
+    ForceOcr,
     Restore,
     DeletePermanently,
     EmptyTrash,
@@ -1070,6 +1084,18 @@ impl MenuAction {
                 });
             }
             MenuAction::MoveNodesToTrash(_) => return Cow::Borrowed("Move to trash"),
+            MenuAction::ReadAllPages => {
+                return Cow::Borrowed(koru_workspace_host::reading_requests::label(
+                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAll,
+                    crate::format::lang(),
+                ));
+            }
+            MenuAction::ReadAgain => {
+                return Cow::Borrowed(koru_workspace_host::reading_requests::label(
+                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain,
+                    crate::format::lang(),
+                ));
+            }
             // The token as it is written in the swatch set, with its first
             // letter raised. One source, so a colour added to `ACCENT_TOKENS`
             // gets a row here without a second table to keep in step.
@@ -1252,6 +1278,17 @@ impl MenuAction {
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
             MenuAction::ImportFiles => "Import files\u{2026}",
+            MenuAction::OcrSettings(enabled) => koru_i18n::t(
+                crate::format::lang(),
+                match enabled {
+                    Some(true) => koru_i18n::Key::FilesOcrSettingsOn,
+                    Some(false) => koru_i18n::Key::FilesOcrSettingsOff,
+                    None => koru_i18n::Key::FilesOcrSettings,
+                },
+            ),
+            MenuAction::RescanAllFiles => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FilesRescanAll)
+            }
             MenuAction::ImportFormat(id) => {
                 koru_workspace_host::formats::import_menu_name(id, crate::format::lang())
                     .unwrap_or(id)
@@ -1344,6 +1381,13 @@ impl MenuAction {
             MenuAction::OpenFileInApp => "Open in app",
             MenuAction::SaveFileAs => "Save as\u{2026}",
             MenuAction::AddNote => "Add note",
+            MenuAction::ForceOcr => koru_workspace_host::reading_requests::label(
+                koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr,
+                crate::format::lang(),
+            ),
+            MenuAction::ViewExtractedText => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReadingViewText)
+            }
             MenuAction::OpenNote => "Open note",
             MenuAction::Restore => "Restore",
             MenuAction::DeletePermanently => "Delete permanently",
@@ -1977,6 +2021,50 @@ pub fn file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
         items.push(trash);
         items
     }
+}
+
+/// The Files view's menu: [`file_items`] and View extracted text for one file,
+/// independently of the last reading status. Reading export lives in the OCR tab.
+///
+/// **Then, for one file, *Read all pages* and *Re-scan* where the Store
+/// offers them** (OCR Plan 3.2; `koru_workspace_host::reading_requests`):
+/// `offers` is the Store's last answer for the file, kept by the view —
+/// `None` when nothing is known yet, which shows neither. They are a group of
+/// their own at the menu's very end, so a menu corrected in place when a
+/// fresh answer arrives moves no row above them.
+pub fn explore_file_items(
+    count: usize,
+    note: Option<bool>,
+    offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+) -> Vec<MenuAction> {
+    let mut items = file_items(count, note);
+    if count == 1 {
+        // The Files menu has one way to re-scan: explicit recognition. Keep
+        // automatic retries available to the Settings failed-item workflow.
+        let entries: Vec<_> = koru_workspace_host::reading_requests::entries(offers, false)
+            .into_iter()
+            .filter(|kind| {
+                *kind != koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain
+            })
+            .collect();
+        items.push(MenuAction::Divider);
+        items.push(MenuAction::ViewExtractedText);
+        if !entries.is_empty() {
+            items.push(MenuAction::Divider);
+            items.extend(entries.into_iter().map(|kind| match kind {
+                koru_workspace_host::reading_requests::ReadRequestKind::ReadAll => {
+                    MenuAction::ReadAllPages
+                }
+                koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain => {
+                    MenuAction::ReadAgain
+                }
+                koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr => {
+                    MenuAction::ForceOcr
+                }
+            }));
+        }
+    }
+    items
 }
 
 /// Formats behind *Export*. Each format is backed by its own exporter crate,

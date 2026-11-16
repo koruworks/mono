@@ -13,3 +13,7 @@ koru-ai-core = { path = "../koru-ai-core", features = ["schema"] }
 koru-store-wire = { path = "../koru-store-wire" }
 schemars.workspace = true
 serde.workspace = true
+
+[dev-dependencies]
+# The "an old answer still parses" pins read and write JSON.
+serde_json.workspace = true

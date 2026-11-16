@@ -541,6 +541,69 @@ impl Client {
         self.post("/v1/search", request)
     }
 
+    // ------------------------------------- the reader (OCR Plan 2.4)
+
+    /// **The reader that finds words in pictures, on this computer**: whether
+    /// it is installed, why it cannot be (if it cannot), the offer's terms,
+    /// a download's progress, *Not now*, and this computer's reading counts.
+    /// Answered from memory; poll it while a download runs.
+    pub fn reader(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.get("/v1/readings/reader")
+    }
+
+    /// **Turn on**, with the terms the person was shown. Refused
+    /// `reader_terms_changed` when the Store would now install something
+    /// else, and `reader_unavailable` where no reader can be used.
+    pub fn install_reader(
+        &self,
+        request: &koru_store_wire::reader::InstallReader,
+    ) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/install", request)
+    }
+
+    /// **Stop** the download; the next install resumes it.
+    pub fn stop_reader_install(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/stop", &serde_json::json!({}))
+    }
+
+    /// **Remove** the model from disk. Readings already made stay.
+    pub fn remove_reader(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.delete_query("/v1/readings/reader")
+    }
+
+    /// **Turn off** (OCR Plan 3.5): reading stops on this computer and the
+    /// download stays. Readings already made stay findable.
+    pub fn turn_reader_off(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/off", &serde_json::json!({}))
+    }
+
+    /// **Turn on** a reader that is downloaded and off: no download.
+    pub fn turn_reader_on(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/on", &serde_json::json!({}))
+    }
+
+    /// **Not now**: search stops offering the reader until an import brings
+    /// a picture or a scanned PDF.
+    pub fn decline_reader(&self) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/decline", &serde_json::json!({}))
+    }
+
+    /// **The items behind the Settings row's *could not be read* count**, on
+    /// this computer: ids and reason tokens, never a name (OCR Plan 2.5). A
+    /// surface names each from the workspace listing it already reads.
+    pub fn reader_items(&self) -> Result<koru_store_wire::reader::ReaderItems> {
+        self.get("/v1/readings/reader/items")
+    }
+
+    /// An import through an importer finished, having brought this many
+    /// pictures and scanned PDFs. A non-zero count makes Koru offer once more.
+    pub fn reader_import_finished(
+        &self,
+        report: &koru_store_wire::reader::ImportFinished,
+    ) -> Result<koru_store_wire::reader::ReaderState> {
+        self.post("/v1/readings/reader/imported", report)
+    }
+
     /// Record that a search led somewhere.
     ///
     /// Machine-local and derived: it feeds the recent-query list and a
@@ -1599,6 +1662,90 @@ impl Client {
         self.get(&format!("/v1/documents/{}/outline", document.to_storage()))
     }
 
+    /// The words read out of one file or picture in `workspace` — its winning
+    /// reading, with how it was read — or `None` when nothing has been read of
+    /// those bytes there yet (OCR TECHNICAL §10).
+    pub fn reading(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<Option<koru_store_wire::readings::ReadingAnswer>> {
+        self.get(&format!(
+            "/v1/readings/{}/{}",
+            workspace.to_storage(),
+            hash.as_str()
+        ))
+    }
+
+    pub fn correct_reading(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+        request: &koru_store_wire::readings::CorrectReading,
+    ) -> Result<koru_store_wire::readings::ReadingCorrections> {
+        self.put(
+            &format!(
+                "/v1/readings/{}/{}/correction",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            request,
+        )
+    }
+
+    /// **Read all pages** of a file that stopped at a page limit (OCR Plan
+    /// 3.2). Recorded on this computer and met behind anything freshly added.
+    /// Refused `blob_not_here`, `reader_unavailable` or `invalid_request`;
+    /// [`ReadingAnswer::offers`](koru_store_wire::readings::ReadingAnswer::offers)
+    /// says beforehand whether it would be accepted.
+    pub fn read_all(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<koru_store_wire::readings::ReadRequested> {
+        self.post(
+            &format!(
+                "/v1/readings/{}/{}/read-all",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            &serde_json::json!({}),
+        )
+    }
+
+    /// **Read again** a file or picture that was read or failed (OCR Plan
+    /// 3.2). Refused as [`Self::read_all`] is.
+    pub fn read_again(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<koru_store_wire::readings::ReadRequested> {
+        self.post(
+            &format!(
+                "/v1/readings/{}/{}/read-again",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            &serde_json::json!({}),
+        )
+    }
+
+    /// Recognize all pages, ignoring the embedded PDF text layer.
+    pub fn force_ocr(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<koru_store_wire::readings::ReadRequested> {
+        self.post(
+            &format!(
+                "/v1/readings/{}/{}/force-ocr",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            &serde_json::json!({}),
+        )
+    }
+
     /// The nodes matching an attribute query, across workspaces, from the
     /// store's read model.
     ///
@@ -1943,6 +2090,45 @@ impl Client {
             &koru_store_wire::SetProfileTransportMode {
                 mode: mode.to_owned(),
                 include_workspaces,
+            },
+        )
+    }
+
+    pub fn profile_transport_mode(
+        &self,
+        profile: ProfileId,
+    ) -> Result<koru_store_wire::ProfileTransportSettings> {
+        self.get(&format!(
+            "/v1/profiles/{}/transport-mode",
+            profile.to_storage()
+        ))
+    }
+
+    pub fn initialize_profile_transport_mode(
+        &self,
+        profile: ProfileId,
+        mode: &str,
+    ) -> Result<koru_store_wire::ProfileTransportSettings> {
+        self.post(
+            &format!("/v1/profiles/{}/transport-default", profile.to_storage()),
+            &koru_store_wire::SetProfileTransportMode {
+                mode: mode.into(),
+                include_workspaces: true,
+            },
+        )
+    }
+
+    pub fn set_workspace_transport_mode(
+        &self,
+        workspace: WorkspaceId,
+        mode: &str,
+        expected_revision: i64,
+    ) -> Result<koru_store_wire::ProfileTransportSettings> {
+        self.put(
+            &format!("/v1/workspaces/{}/transport-mode", workspace.to_storage()),
+            &koru_store_wire::SetWorkspaceTransportMode {
+                mode: mode.into(),
+                expected_revision,
             },
         )
     }

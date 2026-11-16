@@ -214,7 +214,10 @@ pub(crate) fn generate(
     build: &Build,
     libraries: &[android::Library],
 ) -> Result<String, String> {
-    let metadata = metadata(root, &build.triples)?;
+    // The same features the package build turns on, so a crate only
+    // recognition brings is attributed exactly when it is shipped.
+    let features = crate::read_runtime::features(build.packages, &build.triples);
+    let metadata = metadata(root, &build.triples, features)?;
     let shipped = shipped(&metadata, build.packages)?;
     let records = read_records(&root.join(CRATES_DIR))?;
     let mut crates = Vec::with_capacity(shipped.len());
@@ -256,13 +259,16 @@ pub(crate) fn generate(
     Ok(render(&crates, &bundled, &libraries, build.source))
 }
 
-fn metadata(root: &Path, triples: &[String]) -> Result<Metadata, String> {
+fn metadata(root: &Path, triples: &[String], features: Option<&str>) -> Result<Metadata, String> {
     let mut command = Command::new("cargo");
     command
         .current_dir(root)
         .args(["metadata", "--format-version", "1", "--locked"]);
     for triple in triples {
         command.args(["--filter-platform", triple]);
+    }
+    if let Some(features) = features {
+        command.args(["--features", features]);
     }
     let output = command
         .output()

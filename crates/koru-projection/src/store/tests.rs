@@ -511,6 +511,292 @@ fn blob_references_keep_what_the_sweep_query_is_right_to_drop() {
     assert!(p.blob_references(ws).unwrap().is_empty());
 }
 
+/// **Which documents a changed reading reaches** — the search index's targeted
+/// re-index. A picture in a page and the same picture as a file both count; a
+/// document in the Trash counts, because the index keeps its rows for the
+/// Trash filter; a node in its document's own bin does not, because the index
+/// never indexes one; another workspace holding the same bytes does not,
+/// because a reading belongs to a workspace.
+#[test]
+fn documents_carrying_names_each_document_holding_a_live_node_with_the_hash() {
+    let mut p = Projections::in_memory().unwrap();
+    let (ws, elsewhere) = (WorkspaceId::new(), WorkspaceId::new());
+    let (page, file, trashed, binned, unrelated, other) = (
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+        DocumentId::new(),
+    );
+
+    let with_blob = |workspace, document, hash: &str, in_bin: bool| {
+        let mut projection = a_projection(workspace, document, b"revision");
+        projection.nodes[1].kind = "image".into();
+        projection.nodes[1].blob = Some(hash.to_owned());
+        projection.nodes[1].in_trash = in_bin;
+        projection
+    };
+    for projection in [
+        with_blob(ws, page, "b3:aa", false),
+        with_blob(ws, file, "b3:aa", false),
+        with_blob(ws, trashed, "b3:bb", false),
+        with_blob(ws, binned, "b3:aa", true),
+        with_blob(ws, unrelated, "b3:zz", false),
+        with_blob(elsewhere, other, "b3:aa", false),
+    ] {
+        p.replace(&projection, 1, None).unwrap();
+    }
+    let mut trashed_entry = a_listed(trashed, "Binned document");
+    trashed_entry.trashed_at = Some(42);
+    p.set_listing(
+        ws,
+        "Acme",
+        &[
+            a_listed(page, "Page"),
+            a_listed(file, "File"),
+            trashed_entry,
+            a_listed(binned, "Binned node"),
+            a_listed(unrelated, "Unrelated"),
+        ],
+        1,
+    )
+    .unwrap();
+
+    let mut expected = vec![page, file, trashed];
+    expected.sort_by_key(DocumentId::to_storage);
+    assert_eq!(
+        p.documents_carrying(ws, &["b3:aa".to_owned(), "b3:bb".to_owned()])
+            .unwrap(),
+        expected,
+        "each once, ordered by id"
+    );
+    assert!(p.documents_carrying(ws, &[]).unwrap().is_empty());
+    assert!(
+        p.documents_carrying(ws, &["b3:never".to_owned()])
+            .unwrap()
+            .is_empty()
+    );
+    // More hashes than one statement carries still answers once per document.
+    let mut many: Vec<String> = (0..1_200).map(|i| format!("b3:{i:04}")).collect();
+    many.push("b3:zz".to_owned());
+    assert_eq!(p.documents_carrying(ws, &many).unwrap(), vec![unrelated]);
+}
+
+/// **The plan, pinned.** `nodes.blob` has no index, so the only sane plan
+/// starts from the workspace's documents and reads their nodes by the primary
+/// key. A plan that scans `nodes` is a read of every node in the store per
+/// reading that lands — the shape `task_kind_sql` records this planner once
+/// choosing, at 0.5–3 s on a 170,000-node projection.
+#[test]
+fn documents_carrying_starts_from_the_workspace_and_never_scans_nodes() {
+    let p = Projections::in_memory().unwrap();
+    let plan: Vec<String> =
+        p.db.prepare(&format!("EXPLAIN QUERY PLAN {}", documents_carrying_sql(2)))
+            .unwrap()
+            .query_map(params!["w", "b3:aa", "b3:bb"], |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+    let plan = plan.join(" | ");
+    assert!(
+        plan.contains("documents_workspace (workspace_id=?)"),
+        "it does not start from the workspace: {plan}"
+    );
+    assert!(
+        plan.contains("SEARCH n USING") && plan.contains("(document_id=?)"),
+        "it does not read nodes by document: {plan}"
+    );
+    assert!(!plan.contains("SCAN n"), "it scans every node: {plan}");
+}
+
+/// **What a reading could be made of** — the reading coordinator's candidates
+/// (OCR TECHNICAL §9). A picture in a page and a file both count; a trashed
+/// document comes back marked; a node in its document's own bin, a canvas, a
+/// note and another workspace do not; one picture pasted twice is one row.
+/// The two narrowed scopes answer the same rows for what they name.
+#[test]
+fn readable_references_are_the_live_blobs_of_pages_and_files() {
+    let mut p = Projections::in_memory().unwrap();
+    let (ws, elsewhere) = (WorkspaceId::new(), WorkspaceId::new());
+    let [page, file, trashed, binned, canvas, other] = std::array::from_fn(|_| DocumentId::new());
+    let with_blob = |workspace, document, hash: &str, in_bin: bool| {
+        let mut projection = a_projection(workspace, document, b"revision");
+        projection.nodes[1].kind = "image".into();
+        projection.nodes[1].blob = Some(hash.to_owned());
+        projection.nodes[1].mime = Some("image/png".into());
+        projection.nodes[1].in_trash = in_bin;
+        projection
+    };
+    let mut twice = with_blob(ws, page, "b3:aa", false);
+    let mut again = twice.nodes[1].clone();
+    again.id = "n3".into();
+    twice.nodes.push(again);
+    for projection in [
+        twice,
+        with_blob(ws, file, "b3:bb", false),
+        with_blob(ws, trashed, "b3:cc", false),
+        with_blob(ws, binned, "b3:dd", true),
+        with_blob(ws, canvas, "b3:ee", false),
+        with_blob(elsewhere, other, "b3:aa", false),
+    ] {
+        p.replace(&projection, 1, None).unwrap();
+    }
+    let mut file_entry = a_listed(file, "Scan.pdf");
+    file_entry.kind = "file".into();
+    let mut trashed_entry = a_listed(trashed, "Binned");
+    trashed_entry.trashed_at = Some(42);
+    let mut canvas_entry = a_listed(canvas, "Board");
+    canvas_entry.kind = "canvas".into();
+    p.set_listing(
+        ws,
+        "Acme",
+        &[
+            a_listed(page, "Page"),
+            file_entry,
+            trashed_entry,
+            a_listed(binned, "Binned node"),
+            canvas_entry,
+        ],
+        1,
+    )
+    .unwrap();
+
+    let all = p.readable_references(ws, ReadableScope::Workspace).unwrap();
+    let mut expected = vec![
+        (page, "page", "b3:aa", false),
+        (file, "file", "b3:bb", false),
+        (trashed, "page", "b3:cc", true),
+    ];
+    expected.sort_by_key(|(document, ..)| document.to_storage());
+    assert_eq!(
+        all.iter()
+            .map(|r| (r.document, r.kind.as_str(), r.blob.as_str(), r.trashed))
+            .collect::<Vec<_>>(),
+        expected
+    );
+    assert!(all.iter().all(|r| r.mime.as_deref() == Some("image/png")));
+
+    let named = p
+        .readable_references(ws, ReadableScope::Documents(&[file, binned, other]))
+        .unwrap();
+    assert_eq!(named.len(), 1);
+    assert_eq!(named[0].document, file);
+    let carrying = p
+        .readable_references(
+            ws,
+            ReadableScope::Carrying(&["b3:aa".to_owned(), "b3:dd".to_owned()]),
+        )
+        .unwrap();
+    assert_eq!(carrying.len(), 1, "the binned node does not count");
+    assert_eq!(carrying[0].document, page);
+    assert!(
+        p.readable_references(ws, ReadableScope::Documents(&[]))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// **The plans, pinned, on a projection of realistic size**: 2,000 documents
+/// of 25 nodes each in the workspace asked about, beside 4,000 more in another
+/// — 150,000 nodes, the order of the 170,000-node projection `task_kind_sql`
+/// was measured on. Every scope starts from the listing and reads nodes by
+/// document; none scans `nodes`. The plans are printed so they can be read.
+#[test]
+fn readable_references_start_from_the_listing_and_never_scan_nodes() {
+    let mut p = Projections::in_memory().unwrap();
+    let (ws, crowd) = (WorkspaceId::new(), WorkspaceId::new());
+    for (workspace, documents) in [(ws, 2_000), (crowd, 4_000)] {
+        let mut listed = Vec::new();
+        for i in 0..documents {
+            let document = DocumentId::new();
+            let mut projection = a_projection(workspace, document, b"r");
+            projection.nodes = (0..25)
+                .map(|n| {
+                    let mut node = a_node(&format!("n{n}"), "words");
+                    if n == 3 && i % 4 == 0 {
+                        node.kind = "image".into();
+                        node.blob = Some(format!("b3:{i:064x}"));
+                    }
+                    node
+                })
+                .collect();
+            p.replace(&projection, 1, None).unwrap();
+            listed.push(a_listed(document, "Doc"));
+        }
+        p.set_listing(workspace, "W", &listed, 1).unwrap();
+    }
+    let plan_of = |filter: ReadableFilter, parameters: Vec<String>| -> String {
+        let plan: Vec<String> =
+            p.db.prepare(&format!(
+                "EXPLAIN QUERY PLAN {}",
+                readable_references_sql(filter)
+            ))
+            .unwrap()
+            .query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
+                row.get::<_, String>(3)
+            })
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        plan.join(" | ")
+    };
+    let w = ws.to_storage();
+    for (name, filter, parameters) in [
+        ("workspace", ReadableFilter::Workspace, vec![w.clone()]),
+        (
+            "documents",
+            ReadableFilter::Documents(2),
+            vec![w.clone(), "d1".into(), "d2".into()],
+        ),
+        (
+            "carrying",
+            ReadableFilter::Carrying(2),
+            vec![w.clone(), "b3:aa".into(), "b3:bb".into()],
+        ),
+    ] {
+        let plan = plan_of(filter, parameters);
+        println!("readable_references ({name}): {plan}");
+        assert!(
+            plan.contains("SEARCH l USING"),
+            "{name}: it does not start from the listing: {plan}"
+        );
+        assert!(
+            plan.contains("SEARCH n USING") && plan.contains("(document_id=?)"),
+            "{name}: it does not read nodes by document: {plan}"
+        );
+        assert!(
+            !plan.contains("SCAN n"),
+            "{name}: it scans every node: {plan}"
+        );
+        assert!(
+            !plan.contains("SCAN l"),
+            "{name}: it scans the listing: {plan}"
+        );
+    }
+    // The other query a landing reading runs — "documents carrying these
+    // hashes", the search index's targeted re-index — on the same data, so
+    // both plans are recorded at the same size.
+    let carrying: Vec<String> =
+        p.db.prepare(&format!("EXPLAIN QUERY PLAN {}", documents_carrying_sql(2)))
+            .unwrap()
+            .query_map(params![w, "b3:aa", "b3:bb"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+    let carrying = carrying.join(" | ");
+    println!("documents_carrying: {carrying}");
+    assert!(!carrying.contains("SCAN n"), "{carrying}");
+    assert_eq!(
+        p.readable_references(ws, ReadableScope::Workspace)
+            .unwrap()
+            .len(),
+        500
+    );
+}
+
 /// **The sample is one read, and it names the state each document's references
 /// came from.**
 ///

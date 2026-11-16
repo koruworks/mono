@@ -39,10 +39,21 @@ koru-winres = { path = "../koru-winres" }
 # `koru-release`.
 koru-voice = { path = "../koru-voice" }
 koru-voice-models = { path = "../koru-voice-models" }
+# The same rule for the reader's model, which has no speech types: its catalog
+# is built from `koru-models`' own `ModelDescriptor`, `Token` and
+# `LanguageTag`, and `read-model package` proves it installs by running the
+# model store's own `DiskModelStore` under the digest-only policy, opened by
+# the reader's consent record (`koru-voice-consent::READ`).
+koru-models = { path = "../koru-models" }
+koru-voice-consent = { path = "../koru-voice-consent" }
 # The pinned sherpa-onnx archive table (`artifacts::NAMES`), read — never
 # copied — so `dist-cloud` can refuse a release that linked a non-canonical
 # archive. Without the `runtime` feature this links no native code.
 koru-voice-sherpa = { path = "../koru-voice-sherpa" }
+# The pinned ONNX Runtime library the read worker's recognition links
+# (`artifacts::ONNXRUNTIME`), read for the same check. Without the `runtime`
+# feature this links no native code.
+koru-read-paddle = { path = "../koru-read-paddle" }
 minisign.workspace = true
 pulldown-cmark.workspace = true
 reqwest.workspace = true

@@ -88,3 +88,24 @@ fn catalog_ids_round_trip_in_canonical_lowercase_form() {
     assert_eq!(json, format!("\"{}\"", scope.to_storage()));
     assert_eq!(serde_json::from_str::<UserScopeId>(&json).unwrap(), scope);
 }
+
+/// **The reading-document id is a contract with the application.**
+/// `koru_core::ids::reading_document_id` derives the same id on the other side
+/// of the boundary and pins the same vector, computed independently of either
+/// crate (Python's `uuid.uuid5` over the parent's sixteen bytes).
+#[test]
+fn a_reading_document_id_is_derived_from_its_parent_alone() {
+    let parent = DocumentId::parse("6f1c2a3e-8b4d-4e5f-9a0b-1c2d3e4f5a6b").unwrap();
+    assert_eq!(
+        reading_document_id(parent).to_storage(),
+        "3f0c7cc1-3b13-556a-b11f-d1454d28c21e"
+    );
+    assert_eq!(
+        READING_DOCUMENT_NS_V1.to_string(),
+        "05793a5c-5b98-4d2a-a3f2-4ac0b564ad87"
+    );
+    assert_ne!(
+        reading_document_id(parent),
+        reading_document_id(DocumentId::new())
+    );
+}

@@ -8,7 +8,7 @@ use koru_channel as channel;
 use koru_store_core::errors::{Code, Error, Result};
 
 use crate::{
-    StoreWorker, WorkerConfig, cli, console, log, projection, root_inspection, search,
+    StoreWorker, WorkerConfig, cli, console, log, projection, readings, root_inspection, search,
     store_backup, tasks,
 };
 
@@ -35,19 +35,24 @@ pub fn run() {
             let ready = std::env::var_os(crate::INTERNAL_READY_ENV)
                 .map(PathBuf::from)
                 .unwrap_or_else(|| root.join("standalone-ready.json"));
-            StoreWorker::new(WorkerConfig::standalone(
-                root,
-                channel::segment(),
-                invocation.console,
-                Some(ready),
-            ))
-            .serve()
+            let config =
+                WorkerConfig::standalone(root, channel::segment(), invocation.console, Some(ready));
+            // `--read` only: the black-box suites run this host and must
+            // never start a worker beside a test binary.
+            let config = if invocation.read {
+                config.with_reader(readings::ReaderLaunch::Sibling)
+            } else {
+                config
+            };
+            StoreWorker::new(config).serve()
         }),
         cli::Command::Projection(target) => root_for(&invocation)
             .and_then(|root| projection::report_to_console(&root, target.as_deref())),
         cli::Command::Search(text) => {
             root_for(&invocation).and_then(|root| search::report_to_console(&root, text.as_deref()))
         }
+        cli::Command::Readings(hash) => root_for(&invocation)
+            .and_then(|root| readings::report_to_console(&root, hash.as_deref())),
         cli::Command::Tasks(filter) => root_for(&invocation)
             .and_then(|root| tasks::report_to_console(&root, filter.as_deref())),
         cli::Command::Backup(destination) => root_for(&invocation)

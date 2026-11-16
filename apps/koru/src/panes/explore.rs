@@ -4232,6 +4232,19 @@ impl ExploreView {
         }
     }
 
+    fn open_heading_actions(&mut self, area: Rect) -> Outcome {
+        if self.mode == NavigatorMode::Files {
+            self.close_popover();
+            let button = self.actions_button(area);
+            Outcome::LibraryMenu {
+                at: (button.x, button.y + button.h),
+            }
+        } else {
+            self.toggle_popover(PopoverKind::LibraryActions);
+            Outcome::Consumed
+        }
+    }
+
     fn choose_library_action(&mut self, action: actions::Action) -> Outcome {
         match action {
             actions::Action::Import => match self.mode {
@@ -5150,8 +5163,7 @@ impl ExploreView {
             if self.mode == NavigatorMode::Chats {
                 return Outcome::NewAiChat;
             }
-            self.toggle_popover(PopoverKind::LibraryActions);
-            return Outcome::Consumed;
+            return self.open_heading_actions(area);
         }
 
         // The rail owns everything below the heading in tasks mode — including
@@ -7524,11 +7536,13 @@ impl ExploreView {
         if self.mode == NavigatorMode::Agents && row.node == Self::agent_projects_header_node() {
             return RowTreatment::Heading;
         }
-        // Open **or** picked. One treatment, because a multi-selection and the
-        // document you have open are the same claim on this column; splitting
-        // them put a chosen row in the hover's clothes, and then `draw_carried`
-        // promoted the very same set to cards the instant a drag armed.
-        if self.selected == Some(row.node) || self.selection.contains(&row.node) {
+        // Files have one selection: the explicit picked set. A search/reveal
+        // must not leave the active-tab marker painting a second, untoggleable
+        // selection after the person picks another file. Documents still show
+        // which tab is open as well as the rows selected for a batch gesture.
+        if self.selection.contains(&row.node)
+            || (row.kind != Kind::File && self.selected == Some(row.node))
+        {
             return RowTreatment::Card;
         }
         if self.hover == Some(i) {

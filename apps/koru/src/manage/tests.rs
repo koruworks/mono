@@ -721,7 +721,14 @@ fn recovery_sections_appear_with_something_to_recover_and_restore_asks_the_contr
         .expect("*Restore*");
     assert!(more < restore_deleted && restore_unassigned < restore_deleted);
     assert!(
-        laid.disabled.is_empty(),
+        !laid
+            .disabled
+            .contains(&profile_page::Control::RestoreUnassignedProfile(orphan))
+            && !laid
+                .disabled
+                .contains(&profile_page::Control::RestoreDeletedProfile(
+                    workspaces::app_profile(former),
+                )),
         "vouched: every restore may be pressed"
     );
 

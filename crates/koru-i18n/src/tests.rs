@@ -101,6 +101,100 @@ fn terminal_details_vocabulary_exists_in_every_language() {
     }
 }
 
+/// The words of *Text in pictures and PDFs* (OCR Plan 2.5) — the one line in
+/// search, the Settings row and its *could not be read* list, the picture
+/// result as a screen reader hears it — in every language, none of them
+/// saying "OCR". The table's shape already refuses a missing column; this
+/// pins that each is a real sentence and that the product word is never the
+/// engineering one.
+#[test]
+fn reading_vocabulary_exists_in_every_language_and_never_says_ocr() {
+    let keys = [
+        Key::SearchResultSpokenPicture,
+        Key::SearchResultSpokenPictureNamed,
+        Key::ReaderOfferFound,
+        Key::ReaderOfferFoundOne,
+        Key::ReaderOfferNotRead,
+        Key::ReaderOfferNotReadOne,
+        Key::ReaderOfferSize,
+        Key::ReaderOfferOffline,
+        Key::ReaderSentences,
+        Key::ReaderTurnOn,
+        Key::ReaderNotNow,
+        Key::ReaderDownloadPreparing,
+        Key::ReaderDownloadProgress,
+        Key::ReaderDownloadChecking,
+        Key::ReaderDownloadInstalling,
+        Key::ReaderDownloadStopping,
+        Key::ReaderDownloadRemoving,
+        Key::ReaderDownloadStopped,
+        Key::ReaderDownloadFailed,
+        Key::ReaderStillReading,
+        Key::ReaderReasonPassword,
+        Key::ReaderReasonDamaged,
+        Key::ReaderReasonUnsupported,
+        Key::ReaderReasonHere,
+        Key::ReaderItemPictureIn,
+        Key::ReaderItemElsewhere,
+        Key::SettingsReaderTitle,
+        Key::SettingsReaderAside,
+        Key::SettingsReaderStatus,
+        Key::SettingsReaderDownloadRow,
+        Key::SettingsReaderWhatIsRead,
+        Key::SettingsReaderCouldNotRead,
+        Key::SettingsReaderShow,
+        Key::SettingsReaderNotDownloaded,
+        Key::SettingsReaderNotDownloadedSize,
+        Key::SettingsReaderOn,
+        Key::SettingsReaderOnWithFailures,
+        Key::SettingsReaderOnDisk,
+        Key::SettingsReaderTurnOff,
+        Key::SettingsReaderRemove,
+        Key::SettingsReaderUnavailable,
+        Key::SettingsReaderUnavailableNoTrustRoot,
+        Key::SettingsReaderUnavailableNoWorker,
+        Key::SettingsReaderUnavailableWorkerMissing,
+        Key::SettingsReaderUnavailableNotBuilt,
+        Key::SettingsReaderUnavailableNoModel,
+        Key::SettingsReaderUnavailableWillNotLoad,
+        Key::SettingsReaderLanguages,
+        Key::SettingsReaderLanguageLatin,
+        Key::SettingsReaderLanguageChinese,
+        Key::SettingsReaderLanguageJapanese,
+        Key::SettingsReaderListSeparator,
+        Key::SettingsReaderKinds,
+        Key::SettingsReaderArabicNotRead,
+        Key::SettingsReaderMore,
+        // OCR Plan 3.3: an import's summary, the empty page while reading,
+        // and files whose contents are on another device.
+        Key::ReaderOfferHere,
+        Key::ReaderOfferHereOne,
+        Key::ReaderResultsAppear,
+        Key::ReaderNotHere,
+        Key::ReaderNotHereOne,
+        // OCR Plan 3.5: off that keeps the download, and the partly read list.
+        Key::SettingsReaderOff,
+        Key::SettingsReaderPartlyRead,
+        Key::SettingsReaderPagesRead,
+        Key::SettingsReaderPagesReadOne,
+        Key::SettingsReaderReadingRest,
+    ];
+    for key in keys {
+        for lang in Lang::ALL {
+            let value = t(lang, key);
+            // The separator is punctuation and may be a space after a comma.
+            if key != Key::SettingsReaderListSeparator {
+                assert!(!value.trim().is_empty(), "{key:?} in {}", lang.tag());
+            }
+            assert!(
+                !value.to_ascii_lowercase().contains("ocr"),
+                "{key:?} in {} says OCR: {value}",
+                lang.tag()
+            );
+        }
+    }
+}
+
 /// A placeholder dropped in translation is a name that never appears; one
 /// invented is a `{}` on screen. English is the reference because it is what
 /// every call site was written against.

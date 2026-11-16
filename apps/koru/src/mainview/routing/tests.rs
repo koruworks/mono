@@ -471,6 +471,7 @@ fn tab_kind(v: &MainView) -> &'static str {
         TabView::Session(_) => "session",
         TabView::Run(_) => "run",
         TabView::Result(_) => "result",
+        TabView::Ocr(_) => "ocr",
         TabView::Canvas(_) => "canvas",
         TabView::Leaf(_) => "leaf",
     }

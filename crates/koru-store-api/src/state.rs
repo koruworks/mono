@@ -265,6 +265,13 @@ pub struct AppState {
     /// only**: `/v1/debug/*` is metadata, never content, and an index is the
     /// component most tempted to answer with a title.
     pub search: Arc<std::sync::Mutex<serde_json::Value>>,
+    /// What reading words out of files is doing — the coordinator's queue by
+    /// reason, the current job's stage, the worker, how far the readings
+    /// mirror is behind — as the daemon last published it (OCR TECHNICAL §14).
+    ///
+    /// Opaque JSON for the reason [`Self::projection`] gives, and **ids,
+    /// counts and stages only**: never a file's name, a title or a word read.
+    pub readings: Arc<std::sync::Mutex<serde_json::Value>>,
     /// Volatile replication authority. It starts empty after every Store
     /// restart and is cleared when the live Agent control session disappears.
     pub sync_control: Arc<std::sync::Mutex<koru_sync_control::ControlHost>>,
@@ -305,6 +312,10 @@ pub struct AppState {
     /// port, same reason as the attribute query: this crate does not link
     /// `koru-projection`, and a task row is derived data.
     task_service: std::sync::OnceLock<Arc<dyn crate::routes::tasks::TaskService>>,
+    /// One reading, from the readings mirror and the reading document — the
+    /// same port, for the same reason: this crate links neither the mirror nor
+    /// the reading document's shape (OCR TECHNICAL §10).
+    reading_service: std::sync::OnceLock<Arc<dyn crate::routes::readings::ReadingService>>,
     /// What the attribute query service is doing, as its port last published
     /// it. **Counters only** — queries served, rows answered, milliseconds —
     /// never a key, a value or a tag name (the [`Self::search`] rule).
@@ -348,9 +359,27 @@ pub struct AppState {
     /// their next open rather than on an event. See
     /// [`crate::catalog_events`].
     catalog_events: std::sync::OnceLock<Arc<dyn crate::catalog_events::CatalogEventSink>>,
+    /// The installer of the reader that finds words in pictures (OCR Plan
+    /// 2.4), once the daemon has started one. A port for the reason
+    /// [`Self::search_service`] is one; **empty is a real state** — a phone
+    /// and the integration host run none, and `/v1/readings/reader` answers
+    /// `reader_unavailable` there.
+    reader_service: std::sync::OnceLock<Arc<dyn crate::routes::reader::ReaderService>>,
 }
 
 impl AppState {
+    /// Hand the reader's installer down, once, before anything is served.
+    pub fn set_reader_service(
+        &self,
+        service: Arc<dyn crate::routes::reader::ReaderService>,
+    ) -> bool {
+        self.reader_service.set(service).is_ok()
+    }
+
+    pub fn reader_service(&self) -> Option<Arc<dyn crate::routes::reader::ReaderService>> {
+        self.reader_service.get().cloned()
+    }
+
     pub fn new(store: KoruStore, root: String, channel: String, started_at: i64) -> Self {
         Self::with_session_ttl(store, root, channel, started_at, SessionTtl::DEFAULT)
     }
@@ -378,6 +407,7 @@ impl AppState {
             shutdown: Arc::new(tokio::sync::Notify::new()),
             projection: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
             search: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
+            readings: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
             sync_control: Arc::new(std::sync::Mutex::new(
                 koru_sync_control::ControlHost::default(),
             )),
@@ -389,6 +419,7 @@ impl AppState {
             document_outline_service: std::sync::OnceLock::new(),
             attribute_service: std::sync::OnceLock::new(),
             task_service: std::sync::OnceLock::new(),
+            reading_service: std::sync::OnceLock::new(),
             attributes: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
             tasks: Arc::new(std::sync::Mutex::new(serde_json::Value::Null)),
             backup_service: std::sync::OnceLock::new(),
@@ -399,6 +430,7 @@ impl AppState {
             replication_notifier: std::sync::OnceLock::new(),
             catalog_changes: tokio::sync::watch::channel(0).0,
             catalog_events: std::sync::OnceLock::new(),
+            reader_service: std::sync::OnceLock::new(),
         }
     }
 
@@ -442,6 +474,18 @@ impl AppState {
         &self,
     ) -> Option<Arc<dyn crate::routes::workspaces::DocumentOutlineService>> {
         self.document_outline_service.get().cloned()
+    }
+
+    /// Hand the readings port down, once, before anything is served.
+    pub fn set_reading_service(
+        &self,
+        service: Arc<dyn crate::routes::readings::ReadingService>,
+    ) -> bool {
+        self.reading_service.set(service).is_ok()
+    }
+
+    pub fn reading_service(&self) -> Option<Arc<dyn crate::routes::readings::ReadingService>> {
+        self.reading_service.get().cloned()
     }
 
     pub fn set_attribute_service(

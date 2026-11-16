@@ -23,6 +23,9 @@ pub enum Command {
     Projection(Option<String>),
     /// What the index holds, and what any text finds in it.
     Search(Option<String>),
+    /// What the readings mirror holds. With a hash, that reading and its
+    /// words.
+    Readings(Option<String>),
     /// What is outstanding in the read model. With a lifecycle — `open`,
     /// `completed` or `all` — filter the list.
     Tasks(Option<String>),
@@ -50,6 +53,14 @@ pub struct Invocation {
     /// all three, because a person watching a store start wants to see it
     /// start.
     pub console: bool,
+    /// Supervise `koru-read-worker` beside this executable, as the product
+    /// desktop's Store does (OCR TECHNICAL §10 "Worker launch").
+    ///
+    /// **Off unless asked.** This binary is the black-box suites' host, and
+    /// they must never start a worker beside a test binary; the flag exists so
+    /// a person or an acceptance run can drive the real reading path against
+    /// a disposable `--root` without the desktop app.
+    pub read: bool,
 }
 
 struct Flag {
@@ -77,6 +88,13 @@ const FLAGS: &[Flag] = &[
         help: "keep the console and stay out of the notification area",
     },
     Flag {
+        name: "--read",
+        short: None,
+        takes_value: false,
+        args: "--read",
+        help: "read the words out of files with koru-read-worker beside this executable",
+    },
+    Flag {
         name: "--version",
         short: Some("-V"),
         takes_value: false,
@@ -99,6 +117,10 @@ const COMMANDS: &[(&str, &str)] = &[
         "what the read model holds (an id prints that document)",
     ),
     ("search", "what the index holds (any text searches it)"),
+    (
+        "readings",
+        "what has been read out of files (a hash prints its words)",
+    ),
     (
         "tasks",
         "what is outstanding (open, completed or all filters it)",
@@ -154,6 +176,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
     let mut command: Option<Command> = None;
     let mut root: Option<PathBuf> = None;
     let mut console = false;
+    let mut read = false;
     let mut i = 0;
 
     while i < tokens.len() {
@@ -166,6 +189,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 command: Command::Help,
                 root,
                 console,
+                read,
             });
         }
         if token == "--version" || token == "-V" {
@@ -173,6 +197,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 command: Command::Version,
                 root,
                 console,
+                read,
             });
         }
 
@@ -216,6 +241,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 if flag.name == "--console" {
                     console = true;
                 }
+                if flag.name == "--read" {
+                    read = true;
+                }
                 i += 1;
             }
             continue;
@@ -237,6 +265,13 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                     i += 1;
                 }
                 Command::Search(target.cloned())
+            }
+            "readings" => {
+                let target = tokens.get(i + 1).filter(|next| !next.starts_with('-'));
+                if target.is_some() {
+                    i += 1;
+                }
+                Command::Readings(target.cloned())
             }
             "tasks" => {
                 let target = tokens.get(i + 1).filter(|next| !next.starts_with('-'));
@@ -286,6 +321,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
         command: command.unwrap_or(Command::Serve),
         root,
         console,
+        read,
     })
 }
 

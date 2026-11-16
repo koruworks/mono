@@ -104,6 +104,38 @@ impl FakeStore {
         id
     }
 
+    /// A **reading document** (OCR TECHNICAL D9): a `readings` map of words
+    /// per page, no node tree, registered under its own kind.
+    fn add_reading(&self, workspace: WorkspaceId) -> DocumentId {
+        let id = DocumentId::new();
+        self.titles.borrow_mut().insert(id, String::new());
+        self.kinds
+            .borrow_mut()
+            .insert(id, koru_core::explore::KIND_READING.to_owned());
+        self.names
+            .borrow_mut()
+            .entry(workspace)
+            .or_insert_with(|| "Acme".to_owned());
+        let doc = loro::LoroDoc::new();
+        doc.get_map("readings").insert("schema", 1).unwrap();
+        doc.commit();
+        let ws = WorkspaceDoc::adopt(doc).unwrap();
+        self.docs.borrow_mut().insert(id, (workspace, ws));
+        id
+    }
+
+    /// One page of words written into a reading document, one commit
+    /// announced.
+    fn read_page(&self, reading: DocumentId, page: i64) {
+        self.edit(reading, |ws| {
+            ws.doc()
+                .get_map("readings")
+                .insert(&page.to_string(), "the words on a page")
+                .unwrap();
+            ws.doc().commit();
+        });
+    }
+
     /// One step of a run: one value appended, one commit announced.
     fn step(&self, run: DocumentId, i: i64) {
         self.edit(run, |ws| {

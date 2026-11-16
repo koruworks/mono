@@ -1,0 +1,63 @@
+[package]
+rust-version.workspace = true
+name = "koru-read-paddle"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Turns PaddleOCR's PP-OCRv6 small models, run by oar-ocr on ONNX Runtime, into a `koru_read::Reader`, behind a `runtime` feature that is off by default so an ordinary workspace build never compiles or links an inference runtime."
+
+# **The runtime is optional and off, and that is a link decision.**
+#
+# `ort-sys` links ONNX Runtime from the directory `ORT_LIB_PATH` names. With
+# `ort`'s default features off nothing downloads anything, and with no
+# `ORT_LIB_PATH` its build script defers the failure to the link — so
+# `cargo check` with `runtime` on works anywhere, and any *linked* binary
+# without the library fails. `runtime` is therefore off by default, and the one
+# thing that turns it on is `apps/koru-read`'s own `recognition` feature, which
+# the launchers and the release build turn on after placing the library
+# (`docs/features/ocr`, and this crate's `artifacts` module).
+#
+# Everything that does not need the runtime sits **outside** the gate and is
+# compiled and tested by every ordinary build: the reader token, the settings
+# Plan 0.1 measured, the model directory and dictionary checks, the reading
+# order of recognized lines and the confidence, and the pinned ONNX Runtime
+# library.
+#
+# **Only Windows x64 and macOS can turn it on.** The ONNX Runtime 1.27.1 static
+# library this tree pins comes from the sherpa-onnx archive voice already
+# fetches, which exists for those targets only. The runtime dependencies are
+# declared for those targets alone, so `runtime` on Linux or Windows on ARM
+# compiles to the same nothing as `runtime` off, and the worker there reads
+# text layers without recognition.
+[features]
+default = []
+runtime = ["dep:oar-ocr", "dep:ort", "dep:image", "dep:rayon"]
+
+[dependencies]
+koru-read = { path = "../koru-read" }
+
+# **Not workspace dependencies, deliberately**: one consumer each, and putting
+# the names in the shared table would put the invitation in front of every
+# crate in the tree.
+#
+# `oar-ocr` 0.10.2 requires `ort` **exactly** `=2.0.0-rc.13` (Plan 0.1); a
+# newer release candidate changed `Session::builder` and does not build under
+# it. `ort`'s `api-27` is not optional: the default API level of a newer `ort`
+# panics at start against ONNX Runtime 1.27.1, and 1.27 is what the pinned
+# library is. No `download-binaries`, no `load-dynamic`: the library is linked
+# statically from `ORT_LIB_PATH` and nothing is fetched at build time or loaded
+# at run time. `rayon` bounds the thread pool `oar-ocr` does its own pre- and
+# post-processing on, which otherwise takes every core. `image` only names the
+# `RgbImage` `oar-ocr` takes.
+[target.'cfg(any(all(target_os = "windows", target_arch = "x86_64"), target_os = "macos"))'.dependencies]
+oar-ocr = { version = "=0.10.2", default-features = false, optional = true }
+ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "api-27"], optional = true }
+image = { version = "0.25", default-features = false, optional = true }
+rayon = { version = "1.8", optional = true }
+
+[dev-dependencies]
+# The pinned ONNX Runtime library is a file inside voice's pinned sherpa-onnx
+# archive, so a test reads that archive's table (with no runtime compiled) to
+# prove the two name the same archive.
+koru-voice-sherpa = { path = "../koru-voice-sherpa" }

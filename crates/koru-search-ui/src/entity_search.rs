@@ -297,6 +297,8 @@ impl EntitySearch {
                 // An entity picker completes no `#tag` and no `/key`; it
                 // never asks for either table.
                 SearchReadResult::ScopeTables { .. } => {}
+                // The picker asks nothing about the reader.
+                SearchReadResult::Reader(_) => {}
                 SearchReadResult::DocumentFaces(faces) => self.pending_faces.extend(faces),
                 SearchReadResult::Catalog(catalog) => {
                     // A failed read is distinguishable from an empty store
@@ -640,6 +642,8 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
+            picture_name: None,
         }
     }
 
@@ -729,6 +733,7 @@ mod tests {
                     updating_workspaces: Vec::new(),
                     request_seq: seq,
                     corrected_query: None,
+                    reading: None,
                 },
                 facets: None,
                 recent_queries: None,

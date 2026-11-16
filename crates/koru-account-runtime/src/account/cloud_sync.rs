@@ -27,14 +27,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use koru_account_core::workspace_lifecycle::WorkspaceCloudState;
-use koru_account_core::{KoruIdentityId, ProfileId, WorkspaceId};
+use koru_account_core::workspace_lifecycle::{WorkspaceActivationTranscript, WorkspaceCloudState};
+use koru_account_core::{DeviceId, KoruIdentityId, ProfileId, WorkspaceId};
 use koru_account_wire::{
     BeginWorkspaceCloudActivationRequestV1, CloudWorkspaceCandidateV1, CloudWorkspaceCursorV1,
     CompleteWorkspaceCloudActivationRequestV1, MutateWorkspaceCloudRequestV1, Version1,
-    WorkspaceCloudLifecycleResponseV1,
+    WorkspaceCloudActivationChallengeV1, WorkspaceCloudLifecycleResponseV1,
 };
 use koru_agent_wire::{AccountCommand, AccountOperationResult, AccountStage, CloudSyncProfile};
+use koru_device::DevicePublicKey;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -59,6 +60,12 @@ pub const FREE_CAPACITY_FULL: &str = "cloud_free_capacity_full";
 /// A challenge answered for a different Workspace than the one asked about.
 /// Refusing here keeps a device signature off bytes minted for another row.
 const DATASET_MISMATCH: &str = "cloud_dataset_mismatch";
+/// The bytes the account service asked this device to sign are not the
+/// activation this device asked for, so they were not signed.
+const ACTIVATION_UNVERIFIED: &str = "workspace_activation_unverified";
+/// The longest an activation challenge may say it lives. The service issues
+/// minutes; this only refuses a transcript whose times make no sense.
+const MAX_ACTIVATION_LIFETIME_MILLIS: i64 = 60 * 60 * 1000;
 
 /// Discovery is a position, never an account-wide snapshot: one apply reads at
 /// most this many eligibility pairs and stops. A larger catalog resolves over
@@ -100,6 +107,18 @@ pub trait CloudSyncPort: Send + Sync {
     /// was: nothing is opened and nothing starts unasked.
     fn starts_created_profiles_on(&self) -> bool {
         false
+    }
+
+    /// Connected Profiles default to Cloud, while the Store preserves explicit
+    /// Sync off/P2P choices. Hosts implementing this must honor those choices in
+    /// `open_to_cloud` on every reconciliation, not overwrite them on restart.
+    fn starts_connected_profiles_on(&self) -> bool {
+        false
+    }
+
+    /// A deliberate switch, distinct from a default replay on sign-in.
+    fn choose_cloud_sync(&self, _profile: ProfileId, _enabled: bool) -> Result<(), ServiceError> {
+        Ok(())
     }
 
     /// **The device-local half of "on"**: let this device's Store move
@@ -266,6 +285,85 @@ fn capacity_refused(entry: &WorkspaceCloudSync) -> bool {
     entry.error.as_deref() == Some(FREE_CAPACITY_FULL)
 }
 
+/// What this device asked for when it began an activation, and who it is.
+/// The bytes it is then handed to sign must say all of it back.
+struct ActivationAsked {
+    workspace: WorkspaceId,
+    operation_id: Uuid,
+    owner_profile: ProfileId,
+    expected_authorization_version: u64,
+    device: DeviceId,
+    device_key: DevicePublicKey,
+    account: Uuid,
+    /// The session the access token belongs to, when this process knows it.
+    session: Option<Uuid>,
+}
+
+/// **The device signing key signs an activation only after reading it.**
+///
+/// The challenge's `signing_bytes` come from the account service. Signed
+/// unread, they would put this device's signature on whatever the service —
+/// or anything answering as it — chose to send, and the same key signs
+/// pairing transcripts, trust records and Workspace key grants. So the bytes
+/// must be exactly one activation transcript, and every field this device
+/// already knows must be the value it knows.
+///
+/// `Err` names the field that differed, for the log; never its value.
+///
+/// Not compared, because this device has nothing of its own to compare with:
+/// the region and the issuer (read and bounded by the parser), the Profile
+/// lifecycle revision, the nonce, and this device's clock — the operation id
+/// is minted here per request, which is what makes the transcript fresh, and
+/// a device whose clock is wrong must still be able to turn Cloud sync on.
+fn activation_is_what_was_asked(
+    challenge: &WorkspaceCloudActivationChallengeV1,
+    asked: &ActivationAsked,
+) -> Result<(), &'static str> {
+    let said = WorkspaceActivationTranscript::parse(&challenge.signing_bytes).ok_or("layout")?;
+    let lifetime = said
+        .expires_at_millis
+        .checked_sub(said.issued_at_millis)
+        .ok_or("lifetime")?;
+    let checks = [
+        ("challenge_id", said.challenge_id == challenge.challenge_id),
+        ("workspace_id", said.workspace_id == asked.workspace),
+        ("operation_id", said.operation_id == asked.operation_id),
+        (
+            "owner_profile_id",
+            said.owner_profile_id == asked.owner_profile,
+        ),
+        (
+            "expected_authorization_version",
+            said.expected_authorization_version == asked.expected_authorization_version,
+        ),
+        ("device_id", said.device_id == asked.device),
+        (
+            "device_key",
+            said.registered_device_signing_public_key == asked.device_key,
+        ),
+        ("owner_account_id", said.owner_account_id == asked.account),
+        (
+            "session_id",
+            asked
+                .session
+                .is_none_or(|session| said.session_id == session),
+        ),
+        ("issuer", !said.issuer.is_empty()),
+        (
+            "expires_at_millis",
+            said.expires_at_millis == challenge.expires_at_millis,
+        ),
+        (
+            "lifetime",
+            (1..=MAX_ACTIVATION_LIFETIME_MILLIS).contains(&lifetime),
+        ),
+    ];
+    match checks.iter().find(|(_, holds)| !holds) {
+        Some((field, _)) => Err(field),
+        None => Ok(()),
+    }
+}
+
 fn client_error_code(error: &ClientError) -> Option<&str> {
     match error {
         ClientError::Api { code, .. } => Some(code.as_str()),
@@ -412,6 +510,16 @@ impl ProductionAccountService {
         Ok(all)
     }
 
+    /// The session the access token in hand was issued to: the one just
+    /// issued and not yet acknowledged if there is one, else the durable one.
+    /// `None` when this process holds neither as an id it can read.
+    fn access_session_id(&self) -> Option<Uuid> {
+        self.unacknowledged_session_id
+            .as_ref()
+            .or(self.durable_session_id.as_ref())
+            .and_then(|session| Uuid::parse_str(session).ok())
+    }
+
     fn mint_operation_id(&self) -> Uuid {
         let mut bytes = [0_u8; 16];
         self.entropy.fill_bytes(&mut bytes);
@@ -492,19 +600,25 @@ impl ProductionAccountService {
             Ok(authorization) => authorization,
             Err(error) => return Some(error.code.into()),
         };
+        // Each begin is remembered as it was sent: the challenge that comes
+        // back is signed only if it repeats this operation and this version.
         let begin = |expected_authorization_version: u64| {
-            self.client.begin_workspace_cloud_activation(
+            let operation_id = self.mint_operation_id();
+            let asked = (operation_id, expected_authorization_version);
+            let answer = self.client.begin_workspace_cloud_activation(
                 workspace,
                 &BeginWorkspaceCloudActivationRequestV1 {
                     version: Version1,
-                    operation_id: self.mint_operation_id(),
+                    operation_id,
                     owner_profile_id: profile,
                     expected_authorization_version,
                 },
                 &authorization,
-            )
+            );
+            (asked, answer)
         };
-        let challenge = match begin(entry.authorization_version) {
+        let (mut asked, first) = begin(entry.authorization_version);
+        let challenge = match first {
             Ok(challenge) => challenge,
             Err(error) if client_error_code(&error) == Some(VERSION_MISMATCH) => {
                 // Another device moved the row between the read and this
@@ -519,7 +633,9 @@ impl ProductionAccountService {
                 if entry.enabled {
                     return None;
                 }
-                match begin(entry.authorization_version) {
+                let (again, second) = begin(entry.authorization_version);
+                asked = again;
+                match second {
                     Ok(challenge) => challenge,
                     Err(error) => {
                         return Some(
@@ -540,6 +656,29 @@ impl ProductionAccountService {
         };
         if challenge.workspace_id != workspace {
             return Some(DATASET_MISMATCH.into());
+        }
+        let Some(owner) = self.durable_owner else {
+            return Some("credential_owner_unavailable".into());
+        };
+        let (operation_id, expected_authorization_version) = asked;
+        let asked = ActivationAsked {
+            workspace,
+            operation_id,
+            owner_profile: profile,
+            expected_authorization_version,
+            device: self.descriptor.device_id,
+            device_key: self.signing_key.public_key(),
+            account: owner.account.as_uuid(),
+            session: self.access_session_id(),
+        };
+        if let Err(field) = activation_is_what_was_asked(&challenge, &asked) {
+            // Content-free on purpose: which field, never what it held.
+            tracing::warn!(
+                target: "koru_account",
+                field,
+                "cloud activation: the challenge is not the activation this device asked for; not signed"
+            );
+            return Some(ACTIVATION_UNVERIFIED.into());
         }
         let signature = self.signing_key.sign_message(&challenge.signing_bytes);
         match self.client.complete_workspace_cloud_activation(
@@ -821,6 +960,7 @@ impl ProductionAccountService {
         // must lose at most the activation, never the answer to "did they ask
         // for this?".
         if let Some((profile, enabled)) = change {
+            port.choose_cloud_sync(profile, enabled)?;
             let chosen = state
                 .accounts
                 .entry(account_key.clone())
@@ -873,11 +1013,13 @@ impl ProductionAccountService {
             // a capacity refusal the intention stays and nothing asks again
             // until the account's access changes or the switch is pressed.
             let refused = profile_state.workspaces.values().any(capacity_refused);
-            let access = (applied.is_none() && (profile_state.starts_on || refused))
+            let intended = profile_state.starts_on
+                || (port.starts_connected_profiles_on() && !profile_state.enabled);
+            let access = (applied.is_none() && (intended || refused))
                 .then(|| self.cloud_access_known(account, cancel))
                 .flatten();
             let waiting = applied.is_none()
-                && profile_state.starts_on
+                && intended
                 && (access == Some(true) || (access == Some(false) && !refused));
             // **Cloud sync on means the Store is open to Cloud.** One rule,
             // however the Profile came to be on: the switch, the default, or
@@ -892,12 +1034,13 @@ impl ProductionAccountService {
             let gated = port.starts_created_profiles_on();
             if gated
                 && on
-                && !self.cloud_opened.contains(profile)
-                && port.open_to_cloud(*profile).is_ok()
+                && (!self.cloud_opened.contains(profile) || port.starts_connected_profiles_on())
             {
-                self.cloud_opened.insert(*profile);
-                // The Cloud pass was being refused until this moment.
-                woken = true;
+                if port.open_to_cloud(*profile).is_ok() {
+                    woken |= self.cloud_opened.insert(*profile);
+                } else {
+                    self.cloud_opened.remove(profile);
+                }
             }
             let open = !gated || self.cloud_opened.contains(profile);
             let starting = waiting && open;

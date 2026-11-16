@@ -1,18 +1,16 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **Install, lease, load — the three interfaces Plans 1.2 and 1.3 are written
-//! against, normative in Rust rather than described in prose.**
+//! **Install, lease, load — in voice's words.**
 //!
-//! This module is the seam that lets the model store and the worker be built in
-//! parallel. Rev 1 of the roadmap called them parallel while the worker depended
-//! on an API the store had not specified; a seam written as prose is a seam two
-//! agents interpret differently, so it is written here as types.
-//!
-//! Plan 1.1 defined these and implemented none of them; Plan 1.2 wrote
-//! [`crate::DiskModelStore`] behind them — paths, resumable downloads, a
-//! per-digest cross-process install lock, atomic publish, and lease
-//! reclamation after a crash — without changing a signature here. Plan 1.3's
-//! worker consumes exactly what is in this file and nothing more.
+//! The mechanism behind these interfaces is `koru-models`' — the generic
+//! `ModelStore`, `ModelLease` and `LoadedModel`, the disk store with its locks,
+//! leases and atomic publish. This module keeps voice's own copies of the three
+//! interfaces because voice's worker, its engine adapters and its tests are
+//! written against them in voice's types: a model is named by
+//! `koru_voice::ModelId`, an engine by `EngineId`, a descriptor by the typed
+//! [`ModelDescriptor`]. [`crate::DiskModelStore`] implements voice's
+//! [`ModelStore`] by wrapping the generic disk store and mapping every
+//! descriptor through the tokens.
 //!
 //! ## The three, and why they are three
 //!
@@ -29,8 +27,7 @@
 //! whose implementation does its work in `Drop`, so the only way to hold one is
 //! to hold it and the only way to let go is to stop — which means an inference
 //! thread that panics releases its lease, and so does one that returns early
-//! down a path nobody wrote a cleanup for. An explicit `release` would be
-//! correct at every call site until the first one that was not.
+//! down a path nobody wrote a cleanup for.
 //!
 //! ## None of this may run on a thread that answers a person
 //!
@@ -47,13 +44,21 @@ use crate::error::{ModelError, ModelErrorCode};
 use crate::tier::ModelTier;
 use crate::trust::TrustedKeys;
 use koru_voice::{EngineId, ModelId, Requested};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 
-/// A model whose bytes are on this machine, verified, and complete.
+pub use koru_models::store::{InstallProgress, InstallStage};
+
+// The suite beside this module predates the extraction, when
+// `session_error` was an inherent method; it is a trait method now and the
+// suite names it through `super::*`.
+#[cfg(test)]
+use crate::error::SessionErrorExt;
+
+/// A speech model whose bytes are on this machine, verified, and complete.
 ///
 /// It carries the *signed* descriptor, not a remembered summary of one:
-/// [`crate::DiskModelStore`] writes it beside the bytes at install time, as
+/// the disk store writes it beside the bytes at install time, as
 /// `.koru-model.json`, which is what makes loading a model an offline
 /// operation. Nothing here needs a catalog to exist.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -69,36 +74,12 @@ pub struct InstalledModel {
 impl InstalledModel {
     /// A file inside the model directory, by relative path.
     ///
-    /// **Refuses anything that leaves.** An absolute path, a drive prefix, a
-    /// `..`, a bare `.`, a component carrying a separator for the *other*
-    /// platform — each is [`ModelErrorCode::PathEscape`] rather than something
-    /// normalised into safety. Engine adapters name their files from strings
-    /// that came out of a model archive, and an archive is remote input however
-    /// carefully it was verified: the signature says who published the bytes,
-    /// not that every name inside them is sensible.
+    /// **Refuses anything that leaves** — an absolute path, a drive prefix, a
+    /// `..`, a bare `.`, a separator for the other platform — with
+    /// [`ModelErrorCode::PathEscape`]. The rule is
+    /// [`koru_models::file_inside`]'s, applied rather than copied.
     pub fn file(&self, relative: &str) -> Result<PathBuf, ModelError> {
-        let bad = |why: &str| {
-            Err(ModelErrorCode::PathEscape.with(format!("{relative:?} {why}, so it is refused")))
-        };
-        if relative.is_empty() {
-            return bad("is empty");
-        }
-        if relative.contains('\\') || relative.contains(':') {
-            // Rejected on every platform rather than only where it means
-            // something, so a traversal cannot be a bug that reproduces on one
-            // developer's machine.
-            return bad("carries a backslash or a colon");
-        }
-        let candidate = Path::new(relative);
-        for component in candidate.components() {
-            match component {
-                Component::Normal(_) => {}
-                Component::CurDir => return bad("contains a '.' component"),
-                Component::ParentDir => return bad("climbs out with '..'"),
-                Component::RootDir | Component::Prefix(_) => return bad("is absolute"),
-            }
-        }
-        Ok(self.root.join(candidate))
+        koru_models::file_inside(&self.root, relative)
     }
 
     pub fn id(&self) -> &ModelId {
@@ -107,6 +88,15 @@ impl InstalledModel {
 
     pub fn version(&self) -> &ModelVersion {
         &self.descriptor.version
+    }
+
+    /// The speech model a generic installed model is, or a refusal when its
+    /// descriptor names something speech has no word for.
+    pub(crate) fn from_model(model: koru_models::InstalledModel) -> Result<Self, ModelError> {
+        Ok(InstalledModel {
+            descriptor: ModelDescriptor::from_model(model.descriptor)?,
+            root: model.root,
+        })
     }
 }
 
@@ -139,73 +129,31 @@ pub fn choose_installed<'a>(
 /// a promise somebody made and survives the bytes, while this is a question
 /// about a directory and has to be re-asked after anything that could have
 /// emptied it — a `prune` from another channel, a person deleting the cache, a
-/// disk that was not mounted this morning. A flag beside the consent file
-/// would answer *installed* for a cache that is gone, and nothing would fail
-/// until a dictation did.
+/// disk that was not mounted this morning.
 ///
 /// It walks directories, so it is [the world](../../../guide/contributing/PRINCIPLES.md) in
 /// the sense the rest of this module's note means: not from a frame loop.
 ///
 /// A store that cannot be read at all answers `false` rather than an error,
-/// which is the same reading the tray already takes: *nothing usable is here*
-/// is what a person can act on, and the specific failure belongs in the log
-/// beside it.
+/// which is the same reading the tray already takes.
 pub fn anything_installed(store: &dyn ModelStore) -> bool {
     store.installed().is_ok_and(|models| !models.is_empty())
 }
 
-/// Where an install has got to.
-///
-/// **Progress is coalesced by whoever emits it** — at most one report per
-/// 250 ms or per whole percent. The update path emits one per 64 KiB chunk,
-/// which over 650 MB is roughly ten thousand events and is the anti-pattern
-/// `docs/contributing/operations/LOGGING.md` names by name. Declaring the type here does not
-/// make the frequency somebody else's problem, and the rule is kept in one
-/// place — `progress::Coalescer` — rather than at each emitter.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub struct InstallProgress {
-    pub stage: InstallStage,
-    /// Bytes done, in whatever unit the stage counts. Zero outside
-    /// [`InstallStage::Downloading`] and [`InstallStage::Verifying`].
-    pub received: u64,
-    /// Bytes expected. Zero when the stage has no total to speak of.
-    pub total: u64,
-}
-
-/// The stages of an install, in the order they happen.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
-pub enum InstallStage {
-    /// Checking the signature and looking for an existing install of these
-    /// exact bytes. Before any network.
-    Resolving,
-    Downloading,
-    /// Re-hashing the completed file. A separate stage because it is minutes of
-    /// work on a slow disk and a progress bar that stopped at 100% for two
-    /// minutes reads as a hang.
-    Verifying,
-    Unpacking,
-    /// The atomic rename into place. Brief, and the only moment at which a
-    /// concurrent reader could see a model appear.
-    Publishing,
-}
-
 /// **Somebody is using this model; do not delete it.**
 ///
-/// Released by dropping — see the module note. [`crate::DiskModelStore`]'s
-/// implementation is an exclusively locked file per live holder rather than a
-/// flag, because channel-independence means the process that would delete the
-/// bytes is not the process that is using them.
+/// Released by dropping — see the module note.
 pub trait ModelLease: Send {
     /// The model this lease holds open.
     fn installed(&self) -> &InstalledModel;
 }
 
-/// **Which models are on this machine, and how another one gets here.**
+/// **Which speech models are on this machine, and how another one gets here.**
 ///
-/// A trait rather than a struct so that Plan 1.3's worker can be built and
-/// tested against a store that never touches a disk, and so that Milestone 4's
-/// phone — which has a different cache root, no channels and no second writer —
-/// can implement the same three verbs differently without the worker noticing.
+/// A trait rather than a struct so that the worker can be built and tested
+/// against a store that never touches a disk, and so that a phone — which has
+/// a different cache root, no channels and no second writer — can implement the
+/// same verbs differently without the worker noticing.
 /// [`crate::DiskModelStore`] is the desktop's.
 ///
 /// Every method blocks. See the module note about which threads may call them.
@@ -231,10 +179,11 @@ pub trait ModelStore: Send + Sync {
 
     /// **Fetch, verify and publish a model.**
     ///
-    /// The order is normative: verify the signature over the descriptor first
-    /// (no bytes needed), then fetch, then check size and digest, then publish
-    /// atomically from staging. A caller that already has these bytes gets the
-    /// existing install back rather than a second download.
+    /// The order is normative: check that consent covers this offer, verify
+    /// the signature over the descriptor (no bytes needed), then fetch, then
+    /// check size and digest, then publish atomically from staging. A caller
+    /// that already has these bytes gets the existing install back rather than
+    /// a second download.
     ///
     /// Meeting the same `id`/`version` already installed with a *different*
     /// digest is [`ModelErrorCode::IdentityConflict`] — a hard failure, never a
@@ -243,17 +192,14 @@ pub trait ModelStore: Send + Sync {
     /// `progress` is called from this thread; `cancel` is polled between
     /// chunks and answers [`ModelErrorCode::Cancelled`].
     ///
-    /// **`consent` is a parameter and not a check somewhere else.** *No path
-    /// reaches a download without consent* is the kind of rule that is true
-    /// until the second caller, so it is a signature: a
+    /// **`consent` is a parameter and not a check somewhere else.** A
     /// [`koru_voice_consent::Granted`] is what the consent step answers with,
     /// it is the only thing that opens this door, and a caller that has not
     /// asked anybody cannot compile. Holding one is still not enough — an
-    /// implementation checks [`Granted::covers`](koru_voice_consent::Granted::covers)
-    /// against this entry and answers
-    /// [`ModelErrorCode::ConsentRequired`] when a grant does not reach it,
-    /// because agreeing to 600 MB of Apache-2.0 weights is not agreeing to
-    /// whatever the catalog lists next.
+    /// implementation answers [`ModelErrorCode::ConsentRequired`] when the
+    /// grant does not reach this entry, because agreeing to 600 MB of
+    /// Apache-2.0 weights is not agreeing to whatever the catalog lists next,
+    /// and a grant recorded for another feature is not voice's.
     fn install(
         &self,
         entry: &CatalogEntry,

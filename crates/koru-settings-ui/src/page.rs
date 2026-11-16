@@ -217,6 +217,7 @@ impl PageId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Anchor {
     Voice,
+    Reader,
 }
 
 /// Where the page's title sits under the window's top edge — the shared
@@ -821,6 +822,34 @@ impl<'a> Builder<'a> {
             label,
             hint,
             Spec::Button(action, button.to_owned(), koru_ui::ActionStyle::Ghost),
+        );
+    }
+
+    /// Two quiet text buttons — *Read again* and *Show* — side by side: the
+    /// existing [`Spec::Pair`] of the button [`row_text_button`](Self::row_text_button)
+    /// draws, so no control is new.
+    pub(crate) fn row_text_buttons(
+        &mut self,
+        label: &str,
+        hint: Option<&str>,
+        (first, first_action): (&str, Action),
+        (second, second_action): (&str, Action),
+    ) {
+        self.row(
+            label,
+            hint,
+            Spec::Pair(
+                Box::new(Spec::Button(
+                    first_action,
+                    first.to_owned(),
+                    koru_ui::ActionStyle::Ghost,
+                )),
+                Box::new(Spec::Button(
+                    second_action,
+                    second.to_owned(),
+                    koru_ui::ActionStyle::Ghost,
+                )),
+            ),
         );
     }
 

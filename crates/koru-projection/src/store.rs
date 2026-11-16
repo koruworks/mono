@@ -88,6 +88,37 @@ pub struct BlobReferenceRow {
     pub mime: Option<String>,
 }
 
+/// One blob a reading could be made of: a live node in a **page or a file**
+/// that carries it (OCR TECHNICAL §9 "What the coordinator queues").
+///
+/// `document` is the entry whose reading document would hold the words — a
+/// page for a picture pasted into it, the file itself for a file.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReadableReference {
+    pub document: DocumentId,
+    /// `page` or `file`, as the listing names it.
+    pub kind: String,
+    /// The canonical `b3:<hex>` address the node stores.
+    pub blob: String,
+    pub mime: Option<String>,
+    /// The listing's trash stamp, which the projector writes **inherited**
+    /// down the document tree. A trashed entry is not read, and is counted so
+    /// a diagnostic can say why.
+    pub trashed: bool,
+}
+
+/// Which references [`Projections::readable_references`] reads.
+#[derive(Clone, Copy, Debug)]
+pub enum ReadableScope<'a> {
+    /// Every page and file of the workspace.
+    Workspace,
+    /// These documents only — what a projected document's trigger asks.
+    Documents(&'a [DocumentId]),
+    /// The documents of the workspace carrying one of these hashes — what a
+    /// blob landing asks.
+    Carrying(&'a [String]),
+}
+
 /// One document as a blob-reference **sample** read it: its identity, the exact
 /// state the read model projected from, whether it is binned, and every
 /// reference it holds.
@@ -962,6 +993,137 @@ impl Projections {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?))
         })?;
         rows.next().transpose().map_err(Into::into)
+    }
+
+    /// **Which documents of this workspace carry one of these blobs** — the
+    /// documents whose search text moves when the words read out of those
+    /// blobs do (TECHNICAL §7 "The index").
+    ///
+    /// A node counts when it is **live in its document**: one in the
+    /// document's own bin is not indexed, so re-indexing for it would be work
+    /// with no result. A document in the *workspace's* Trash does count — the
+    /// search index keeps a binned document's rows so the Trash filter can
+    /// find them, and those rows have to be right too.
+    ///
+    /// Each document once, ordered by id. Empty `hashes` answers empty without
+    /// a query.
+    ///
+    /// **The plan starts from the workspace.** `nodes.blob` has no index, so
+    /// the read is `documents_workspace` to this workspace's documents, then
+    /// each document's nodes by document id, with the hash and bin tests as
+    /// filters: work proportional to the workspace, never a scan of every node
+    /// in the store. [`documents_carrying_sql`] says why the `+` on `n.blob`.
+    pub fn documents_carrying(
+        &self,
+        workspace: WorkspaceId,
+        hashes: &[String],
+    ) -> Result<Vec<DocumentId>> {
+        /// Well under SQLite's bound on parameters, and large enough that a
+        /// burst of readings landing is one statement in practice.
+        const CHUNK: usize = 500;
+        let mut found: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        for chunk in hashes.chunks(CHUNK) {
+            let mut query = self.db.prepare(&documents_carrying_sql(chunk.len()))?;
+            let workspace = workspace.to_storage();
+            let parameters =
+                std::iter::once(workspace.as_str()).chain(chunk.iter().map(String::as_str));
+            let rows = query.query_map(rusqlite::params_from_iter(parameters), |row| {
+                row.get::<_, String>(0)
+            })?;
+            for row in rows {
+                found.insert(row?);
+            }
+        }
+        Ok(found
+            .into_iter()
+            .filter_map(|document| DocumentId::parse(&document))
+            .collect())
+    }
+
+    /// **The blobs a reading could be made of**, for the Store daemon's reading
+    /// coordinator (OCR TECHNICAL §9 "What the coordinator queues").
+    ///
+    /// Every node **live in its document** that carries a blob, in a listed
+    /// document of kind `page` or `file` — the two kinds a reading document can
+    /// belong to (TECHNICAL D9). A node in its document's own bin is left out:
+    /// the index never indexes one, so reading it is work with no result, and
+    /// restoring it reprojects the document, which is what asks again. A
+    /// document in the workspace's Trash is **returned and marked**, because
+    /// the coordinator counts it (`trashed`) rather than reading it.
+    ///
+    /// Ordered by document, then hash, so the answer is the same on every read
+    /// of the same state. Duplicates within a document — one picture pasted
+    /// twice — come back once.
+    ///
+    /// **The plan starts from the listing**: `listing_workspace` for a
+    /// workspace, the primary key for named documents, then each document's
+    /// nodes by `nodes_document`. [`readable_references_sql`] says why the
+    /// `+` on `n.blob` and `l.kind`.
+    pub fn readable_references(
+        &self,
+        workspace: WorkspaceId,
+        scope: ReadableScope<'_>,
+    ) -> Result<Vec<ReadableReference>> {
+        const CHUNK: usize = 500;
+        let mut found = std::collections::BTreeMap::new();
+        let mut run = |sql: &str, parameters: Vec<String>| -> Result<()> {
+            let mut query = self.db.prepare(sql)?;
+            let rows = query.query_map(rusqlite::params_from_iter(parameters.iter()), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, bool>(4)?,
+                ))
+            })?;
+            for row in rows {
+                let (document, kind, blob, mime, trashed) = row?;
+                let Some(id) = DocumentId::parse(&document) else {
+                    continue;
+                };
+                found
+                    .entry((document, blob.clone()))
+                    .or_insert(ReadableReference {
+                        document: id,
+                        kind,
+                        blob,
+                        mime,
+                        trashed,
+                    });
+            }
+            Ok(())
+        };
+        let workspace = workspace.to_storage();
+        match scope {
+            ReadableScope::Workspace => {
+                run(
+                    &readable_references_sql(ReadableFilter::Workspace),
+                    vec![workspace],
+                )?;
+            }
+            ReadableScope::Documents(documents) => {
+                for chunk in documents.chunks(CHUNK) {
+                    let mut parameters = vec![workspace.clone()];
+                    parameters.extend(chunk.iter().map(DocumentId::to_storage));
+                    run(
+                        &readable_references_sql(ReadableFilter::Documents(chunk.len())),
+                        parameters,
+                    )?;
+                }
+            }
+            ReadableScope::Carrying(hashes) => {
+                for chunk in hashes.chunks(CHUNK) {
+                    let mut parameters = vec![workspace.clone()];
+                    parameters.extend(chunk.iter().cloned());
+                    run(
+                        &readable_references_sql(ReadableFilter::Carrying(chunk.len())),
+                        parameters,
+                    )?;
+                }
+            }
+        }
+        Ok(found.into_values().collect())
     }
 
     /// **One read of a Workspace's blob-reference sample** — every listed
@@ -3254,6 +3416,69 @@ fn task_kind_sql() -> String {
         .map(|kind| format!("'{}'", kind.as_str()))
         .collect();
     format!("+n.kind IN ({})", kinds.join(", "))
+}
+
+/// [`Projections::documents_carrying`]'s statement, for `hashes` hashes: the
+/// workspace as the first parameter, then each hash. One function so the test
+/// that pins its plan reads the statement that runs.
+///
+/// **`+n.blob`, so the hash test stays a filter.** There is no index on
+/// `nodes.blob` today and the plan starts from `documents_workspace`; the `+`
+/// keeps it there if one is ever added for another question, which is the
+/// lesson [`task_kind_sql`] records.
+fn documents_carrying_sql(hashes: usize) -> String {
+    let marks = vec!["?"; hashes.max(1)].join(", ");
+    format!(
+        "SELECT DISTINCT n.document_id
+           FROM documents d
+           JOIN nodes n ON n.document_id = d.document_id
+          WHERE d.workspace_id = ?
+            AND +n.blob IN ({marks})
+            {bin}",
+        bin = NodeScope::Live.clause("n.in_trash"),
+    )
+}
+
+/// Which rows [`readable_references_sql`] selects, with how many parameters
+/// follow the workspace.
+#[derive(Clone, Copy, Debug)]
+enum ReadableFilter {
+    Workspace,
+    Documents(usize),
+    Carrying(usize),
+}
+
+/// [`Projections::readable_references`]'s statement: the workspace as the
+/// first parameter, then the documents or hashes of the filter. One function
+/// so the test that pins its plan reads the statement that runs.
+///
+/// **`+l.kind` and `+n.blob`, so both stay filters.** Neither column narrows
+/// anything worth starting from — nearly every listed document is a page or a
+/// file, and `nodes.blob` has no index today — and the planner has chosen a
+/// poor index over a good one in this file before ([`task_kind_sql`]). The
+/// unary `+` leaves `listing_workspace` (or the listing's primary key) and
+/// `nodes_document` as the only ways in.
+fn readable_references_sql(filter: ReadableFilter) -> String {
+    let marks = |n: usize| vec!["?"; n.max(1)].join(", ");
+    let narrow = match filter {
+        ReadableFilter::Workspace => String::new(),
+        ReadableFilter::Documents(n) => format!("AND l.document_id IN ({})", marks(n)),
+        ReadableFilter::Carrying(n) => format!("AND +n.blob IN ({})", marks(n)),
+    };
+    format!(
+        "SELECT l.document_id, l.kind, n.blob, n.mime, l.trashed_at IS NOT NULL
+           FROM listing l
+           JOIN nodes n ON n.document_id = l.document_id
+          WHERE l.workspace_id = ?
+            AND +l.kind IN ('{page}', '{file}')
+            AND +n.blob IS NOT NULL
+            {bin}
+            {narrow}
+          ORDER BY l.document_id, n.blob",
+        page = koru_core::explore::KIND_DOCUMENT,
+        file = koru_core::explore::KIND_FILE,
+        bin = NodeScope::Live.clause("n.in_trash"),
+    )
 }
 
 /// Whether the node carries a completed lifecycle. Used as a *column* on every

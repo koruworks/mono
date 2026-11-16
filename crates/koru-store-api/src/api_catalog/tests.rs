@@ -307,6 +307,7 @@ fn no_route_is_registered_outside_this_table() {
         ("debug.rs", include_str!("../routes/debug.rs")),
         ("workspaces.rs", include_str!("../routes/workspaces.rs")),
         ("reminders.rs", include_str!("../routes/reminders.rs")),
+        ("readings.rs", include_str!("../routes/readings.rs")),
     ] {
         assert!(
             !source.contains(".route("),
@@ -343,9 +344,18 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // pause, the blob release, the Profile transport mode, the documents
     // waiting on another device and one document's own Cloud coverage
     // (D256, D258, rung 2's space reclaim), as is the Welcome page's
-    // installation-local progress (a query path and a per-row path).
-    assert_eq!(ROUTES.len(), 113, "a row was added or removed");
-    assert_eq!(paths.len(), 91, "a path was added or removed");
+    // installation-local progress (a query path and a per-row path). The
+    // readings debug view (OCR TECHNICAL §14) is one more internal row, and
+    // one reading's words (§10, `/v1/readings/{workspace}/{hash}`) another.
+    // The reader's installer (OCR Plan 2.4) adds six internal rows over five
+    // paths: its state and Remove share `/v1/readings/reader`. The items
+    // behind the Settings row's could-not-be-read count (Plan 2.5) one more.
+    // A person's two requests on one item (OCR Plan 3.2, `…/read-all` and
+    // `…/read-again`) add two internal rows over two paths. Turning the
+    // reader off and on again (OCR Plan 3.5, `…/reader/off` and `…/on`) two
+    // more.
+    assert_eq!(ROUTES.len(), 131, "a row was added or removed");
+    assert_eq!(paths.len(), 107, "a path was added or removed");
 }
 
 #[test]
@@ -524,12 +534,39 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/workspaces/{id}/blobs/pause",
             "/v1/workspaces/{id}/blobs/release",
             "/v1/profiles/{id}/transport-mode",
+            "/v1/profiles/{id}/transport-mode",
+            "/v1/profiles/{id}/transport-default",
+            "/v1/workspaces/{id}/transport-mode",
+            // Ours: the reader that finds words in pictures, on this computer
+            // (OCR Plan 2.4) — a model on this machine and this machine's
+            // answer to an offer, which promise a third party nothing.
+            "/v1/readings/reader",
+            "/v1/readings/reader",
+            "/v1/readings/reader/install",
+            "/v1/readings/reader/stop",
+            // Ours: whether the reader is on is machine-local (OCR Plan 3.5).
+            "/v1/readings/reader/off",
+            "/v1/readings/reader/on",
+            "/v1/readings/reader/decline",
+            "/v1/readings/reader/imported",
+            // Ours: this computer's could-not-be-read items (OCR Plan 2.5).
+            "/v1/readings/reader/items",
+            // Ours: one reading's words, asked only by the debug-only *Save
+            // reading* entry until a rung that shows them to a person ships.
+            "/v1/readings/{workspace}/{hash}",
+            // Ours: a person's request on one item, a fact about this
+            // computer (OCR Plan 3.2).
+            "/v1/readings/{workspace}/{hash}/correction",
+            "/v1/readings/{workspace}/{hash}/read-all",
+            "/v1/readings/{workspace}/{hash}/read-again",
+            "/v1/readings/{workspace}/{hash}/force-ocr",
             "/v1/debug/openapi.json",
             "/v1/debug/store",
             "/v1/debug/workspaces/{id}",
             "/v1/debug/documents/{id}",
             "/v1/debug/projection",
             "/v1/debug/search",
+            "/v1/debug/readings",
             "/v1/debug/attributes",
             "/v1/debug/tasks",
             "/v1/debug/sync",

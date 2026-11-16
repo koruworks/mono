@@ -280,7 +280,7 @@ fn documents_actions_menu_opens_and_routes_every_action() {
 }
 
 #[test]
-fn files_has_the_same_import_entry_point_for_multi_file_picker() {
+fn files_heading_opens_the_shell_menu_with_import_and_ocr_actions() {
     let mut v = with_rows(3);
     v.show_files();
     let a = area();
@@ -290,19 +290,15 @@ fn files_has_the_same_import_entry_point_for_multi_file_picker() {
     let (x, y) = button.centre();
     assert!(v.mouse_move(a, VIEW, x, y));
     assert_eq!(v.cursor_icon(), koru_ui::cursor::PRESS);
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert_eq!(
-        v.popover_rows(),
-        vec![PopoverRow::LibraryAction(actions::Action::Import)]
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::LibraryMenu {
+            at: (button.x, button.y + button.h),
+        }
     );
     assert!(
-        v.popover_list_band(a, VIEW).is_none(),
-        "the one-command menu has no footer divider"
-    );
-    let import = v.popover_rects(a, VIEW)[0].1.centre();
-    assert_eq!(
-        v.mouse_down(a, VIEW, import.0, import.1, false),
-        Outcome::ImportFiles
+        v.popover.is_none(),
+        "the shell owns the complete Files menu"
     );
 }
 
@@ -3240,6 +3236,30 @@ fn clicking_an_already_selected_row_without_dragging_collapses_to_that_row() {
     assert_eq!(v.selection, HashSet::from([ids[2]]));
 }
 
+#[test]
+fn files_selection_can_replace_and_clear_a_revealed_row() {
+    let (mut view, ids) = flat_rows(2);
+    view.mode = NavigatorMode::Files;
+    for row in &mut view.rows {
+        row.kind = Kind::File;
+    }
+    // A stale active-file marker must not behave as a second selection.
+    view.set_selected(Some(ids[0]));
+    view.select_only(ids[0]);
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Card);
+    let a = area();
+    view.mouse_down(a, VIEW, on_label(a), row_centre(&view, a, 1), false);
+    assert_eq!(view.mouse_up(), Outcome::Consumed);
+    assert_eq!(view.selection_nodes(), vec![ids[1]]);
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Idle);
+    assert_eq!(view.row_treatment(&view.rows[1], 1), RowTreatment::Card);
+    view.mouse_down(a, VIEW, on_label(a), row_centre(&view, a, 1), true);
+    assert_eq!(view.mouse_up(), Outcome::Consumed);
+    assert!(view.selection_nodes().is_empty());
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Idle);
+    assert_eq!(view.row_treatment(&view.rows[1], 1), RowTreatment::Idle);
+}
+
 /// The row cache is pre-order, so an inclusive Shift range contains nested
 /// rows as well as the two endpoints instead of selecting siblings only.
 #[test]
@@ -3911,6 +3931,26 @@ fn a_press_on_the_dots_does_not_seed_a_drag() {
 /// A right-click on a row reports its menu at the cursor rather than under a
 /// button. Empty library space offers import, while pinned chrome is swallowed
 /// rather than falling through to the view underneath.
+#[test]
+fn files_ocr_heading_and_background_use_the_same_menu_route() {
+    let mut view = with_rows(2);
+    view.show_files();
+    let a = area();
+    let button = view.actions_button(a);
+    let (x, y) = button.centre();
+    assert_eq!(
+        view.mouse_down(a, VIEW, x, y, false),
+        Outcome::LibraryMenu {
+            at: (button.x, button.y + button.h),
+        }
+    );
+    assert!(view.popover.is_none());
+    assert!(matches!(
+        view.context_menu(a, a.x + a.w * 0.5, a.y + a.h - 2.0),
+        Outcome::LibraryMenu { .. }
+    ));
+}
+
 #[test]
 fn right_clicking_a_row_reports_its_menu_at_the_cursor() {
     let mut v = with_rows(2);

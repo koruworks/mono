@@ -62,5 +62,5 @@ pub use model::{
     DocumentProjection, PROJECTION_SCHEMA_VERSION, ProjectedAttr, ProjectedNode, ProjectedRun,
     ProjectionSourceStatus, UnfiledDocument,
 };
-pub use store::{ProjectionError, Projections, Staleness};
+pub use store::{ProjectionError, Projections, ReadableReference, ReadableScope, Staleness};
 pub use worker::{Projector, ProjectorStats};

@@ -562,6 +562,17 @@ impl Manifest {
             .and_then(DocumentId::parse))
     }
 
+    /// The kind token a document is registered under, without walking the
+    /// tree: one index lookup and one meta read. `None` for an id this
+    /// manifest does not hold, and for an entry written with no kind.
+    ///
+    /// The store never interprets the token; this is for the two places a
+    /// host has told it to (the file a note may attach to, the kinds whose
+    /// history is not captured).
+    pub fn kind_of(&self, id: DocumentId) -> Option<String> {
+        self.meta_of(id).ok()?.get(K_KIND).and_then(as_string)
+    }
+
     /// Move a document under a new parent, at a position among its siblings.
     pub fn move_document(
         &mut self,

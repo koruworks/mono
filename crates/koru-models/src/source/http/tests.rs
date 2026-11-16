@@ -14,7 +14,7 @@ use super::*;
 use crate::descriptor::{ModelVersion, Sha256Digest};
 use crate::fixtures;
 use crate::testserver::{FixtureServer, Reply};
-use koru_voice::ModelId;
+use crate::token::ModelId;
 
 const NAME: &str = "parakeet-1.2.0.zip";
 

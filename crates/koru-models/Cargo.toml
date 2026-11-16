@@ -1,0 +1,62 @@
+[package]
+rust-version.workspace = true
+name = "koru-models"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Which models exist, where their verified bytes are on this machine, and how they get there — the catalog, the signed descriptor, the pinned model-signing key, the resumable download and the disk store with its locks and leases. It knows no engine, no inference runtime, no audio, no channel and no feature: a caller names its catalog, its cache root and its consent record, and something else loads what it hands out."
+
+# **The dependencies are the charter, stated twice.** This crate was extracted
+# from `koru-voice-models` (see `docs/decisions/` — the model store, extracted)
+# so that a second kind of model can be installed by the same mechanism, and
+# what it does *not* link is what makes it shareable.
+#
+# `koru-update` supplies `verify::sha256_file` and the hardened
+# `archive::extract_zip` with its `ArchiveLimits`. Neither is update-specific,
+# and both are things this mechanism reuses rather than writes again.
+#
+# `minisign-verify` is the trust root's primitive, deliberately the same one
+# the update path already verifies with so there is no second signature format
+# in the tree. `url` is what a mirror is, with `https` checked at parse time.
+#
+# `reqwest` is the *blocking* client on purpose: every method of `ModelStore`
+# blocks, the thread that calls one is a worker's, and an async runtime
+# acquired to download a file would have to be acquired by a phone too. `fs2`
+# is the cross-process lock — the same primitive `koru_update::lease` uses,
+# because two builds sharing one channel-independent cache is exactly the
+# situation `InstanceLease` was written for.
+#
+# `koru-voice-consent` is **the gate, not the record**: `ModelStore::install`
+# asks for a `Granted` by value, so *no path reaches a download without
+# consent* is a signature. A store is built naming which feature's consent
+# record opens it, so a grant one feature recorded cannot open another's
+# store. The crate's name is older than this one; see the decision record for
+# why it was not renamed here.
+#
+# **Not here, and not by accident:** no `koru-voice` (no `EngineId`, no
+# `VoiceLanguage`, no tier enum — the descriptor carries validated tokens and a
+# feature crate maps them to its own types), no inference runtime, no `cpal`,
+# no `koru-ipc`, no `koru-channel`, and no `koru-env`: the cache root and the
+# catalog source are values a caller resolves from its own variables. The
+# model cache is channel-independent (ADR-250), so a crate that knew which
+# channel it was would be a crate that could get that wrong.
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+url = { workspace = true }
+minisign-verify = { workspace = true }
+reqwest = { workspace = true }
+fs2 = { workspace = true }
+# One line, and it is the loudest one in the crate: an unconditional `warn!`
+# when a model is installed with no signature. `docs/contributing/operations/LOGGING.md`
+# puts that in the always-logged category, so it may not be behind a feature.
+tracing = { workspace = true }
+koru-update = { path = "../koru-update" }
+koru-voice-consent = { path = "../koru-voice-consent" }
+
+[dev-dependencies]
+# The signing half. `minisign` generates a keypair and signs bytes so every
+# verification vector is built rather than checked in.
+minisign = { workspace = true }
+tempfile = { workspace = true }

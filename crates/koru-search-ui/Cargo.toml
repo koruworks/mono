@@ -36,6 +36,14 @@ koru-draw = { path = "../koru-draw" }
 # The widgets: the text box, the list, the popover, the tooltip — and `keys`,
 # which is the one normalisation of what a Ctrl chord is on.
 koru-ui = { path = "../koru-ui" }
+# The words a row adds of its own — *Page 12*, *in Tax 2023*, and the sentence
+# a screen reader hears — in all eight languages, with page numbers written the
+# way each language writes them. A leaf with no dependencies.
+koru-i18n = { path = "../koru-i18n" }
+# The one rounding of a download's size into the megabytes a sentence says, so
+# the line in search, the Settings row and voice's consent never disagree by a
+# megabyte (OCR Plan 2.5). A leaf of serde and nothing else.
+koru-voice-consent = { path = "../koru-voice-consent" }
 # The tag *name* grammar: the `#` token rule the store's query parser also uses,
 # and the matcher the editor's chooser narrows with. Shared so a completion this
 # box offers is one the parser will read as a filter, and so `fun/h` means the

@@ -455,7 +455,7 @@ impl ExploreView {
                 // everywhere would leave a client unable to open *any* row.
                 // The one row that does carry it is the one already open,
                 // which is the one nothing needs to open.
-                if self.selected == Some(row.node) {
+                if row.kind != koru_core::Kind::File && self.selected == Some(row.node) {
                     node = node.with_selected(true);
                 }
                 if row.has_children {
@@ -883,10 +883,7 @@ impl ExploreView {
                     self.toggle_profile_popover();
                     Some(Outcome::Consumed)
                 }
-                p if p == parts::ACTIONS => {
-                    self.toggle_popover(PopoverKind::LibraryActions);
-                    Some(Outcome::Consumed)
-                }
+                p if p == parts::ACTIONS => Some(self.open_heading_actions(area)),
                 p if p == parts::TRASH => Some(Outcome::OpenTrash),
                 p if p == parts::EMPTY_ACTION => Some(self.empty_state().2),
                 _ => None,

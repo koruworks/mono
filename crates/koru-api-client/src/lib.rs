@@ -115,10 +115,11 @@ pub use koru_store_client::{
     LocalProfileRestoration, ManifestRef, Navigation, NewDocument, NewProfile, NewWorkspace,
     OutlineHeading, ProfileAccountBindingOutcome, ProfileAccountClearOutcome, ProfileAppearance,
     ProfileDeletionBatch, ProfileDeletionPreview, ProfileLifecycleInventory,
-    ProfileLifecycleInventoryItem, ProfileRestoreOutcome, ProvisionAccountProfile, RecentQuery,
-    RenameProfile, RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery,
-    SearchRequest, SearchResponse, Status, Stopping, UnassignedReason, UnassignedWorkspace,
-    WorkspaceAppearance, WorkspaceAuthority, WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
+    ProfileLifecycleInventoryItem, ProfileRestoreOutcome, ProvisionAccountProfile, ReadRequestKind,
+    ReadRequested, ReadingAnswer, ReadingOffers, ReadingPage, RecentQuery, RenameProfile,
+    RenameWorkspace, SearchFacets, SearchHit, SearchPage, SearchQuery, SearchRequest,
+    SearchResponse, Status, Stopping, UnassignedReason, UnassignedWorkspace, WorkspaceAppearance,
+    WorkspaceAuthority, WorkspaceAuthorityState, WorkspaceAvailabilityIssue,
 };
 pub use koru_store_client::{debug, store_session_debug, sync, sync_debug};
 
@@ -535,6 +536,7 @@ impl Client {
                     updating_workspaces: response.page.updating_workspaces,
                     request_seq: response.page.request_seq,
                     corrected_query: response.page.corrected_query,
+                    reading: response.page.reading,
                 },
                 facets: response.facets,
                 recent_queries: response.recent_queries,

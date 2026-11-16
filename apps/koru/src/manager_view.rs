@@ -523,6 +523,26 @@ impl View for DocumentPane {
         View::take_wants_copy_image(&mut self.doc)
     }
 
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        View::take_wants_save_reading(&mut self.doc)
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        View::take_wants_reading_offers(&mut self.doc)
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        View::take_wants_read_again(&mut self.doc)
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        View::set_reading_offers(&mut self.doc, target, offers)
+    }
+
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
         View::take_wants_copy_html(&mut self.doc)
     }
@@ -786,6 +806,11 @@ impl ManagerView {
 }
 
 impl View for ManagerView {
+    forward_to_the_window! {
+        fn begin_file_image_open(&mut self, file: koru_core::DocumentId) -> bool;
+        fn show_file_reading(&mut self, file: koru_core::DocumentId, details: Result<koru_workspace_host::reading_details::ReadingDetails, String>) -> bool;
+        fn show_file_image(&mut self, file: koru_core::DocumentId, name: String, image: std::sync::Arc<koru_ui::media_viewer::ViewerImage>) -> bool;
+    }
     fn set_window_focused(&mut self, focused: bool) {
         match self {
             Self::Container(view) => view.set_window_focused(focused),
@@ -1552,6 +1577,25 @@ impl View for ManagerView {
         }
     }
 
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: koru_workspace_host::ImportNoticeTarget,
+        reading: koru_workspace_host::reader_offer::ImportReading,
+    ) -> bool {
+        match self {
+            Self::Container(c) => c.show_import_notice_reading(message, target, reading),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn reader_answered(&mut self, state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        match self {
+            Self::Container(c) => c.reader_answered(state),
+            Self::Document(_) => false,
+        }
+    }
+
     fn show_import_preview(&mut self, preview: koru_workspace_host::ImportPreview) -> bool {
         match self {
             Self::Container(c) => c.show_import_preview(preview),
@@ -2201,6 +2245,38 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.take_wants_copy_image(),
             Self::Document(v) => v.take_wants_copy_image(),
+        }
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_save_reading(),
+            Self::Document(v) => v.take_wants_save_reading(),
+        }
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_reading_offers(),
+            Self::Document(v) => v.take_wants_reading_offers(),
+        }
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        match self {
+            Self::Container(v) => v.take_wants_read_again(),
+            Self::Document(v) => v.take_wants_read_again(),
+        }
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match self {
+            Self::Container(v) => v.set_reading_offers(target, offers),
+            Self::Document(v) => v.set_reading_offers(target, offers),
         }
     }
 

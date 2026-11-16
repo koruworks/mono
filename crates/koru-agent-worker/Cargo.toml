@@ -5,13 +5,15 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "Running a role of our own executable as a supervised child."
+description = "Running a role of our own executable, or a sibling program, as a supervised child."
 
 [dependencies]
 tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true }
+# `Win32_System_IO`: the completion port a memory-limited job reports its
+# limit on (`windows_job.rs`).
+windows-sys = { workspace = true, features = ["Win32_System_IO"] }
 
 # `kill(-pgid, …)` and `getpgrp`: the process group is the unix stand-in for
 # the Job Object (M24).

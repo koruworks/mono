@@ -733,6 +733,31 @@ impl View for BuiltInDocument {
         self.editor.view.wants_copy_image.take()
     }
 
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        self.wants_save_reading.take()
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        BuiltInDocument::take_wants_reading_offers(self)
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        BuiltInDocument::take_wants_read_again(self)
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match target {
+            koru_workspace_host::reading_file::ReadingTarget::Picture { hash } => {
+                BuiltInDocument::set_reading_offers(self, hash, offers)
+            }
+            koru_workspace_host::reading_file::ReadingTarget::File(_) => false,
+        }
+    }
+
     fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
         self.editor.apply_pending_cut_image(ws)
     }

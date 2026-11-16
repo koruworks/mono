@@ -158,6 +158,14 @@ pub const VOICE: &str = "koru-voice";
 /// meet. Beside the other nine for the reason [`STORE`] gives.
 pub const DELEGATE: &str = "koru-delegate";
 
+/// The read worker's endpoint: the Store daemon's coordinator sends it one
+/// file's path at a time and reads back that file's words, page by page
+/// (`koru_read::wire`). Root-qualified like [`VOICE`] — the worker is
+/// started with the Store's own `--root` — so a rooted Store and its worker
+/// meet and two rooted stacks never do. Beside the others for the reason
+/// [`STORE`] gives.
+pub const READ: &str = "koru-read";
+
 /// Every service token this crate can name, as one table.
 ///
 /// **It exists so the length budget can be tested rather than remembered.** A
@@ -181,4 +189,5 @@ pub const SERVICES: &[&str] = &[
     AGENT_GATEWAY_BRIDGE,
     VOICE,
     DELEGATE,
+    READ,
 ];

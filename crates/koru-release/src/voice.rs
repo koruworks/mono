@@ -156,7 +156,18 @@ fn shared_work_and_sources(root: &Path) -> Result<(PathBuf, Vec<PathBuf>), Strin
     Ok((work, sources))
 }
 
-fn shared_work_from_common(root: &Path, common: &str) -> Result<PathBuf, String> {
+pub(crate) fn shared_work_from_common(root: &Path, common: &str) -> Result<PathBuf, String> {
+    shared_dir_from_common(root, common, DEFAULT_WORK)
+}
+
+/// `<main checkout>/<relative>`, from Git's common directory. The reader's
+/// model publisher keeps its own work directory beside voice's for the same
+/// reason ADR-254 gives: one verified copy per machine, not one per worktree.
+pub(crate) fn shared_dir_from_common(
+    root: &Path,
+    common: &str,
+    relative: &str,
+) -> Result<PathBuf, String> {
     let common = PathBuf::from(common);
     let common = if common.is_absolute() {
         common
@@ -166,10 +177,10 @@ fn shared_work_from_common(root: &Path, common: &str) -> Result<PathBuf, String>
     let main = common
         .parent()
         .ok_or_else(|| format!("{} has no parent checkout", common.display()))?;
-    Ok(main.join(DEFAULT_WORK))
+    Ok(main.join(relative))
 }
 
-fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -313,7 +324,7 @@ fn pin(options: &Options) -> Result<(), String> {
     for artifact in options.rows() {
         println!("\n  {}", artifact.id);
         let target = options.work.join(artifact.file_name);
-        let (size, digest) = download_and_hash(artifact, &target, options.keep)?;
+        let (size, digest) = download_and_hash(artifact.url, &target, options.keep)?;
         println!("    upstream_size:   {size},");
         println!("    upstream_sha256: \"{digest}\",");
         if size != artifact.upstream_size {
@@ -382,19 +393,7 @@ fn publish(options: &Options) -> Result<(), String> {
     if rows.iter().any(|artifact| !table::is_product(artifact)) {
         return Err("only product models can be published; research candidates may be pinned and fetched, but never enter the product catalog".into());
     }
-    // A dry run reads only what is already public, so it needs no token. The
-    // upload path needs the real client, and asking for the token here rather
-    // than lazily means a missing one is an error before anything is fetched.
-    let cloud = if options.upload {
-        let paths = crate::release_paths()?;
-        let config: crate::cloud::CloudConfig = crate::read_json(&paths.cloud).map_err(|_| {
-            "release cloud configuration is missing; run `koru-release cloud-setup` first"
-                .to_string()
-        })?;
-        Cloud::from_config(crate::cloudflare_token()?, config)?
-    } else {
-        Cloud::public_reader()?
-    };
+    let cloud = cloud_for(options.upload)?;
 
     // Every product entry, whether or not `--only` narrowed the archive work:
     // a catalog that listed one model would silently withdraw the other one.
@@ -453,8 +452,33 @@ fn publish(options: &Options) -> Result<(), String> {
         );
         return Ok(());
     }
+    upload(&cloud, &work)
+}
+
+/// **The client a publish talks to.** A dry run reads only what is already
+/// public, so it needs no token. The upload path needs the real client, and
+/// asking for the token here rather than lazily means a missing one is an
+/// error before anything is fetched. Shared with `read-model publish`, so the
+/// two model publishers cannot disagree about what `--upload` requires.
+pub(crate) fn cloud_for(upload: bool) -> Result<Cloud, String> {
+    if upload {
+        let paths = crate::release_paths()?;
+        let config: crate::cloud::CloudConfig = crate::read_json(&paths.cloud).map_err(|_| {
+            "release cloud configuration is missing; run `koru-release cloud-setup` first"
+                .to_string()
+        })?;
+        Cloud::from_config(crate::cloudflare_token()?, config)
+    } else {
+        Cloud::public_reader()
+    }
+}
+
+/// **Write the jobs [`announce`] has already printed.** The one upload loop
+/// both model publishers use, so the reader's model reaches the origin by
+/// exactly the mechanism voice's does.
+pub(crate) fn upload(cloud: &Cloud, work: &[Job]) -> Result<(), String> {
     println!("\n[Koru] writing to {} ...", crate::cloud::HOST);
-    for job in &work {
+    for job in work {
         match &job.body {
             Body::Skip(_) => continue,
             Body::File(path) => {
@@ -472,16 +496,16 @@ fn publish(options: &Options) -> Result<(), String> {
 
 /// One object the publish would write, or deliberately would not.
 #[derive(Debug)]
-struct Job {
-    key: String,
-    size: u64,
-    content_type: &'static str,
-    cache_control: &'static str,
-    body: Body,
+pub(crate) struct Job {
+    pub(crate) key: String,
+    pub(crate) size: u64,
+    pub(crate) content_type: &'static str,
+    pub(crate) cache_control: &'static str,
+    pub(crate) body: Body,
 }
 
 #[derive(Debug)]
-enum Body {
+pub(crate) enum Body {
     File(PathBuf),
     Bytes(Vec<u8>),
     Skip(&'static str),
@@ -527,7 +551,7 @@ impl Job {
 /// of the same bytes — it is a truncated upload, a hash collision nobody should
 /// believe in, or a key computed by something other than this table. Overwriting
 /// it would erase the evidence, so it refuses instead.
-fn archive_job(
+pub(crate) fn archive_job(
     key: String,
     path: PathBuf,
     size: u64,
@@ -556,7 +580,7 @@ fn archive_job(
 /// A byte comparison rather than a digest: these are kilobytes, the fetch has
 /// already happened, and *identical* is the only condition under which skipping
 /// is safe. `existing` is passed in for the reason [`archive_job`] gives.
-fn document_job(key: String, bytes: Vec<u8>, existing: Option<Vec<u8>>) -> Job {
+pub(crate) fn document_job(key: String, bytes: Vec<u8>, existing: Option<Vec<u8>>) -> Job {
     let size = bytes.len() as u64;
     if existing.as_deref() == Some(bytes.as_slice()) {
         return Job::skip(key, size, "unchanged");
@@ -572,7 +596,7 @@ fn document_job(key: String, bytes: Vec<u8>, existing: Option<Vec<u8>>) -> Job {
 
 /// **What will be written, before anything is.** The safety requirement, in one
 /// place, so it cannot be printed by one path and skipped by another.
-fn announce(work: &[Job], upload: bool) {
+pub(crate) fn announce(work: &[Job], upload: bool) {
     println!(
         "\n[Koru] {}:\n",
         if upload {
@@ -772,7 +796,7 @@ fn ensure_downloaded(artifact: &ModelArtifact, options: &Options) -> Result<Path
             return Ok(target);
         }
     }
-    let (size, digest) = download_and_hash(artifact, &target, true)?;
+    let (size, digest) = download_and_hash(artifact.url, &target, true)?;
     if size != artifact.upstream_size || digest != artifact.upstream_sha256 {
         let _ = std::fs::remove_file(&target);
         return Err(format!(
@@ -789,13 +813,16 @@ fn ensure_downloaded(artifact: &ModelArtifact, options: &Options) -> Result<Path
 /// `keep` writes it to `target` through a `.part`; otherwise the bytes are
 /// hashed and dropped, which is what `pin` wants — measuring an artifact should
 /// not require half a gigabyte of disk somebody then has to remember to delete.
-fn download_and_hash(
-    artifact: &ModelArtifact,
+///
+/// Takes the URL rather than a row so `read-model convert` fetches the
+/// reader's official weights through this same streamer.
+pub(crate) fn download_and_hash(
+    url: &str,
     target: &Path,
     keep: bool,
 ) -> Result<(u64, String), String> {
     use sha2::{Digest, Sha256};
-    println!("    downloading {}", artifact.url);
+    println!("    downloading {url}");
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         // No overall timeout: half a gigabyte on a domestic connection is
@@ -805,11 +832,11 @@ fn download_and_hash(
         .build()
         .map_err(|error| error.to_string())?;
     let mut response = client
-        .get(artifact.url)
+        .get(url)
         .send()
-        .map_err(|error| format!("{}: {error}", artifact.url))?;
+        .map_err(|error| format!("{url}: {error}"))?;
     if !response.status().is_success() {
-        return Err(format!("{} answered {}", artifact.url, response.status()));
+        return Err(format!("{url} answered {}", response.status()));
     }
     let part = target.with_extension("part");
     let mut sink: Box<dyn Write> = if keep {
@@ -829,7 +856,7 @@ fn download_and_hash(
     loop {
         let read = response
             .read(&mut buffer)
-            .map_err(|error| format!("{}: {error}", artifact.url))?;
+            .map_err(|error| format!("{url}: {error}"))?;
         if read == 0 {
             break;
         }
