@@ -1547,6 +1547,7 @@ fn list_face(name: &str, color: Option<&str>) -> (koru_core::ids::ListId, super:
             id,
             name: name.to_owned(),
             color: color.map(str::to_owned),
+            path: None,
         },
     )
 }
@@ -4730,6 +4731,7 @@ mod note {
             id: list,
             name: "Top".to_owned(),
             color: Some("red".to_owned()),
+            path: None,
         }]);
         let plus = view.plus_rect();
         let swatch = view.swatch_rect().expect("a list wears its colour");
@@ -5083,6 +5085,7 @@ mod note {
             id: list,
             name: "Top".to_owned(),
             color: Some("teal".to_owned()),
+            path: None,
         }]);
         let swatch = view.swatch_rect().unwrap();
         let (x, y) = (swatch.x + swatch.w * 0.5, swatch.y + swatch.h * 0.5);
@@ -5107,11 +5110,13 @@ mod note {
                 id: list,
                 name: "Top".to_owned(),
                 color: Some("teal".to_owned()),
+                path: None,
             },
             crate::tasks_view::ListFace {
                 id: other,
                 name: "Later".to_owned(),
                 color: None,
+                path: None,
             },
         ]);
         let mods = ModifiersState::empty();

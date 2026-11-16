@@ -385,7 +385,7 @@ impl Capture {
         {
             chips.push(RowChip {
                 kind: ChipKind::Tag,
-                label: face.name.clone(),
+                label: face.label(),
                 accent: face.color.clone(),
                 list: None,
             });

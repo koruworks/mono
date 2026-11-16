@@ -360,6 +360,21 @@ pub struct ListFace {
     pub id: ListId,
     pub name: String,
     pub color: Option<String>,
+    /// The lists it is inside, ready to be shown ahead of its name — only
+    /// when another list shares the name (nested-lists D8). The heading of a
+    /// list's own page reads [`name`](Self::name); a chip and a picker row
+    /// read [`label`](Self::label).
+    pub path: Option<String>,
+}
+
+impl ListFace {
+    /// What a chip or a picker row says for this list.
+    pub fn label(&self) -> String {
+        match &self.path {
+            Some(path) => format!("{path}{}", self.name),
+            None => self.name.clone(),
+        }
+    }
 }
 
 pub struct TasksView {
@@ -1158,7 +1173,7 @@ impl TasksView {
         if let Some(face) = row.list.and_then(|id| self.list_face(id)) {
             chips.push(RowChip {
                 kind: ChipKind::Tag,
-                label: face.name.clone(),
+                label: face.label(),
                 accent: face.color.clone(),
                 list: row.list,
             });

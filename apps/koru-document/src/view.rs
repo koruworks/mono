@@ -607,6 +607,18 @@ impl View for BuiltInDocument {
                 .iter()
                 .map(|l| (l.entry.id, l.entry.name.clone(), l.entry.color.clone())),
         );
+        // Where each list sits, for the chip and the picker: a name alone no
+        // longer says which list it is once two may share one.
+        self.editor.view.lists.set_places(
+            koru_core::system::shared_name_paths(
+                lists,
+                koru_i18n::t(koru_i18n::current(), koru_i18n::Key::TaskListPathSeparator),
+            ),
+            lists
+                .iter()
+                .filter(|l| l.parent.is_some())
+                .map(|l| l.entry.id),
+        );
         // A recoloured list is the same rows with a new face — repaint, no
         // reflow. The accent changes no width; that is why it may be pushed
         // this cheaply.

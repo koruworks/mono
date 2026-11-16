@@ -6168,15 +6168,16 @@ pub trait Editing {
     /// The list picker over `nodes`: the workspace's lists as the container
     /// last pushed them, the one the (first) node is in checked.
     fn open_list_chooser(&mut self, ws: &WorkspaceDoc, trigger: Trigger, nodes: Vec<NodeId>) {
-        let table: Vec<list_picker::ListChoice> = self
-            .view()
-            .lists
+        let lists = &self.view().lists;
+        let table: Vec<list_picker::ListChoice> = lists
             .listed()
             .iter()
             .map(|(id, name, color)| list_picker::ListChoice {
                 id: *id,
                 name: name.clone(),
                 color: color.clone(),
+                path: lists.path(*id).map(str::to_owned),
+                top_level: lists.is_top_level(*id),
             })
             .collect();
         let current = current_list(ws, nodes.first().copied());

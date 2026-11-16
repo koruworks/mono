@@ -412,3 +412,38 @@ fn a_ring_of_tombstones_puts_its_children_at_the_top() {
     ]);
     assert_eq!(tree.node(child).unwrap().parent, None);
 }
+
+/// D8's consequence: a name alone no longer identifies a list, so a list
+/// whose name is shared says where it is. Only the lists that need to.
+#[test]
+fn a_shared_name_gets_a_path_and_nothing_else_does() {
+    let mut sys = SystemDoc::create().unwrap();
+    let top3 = list(&mut sys, None, "Top 3");
+    let inner = list(&mut sys, Some(top3), "Inner");
+    let nested = list(&mut sys, Some(inner), "Backlog");
+    let top = list(&mut sys, None, "backlog");
+    let alone = list(&mut sys, Some(top3), "Core Data");
+
+    let tree = sys.list_tree();
+    let paths = shared_name_paths(tree.nodes(), " / ");
+    assert_eq!(
+        paths.get(&nested).map(String::as_str),
+        Some("Top 3 / Inner / ")
+    );
+    assert_eq!(
+        paths.get(&top),
+        None,
+        "the top-level namesake has nothing above it to show"
+    );
+    assert_eq!(paths.get(&alone), None, "a name nobody shares needs no path");
+    assert_eq!(paths.len(), 1);
+
+    // A parent's rename changes the path shown and nothing else.
+    sys.rename_list(top3, "Top 5").unwrap();
+    let paths = shared_name_paths(sys.list_tree().nodes(), " / ");
+    assert_eq!(
+        paths.get(&nested).map(String::as_str),
+        Some("Top 5 / Inner / ")
+    );
+    assert_eq!(sys.list_entry(nested).unwrap().name, "Backlog");
+}
