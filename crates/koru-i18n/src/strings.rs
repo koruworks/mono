@@ -4273,6 +4273,8 @@ pub enum Key {
     UiLabTextSample,
     /// A story input: the production call's `disabled` (or `enabled`) flag.
     UiLabControlDisabled,
+    /// An icon button's tone: on is said by the filled glyph alone.
+    UiLabOptionQuiet,
     // **Text in pictures and PDFs: long files** (OCR Plan 3.2, EXPERIENCE §4).
     /// A file's right-click entry: read the rest of a file that stopped at
     /// the page limit.
@@ -4361,7 +4363,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3316] = [
+    pub const ALL: [Key; 3317] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7619,6 +7621,7 @@ impl Key {
         Key::UiLabTypedCount,
         Key::UiLabTextSample,
         Key::UiLabControlDisabled,
+        Key::UiLabOptionQuiet,
         Key::ReadingReadAllPages,
         Key::ReadingReadAgain,
         Key::ReadingDetails,
@@ -20107,6 +20110,7 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabTypedCount, en: "Characters typed: {}", es: "Caracteres escritos: {}", pt_br: "Caracteres digitados: {}", de: "Eingegebene Zeichen: {}", fr: "Caractères saisis : {}", ar: "عدد الأحرف المكتوبة: {}", zh_hans: "已输入字符数：{}", ja: "入力した文字数: {}" },
     Row { key: Key::UiLabTextSample, en: "Notes, tasks and people in one place", es: "Notas, tareas y personas en un solo lugar", pt_br: "Notas, tarefas e pessoas em um só lugar", de: "Notizen, Aufgaben und Personen an einem Ort", fr: "Notes, tâches et personnes au même endroit", ar: "الملاحظات والمهام والأشخاص في مكان واحد", zh_hans: "笔记、任务和联系人集中在一处", ja: "メモ、タスク、連絡先をひとつの場所に" },
     Row { key: Key::UiLabControlDisabled, en: "Disabled", es: "Desactivado", pt_br: "Desativado", de: "Deaktiviert", fr: "Désactivé", ar: "معطّل", zh_hans: "已停用", ja: "無効" },
+    Row { key: Key::UiLabOptionQuiet, en: "Quiet", es: "Discreto", pt_br: "Discreto", de: "Dezent", fr: "Discret", ar: "هادئ", zh_hans: "低调", ja: "控えめ" },
     // Text in pictures and PDFs: long files (OCR Plan 3.2). The wording is
     // EXPERIENCE §4's own.
     Row { key: Key::ReadingReadAllPages, en: "Read all pages", es: "Leer todas las páginas", pt_br: "Ler todas as páginas", de: "Alle Seiten lesen", fr: "Lire toutes les pages", ar: "قراءة كل الصفحات", zh_hans: "读取所有页面", ja: "すべてのページを読み取る" },

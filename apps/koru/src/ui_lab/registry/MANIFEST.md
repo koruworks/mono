@@ -246,7 +246,7 @@ batch's counts.
 | kind: app-local | 59 |
 | kind: native adapter | 35 |
 | token values listed | 174 |
-| symbols | 2390 |
+| symbols | 2391 |
 | symbols with typed recipes | 10 |
 | inspector identities | 61 |
 | inspector identity registration sites | 64 |
@@ -256,7 +256,7 @@ batch's counts.
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
 | symbol story: available | 9 |
-| symbol story: no story yet | 444 |
+| symbol story: no story yet | 445 |
 | symbol story: nonvisual | 1675 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
@@ -264,7 +264,7 @@ batch's counts.
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2338 |
+| A2UI: not supported | 2339 |
 <!-- counts:end -->
 
 Platform cells, by platform and availability: each record says one thing

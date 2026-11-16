@@ -96,6 +96,7 @@ const ICON_TONE: OptionSet = values(
     &[
         labelled("Default", Key::UiLabOptionDefault),
         labelled("Danger", Key::UiLabOptionDanger),
+        labelled("Quiet", Key::UiLabOptionQuiet),
     ],
 );
 
@@ -345,6 +346,10 @@ const ACTION_RECORDS: [Entry; 4] = [
                 &[ICON_TONE, ICON_METRICS],
             ),
             widget_with("koru_ui::icon_button::draw_toned", &[ICON_TONE]),
+            widget_with(
+                "koru_ui::icon_button::draw_focused",
+                &[ICON_TONE, ICON_METRICS],
+            ),
             widget("koru_ui::icon_button::draw"),
             widget("koru_ui::icon_button::draw_with"),
             widget("koru_ui::icon_button::draw_with_in"),
