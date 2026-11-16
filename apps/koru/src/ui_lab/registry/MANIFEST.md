@@ -1050,7 +1050,7 @@ nothing in the app it could call.
   document/native}.rs`, `manage/profiles/progress/fixtures.rs`,
   `panes/explore/popover_baseline.rs`) and the undeclared
   `mainview/shell_conformance.rs` are left out.
-- 22 app files' `mod` lists are baselined: `main.rs` and every folder
+- 21 app files' `mod` lists are baselined: `main.rs` and every folder
   root of the workspace app that declares children, and the two other
   crates' `lib.rs`. Deeper modules are covered by their parent's
   classification.
