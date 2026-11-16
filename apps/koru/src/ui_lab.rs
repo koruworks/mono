@@ -14,8 +14,8 @@
 //!
 //! The window ([`shell`]) is a gallery in three regions. The navigator lists
 //! every record the registry has for a desktop platform, in three groups
-//! that fold; a record that exists only on a phone stays in the registry and
-//! is not listed. The centre is the page of the record on show: its story
+//! that fold, under a search that narrows it; a record that exists only on
+//! a phone stays in the registry and is neither listed nor found. The centre is the page of the record on show: its story
 //! when it has one, and otherwise its status said in words, with nothing
 //! drawn in the component's place. The properties column states what is
 //! recorded about it and holds a story's inputs. The one story so far is the

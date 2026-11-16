@@ -6,7 +6,7 @@
 
 use super::super::tests::{
     SIZE, SMALLEST, assert_sound, centre, draw, drawn, english, entry_key, frame, group_key, named,
-    press, record, tab,
+    press, record, tab, type_text,
 };
 use super::*;
 
@@ -462,5 +462,322 @@ fn a_resize_keeps_the_list_within_its_rows() {
         assert_eq!(rect.y + rect.h, viewport.y + viewport.h);
         let (x, y) = centre(&lab, last);
         assert_eq!(lab.hit_at(x, y), Some(last));
+    });
+}
+
+// ---------------------------------------------------------------- search
+
+/// Put the keyboard in the search field with the pointer.
+fn into_search(lab: &mut Lab, engine: &mut TextEngine) {
+    assert!(press(lab, engine, SEARCH));
+    assert_eq!(lab.focus, Some(SEARCH));
+}
+
+fn listed(lab: &Lab) -> Vec<&'static str> {
+    lab.nav
+        .rows()
+        .iter()
+        .filter_map(|row| match row {
+            Row::Entry(entry) => Some(entry.catalog_id),
+            Row::Group(_) => None,
+        })
+        .collect()
+}
+
+/// Typing in the search field narrows the list to what it finds, with each
+/// group's heading counting its own. The record on show is not changed by
+/// searching, and emptying the field brings the whole gallery back.
+#[test]
+fn typing_in_the_search_field_narrows_the_list() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let everything = listed(&lab);
+        into_search(&mut lab, &mut engine);
+        type_text(&mut lab, &mut engine, "button");
+        assert_eq!(lab.query(), "button");
+        let found = listed(&lab);
+        assert!(found.contains(&registry::BUTTON));
+        assert!(found.len() > 1 && found.len() < everything.len());
+        let words = registry::search_words("button");
+        for id in &found {
+            assert!(record(id).matches(&words), "{id} was not asked for");
+        }
+        for id in &everything {
+            assert_eq!(found.contains(id), record(id).matches(&words), "{id}");
+        }
+        // The groups that found something keep their heading and count it.
+        let mut counted = 0;
+        for family in Family::ALL {
+            let count = found
+                .iter()
+                .filter(|id| record(id).family == family)
+                .count();
+            assert_eq!(lab.nav.count(family), count, "{family:?}");
+            assert_eq!(
+                lab.nav.rows().contains(&Row::Group(family)),
+                count > 0,
+                "{family:?}"
+            );
+            counted += count;
+        }
+        assert_eq!(counted, found.len());
+        // From the top, and the record on show is still the one on show.
+        assert_eq!(lab.nav.scroll, 0.0);
+        assert_eq!(lab.entry.catalog_id, registry::BUTTON);
+        assert_eq!(
+            frame(&lab)
+                .node(entry_key(registry::BUTTON))
+                .unwrap()
+                .selected,
+            Some(true)
+        );
+        assert_sound(&lab, "a narrowed list");
+
+        // More words narrow further: every word has to be found.
+        type_text(&mut lab, &mut engine, " split");
+        assert_eq!(listed(&lab), ["C-SPLIT-BUTTON"]);
+        // Case and the spaces round the words do not matter.
+        assert!(lab.set_field(&mut engine, SEARCH, "  SPLIT   Button "));
+        assert_eq!(listed(&lab), ["C-SPLIT-BUTTON"]);
+        assert!(
+            !lab.set_field(&mut engine, SEARCH, "split button"),
+            "the same search"
+        );
+
+        assert!(lab.set_field(&mut engine, SEARCH, ""));
+        assert_eq!(listed(&lab), everything);
+    });
+}
+
+/// A record is found by what it is called in the display language, by its
+/// public name, by its catalog ID and by a symbol it records.
+#[test]
+fn a_record_is_found_by_its_names_its_id_and_its_symbols() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        for (query, expected) in [
+            ("KoruButton", registry::BUTTON),
+            ("c-button", registry::BUTTON),
+            ("draw_google_button", registry::BUTTON),
+            ("koru_ui::text_input::InputStyle", "C-TEXT-INPUT"),
+            ("T-SPACE", "T-SPACE"),
+        ] {
+            lab.set_field(&mut engine, SEARCH, query);
+            assert!(listed(&lab).contains(&expected), "`{query}`");
+        }
+        // A purpose is not searched: a sentence would match half the list.
+        let purpose = text(record(registry::BUTTON).purpose);
+        lab.set_field(&mut engine, SEARCH, purpose);
+        assert!(!listed(&lab).contains(&registry::BUTTON));
+    });
+    // In each language, a record's own name finds it.
+    for lang in koru_i18n::Lang::ALL {
+        koru_i18n::with_current(lang, || {
+            let (mut lab, mut engine) = drawn(SIZE);
+            for id in [registry::BUTTON, "T-SPACE", "C-TEXT-INPUT"] {
+                let name = text(record(id).name);
+                lab.set_field(&mut engine, SEARCH, name);
+                assert!(listed(&lab).contains(&id), "{lang:?}: `{name}`");
+            }
+        });
+    }
+}
+
+/// What exists only on a phone cannot be searched for: not by its name, not
+/// by its catalog ID, not by its symbols.
+#[test]
+fn a_phone_record_is_never_found() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let hidden: Vec<&'static Entry> = registry::catalog()
+            .filter(|entry| !entry.on_desktop())
+            .collect();
+        assert!(hidden.len() > 20);
+        for entry in hidden {
+            let symbol = entry.symbols().next().unwrap().symbol;
+            for query in [entry.catalog_id, text(entry.name), symbol] {
+                lab.set_field(&mut engine, SEARCH, query);
+                assert!(
+                    !listed(&lab).contains(&entry.catalog_id),
+                    "`{query}` found {}",
+                    entry.catalog_id
+                );
+            }
+        }
+    });
+}
+
+/// A search that finds nothing keeps what was typed, says so, and offers a
+/// button that empties it. The list comes back with the record on show in
+/// view, and the keyboard is in the field again.
+#[test]
+fn a_search_that_finds_nothing_keeps_the_query_and_offers_reset() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let everything = listed(&lab);
+        into_search(&mut lab, &mut engine);
+        type_text(&mut lab, &mut engine, "no such thing");
+        assert!(lab.nav.rows().is_empty());
+        assert_eq!(lab.query(), "no such thing", "the query is kept");
+        let frame = frame(&lab);
+        assert!(!frame.contains(LIST));
+        assert!(frame.contains(NOTHING_FOUND));
+        assert!(frame.contains(RESET_SEARCH));
+        assert_sound(&lab, "nothing found");
+        // The page is still the Button's, and still works.
+        assert_eq!(lab.entry.catalog_id, registry::BUTTON);
+        assert!(frame.contains(SUBJECT));
+        // Tab goes from the field to the button under it.
+        assert!(tab(&mut lab, &mut engine));
+        assert_eq!(lab.focus, Some(RESET_SEARCH));
+        assert!(key(&mut lab, &mut engine, NamedKey::Enter));
+        assert_eq!(lab.query(), "");
+        assert_eq!(listed(&lab), everything);
+        assert_eq!(lab.focus, Some(SEARCH), "back in the field it cleared");
+        let frame = super::super::tests::frame(&lab);
+        assert!(!frame.contains(RESET_SEARCH) && !frame.contains(NOTHING_FOUND));
+        let row = frame
+            .node(entry_key(registry::BUTTON))
+            .expect("the record on show is in view again");
+        assert_eq!(row.selected, Some(true));
+
+        // The pointer does the same.
+        type_text(&mut lab, &mut engine, "zzzz");
+        assert!(press(&mut lab, &mut engine, RESET_SEARCH));
+        assert_eq!(lab.query(), "");
+        assert_eq!(listed(&lab), everything);
+
+        // A very long query with nowhere to break still fits the column.
+        lab.set_field(&mut engine, SEARCH, &"q".repeat(400));
+        draw(&mut lab, &mut engine, SMALLEST);
+        assert!(lab.nav.rows().is_empty());
+        assert_sound(&lab, "a very long query");
+    });
+}
+
+/// The toolbar's Reset is the story's: it leaves the search, what it found
+/// and the record on show alone. Showing another record leaves them too.
+#[test]
+fn reset_and_showing_a_record_keep_the_search() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        lab.set_field(&mut engine, SEARCH, "button");
+        draw(&mut lab, &mut engine, SIZE);
+        let found = listed(&lab);
+        press(&mut lab, &mut engine, SUBJECT);
+        assert!(press(&mut lab, &mut engine, RESET));
+        assert_eq!(lab.query(), "button");
+        assert_eq!(listed(&lab), found);
+        assert_eq!(lab.entry.catalog_id, registry::BUTTON);
+
+        assert!(press(&mut lab, &mut engine, entry_key("C-SPLIT-BUTTON")));
+        assert_eq!(lab.entry.catalog_id, "C-SPLIT-BUTTON");
+        assert_eq!(lab.query(), "button");
+        assert_eq!(listed(&lab), found);
+        // The record on show need not be one the search finds.
+        lab.set_field(&mut engine, SEARCH, "T-SPACE");
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(lab.entry.catalog_id, "C-SPLIT-BUTTON");
+        assert_eq!(listed(&lab), ["T-SPACE"]);
+        assert_sound(&lab, "the record on show is not in the list");
+    });
+}
+
+/// From the field: Down goes to the first row found, Enter shows the first
+/// record found, and Escape empties the search before it gives the keyboard
+/// up.
+#[test]
+fn the_search_field_is_driven_from_the_keyboard() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        // Tab reaches the field before the list.
+        while lab.focus != Some(SEARCH) {
+            assert!(tab(&mut lab, &mut engine));
+        }
+        type_text(&mut lab, &mut engine, "split button");
+        assert_eq!(lab.entry.catalog_id, registry::BUTTON);
+        assert!(key(&mut lab, &mut engine, NamedKey::Enter));
+        assert_eq!(lab.entry.catalog_id, "C-SPLIT-BUTTON");
+        assert_eq!(lab.focus, Some(SEARCH), "still typing");
+        assert!(
+            !key(&mut lab, &mut engine, NamedKey::Enter),
+            "already shown"
+        );
+
+        assert!(key(&mut lab, &mut engine, NamedKey::ArrowDown));
+        assert_eq!(lab.focus, Some(group_key(Family::Controls)));
+        assert!(key(&mut lab, &mut engine, NamedKey::ArrowDown));
+        assert_eq!(lab.focus, Some(entry_key("C-SPLIT-BUTTON")));
+        // Shift+Tab from the list is the field again, its text selected so
+        // the next word replaces it.
+        assert!(named(
+            &mut lab,
+            &mut engine,
+            NamedKey::Tab,
+            ModifiersState::SHIFT
+        ));
+        assert_eq!(lab.focus, Some(SEARCH));
+        type_text(&mut lab, &mut engine, "toggle");
+        assert_eq!(lab.query(), "toggle");
+
+        assert!(key(&mut lab, &mut engine, NamedKey::Escape));
+        assert_eq!(lab.query(), "", "Escape empties the search first");
+        assert_eq!(lab.focus, Some(SEARCH));
+        assert!(key(&mut lab, &mut engine, NamedKey::Escape));
+        assert_eq!(lab.focus, None);
+        // With nothing found there is no row for Down or Enter to go to.
+        into_search(&mut lab, &mut engine);
+        type_text(&mut lab, &mut engine, "zzzz");
+        assert!(!key(&mut lab, &mut engine, NamedKey::ArrowDown));
+        assert!(!key(&mut lab, &mut engine, NamedKey::Enter));
+        assert_eq!(lab.entry.catalog_id, "C-SPLIT-BUTTON");
+    });
+}
+
+/// The search field is a real field: an I-beam over it, a visible mark while
+/// it has the keyboard, composed text that only searches once committed, and
+/// a caret an input method can open its candidates at.
+#[test]
+fn the_search_field_takes_composed_text_and_reports_its_caret() {
+    koru_i18n::with_current(koru_i18n::Lang::Ja, || {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let (x, y) = centre(&lab, SEARCH);
+        assert_eq!(lab.cursor_icon(x, y), CursorIcon::Text);
+        assert_eq!(lab.ime_cursor_area(), None, "nothing is typed in yet");
+        into_search(&mut lab, &mut engine);
+        // The box round the field wears the focus ring.
+        let ring = frame(&lab).named("Search").next().unwrap();
+        assert!(ring.state.focused && ring.ring.is_some());
+        let field = lab.rect(SEARCH).unwrap();
+        assert!(field.x > ring.rect.x && field.y > ring.rect.y);
+        let caret = lab.ime_cursor_area().expect("the field is typed in");
+        assert!(caret.x >= field.x && caret.x <= field.x + field.w);
+        assert!(caret.y >= field.y && caret.y + caret.h <= field.y + field.h);
+
+        let everything = listed(&lab);
+        lab.ime(&mut engine, ImeEvent::Enabled);
+        assert!(lab.ime(
+            &mut engine,
+            ImeEvent::Preedit {
+                text: "ぼたん",
+                cursor: Some((9, 9)),
+            },
+        ));
+        assert_eq!(listed(&lab), everything, "a composition is not a search");
+        let name = text(record(registry::BUTTON).name);
+        assert!(lab.ime(&mut engine, ImeEvent::Commit { text: name }));
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(lab.query(), name);
+        assert!(listed(&lab).contains(&registry::BUTTON));
+        assert!(listed(&lab).len() < everything.len());
+        assert!(
+            lab.ime_cursor_area().unwrap().x > caret.x,
+            "the caret moved"
+        );
+        assert_sound(&lab, "a composed search");
+
+        // Another window has the keyboard: no composition is ours to place.
+        lab.focus_changed(false);
+        assert_eq!(lab.ime_cursor_area(), None);
     });
 }

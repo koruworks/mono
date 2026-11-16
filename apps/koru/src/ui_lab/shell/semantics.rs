@@ -14,6 +14,9 @@
 //! Window        UI Lab                       s:window#window
 //! ├── Button    Minimize / Maximize / Close  s:window#minimize, #maximize, #close
 //! ├── Button    Reset                        s:ui-lab#reset
+//! ├── TextInput Search components            s:ui-lab#search           value = the query
+//! ├── Label     nothing was found            s:ui-lab#no-results       spoken when it changes
+//! ├── Button    Reset search                 s:ui-lab#reset-search     only while nothing is found
 //! ├── ListBox   Components                   s:ui-lab#navigator        how many rows it has
 //! │   ├── Button         a group             s:ui-lab.group#<group>    expanded or collapsed
 //! │   └── ListBoxOption  a record            s:ui-lab.navigator#<catalog id>   selected, n of N
@@ -52,6 +55,7 @@ use koru_workspace_host::accessibility::{
     ViewSlot, WindowSemantics, WindowSlot, part, window_commands,
 };
 
+use super::navigator::NOTHING_FOUND;
 use super::page::{NAME, PURPOSE, REASON, STATUS, SYMBOL, facts, option_line, symbol_status};
 use super::*;
 
@@ -120,15 +124,13 @@ impl Lab {
         self.laid.as_ref().map(|laid| laid.size)
     }
 
-    /// Where the label field's caret is, in the window's logical pixels,
-    /// while the field has the keyboard: where an input method should open
-    /// its candidate list. `None` whenever the field is not being typed in.
+    /// Where the caret of the field being typed in is, in the window's
+    /// logical pixels: where an input method should open its candidate
+    /// list. The search field and a property's field answer alike. `None`
+    /// whenever no field has the keyboard.
     pub(in crate::ui_lab) fn ime_cursor_area(&self) -> Option<Rect> {
-        let field = control_key(Control::Label);
-        if self.focus != Some(field) || !self.active {
-            return None;
-        }
-        self.label.ime_cursor_area(self.rect(field)?)
+        let focus = self.focus.filter(|_| self.active)?;
+        self.field(focus)?.ime_cursor_area(self.rect(focus)?)
     }
 
     /// A number that changes when anything this window publishes changes,
@@ -138,6 +140,7 @@ impl Lab {
         let mut revision = Revision::new();
         revision
             .str(self.entry.catalog_id)
+            .str(self.query())
             .bool(self.maximised)
             .bool(self.active);
         match &self.story {
@@ -180,12 +183,14 @@ impl Lab {
         let laid = self.laid.as_ref()?;
         let place = Place { window, view };
         let mut children = self.caption_commands(window);
-        children.extend(
-            laid.frame
-                .semantics()
-                .iter()
-                .filter_map(|node| self.control_node(place, laid, node)),
-        );
+        for node in &laid.frame.semantics() {
+            children.extend(self.control_node(place, laid, node));
+            if node.key == Some(SEARCH) {
+                // What the search found nothing for, said under the field it
+                // was typed in.
+                children.extend(self.nothing_found_node(place, laid));
+            }
+        }
         Some(WindowSemantics {
             window,
             label: text(koru_i18n::Key::UiLabTitle).to_owned(),
@@ -200,6 +205,19 @@ impl Lab {
             scope: Scope::Whole,
             retired: Vec::new(),
         })
+    }
+
+    /// The line that says a search found nothing, spoken when it appears and
+    /// when what it quotes changes: typing is otherwise answered by silence.
+    fn nothing_found_node(&self, place: Place, laid: &Laid) -> Option<SemanticNode> {
+        let rect = laid.rect(NOTHING_FOUND)?;
+        let label = koru_i18n::fill(text(koru_i18n::Key::UiLabNoResults), &[self.query().trim()]);
+        Some(
+            SemanticNode::new(place.of(NOTHING_FOUND)?, NativeRole::Label)
+                .with_label(label)
+                .with_bounds(rect)
+                .with_live(Live::Polite),
+        )
     }
 
     /// The window's own three controls, where the shared caption draws them.
@@ -234,9 +252,9 @@ impl Lab {
     /// it.
     fn control_node(&self, place: Place, laid: &Laid, node: &el::SemNode) -> Option<SemanticNode> {
         let key = node.key?;
-        let field = control_key(Control::Label);
+        let field = self.field(key);
         let row = self.nav.row_of(key);
-        let role = if key == field {
+        let role = if field.is_some() {
             NativeRole::TextInput
         } else if key == LIST {
             // A list one of whose items is the selected one.
@@ -277,10 +295,10 @@ impl Lab {
                     el::Action::Focus => Action::Focus,
                 }),
         );
-        if key == field {
+        if let Some(field) = field {
             // A value makes a client able to set it, so setting it is done.
             result = result
-                .with_value(self.label.raw_text())
+                .with_value(field.raw_text())
                 .with_action(Action::SetValue);
         }
         match row {
@@ -542,17 +560,12 @@ impl Lab {
                     },
                 )
             }
-            Action::SetValue if key == control_key(Control::Label) => {
+            Action::SetValue if self.field(key).is_some() => {
                 let Some(ActionData::Value(value)) = &request.data else {
                     return false;
                 };
                 let focused = self.set_focus(engine, Some(key));
-                if self.label.raw_text() != &**value {
-                    self.label.ime_cancel(engine);
-                    self.label.set_text(engine, value);
-                    self.label.move_to_end(engine);
-                }
-                self.adopt_label() || focused
+                self.set_field(engine, key, value) || focused
             }
             _ => false,
         }

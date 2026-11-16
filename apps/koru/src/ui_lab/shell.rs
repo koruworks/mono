@@ -59,7 +59,7 @@ use winit::dpi::PhysicalSize;
 use winit::keyboard::{Key as KeyboardKey, ModifiersState, NamedKey};
 use winit::window::{CursorIcon, ResizeDirection, WindowAttributes};
 
-use self::navigator::{LIST, Navigator, Row};
+use self::navigator::{LIST, Navigator, RESET_SEARCH, Row, SEARCH};
 use self::page::{PAGE, PANEL};
 use super::placement::Placement;
 use super::registry::{self, Control, Entry, Family};
@@ -211,9 +211,12 @@ pub(crate) struct Lab {
     /// The record's story, when it has one. Dropped, edits and all, when
     /// another record is shown.
     story: Option<ButtonStory>,
-    /// The label property's field. It owns the text being edited — caret,
-    /// selection, undo, composition — and the story is told after each edit.
-    label: TextInput,
+    /// Every field a person types in, by the key of the control it is drawn
+    /// in: the navigator's search, and one for each free-text property of
+    /// the story on show. A field owns the text being edited — caret,
+    /// selection, undo, composition — and whoever the text is for is told
+    /// after each edit ([`Lab::adopt`]).
+    fields: Vec<(Key, TextInput)>,
     /// Where the centre and the properties column are scrolled.
     page_scroll: f32,
     panel_scroll: f32,
@@ -229,7 +232,8 @@ impl Lab {
         entry: &'static Entry,
     ) -> Self {
         let story = Self::story_for(entry);
-        let label = Self::label_field(engine, story.as_ref());
+        let mut fields = vec![(SEARCH, TextInput::new(engine, theme::role::row()))];
+        fields.extend(Self::story_fields(engine, story.as_ref()));
         Self {
             placement,
             closed: false,
@@ -246,7 +250,7 @@ impl Lab {
             scroll_drag: None,
             entry,
             story,
-            label,
+            fields,
             page_scroll: 0.0,
             panel_scroll: 0.0,
             cache: TextCache::default(),
@@ -261,13 +265,43 @@ impl Lab {
             .then(|| ButtonStory::new(text(koru_i18n::Key::UiLabButtonSampleLabel)))
     }
 
-    /// The field the label property is typed in, holding the story's label.
-    fn label_field(engine: &mut TextEngine, story: Option<&ButtonStory>) -> TextInput {
-        TextInput::with_text(
-            engine,
-            theme::role::row(),
-            story.map_or("", ButtonStory::label),
-        )
+    /// A field for each free-text property of `story`, holding what the
+    /// story holds.
+    fn story_fields(engine: &mut TextEngine, story: Option<&ButtonStory>) -> Vec<(Key, TextInput)> {
+        let Some(story) = story else {
+            return Vec::new();
+        };
+        story
+            .controls()
+            .iter()
+            .filter(|control| **control == Control::Label)
+            .map(|control| {
+                (
+                    control_key(*control),
+                    TextInput::with_text(engine, theme::role::row(), story.label()),
+                )
+            })
+            .collect()
+    }
+
+    /// The field drawn in `key`'s control, when it is one.
+    fn field(&self, key: Key) -> Option<&TextInput> {
+        self.fields
+            .iter()
+            .find(|(owner, _)| *owner == key)
+            .map(|(_, field)| field)
+    }
+
+    fn field_mut(&mut self, key: Key) -> Option<&mut TextInput> {
+        self.fields
+            .iter_mut()
+            .find(|(owner, _)| *owner == key)
+            .map(|(_, field)| field)
+    }
+
+    /// What the search field holds.
+    fn query(&self) -> &str {
+        self.field(SEARCH).map_or("", TextInput::raw_text)
     }
 
     fn caption_rect(&self) -> Option<Rect> {
@@ -322,18 +356,18 @@ impl Lab {
                 .is_some_and(|laid| laid.stops().contains(&key))
     }
 
-    /// Give the keyboard to `key`, or to nothing. Leaving the label field
-    /// ends whatever was in progress in it: a drag, a selection, a
-    /// composition.
+    /// Give the keyboard to `key`, or to nothing. Leaving a field ends
+    /// whatever was in progress in it: a drag, a selection, a composition.
     fn set_focus(&mut self, engine: &mut TextEngine, key: Option<Key>) -> bool {
         if self.focus == key {
             return false;
         }
-        let field = control_key(Control::Label);
-        if self.focus == Some(field) {
-            self.label.ime_cancel(engine);
-            self.label.blur(engine);
-            self.adopt_label();
+        if let Some(left) = self.focus
+            && let Some(field) = self.field_mut(left)
+        {
+            field.ime_cancel(engine);
+            field.blur(engine);
+            self.adopt(left);
         }
         self.focus = key;
         if let Some(row) = key.and_then(|key| self.nav.row_of(key)) {
@@ -342,27 +376,61 @@ impl Lab {
         true
     }
 
-    /// Tell the story what the field now holds.
-    fn adopt_label(&mut self) -> bool {
-        let text = self.label.raw_text();
-        self.story
-            .as_mut()
-            .is_some_and(|story| story.set_label(text))
+    /// Tell whoever `key`'s field is for what it now holds: the navigator
+    /// its query, the story its label. Returns whether that changed anything.
+    fn adopt(&mut self, key: Key) -> bool {
+        let Some(field) = self.fields.iter().find(|(owner, _)| *owner == key) else {
+            return false;
+        };
+        let text = field.1.raw_text();
+        if key == SEARCH {
+            self.nav.set_query(text)
+        } else if key == control_key(Control::Label) {
+            self.story
+                .as_mut()
+                .is_some_and(|story| story.set_label(text))
+        } else {
+            false
+        }
+    }
+
+    /// Put `text` in `key`'s field, the caret after it, and tell whoever it
+    /// is for. Returns whether that changed anything.
+    fn set_field(&mut self, engine: &mut TextEngine, key: Key, text: &str) -> bool {
+        let Some(field) = self.field_mut(key) else {
+            return false;
+        };
+        field.ime_cancel(engine);
+        if field.raw_text() != text {
+            field.set_text(engine, text);
+        }
+        field.move_to_end(engine);
+        self.adopt(key)
     }
 
     /// The toolbar's Reset: the story back to how it opened, and the field
-    /// showing the label it went back to. The record on show, the navigator
-    /// and where anything is scrolled are left as they are.
+    /// showing the label it went back to. The record on show, the search and
+    /// what it found, and where anything is scrolled are left as they are.
     fn reset(&mut self, engine: &mut TextEngine) -> bool {
         let Some(story) = self.story.as_mut() else {
             return false;
         };
         let changed = story.reset();
-        self.label.ime_cancel(engine);
-        if self.label.raw_text() != story.label() {
-            self.label.set_text(engine, story.label());
+        let label = story.label().to_owned();
+        self.set_field(engine, control_key(Control::Label), &label);
+        changed
+    }
+
+    /// Empty the search, so the navigator lists the whole gallery again.
+    /// The record on show stays on show.
+    fn reset_search(&mut self, engine: &mut TextEngine) -> bool {
+        let changed = self.set_field(engine, SEARCH, "");
+        if changed {
+            // The button that was pressed is gone with the empty result: the
+            // keyboard goes back to the field it cleared.
+            self.focus = Some(SEARCH);
+            self.bring_shown_into_view = true;
         }
-        self.label.move_to_end(engine);
         changed
     }
 
@@ -373,10 +441,13 @@ impl Lab {
         if entry.catalog_id == self.entry.catalog_id {
             return false;
         }
-        self.label.ime_cancel(engine);
         self.entry = entry;
         self.story = Self::story_for(entry);
-        self.label = Self::label_field(engine, self.story.as_ref());
+        // The search field is the navigator's and stays; the story's fields
+        // go with the story.
+        self.fields.retain(|(owner, _)| *owner == SEARCH);
+        let fields = Self::story_fields(engine, self.story.as_ref());
+        self.fields.extend(fields);
         self.style_hover = None;
         self.page_scroll = 0.0;
         self.panel_scroll = 0.0;
@@ -419,6 +490,8 @@ impl Lab {
             }
         } else if key == RESET {
             self.reset(engine)
+        } else if key == RESET_SEARCH {
+            self.reset_search(engine)
         } else {
             match self.nav.row_of(key) {
                 Some(Row::Group(family)) => {
@@ -459,8 +532,8 @@ impl Lab {
         let changed = self.set_focus(engine, Some(stops[next]));
         // Arriving at a field by keyboard selects what is in it, because the
         // next keystroke is most often a replacement.
-        if changed && stops[next] == control_key(Control::Label) {
-            self.label.select_all(engine);
+        if changed && let Some(field) = self.field_mut(stops[next]) {
+            field.select_all(engine);
         }
         if changed {
             self.reveal(stops[next]);
@@ -587,12 +660,14 @@ impl Lab {
         let Some(key) = key else {
             return changed;
         };
-        if key == control_key(Control::Label) {
-            if let Some(rect) = self.rect(key) {
+        if self.field(key).is_some() {
+            if let Some(rect) = self.rect(key)
+                && let Some(field) = self.field_mut(key)
+            {
                 changed |= if double {
-                    self.label.double_click(engine, rect, x, y)
+                    field.double_click(engine, rect, x, y)
                 } else {
-                    self.label.click(engine, rect, x, y)
+                    field.click(engine, rect, x, y)
                 };
             }
         } else if key == control_key(Control::Style) {
@@ -656,6 +731,31 @@ impl Lab {
         true
     }
 
+    /// A key the search field did not take as typing. Escape empties the
+    /// search, and gives the keyboard up once it is empty; Down goes to the
+    /// first row found; Enter shows the first record found.
+    fn search_key(&mut self, engine: &mut TextEngine, key: &KeyboardKey, repeat: bool) -> bool {
+        match key {
+            KeyboardKey::Named(NamedKey::Escape) if !self.query().is_empty() => {
+                self.reset_search(engine)
+            }
+            KeyboardKey::Named(NamedKey::Escape) => self.set_focus(engine, None),
+            KeyboardKey::Named(NamedKey::ArrowDown) => match self.nav.first() {
+                Some(row) => {
+                    self.set_focus(engine, Some(row.key()));
+                    self.reveal(row.key());
+                    true
+                }
+                None => false,
+            },
+            KeyboardKey::Named(NamedKey::Enter) if !repeat => match self.nav.first_entry() {
+                Some(entry) => self.show(engine, entry),
+                None => false,
+            },
+            _ => false,
+        }
+    }
+
     /// A key while the keyboard is on the page: it scrolls.
     fn page_key(&mut self, engine: &mut TextEngine, key: &KeyboardKey) -> bool {
         let (max, viewport) = self.scroll_range(PAGE).unwrap_or_default();
@@ -693,14 +793,15 @@ impl Lab {
         let Some(focus) = self.focus else {
             return false;
         };
-        if focus == control_key(Control::Label) {
-            return match self.label.key(engine, key, typed, mods) {
+        if let Some(field) = self.field_mut(focus) {
+            return match field.key(engine, key, typed, mods) {
                 // The caret may have moved without the text changing; either
                 // way the field has to be drawn again.
                 Typed::Handled => {
-                    self.adopt_label();
+                    self.adopt(focus);
                     true
                 }
+                Typed::Passed if focus == SEARCH => self.search_key(engine, key, repeat),
                 Typed::Passed if matches!(key, KeyboardKey::Named(NamedKey::Escape)) => {
                     self.set_focus(engine, None)
                 }
@@ -804,7 +905,7 @@ impl Lab {
             .child(
                 el::row("Workbench")
                     .fill()
-                    .child(self.navigator(height))
+                    .child(self.navigator(engine, height))
                     .child(el::divider(Line::Divider))
                     .child(self.page(engine, width))
                     .child(el::divider(Line::Divider))
@@ -812,9 +913,10 @@ impl Lab {
             )
     }
 
-    /// The left column: its heading, and the catalog under it.
-    fn navigator(&self, height: f32) -> El {
-        el::col("Navigator")
+    /// The left column: its heading, the search, and under it the catalog
+    /// or, when the search finds nothing, a line saying so.
+    fn navigator(&self, engine: &mut TextEngine, height: f32) -> El {
+        let column = el::col("Navigator")
             .w(NAVIGATOR_WIDTH)
             .pad(alias::NAV_PAD)
             .gap(NAVIGATOR_GAP)
@@ -824,7 +926,39 @@ impl Lab {
                     .role(roles::POPOVER_HEADING)
                     .truncate(),
             )
-            .child(self.nav.element(self.entry, height))
+            // The shared search box draws no focus state of its own: the box
+            // round it wears the ring while the field has the keyboard.
+            .child(
+                el::boxed("Search")
+                    .pad(FOCUS_INSET)
+                    .radius(Radius::M)
+                    .states(&FRAME_STATES)
+                    .activity([SEARCH])
+                    .child(
+                        el::leaf(
+                            "Search field",
+                            Slot {
+                                width: 0.0,
+                                height: FIELD_HEIGHT.value,
+                            },
+                        )
+                        .semantic()
+                        .h(FIELD_HEIGHT)
+                        .id(SEARCH)
+                        .hit()
+                        .focusable()
+                        // Published as a text field with its value, like a
+                        // property's.
+                        .semantics(Role::Group)
+                        .name(koru_i18n::Key::UiLabSearch)
+                        .action(el::Action::Focus),
+                    ),
+            );
+        if self.nav.rows().is_empty() {
+            column.child(navigator::nothing_found(engine, self.query()))
+        } else {
+            column.child(self.nav.element(self.entry, height))
+        }
     }
 
     /// One property's control, by what kind of input it is.
@@ -931,7 +1065,10 @@ impl WindowApp for Lab {
     }
 
     fn cursor_icon(&self, x: f32, y: f32) -> CursorIcon {
-        if self.hit_at(x, y) == Some(control_key(Control::Label)) {
+        if self
+            .hit_at(x, y)
+            .is_some_and(|key| self.field(key).is_some())
+        {
             CursorIcon::Text
         } else {
             koru_ui::cursor::PRESS
@@ -980,7 +1117,9 @@ impl WindowApp for Lab {
         self.active = focused;
         if !focused {
             // The button that began a drag was released somewhere else.
-            self.label.release();
+            for (_, field) in &mut self.fields {
+                field.release();
+            }
             self.scroll_drag = None;
         }
         true
@@ -1033,17 +1172,25 @@ impl WindowApp for Lab {
             self.pointer = Some((x, y));
             return self.drag_scroll(y);
         }
-        if self.label.is_dragging() {
-            let field = control_key(Control::Label);
-            return self
-                .rect(field)
-                .is_some_and(|rect| self.label.drag(engine, rect, x));
+        if let Some(key) = self
+            .fields
+            .iter()
+            .find(|(_, field)| field.is_dragging())
+            .map(|(owner, _)| *owner)
+        {
+            let rect = self.rect(key);
+            return match (rect, self.field_mut(key)) {
+                (Some(rect), Some(field)) => field.drag(engine, rect, x),
+                _ => false,
+            };
         }
         self.pointer_moved(x, y)
     }
 
     fn mouse_up(&mut self) -> bool {
-        self.label.release();
+        for (_, field) in &mut self.fields {
+            field.release();
+        }
         self.scroll_drag = None;
         false
     }
@@ -1085,20 +1232,22 @@ impl WindowApp for Lab {
     }
 
     fn wants_ime(&self) -> bool {
-        // The label field takes composed text. The runner asks once, when the
+        // The fields take composed text. The runner asks once, when the
         // window is created, so this cannot follow the focus.
         true
     }
 
     fn ime(&mut self, engine: &mut TextEngine, event: ImeEvent<'_>) -> bool {
-        if self.focus != Some(control_key(Control::Label)) {
+        let Some(focus) = self.focus else {
             return false;
-        }
-        let changed = self.label.ime(engine, &composition(event));
-        // A composition in progress is not the label yet: the field's
+        };
+        let Some(field) = self.field_mut(focus) else {
+            return false;
+        };
+        let changed = field.ime(engine, &composition(event));
+        // A composition in progress is not the text yet: the field's
         // authored text only changes when one is committed.
-        self.adopt_label();
-        changed
+        self.adopt(focus) || changed
     }
 
     fn draw(&mut self, scene: &mut Scene, engine: &mut TextEngine, w: f32, h: f32) {
@@ -1159,10 +1308,11 @@ impl WindowApp for Lab {
             menu: caption::MenuVisual::default(),
         };
         let reset = text(koru_i18n::Key::UiLabReset);
-        let field = control_key(Control::Label);
+        let reset_search = text(koru_i18n::Key::UiLabResetSearch);
+        let search = text(koru_i18n::Key::UiLabSearch);
         let Self {
             story,
-            label,
+            fields,
             style_hover,
             ..
         } = self;
@@ -1214,16 +1364,26 @@ impl WindowApp for Lab {
                         state.focused,
                     );
                     scene.pop_layer();
-                } else if key == field {
-                    label.draw(
+                } else if key == RESET_SEARCH {
+                    ActionButton::new(reset_search, ActionStyle::Secondary, None).draw_focused(
                         scene,
                         root,
                         engine,
                         rect,
-                        InputStyle::form(state.focused),
-                        None,
+                        state.hovered,
                         state.focused,
                     );
+                } else if let Some((_, field)) = fields.iter_mut().find(|(owner, _)| *owner == key)
+                {
+                    // The search is the shared search box, with the hint of
+                    // what it searches while it is empty; a property is a
+                    // form's field.
+                    let (style, hint) = if key == SEARCH {
+                        (InputStyle::search(), Some(search))
+                    } else {
+                        (InputStyle::form(state.focused), None)
+                    };
+                    field.draw(scene, root, engine, rect, style, hint, state.focused);
                 } else if key == STYLE_SEGMENTS
                     && let Some(segments) = &segments
                     && let Some(story) = story.as_ref()

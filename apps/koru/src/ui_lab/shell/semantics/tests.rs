@@ -91,6 +91,7 @@ const FIELD_AT: &str = "s:ui-lab.control#label";
 const STYLE_AT: &str = "s:ui-lab.control#style";
 const ENTRY_AT: &str = "s:ui-lab.navigator#C-BUTTON";
 const LIST_AT: &str = "s:ui-lab#navigator";
+const SEARCH_AT: &str = "s:ui-lab#search";
 const PAGE_AT: &str = "s:ui-lab#page";
 const PANEL_AT: &str = "s:ui-lab#properties";
 const CONTROLS_AT: &str = "s:ui-lab.group#controls";
@@ -141,6 +142,11 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     Some("Close window")
                 ),
                 (RESET_AT.to_owned(), NativeRole::Button, Some("Reset")),
+                (
+                    SEARCH_AT.to_owned(),
+                    NativeRole::TextInput,
+                    Some("Search components")
+                ),
                 (LIST_AT.to_owned(), NativeRole::ListBox, Some("Components")),
                 (PAGE_AT.to_owned(), NativeRole::Group, Some("Details")),
                 (PANEL_AT.to_owned(), NativeRole::Group, Some("Properties")),
@@ -678,7 +684,9 @@ fn a_request_for_something_the_frame_does_not_show_does_nothing() {
             data: None,
         };
         for request in [
-            absent(ObjectKey::Surface("ui-lab"), "search"),
+            absent(ObjectKey::Surface("ui-lab"), "story-picker"),
+            // The button that empties a search, while the search finds things.
+            absent(ObjectKey::Surface("ui-lab"), "reset-search"),
             // A row the list holds and the frame does not show.
             absent(ObjectKey::Surface("ui-lab.navigator"), out_of_view),
             // A record of the registry that the gallery does not list.
@@ -749,5 +757,100 @@ fn the_candidate_area_is_the_fields_caret_and_only_while_it_is_typed_in() {
         // Another window has the keyboard: no composition is ours to place.
         WindowApp::focus_changed(&mut lab, false);
         assert_eq!(lab.ime_cursor_area(), None);
+    });
+}
+
+/// The search field is a text field with its value, and setting the value
+/// searches. Finding nothing is said aloud, and the button that empties the
+/// search is offered beside it.
+#[test]
+fn the_search_field_is_announced_and_can_be_set() {
+    english(|| {
+        let (mut lab, mut engine) = drawn();
+        let semantics = tree(&lab);
+        let search = find(&semantics, SEARCH_AT);
+        assert_eq!(search.role, NativeRole::TextInput);
+        assert_eq!(search.label.as_deref(), Some("Search components"));
+        assert_eq!(search.value.as_deref(), Some(""));
+        assert_eq!(search.actions, [Action::Focus, Action::SetValue]);
+        assert_eq!(search.bounds, lab.rect(SEARCH));
+        // It reads before the list it narrows.
+        let order: Vec<String> = semantics
+            .children
+            .iter()
+            .map(|node| tail(&node.occurrence))
+            .collect();
+        let at = |locator: &str| order.iter().position(|l| l == locator).unwrap();
+        assert!(at(RESET_AT) < at(SEARCH_AT) && at(SEARCH_AT) < at(LIST_AT));
+
+        let all = find(&semantics, LIST_AT).size_of_set.unwrap();
+        let set = request(
+            &lab,
+            SEARCH_AT,
+            Action::SetValue,
+            Some(ActionData::Value("split button".into())),
+        );
+        assert!(lab.accessibility_action(&mut engine, &set));
+        draw(&mut lab, &mut engine);
+        let semantics = tree(&lab);
+        assert_eq!(
+            find(&semantics, SEARCH_AT).value.as_deref(),
+            Some("split button")
+        );
+        let list = find(&semantics, LIST_AT);
+        assert_eq!(list.size_of_set, Some(2), "a group and the record found");
+        assert!(list.size_of_set.unwrap() < all);
+        assert_eq!(
+            semantics.focus,
+            Some(find(&semantics, SEARCH_AT).occurrence)
+        );
+
+        let before = lab.semantics_revision();
+        let nothing = request(
+            &lab,
+            SEARCH_AT,
+            Action::SetValue,
+            Some(ActionData::Value("zzzz".into())),
+        );
+        assert!(lab.accessibility_action(&mut engine, &nothing));
+        draw(&mut lab, &mut engine);
+        assert_ne!(lab.semantics_revision(), before, "what is said changed");
+        let semantics = tree(&lab);
+        let said = find(&semantics, "s:ui-lab#no-results");
+        assert_eq!(said.role, NativeRole::Label);
+        assert_eq!(said.label.as_deref(), Some("Nothing matches “zzzz”."));
+        assert_eq!(said.live, Some(Live::Polite));
+        let reset = find(&semantics, "s:ui-lab#reset-search");
+        assert_eq!(reset.role, NativeRole::Button);
+        assert_eq!(reset.label.as_deref(), Some("Reset search"));
+        assert_eq!(reset.actions, [Action::Click, Action::Focus]);
+        assert!(
+            flat(&semantics.children)
+                .iter()
+                .all(|node| tail(&node.occurrence) != LIST_AT),
+            "no list while nothing is found"
+        );
+        let order: Vec<String> = semantics
+            .children
+            .iter()
+            .map(|node| tail(&node.occurrence))
+            .collect();
+        let at = |locator: &str| order.iter().position(|l| l == locator).unwrap();
+        assert!(at(SEARCH_AT) < at("s:ui-lab#no-results"));
+        assert!(at("s:ui-lab#no-results") < at("s:ui-lab#reset-search"));
+
+        assert!(ask(
+            &mut lab,
+            &mut engine,
+            "s:ui-lab#reset-search",
+            Action::Click
+        ));
+        let semantics = tree(&lab);
+        assert_eq!(find(&semantics, SEARCH_AT).value.as_deref(), Some(""));
+        assert_eq!(find(&semantics, LIST_AT).size_of_set, Some(all));
+        assert_eq!(
+            semantics.focus,
+            Some(find(&semantics, SEARCH_AT).occurrence)
+        );
     });
 }

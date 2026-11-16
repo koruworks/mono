@@ -13,7 +13,15 @@
 //!
 //! **What it lists is [`registry::desktop`]'s**, and nothing else reads the
 //! catalog for it: a record that exists only on a phone is not a row, is not
-//! counted beside its group and cannot be reached by the keyboard.
+//! counted beside its group, is not found by the search and cannot be
+//! reached by the keyboard.
+//!
+//! **The search narrows the same list.** What is typed in the field over it
+//! is matched against each record's name in the display language, its public
+//! name, its catalog ID and its recorded symbols; the groups keep their
+//! headings and count what was found. A search that finds nothing keeps the
+//! query in the field, says so, and offers a button that empties it. The
+//! record on show stays on show whatever is searched for.
 //!
 //! **Only the rows in view are elements.** Every row is one height
 //! ([`NAVIGATOR_ROW`]), so which rows the viewport shows is arithmetic on the
@@ -37,6 +45,16 @@ use super::*;
 /// The scrolling viewport. Its key is what a press in the scrollbar's gutter
 /// and the wheel are about.
 pub(super) const LIST: Key = Key::surface("ui-lab", "navigator");
+/// The search field over the list.
+pub(super) const SEARCH: Key = Key::surface("ui-lab", "search");
+/// The line that says a search found nothing.
+pub(super) const NOTHING_FOUND: Key = Key::surface("ui-lab", "no-results");
+/// The button under that line that empties the search.
+pub(super) const RESET_SEARCH: Key = Key::surface("ui-lab", "reset-search");
+
+/// How much of a query the nothing-found line quotes. A query can be any
+/// length and need not have a space to wrap at.
+const QUOTED: usize = 32;
 
 /// One row of the list.
 #[derive(Copy, Clone, Debug)]
@@ -86,12 +104,16 @@ static GROUP_STATES: StateRecipe = StateRecipe {
 
 /// What the list holds and where the person is in it.
 pub(super) struct Navigator {
+    /// What the search is looking for: [`registry::search_words`]'s. Empty
+    /// while nothing is searched for.
+    words: Vec<String>,
     /// The groups the person folded, by [`Family::slot`].
     folded: [bool; 3],
     /// The rows the list shows, top to bottom: each group that has a record,
     /// then its records unless it is folded.
     rows: Vec<Row>,
-    /// How many records each group has, folded or not.
+    /// How many records each group has that the search finds, folded or
+    /// not.
     counts: [usize; 3],
     /// The row the keyboard is on, or was last on.
     cursor: Option<Row>,
@@ -103,6 +125,7 @@ impl Navigator {
     /// The whole gallery, every group unfolded, the keyboard on `shown`.
     pub(super) fn new(shown: &'static Entry) -> Self {
         let mut navigator = Self {
+            words: Vec::new(),
             folded: [false; 3],
             rows: Vec::new(),
             counts: [0; 3],
@@ -113,13 +136,16 @@ impl Navigator {
         navigator
     }
 
-    /// Read the gallery again: after a group folds or unfolds.
-    fn rebuild(&mut self) {
+    /// Read the gallery again: after a group folds or unfolds, the search
+    /// changes, or the display language does (a record is found by the name
+    /// it has in that language).
+    pub(super) fn rebuild(&mut self) {
         self.rows.clear();
         self.counts = [0; 3];
         for family in Family::ALL {
             let records: Vec<&'static Entry> = registry::desktop()
                 .filter(|entry| entry.family == family)
+                .filter(|entry| self.words.is_empty() || entry.matches(&self.words))
                 .collect();
             // A group with nothing in it is not shown as an empty heading.
             if records.is_empty() {
@@ -131,19 +157,46 @@ impl Navigator {
                 self.rows.extend(records.into_iter().map(Row::Entry));
             }
         }
-        // A row that folded away hands the keyboard to its group's heading.
+        // A row that folded away hands the keyboard to its group's heading;
+        // one the search no longer finds leaves the keyboard nowhere in
+        // particular, and Tab finds the list's first row.
         if let Some(Row::Entry(entry)) = self.cursor
             && self.position(Row::Entry(entry)).is_none()
         {
             self.cursor = Some(Row::Group(entry.family));
         }
+        if self.cursor.is_some_and(|row| self.position(row).is_none()) {
+            self.cursor = None;
+        }
+    }
+
+    /// Search for `query`: the list becomes the records it finds, from the
+    /// top. Returns whether what is searched for changed.
+    pub(super) fn set_query(&mut self, query: &str) -> bool {
+        let words = registry::search_words(query);
+        if words == self.words {
+            return false;
+        }
+        self.words = words;
+        self.scroll = 0.0;
+        self.rebuild();
+        true
+    }
+
+    /// The first record the list shows.
+    pub(super) fn first_entry(&self) -> Option<&'static Entry> {
+        self.rows.iter().find_map(|row| match row {
+            Row::Entry(entry) => Some(*entry),
+            Row::Group(_) => None,
+        })
     }
 
     pub(super) fn rows(&self) -> &[Row] {
         &self.rows
     }
 
-    /// How many records `family` has, whether or not they are showing.
+    /// How many records of `family` the search finds, whether or not they
+    /// are showing. All of them while nothing is searched for.
     pub(super) fn count(&self, family: Family) -> usize {
         self.counts[family.slot()]
     }
@@ -352,6 +405,51 @@ impl Navigator {
                     .ink(Ink::Hint),
             )
     }
+}
+
+/// **What stands in the list's place when a search finds nothing**: a line
+/// that says so, quoting what was searched for, and a button that empties
+/// the search. The query itself stays in the field.
+pub(super) fn nothing_found(engine: &mut TextEngine, query: &str) -> El {
+    let query = query.trim();
+    let quoted = match query.char_indices().nth(QUOTED) {
+        Some((end, _)) => format!("{}…", &query[..end]),
+        None => query.to_owned(),
+    };
+    let reset = text(koru_i18n::Key::UiLabResetSearch);
+    el::col("No results")
+        .fill()
+        .pad_top(NAVIGATOR_GAP)
+        .gap(PANEL_GAP)
+        .child(
+            el::text(koru_i18n::fill(
+                text(koru_i18n::Key::UiLabNoResults),
+                &[&quoted],
+            ))
+            .named("No results message")
+            .id(NOTHING_FOUND)
+            .role(roles::ROW)
+            .ink(Ink::Secondary)
+            .wrap(),
+        )
+        .child(
+            el::leaf(
+                "Reset search",
+                Slot {
+                    width: ActionButton::new(reset, ActionStyle::Secondary, None).width(engine),
+                    height: ActionButton::H,
+                },
+            )
+            .semantic()
+            .id(RESET_SEARCH)
+            .align_self(Align::Start)
+            .hit()
+            .focusable()
+            .semantics(Role::Button)
+            .name(koru_i18n::Key::UiLabResetSearch)
+            .action(el::Action::Click)
+            .action(el::Action::Focus),
+        )
 }
 
 /// One record's row. The selected one wears the selected plate and a heavier

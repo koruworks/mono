@@ -54,6 +54,11 @@ pub(super) fn story(lab: &Lab) -> &ButtonStory {
     lab.story.as_ref().expect("the record on show has a story")
 }
 
+/// The label property's field.
+pub(super) fn label(lab: &Lab) -> &TextInput {
+    lab.field(field()).expect("the story has a label field")
+}
+
 /// A record of the gallery, by its catalog ID.
 pub(super) fn record(catalog_id: &str) -> &'static Entry {
     registry::desktop()
@@ -238,8 +243,8 @@ fn the_lab_opens_with_the_record_on_show_in_view() {
     });
 }
 
-/// The keyboard's stops are the toolbar's Reset, one row of the navigator,
-/// the page, and the story's own controls. Nothing stands in for a control
+/// The keyboard's stops are the toolbar's Reset, the search, one row of the
+/// navigator, the page, and the story's own controls. Nothing stands in for a control
 /// the Lab does not have yet.
 #[test]
 fn the_keyboard_stops_are_the_controls_that_exist() {
@@ -249,6 +254,7 @@ fn the_keyboard_stops_are_the_controls_that_exist() {
             lab.laid.as_ref().unwrap().stops(),
             [
                 RESET,
+                SEARCH,
                 entry_key(registry::BUTTON),
                 PAGE,
                 SUBJECT,
@@ -330,7 +336,7 @@ fn typing_in_the_label_field_relabels_the_button() {
         ));
         type_text(&mut lab, &mut engine, "Move 12 files to the shared archive");
         assert_eq!(story(&lab).label(), "Move 12 files to the shared archive");
-        assert_eq!(lab.label.raw_text(), story(&lab).label());
+        assert_eq!(label(&lab).raw_text(), story(&lab).label());
         assert_eq!(story(&lab).presses(), 0, "typing a space is not a press");
 
         // The button is measured from its new label, and is named by it.
@@ -366,8 +372,7 @@ fn a_very_long_label_stays_inside_the_preview() {
         for size in [SIZE, SMALLEST] {
             let (mut lab, mut engine) = drawn(size);
             let long = "A label that keeps going ".repeat(40);
-            lab.label.set_text(&mut engine, &long);
-            assert!(lab.adopt_label());
+            assert!(lab.set_field(&mut engine, field(), &long));
             draw(&mut lab, &mut engine, size);
             assert_sound(&lab, "a very long label");
             let preview = frame(&lab).rect_of("Preview").unwrap();
@@ -436,7 +441,7 @@ fn reset_restores_the_label_the_style_and_the_click_result() {
         assert!(press(&mut lab, &mut engine, RESET));
         assert!(story(&lab).is_pristine());
         assert_eq!(story(&lab).label(), "Save changes");
-        assert_eq!(lab.label.raw_text(), "Save changes", "the field follows");
+        assert_eq!(label(&lab).raw_text(), "Save changes", "the field follows");
         assert_eq!(story(&lab).style(), ButtonRole::Secondary);
         assert_eq!(lab.result_line(), "Not pressed yet");
         assert_eq!(lab.focus, Some(RESET));
@@ -537,7 +542,7 @@ fn the_trial_can_be_done_from_the_keyboard() {
         }
         assert!(named(&mut lab, &mut engine, NamedKey::Enter, none));
         assert!(story(&lab).is_pristine());
-        assert_eq!(lab.label.raw_text(), "Save changes");
+        assert_eq!(label(&lab).raw_text(), "Save changes");
         assert_sound(&lab, "after a keyboard reset");
     });
 }
@@ -584,7 +589,7 @@ fn a_key_with_nothing_focused_does_nothing() {
             ModifiersState::empty(),
         ));
         assert_eq!(lab.story, before);
-        assert_eq!(lab.label.raw_text(), "Save changes");
+        assert_eq!(label(&lab).raw_text(), "Save changes");
     });
 }
 
@@ -613,13 +618,13 @@ fn composed_text_reaches_the_label_only_when_committed() {
                 cursor: Some((9, 9)),
             },
         ));
-        assert!(lab.label.is_composing());
+        assert!(label(&lab).is_composing());
         assert_eq!(story(&lab).label(), "Save changes", "not the label yet");
 
         assert!(lab.ime(&mut engine, ImeEvent::Commit { text: "保存" }));
-        assert!(!lab.label.is_composing());
+        assert!(!label(&lab).is_composing());
         assert_eq!(story(&lab).label(), "保存");
-        assert_eq!(lab.label.raw_text(), "保存");
+        assert_eq!(label(&lab).raw_text(), "保存");
         draw(&mut lab, &mut engine, SIZE);
         assert_sound(&lab, "a composed label");
 
@@ -632,7 +637,7 @@ fn composed_text_reaches_the_label_only_when_committed() {
             },
         );
         assert!(tab(&mut lab, &mut engine));
-        assert!(!lab.label.is_composing());
+        assert!(!label(&lab).is_composing());
         assert_eq!(story(&lab).label(), "保存");
     });
 }
@@ -819,7 +824,7 @@ fn the_sample_label_is_in_the_language_the_lab_opened_in() {
                 story(&lab).label(),
                 koru_i18n::t(lang, koru_i18n::Key::UiLabButtonSampleLabel)
             );
-            assert_eq!(lab.label.raw_text(), story(&lab).label());
+            assert_eq!(label(&lab).raw_text(), story(&lab).label());
         });
     }
 }
@@ -854,7 +859,7 @@ fn showing_another_record_discards_the_storys_edits() {
         draw(&mut lab, &mut engine, SIZE);
         assert!(story(&lab).is_pristine());
         assert_eq!(story(&lab).label(), "Save changes");
-        assert_eq!(lab.label.raw_text(), "Save changes");
+        assert_eq!(label(&lab).raw_text(), "Save changes");
         assert_eq!(lab.result_line(), "Not pressed yet");
     });
 }

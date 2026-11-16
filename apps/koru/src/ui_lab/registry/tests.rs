@@ -279,6 +279,44 @@ fn every_status_a_page_states_reads_differently() {
     assert_eq!(names, ["Windows", "macOS", "Linux"]);
 }
 
+/// A search is its words, lower case; a record is what they ask for when
+/// every one of them is in its name, its public name, its catalog ID or one
+/// of its symbols, whatever the case.
+#[test]
+fn a_record_matches_when_every_word_is_found_in_what_it_is_called() {
+    assert_eq!(search_words("  Split   BUTTON "), ["split", "button"]);
+    assert!(search_words("   ").is_empty());
+    koru_i18n::with_current(koru_i18n::Lang::En, || {
+        let found = |query: &str| button().matches(&search_words(query));
+        assert!(found("button"));
+        assert!(found("KORUBUTTON"));
+        assert!(found("c-button"));
+        assert!(found("draw_help"));
+        // Each word may be found somewhere different.
+        assert!(found("koru draw_apple c-butt"));
+        assert!(!found("button toggle"), "every word has to be found");
+        assert!(!found("zzzz"));
+        // No words is no search: everything is what was asked for.
+        assert!(found(""));
+        // The source file and the purpose are not searched.
+        assert!(!found("button.rs"));
+        assert!(!found(koru_i18n::t(koru_i18n::Lang::En, button().purpose)));
+    });
+    // The name searched is the one in the display language.
+    for lang in koru_i18n::Lang::ALL {
+        koru_i18n::with_current(lang, || {
+            for entry in desktop() {
+                let name = koru_i18n::t(lang, entry.name);
+                assert!(
+                    entry.matches(&search_words(name)),
+                    "{lang:?}: `{name}` does not find {}",
+                    entry.catalog_id
+                );
+            }
+        });
+    }
+}
+
 /// A record's status is its symbols': the Button runs, a token table waits,
 /// and what several symbols say about A2UI is listed once each.
 #[test]

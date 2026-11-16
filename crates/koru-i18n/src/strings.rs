@@ -4124,13 +4124,16 @@ pub enum Key {
     UiLabStoryBoundary,
     UiLabStoryBoundaryWhy,
     UiLabFactLine,
+    UiLabSearch,
+    UiLabNoResults,
+    UiLabResetSearch,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3151] = [
+    pub const ALL: [Key; 3154] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7282,6 +7285,9 @@ impl Key {
         Key::UiLabStoryBoundary,
         Key::UiLabStoryBoundaryWhy,
         Key::UiLabFactLine,
+        Key::UiLabSearch,
+        Key::UiLabNoResults,
+        Key::UiLabResetSearch,
     ];
 }
 
@@ -19602,4 +19608,7 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabStoryBoundary, en: "Boundary", es: "Límite", pt_br: "Limite", de: "Grenze", fr: "Limite", ar: "حدّ", zh_hans: "边界", ja: "境界" },
     Row { key: Key::UiLabStoryBoundaryWhy, en: "Below the component level or owned by content. It is shown through the components that use it, not as a story of its own.", es: "Está por debajo del nivel de componente o pertenece al contenido. Se muestra a través de los componentes que lo usan, no como un ejemplo propio.", pt_br: "Fica abaixo do nível de componente ou pertence ao conteúdo. É mostrado pelos componentes que o usam, não como um exemplo próprio.", de: "Unterhalb der Komponentenebene oder dem Inhalt zugehörig. Es wird durch die Komponenten gezeigt, die es verwenden, nicht als eigenes Beispiel.", fr: "Sous le niveau des composants ou propre au contenu. Il est montré par les composants qui l’utilisent, pas par un exemple à part.", ar: "دون مستوى المكوّنات أو تابع للمحتوى. يُعرض عبر المكوّنات التي تستخدمه، لا كمثال مستقل.", zh_hans: "低于组件层级或归内容所有。它通过使用它的组件来展示，没有单独的示例。", ja: "コンポーネントより下の層、またはコンテンツが持つものです。単独のサンプルではなく、これを使うコンポーネントを通して表示します。" },
     Row { key: Key::UiLabFactLine, en: "{}: {}", es: "{}: {}", pt_br: "{}: {}", de: "{}: {}", fr: "{} : {}", ar: "{}: {}", zh_hans: "{}：{}", ja: "{}: {}" },
+    Row { key: Key::UiLabSearch, en: "Search components", es: "Buscar componentes", pt_br: "Buscar componentes", de: "Komponenten suchen", fr: "Rechercher des composants", ar: "البحث في المكوّنات", zh_hans: "搜索组件", ja: "コンポーネントを検索" },
+    Row { key: Key::UiLabNoResults, en: "Nothing matches “{}”.", es: "Nada coincide con «{}».", pt_br: "Nada corresponde a “{}”.", de: "Nichts passt zu „{}“.", fr: "Rien ne correspond à « {} ».", ar: "لا شيء يطابق «{}».", zh_hans: "没有与“{}”匹配的内容。", ja: "「{}」に一致するものはありません。" },
+    Row { key: Key::UiLabResetSearch, en: "Reset search", es: "Restablecer la búsqueda", pt_br: "Redefinir a busca", de: "Suche zurücksetzen", fr: "Réinitialiser la recherche", ar: "إعادة تعيين البحث", zh_hans: "重置搜索", ja: "検索をリセット" },
 ];

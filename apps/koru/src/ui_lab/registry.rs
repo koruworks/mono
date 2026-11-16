@@ -802,6 +802,26 @@ impl Entry {
         }
     }
 
+    /// Whether the record is what `words` ask for: every word is part of
+    /// what the record is called in the display language, of its public
+    /// name, of its catalog ID or of one of its recorded symbols. `words`
+    /// are [`search_words`]'s, already lower case. No word matches a
+    /// purpose: a sentence would match half the catalog.
+    pub(crate) fn matches(&self, words: &[String]) -> bool {
+        let lang = koru_i18n::current();
+        let name = koru_i18n::t(lang, self.name).to_lowercase();
+        let public_name = self.public_name.to_lowercase();
+        let catalog_id = self.catalog_id.to_lowercase();
+        words.iter().all(|word| {
+            name.contains(word)
+                || public_name.contains(word)
+                || catalog_id.contains(word)
+                || self
+                    .symbols()
+                    .any(|symbol| symbol.symbol.to_lowercase().contains(word))
+        })
+    }
+
     /// The story the record's page runs, when it has one.
     pub(crate) fn story_id(&self) -> Option<&'static str> {
         match self.status() {
@@ -875,6 +895,12 @@ pub(crate) fn catalog() -> impl Iterator<Item = &'static Entry> {
 /// registry: [`catalog`] still has every record.
 pub(crate) fn desktop() -> impl Iterator<Item = &'static Entry> {
     catalog().filter(|entry| entry.on_desktop())
+}
+
+/// What a search is looking for: the words typed, lower case. No words is
+/// no search.
+pub(crate) fn search_words(query: &str) -> Vec<String> {
+    query.split_whitespace().map(str::to_lowercase).collect()
 }
 
 /// The entry and recipe a story ID runs.
