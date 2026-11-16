@@ -445,7 +445,6 @@ impl WidgetStory {
 
     /// What a free-text input holds; nothing for an input the recipe does
     /// not have.
-    #[allow(dead_code)] // Until the first widget story is registered.
     pub(crate) fn text(&self, control: Control) -> &str {
         match self.value(control) {
             Some(Value::Text(text)) => text,
@@ -462,7 +461,6 @@ impl WidgetStory {
     }
 
     /// Whether a yes-or-no input says yes.
-    #[allow(dead_code)] // Until the first widget story is registered.
     pub(crate) fn flag(&self, control: Control) -> bool {
         matches!(self.value(control), Some(Value::Flag(true)))
     }

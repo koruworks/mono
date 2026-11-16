@@ -148,7 +148,11 @@ fn every_registered_story_opens_at_its_defaults() {
                 opened += 1;
             }
         }
-        assert_eq!(opened, 9, "the stories the Lab has");
+        assert_eq!(
+            opened,
+            9 + crate::ui_lab::stories::ALL.len(),
+            "the stories the Lab has"
+        );
         assert_eq!(Story::open("C-BUTTON/compact"), None);
         assert_eq!(Story::open(""), None);
     });

@@ -8,12 +8,13 @@ use koru_draw::theme::Profile;
 use koru_workspace_host::accessibility::{SemanticNode, ViewSlot, WindowSlot};
 
 use super::super::tests::{
-    SIZE, SMALLEST, assert_sound, centre, draw, english, frame, named, press, record, result, tab,
-    type_text,
+    SIZE, SMALLEST, assert_sound, centre, component_at, draw, english, frame, inspected, named,
+    press, property, record, result, tab, type_text,
 };
 use super::*;
 
 mod parts;
+mod widgets;
 
 const NONE: ModifiersState = ModifiersState::empty();
 
@@ -68,6 +69,14 @@ const STORIED: [&str; 9] = [
     "T-TEXT-ROLES",
 ];
 
+/// Every record the gallery can run.
+fn storied() -> Vec<&'static str> {
+    registry::desktop()
+        .filter(|entry| entry.story_id().is_some())
+        .map(|entry| entry.catalog_id)
+        .collect()
+}
+
 /// Every story lays out with nothing overflowing, in each of the eight
 /// languages, at the default size, at the smallest, and at every preview
 /// width; and every one of them is the record's registered story.
@@ -75,7 +84,7 @@ const STORIED: [&str; 9] = [
 fn every_story_composes_in_every_language_and_at_every_width() {
     for lang in koru_i18n::Lang::ALL {
         koru_i18n::with_current(lang, || {
-            for id in STORIED {
+            for id in storied() {
                 for size in [SIZE, SMALLEST] {
                     let (mut lab, mut engine) = showing(id, size);
                     let context = format!("{id} in {lang:?} at {size:?}");
@@ -101,13 +110,12 @@ fn every_story_composes_in_every_language_and_at_every_width() {
             }
         });
     }
+    // The first nine, and every widget story registered since.
+    let storied = storied();
+    assert!(STORIED.iter().all(|id| storied.contains(id)));
     assert_eq!(
-        registry::desktop()
-            .filter(|entry| entry.story_id().is_some())
-            .map(|entry| entry.catalog_id)
-            .collect::<Vec<_>>()
-            .len(),
-        STORIED.len(),
+        storied.len(),
+        STORIED.len() + crate::ui_lab::stories::ALL.len(),
         "every story is exercised here"
     );
 }

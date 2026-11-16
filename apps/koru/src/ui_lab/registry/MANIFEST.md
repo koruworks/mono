@@ -28,7 +28,9 @@ from the Android and iOS apps are in the registry and in none of those, and
 no page shows a phone's cell. The macOS share extension and the desktop's
 system surfaces are native and are listed.
 
-**Nine records have a story.** A record with a story names the symbol the
+**Thirteen records have a story**: the nine the gallery opened with, and
+the shared widgets plan L4b has reached (see *L4b batch 1* below). A record
+with a story names the symbol the
 story drives as a `Recipe`: its typed styles, the inputs the properties
 column offers, and the option sets the symbol takes. Its Windows cell is
 `Available`, which the registry's tests hold equal to having a story.
@@ -44,6 +46,10 @@ column offers, and the option sets the symbol takes. Its Windows cell is
 | `T-INK/roles` | Ink | `Ink::ALL`: each role set as text |
 | `T-LINE/roles` | Lines | `Line::ALL`: each hairline drawn |
 | `T-TEXT-ROLES/roles` | Text roles | `roles::ALL`: a sample set in each role, with its size and line height |
+| `C-TOGGLE/switch` | Toggle | `koru_ui::toggle::Toggle`: flipped; disabled, pending, leading glyph |
+| `C-CHIP/choice` | Chip | `koru_ui::chip::Chip`: three, one chosen; the first one's label; the leading slot |
+| `C-SEGMENTED/choice` | Segmented control | `koru_ui::segmented::Segmented`: three segments, one chosen; the arrows choose |
+| `C-DROPDOWN/field` | Dropdown | `koru_ui::dropdown::Dropdown`: the field and the list it opens; disabled |
 
 The text input's story drives three of `InputStyle`'s four constructors;
 `bare` draws no box and waits for a story of its own, as do `invalid` and the
@@ -256,16 +262,16 @@ batch's counts.
 | kind: native adapter | 35 |
 | token values listed | 174 |
 | symbols | 2391 |
-| symbols with typed recipes | 10 |
+| symbols with typed recipes | 14 |
 | inspector identities | 61 |
 | inspector identity registration sites | 64 |
-| disposition: story exists | 9 |
-| disposition: no story yet | 204 |
+| disposition: story exists | 13 |
+| disposition: no story yet | 200 |
 | disposition: nonvisual | 62 |
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
-| symbol story: available | 9 |
-| symbol story: no story yet | 445 |
+| symbol story: available | 13 |
+| symbol story: no story yet | 441 |
 | symbol story: nonvisual | 1675 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
@@ -282,7 +288,7 @@ about each platform.
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 9 | 278 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| Windows | 13 | 274 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
 | macOS | 0 | 1 | 286 | 0 | 1 | 3 | 34 | 8 | 0 |
 | Linux | 0 | 0 | 286 | 0 | 0 | 7 | 36 | 3 | 1 |
 | Android | 0 | 18 | 0 | 73 | 13 | 196 | 28 | 3 | 2 |
@@ -2440,6 +2446,64 @@ its box: the shared search input is the next batch's.
 
 No caller in the ordinary app passes focus yet; that was left alone on
 purpose.
+
+### The batch's records
+
+Thirteen records, all `koru-ui`, all `Kind::Widget`. A story is a `Widget`
+in `ui_lab/stories/`, listed in `stories::ALL` beside its recipe; the
+window draws, hit-tests and publishes every one of them through the same
+few questions (`ui_lab/stories.rs`).
+
+| Record | Story | State |
+| --- | --- | --- |
+| `C-TOGGLE` | `C-TOGGLE/switch` | runs |
+| `C-CHIP` | `C-CHIP/choice` | runs |
+| `C-SEGMENTED` | `C-SEGMENTED/choice` | runs |
+| `C-DROPDOWN` | `C-DROPDOWN/field` | runs |
+| `C-SWATCH` | | no story yet |
+| `C-COLOR-PICKER-ROW` | | no story yet |
+| `C-STEPPER` | | no story yet |
+| `C-PREVIEW-TILE` | | no story yet |
+| `C-ICON-BUTTON` | | no story yet |
+| `C-BUTTON-GROUP` | | no story yet |
+| `C-SPLIT-BUTTON` | | no story yet |
+| `C-COPY` | | no story yet |
+| `C-BUTTON` | `C-BUTTON/dialog` (from the first trial) | its other symbols have no story yet |
+
+**Left out of this batch by decision**, and still "no story yet":
+`C-CHOICE-DIALOG` is a floating dialog and belongs to the floating-surfaces
+batch; the display chips `C-BADGE`, `C-LABEL-CHIP` and `C-CONTEXT-CHIP`
+belong to the feedback batch.
+
+### What each story offers, and what it leaves out
+
+Inputs are the production call's own. Sample content (three densities, the
+eight languages by their own names) is synthetic and in the display
+language. Hover and focus are left to the real pointer and keyboard; no
+story forces them.
+
+- **Toggle** (`Toggle::new(on).enabled(..).pending(..).icon(..)`): pressed
+  to flip; *Disabled*, *Pending* and *Leading* are its three builders. The
+  leading glyph is the cloud pair its first caller passes, so on and off
+  differ by glyph as well as position. Disabled or pending, the story's
+  switch takes no press. That rule is the story's: the production
+  component has no hit test of its own and leaves it to each caller, and
+  the callers were not audited for it.
+- **Chip** (`Chip::new(label, selected).leading(w)`): three chips, one
+  chosen by a press. *Label* is the first chip's; *Leading* reserves the
+  16 px slot and the story draws a plain star in it, as a caller draws its
+  own mark. `chip::wrap` stays nonvisual: it is the row arithmetic, and
+  does not count a leading slot, so the story repeats it with the slot
+  counted.
+- **Segmented control** (`Segmented::layout` and `draw_focused`): three
+  segments. One Tab stop; the arrows choose, as in Settings. Its `alpha`
+  is a number the caller picks for a read-only surface and has no input.
+- **Dropdown** (`Dropdown::new(value).open(..).enabled(..)`,
+  `Dropdown::menu`): the closed field and its own list, which is the
+  shared menu hung under the field by `Dropdown::menu`. `open` is real: it
+  is set while the list shows. *Disabled* is `enabled(false)`. `in_face`
+  (a font picker's per-row face) has no input: it takes a font stack, not
+  a choice the type lists.
 
 ## Keeping the inventory true
 

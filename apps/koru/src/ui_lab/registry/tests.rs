@@ -412,7 +412,21 @@ fn every_storied_record_names_what_its_story_drives() {
         .flat_map(|entry| entry.symbols())
         .filter(|symbol| matches!(symbol.story, Story::Available(_)))
         .count();
-    assert_eq!(registered, cases.len());
+    // The rest are the widget stories, each listed with its `Widget`.
+    let widgets = crate::ui_lab::stories::ALL;
+    assert_eq!(registered, cases.len() + widgets.len());
+    for widget in widgets {
+        let (entry, recipe) = recipe(widget.id());
+        assert_eq!(entry.story_id(), Some(widget.id()));
+        assert_eq!(recipe.styles, Styles::Unstyled, "{}", widget.id());
+        assert!(widget.id().starts_with(entry.catalog_id), "{}", widget.id());
+        assert_eq!(
+            entry.availability(Platform::Windows),
+            Availability::Available,
+            "{}",
+            widget.id()
+        );
+    }
     // What was recorded beside the symbol stayed with it.
     assert_eq!(recipe(ROW_STORY).1.a2ui, A2ui::Component("Row"));
     assert_eq!(recipe(COLUMN_STORY).1.a2ui, A2ui::Component("Column"));

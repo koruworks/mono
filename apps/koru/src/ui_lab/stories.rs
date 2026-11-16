@@ -39,12 +39,12 @@ use super::registry::Control;
 use super::story::{Held, StoryOption, WidgetStory};
 
 /// What a part of a component is, to a screen reader.
-#[allow(dead_code)] // Until the first widget story is registered.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PartRole {
     /// Pressed for an effect.
     Button,
     /// A button that stays down: on or off.
+    #[allow(dead_code)] // Until the split button's story.
     Pressed(bool),
     /// A switch: on or off.
     Switch(bool),
@@ -53,6 +53,7 @@ pub(crate) enum PartRole {
     /// A field that shows one value and opens the list of the rest.
     Combo,
     /// Something to read, not to press: a stepper's value.
+    #[allow(dead_code)] // Until the stepper's story.
     Readout,
 }
 
@@ -76,7 +77,6 @@ pub(crate) struct Part {
     pub(crate) own_focus: bool,
 }
 
-#[allow(dead_code)] // Until the first widget story is registered.
 impl Part {
     /// A part that is pressed for an effect and draws its own focus mark.
     pub(crate) fn button(part: &'static str, rect: Rect, name: impl Into<String>) -> Self {
@@ -107,6 +107,7 @@ impl Part {
     }
 
     /// The component has no focus mark for this part: the window rings it.
+    #[allow(dead_code)] // Until the first story of a component without one.
     pub(crate) fn ringed(mut self) -> Self {
         self.own_focus = false;
         self
@@ -130,7 +131,6 @@ pub(crate) struct Pointed {
 }
 
 /// What a painter draws with.
-#[allow(dead_code)] // Until the first widget story is registered.
 pub(crate) struct Canvas<'a> {
     pub(crate) scene: &'a mut Scene,
     pub(crate) root: Affine,
@@ -213,8 +213,25 @@ pub(crate) trait Widget: Sync {
     fn result(&self, story: &WidgetStory) -> Option<String>;
 }
 
+mod choices;
+
 /// Every widget story the Lab can run.
-pub(crate) const ALL: &[&dyn Widget] = &[];
+pub(crate) const ALL: &[&dyn Widget] = &[
+    &choices::ToggleStory,
+    &choices::ChipStory,
+    &choices::SegmentedStory,
+    &choices::DropdownStory,
+];
+
+/// A string of the Lab's, in the display language.
+fn text(key: koru_i18n::Key) -> &'static str {
+    koru_i18n::t(koru_i18n::current(), key)
+}
+
+/// The line under a component that chooses: what is chosen now.
+fn chosen_line(chosen: &str) -> String {
+    koru_i18n::fill(text(koru_i18n::Key::UiLabResultChosen), &[chosen])
+}
 
 /// The widget story registered as `story_id`.
 pub(crate) fn find(story_id: &str) -> Option<&'static dyn Widget> {

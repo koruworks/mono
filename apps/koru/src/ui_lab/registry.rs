@@ -408,8 +408,13 @@ pub(crate) enum Control {
     Size,
     /// The `disabled` or `enabled: bool` the production call takes: a yes
     /// or a no.
-    #[allow(dead_code)] // Offered by the first widget story that has one.
     Disabled,
+    /// The `pending: bool` of a control whose change is in flight: a yes or
+    /// a no.
+    Pending,
+    /// Whether the component leads with its optional glyph or mark slot
+    /// (`Toggle::icon`, `Chip::leading`): a yes or a no.
+    Leading,
 }
 
 impl Control {
@@ -424,6 +429,8 @@ impl Control {
             Self::Tone => koru_i18n::Key::UiLabControlTone,
             Self::Size => koru_i18n::Key::UiLabControlSize,
             Self::Disabled => koru_i18n::Key::UiLabControlDisabled,
+            Self::Pending => koru_i18n::Key::UiLabOptionPending,
+            Self::Leading => koru_i18n::Key::UiLabControlLeading,
         }
     }
 
@@ -439,6 +446,8 @@ impl Control {
             Self::Tone => "tone",
             Self::Size => "size",
             Self::Disabled => "disabled",
+            Self::Pending => "pending",
+            Self::Leading => "leading",
         }
     }
 
@@ -454,7 +463,9 @@ impl Control {
             Self::Tone => "ui-lab.tone",
             Self::Size => "ui-lab.size",
             // Free text and a yes or a no have no options.
-            Self::Label | Self::Placeholder | Self::Disabled => "ui-lab.text",
+            Self::Label | Self::Placeholder | Self::Disabled | Self::Pending | Self::Leading => {
+                "ui-lab.text"
+            }
         }
     }
 
@@ -462,7 +473,7 @@ impl Control {
         match self {
             Self::Label | Self::Placeholder => Input::Text,
             Self::Style | Self::Gap | Self::Padding | Self::Tone | Self::Size => Input::Choice,
-            Self::Disabled => Input::Toggle,
+            Self::Disabled | Self::Pending | Self::Leading => Input::Toggle,
         }
     }
 }
@@ -741,6 +752,32 @@ pub(crate) const SURFACE_STORY: &str = "T-SURFACE/roles";
 pub(crate) const INK_STORY: &str = "T-INK/roles";
 pub(crate) const LINE_STORY: &str = "T-LINE/roles";
 pub(crate) const TEXT_ROLES_STORY: &str = "T-TEXT-ROLES/roles";
+
+/// The shared choice widgets, each the production component pressed for
+/// real (`stories/choices.rs`).
+pub(crate) const TOGGLE_STORY: &str = "C-TOGGLE/switch";
+pub(crate) const CHIP_STORY: &str = "C-CHIP/choice";
+pub(crate) const SEGMENTED_STORY: &str = "C-SEGMENTED/choice";
+pub(crate) const DROPDOWN_STORY: &str = "C-DROPDOWN/field";
+
+/// A widget symbol a story drives: its inputs, the option sets it takes,
+/// and the story's ID. It takes no style of the two button enums, and no
+/// declaration can name it.
+const fn staged(
+    symbol: &'static str,
+    controls: &'static [Control],
+    options: &'static [OptionSet],
+    story_id: &'static str,
+) -> Recipe {
+    Recipe {
+        symbol,
+        styles: Styles::Unstyled,
+        controls,
+        options,
+        a2ui: A2ui::NotSupported,
+        story: Story::Available(story_id),
+    }
+}
 
 /// A symbol a story drives that takes no style and has no input: a token
 /// table, shown whole.

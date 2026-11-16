@@ -177,6 +177,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("shell/semantics.rs"),
     ),
     ("ui_lab/stories.rs", include_str!("stories.rs")),
+    (
+        "ui_lab/stories/choices.rs",
+        include_str!("stories/choices.rs"),
+    ),
     ("ui_lab/story.rs", include_str!("story.rs")),
     ("ui_lab/tokens.rs", include_str!("tokens.rs")),
     ("ui_lab/windows.rs", include_str!("windows.rs")),
