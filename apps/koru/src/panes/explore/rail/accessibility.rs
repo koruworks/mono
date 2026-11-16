@@ -130,13 +130,12 @@ impl TasksRail {
                     if let Some(band) = band.as_mut() {
                         band.h = bounds.y + bounds.h - band.y;
                     }
-                    let mut node =
-                        SemanticNode::new(list_occurrence(cx, list.id), Role::TreeItem)
-                            .with_label(list.name.clone())
-                            .with_bounds(bounds)
-                            .with_level(list.depth + 1)
-                            .with_position(position)
-                            .with_actions([Action::Click, Action::Focus, Action::ScrollIntoView]);
+                    let mut node = SemanticNode::new(list_occurrence(cx, list.id), Role::TreeItem)
+                        .with_label(list.name.clone())
+                        .with_bounds(bounds)
+                        .with_level(list.depth + 1)
+                        .with_position(position)
+                        .with_actions([Action::Click, Action::Focus, Action::ScrollIntoView]);
                     position += 1;
                     // `Some(true)` on the open page's row and nothing on the
                     // rest: a node carrying `selected` loses Invoke.
@@ -301,12 +300,9 @@ impl TasksRail {
                     .find(|bucket| token(*bucket) == target.part.name())?,
             ),
             ObjectKey::Surface(LISTS) if target.part == NEW_LIST => RailFocus::NewList,
-            ObjectKey::Model(uuid) => RailFocus::List(
-                self.lists
-                    .iter()
-                    .find(|list| list.id.as_uuid() == uuid)?
-                    .id,
-            ),
+            ObjectKey::Model(uuid) => {
+                RailFocus::List(self.lists.iter().find(|list| list.id.as_uuid() == uuid)?.id)
+            }
             _ => return None,
         };
         match (action, focus) {

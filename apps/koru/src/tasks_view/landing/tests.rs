@@ -66,7 +66,10 @@ fn a_task_lands_where_it_is_now() {
         Some((queue(Bucket::Today), Rule::Today))
     );
     assert_eq!(
-        placed(&row("open", Some("upcoming"), vec![pinned(), in_list()]), &[list]),
+        placed(
+            &row("open", Some("upcoming"), vec![pinned(), in_list()]),
+            &[list]
+        ),
         Some((queue(Bucket::Today), Rule::Today)),
         "pinned with a later due: its natural bucket is not Today, and it is"
     );
@@ -166,7 +169,11 @@ fn an_answer_after_the_ceiling_changes_nothing() {
     let (document, node) = ids();
     let now = Instant::now();
     let (generation, send) = landing.begin_with_for_test(document, node, now);
-    assert!(landing.poll(now + wait_ceiling() - Duration::from_millis(1)).is_none());
+    assert!(
+        landing
+            .poll(now + wait_ceiling() - Duration::from_millis(1))
+            .is_none()
+    );
     assert!(matches!(
         landing.poll(now + wait_ceiling()),
         Some(Landed::Document { .. })

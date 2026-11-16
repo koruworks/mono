@@ -5306,13 +5306,13 @@ impl MainView {
                 ),
                 // Out to the top level, last: the menu's reading of dragging
                 // the row between the top-level rows.
-                MenuAction::ListMoveToTop => self.apply_tasks_rail(
-                    crate::panes::explore::rail::TasksRailRequest::MoveList {
+                MenuAction::ListMoveToTop => {
+                    self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::MoveList {
                         id,
                         parent: None,
                         before: None,
-                    },
-                ),
+                    })
+                }
                 MenuAction::ListSwatch(token) => self.apply_tasks_rail(
                     crate::panes::explore::rail::TasksRailRequest::RecolorList {
                         id,

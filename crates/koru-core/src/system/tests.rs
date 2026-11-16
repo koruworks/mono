@@ -389,7 +389,10 @@ fn an_alias_tombstone_does_not_claim_its_old_name() {
 #[test]
 fn a_list_is_created_renamed_recolored_and_reordered_by_id() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list_under(None, "Wedding", Some("pink"), 1234).unwrap().id();
+    let list = sys
+        .create_list_under(None, "Wedding", Some("pink"), 1234)
+        .unwrap()
+        .id();
 
     let entry = sys.list_entry(list).unwrap();
     assert_eq!(entry.name, "Wedding");
@@ -431,8 +434,14 @@ fn an_unknown_list_answers_false_rather_than_erroring() {
 #[test]
 fn a_deleted_list_leaves_the_rail_and_cannot_be_written_again() {
     let mut sys = SystemDoc::create().unwrap();
-    let wedding = sys.create_list_under(None, "Wedding", None, 1).unwrap().id();
-    let bike = sys.create_list_under(None, "Bike Project", None, 2).unwrap().id();
+    let wedding = sys
+        .create_list_under(None, "Wedding", None, 1)
+        .unwrap()
+        .id();
+    let bike = sys
+        .create_list_under(None, "Bike Project", None, 2)
+        .unwrap()
+        .id();
 
     assert!(sys.delete_list(wedding, 3).unwrap());
     let listed: Vec<ListId> = sys.lists().into_iter().map(|l| l.id).collect();
@@ -454,9 +463,15 @@ fn a_deleted_list_leaves_the_rail_and_cannot_be_written_again() {
 #[test]
 fn a_deleted_lists_name_can_be_used_again_as_a_new_list() {
     let mut sys = SystemDoc::create().unwrap();
-    let first = sys.create_list_under(None, "Reading", None, 1).unwrap().id();
+    let first = sys
+        .create_list_under(None, "Reading", None, 1)
+        .unwrap()
+        .id();
     sys.delete_list(first, 2).unwrap();
-    let second = sys.create_list_under(None, "Reading", None, 3).unwrap().id();
+    let second = sys
+        .create_list_under(None, "Reading", None, 3)
+        .unwrap()
+        .id();
     assert_ne!(second, first, "a new list, not a resurrection");
     assert_eq!(sys.lists().len(), 1);
 }
@@ -466,9 +481,14 @@ fn a_deleted_lists_name_can_be_used_again_as_a_new_list() {
 #[test]
 fn a_recased_list_name_reuses_the_live_record() {
     let mut sys = SystemDoc::create().unwrap();
-    let wedding = sys.create_list_under(None, "Wedding", Some("pink"), 1).unwrap().id();
+    let wedding = sys
+        .create_list_under(None, "Wedding", Some("pink"), 1)
+        .unwrap()
+        .id();
     assert_eq!(
-        sys.create_list_under(None, "WEDDING", Some("blue"), 2).unwrap().id(),
+        sys.create_list_under(None, "WEDDING", Some("blue"), 2)
+            .unwrap()
+            .id(),
         wedding
     );
     assert_eq!(
@@ -483,9 +503,18 @@ fn a_recased_list_name_reuses_the_live_record() {
 #[test]
 fn lists_come_back_in_rail_order() {
     let mut sys = SystemDoc::create().unwrap();
-    let reading = sys.create_list_under(None, "Reading", None, 1).unwrap().id();
-    let wedding = sys.create_list_under(None, "Wedding", None, 2).unwrap().id();
-    let bike = sys.create_list_under(None, "Bike Project", None, 3).unwrap().id();
+    let reading = sys
+        .create_list_under(None, "Reading", None, 1)
+        .unwrap()
+        .id();
+    let wedding = sys
+        .create_list_under(None, "Wedding", None, 2)
+        .unwrap()
+        .id();
+    let bike = sys
+        .create_list_under(None, "Bike Project", None, 3)
+        .unwrap()
+        .id();
     sys.set_list_order(wedding, Some(0)).unwrap();
     sys.set_list_order(bike, Some(1)).unwrap();
     // A list a build before nested lists made carries no rank at all.
@@ -502,8 +531,14 @@ fn lists_come_back_in_rail_order() {
 fn two_peers_creating_lists_offline_converge_on_both() {
     let mut a = SystemDoc::create().unwrap();
     let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
-    let from_a = a.create_list_under(None, "Wedding", Some("pink"), 1).unwrap().id();
-    let from_b = b.create_list_under(None, "Bike Project", Some("blue"), 2).unwrap().id();
+    let from_a = a
+        .create_list_under(None, "Wedding", Some("pink"), 1)
+        .unwrap()
+        .id();
+    let from_b = b
+        .create_list_under(None, "Bike Project", Some("blue"), 2)
+        .unwrap()
+        .id();
     assert_ne!(from_a, from_b, "two v4 ids, minted with no coordination");
 
     let a_updates = a.export_all_updates().unwrap();

@@ -556,6 +556,10 @@ mod tests {
             "a top-level list already has the name"
         );
         assert_eq!(both[1].label(), "Backlog");
-        assert_eq!(filter_table(&both, "backlog").len(), 2, "both are selectable");
+        assert_eq!(
+            filter_table(&both, "backlog").len(),
+            2,
+            "both are selectable"
+        );
     }
 }

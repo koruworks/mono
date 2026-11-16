@@ -49,13 +49,13 @@ use koru_projection::model::ListedDocument;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 use sha2::{Digest, Sha256};
 
+use crate::fuzzy::Part;
 use crate::fuzzy::SharedVocabulary;
+use crate::lists::ListRow;
 use crate::model::{
     AttrRow, Fragment, FuzzyIndexStats, IndexStats, Lifecycle, PreviewBlock, RecentQuery,
     SearchFacet, SearchFacets, SearchPage, SearchPreview, SearchQuery, SearchResult, field,
 };
-use crate::fuzzy::Part;
-use crate::lists::ListRow;
 use crate::normalize::{normalize, term_counts};
 
 /// The shape of everything below, **and what the text in it means**. A change

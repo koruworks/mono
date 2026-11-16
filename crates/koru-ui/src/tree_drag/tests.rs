@@ -137,7 +137,11 @@ fn a_shut_row_opens_only_after_being_rested_on() {
     let mut spring = SpringOpen::default();
 
     spring.rest_on(Some(7), t0);
-    assert_eq!(spring.due(later(100), 0.3), None, "passing over opens nothing");
+    assert_eq!(
+        spring.due(later(100), 0.3),
+        None,
+        "passing over opens nothing"
+    );
     spring.rest_on(Some(7), later(200));
     assert_eq!(
         spring.due(later(300), 0.3),

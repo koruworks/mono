@@ -10832,11 +10832,7 @@ fn a_list_is_made_inline_and_handed_to_the_shell() {
     assert_eq!(create.name, "Wedding");
     assert_eq!(create.parent, None, "at the top level");
     assert!(create.color.is_some(), "with a swatch off the shared set");
-    assert_eq!(
-        v.explore.rail().composing(),
-        None,
-        "and the field is gone"
-    );
+    assert_eq!(v.explore.rail().composing(), None, "and the field is gone");
 }
 
 /// Escape takes the field away and makes nothing.

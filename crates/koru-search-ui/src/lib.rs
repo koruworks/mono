@@ -3165,10 +3165,12 @@ impl SearchSurface {
             // *Open in document* on a page that is itself a task lands on
             // that page's own line: the task's node, which a title hit does
             // not otherwise name.
-            node: hit
-                .node
-                .clone()
-                .or_else(|| hit.task.as_ref().filter(|_| in_document).map(|t| t.node.clone())),
+            node: hit.node.clone().or_else(|| {
+                hit.task
+                    .as_ref()
+                    .filter(|_| in_document)
+                    .map(|t| t.node.clone())
+            }),
             trashed,
             match_text,
             disposition,
@@ -4125,15 +4127,18 @@ impl SearchSurface {
                     .and_then(theme::accent_tone)
                     .map(|tone| tone.swatch)
                     .unwrap_or(p.text_dim);
-                let line = self
-                    .engine
-                    .simple_layout(" ", theme::role::row());
+                let line = self.engine.simple_layout(" ", theme::role::row());
                 let side = LIST_SWATCH;
                 let _mark = koru_draw::inspect::scope(
                     "SearchListSwatch",
                     "part",
                     root,
-                    scene::rect(PAD, y + content.title, 16.0, scene::first_line_height(&line)),
+                    scene::rect(
+                        PAD,
+                        y + content.title,
+                        16.0,
+                        scene::first_line_height(&line),
+                    ),
                     |record| {
                         record.property("side", "LIST_SWATCH", "koru-search-ui");
                         record.property(

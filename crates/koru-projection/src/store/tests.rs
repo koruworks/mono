@@ -5187,10 +5187,19 @@ fn the_selector_answers_exactly_the_tasks_it_names() {
                     an_attr("pinned-today", "koru.today", "boolean", "true"),
                 ],
             ),
-            marked("overdue", vec![an_attr("o-due", "koru.due", "date", "2026-09-01")]),
-            marked("high", vec![an_attr("h-pri", "koru.priority", "text", "high")]),
+            marked(
+                "overdue",
+                vec![an_attr("o-due", "koru.due", "date", "2026-09-01")],
+            ),
+            marked(
+                "high",
+                vec![an_attr("h-pri", "koru.priority", "text", "high")],
+            ),
             marked("plain", Vec::new()),
-            marked("far", vec![an_attr("f-due", "koru.due", "date", "2027-03-01")]),
+            marked(
+                "far",
+                vec![an_attr("f-due", "koru.due", "date", "2027-03-01")],
+            ),
             a_node("prose", "not a task at all"),
         ],
     );
@@ -5211,7 +5220,10 @@ fn the_selector_answers_exactly_the_tasks_it_names() {
     };
 
     let every = ["old", "pinned", "overdue", "high", "plain", "far", "prose"];
-    let rows = ask(every.iter().map(|n| name(n)).collect(), Some(windows.clone()));
+    let rows = ask(
+        every.iter().map(|n| name(n)).collect(),
+        Some(windows.clone()),
+    );
     let bucket_of = |node: &str| {
         rows.iter()
             .find(|row| row.node == node)

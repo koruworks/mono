@@ -62,7 +62,12 @@ fn drag_to(rail: &mut TasksRail, id: ListId, y: f32) -> Option<TasksRailRequest>
     let (_, cy) = r.centre();
     rail.mouse_down(area(), top(), x, cy, false);
     // Two moves: the first arms the drag, the second is the carry proper.
-    rail.mouse_move(area(), top(), x, cy + (y - cy).signum() * (DRAG_ARM_PX + 1.0));
+    rail.mouse_move(
+        area(),
+        top(),
+        x,
+        cy + (y - cy).signum() * (DRAG_ARM_PX + 1.0),
+    );
     rail.mouse_move(area(), top(), x, y);
     rail.mouse_up()
 }
@@ -116,7 +121,11 @@ fn indent_stops_growing_after_four_levels() {
         rail.row_parts(RailRow::List(i), r).icon.x
     };
     assert!(x(MAX_INDENT) > x(MAX_INDENT - 1));
-    assert_eq!(x(9), x(MAX_INDENT), "deeper rows keep the fourth level's indent");
+    assert_eq!(
+        x(9),
+        x(MAX_INDENT),
+        "deeper rows keep the fourth level's indent"
+    );
     let r = rect_of(&rail, ids[9]);
     assert!(
         rail.row_parts(RailRow::List(9), r).label.w > 40.0,
@@ -131,7 +140,11 @@ fn the_caret_shuts_and_opens_and_opens_no_page() {
     let (cx, cy) = rail.row_parts(RailRow::List(0), r).caret.centre();
 
     assert_eq!(rail.mouse_down(area(), top(), cx, cy, false), None);
-    assert_eq!(showing(&rail), vec![top3, other, solo], "shut hides what is inside");
+    assert_eq!(
+        showing(&rail),
+        vec![top3, other, solo],
+        "shut hides what is inside"
+    );
     assert_eq!(rail.selected(), None, "no page was opened");
     assert!(!rail.dragging(), "and no drag was armed");
     assert_eq!(rail.collapsed(), vec![top3]);
@@ -159,11 +172,19 @@ fn the_open_set_is_put_back_before_the_table_arrives() {
 fn a_shut_parent_shows_the_total_and_an_open_one_shows_no_number() {
     let (mut rail, [top3, ..]) = tree();
     assert_eq!(rail.shown_counts(0), None, "open: no number on the parent");
-    assert_eq!(rail.shown_counts(1), Some((2, 1)), "each child shows its own");
+    assert_eq!(
+        rail.shown_counts(1),
+        Some((2, 1)),
+        "each child shows its own"
+    );
     assert_eq!(rail.shown_counts(3), Some((4, 0)), "a leaf shows its own");
 
     rail.set_open(top3, false);
-    assert_eq!(rail.shown_counts(0), Some((6, 1)), "shut: 1 + 2 + 3, 1 overdue");
+    assert_eq!(
+        rail.shown_counts(0),
+        Some((6, 1)),
+        "shut: 1 + 2 + 3, 1 overdue"
+    );
 }
 
 // ------------------------------------------------------------ making a list
@@ -197,7 +218,11 @@ fn the_plus_shows_the_field_at_the_top_however_long_the_rail_is() {
         .iter()
         .position(|(row, _)| *row == RailRow::ListsHeading)
         .unwrap();
-    assert_eq!(rows[heading + 1].0, RailRow::Compose, "first under the heading");
+    assert_eq!(
+        rows[heading + 1].0,
+        RailRow::Compose,
+        "first under the heading"
+    );
     assert_eq!(rows[heading + 2].0, RailRow::List(0));
 }
 
@@ -294,7 +319,10 @@ fn dragging_onto_the_middle_of_a_row_nests() {
     );
     let moved = rail.lists().iter().find(|l| l.id == other).unwrap();
     assert_eq!((moved.parent, moved.depth), (Some(solo), 1));
-    assert!(showing(&rail).contains(&other), "and its new parent is open");
+    assert!(
+        showing(&rail).contains(&other),
+        "and its new parent is open"
+    );
 }
 
 #[test]
@@ -312,7 +340,11 @@ fn dragging_out_past_the_last_row_un_nests() {
     let moved = rail.lists().iter().find(|l| l.id == backlog).unwrap();
     assert_eq!((moved.parent, moved.depth), (None, 0));
     assert!(
-        rail.lists().iter().find(|l| l.id == top3).unwrap().has_children,
+        rail.lists()
+            .iter()
+            .find(|l| l.id == top3)
+            .unwrap()
+            .has_children,
         "Core Data is still inside Top 3"
     );
 }
@@ -413,7 +445,12 @@ fn a_carry_inside_one_landing_rebuilds_nothing() {
 
     let settled = rail.rebuilds();
     for wobble in 0..50 {
-        rail.mouse_move(area(), top(), x + wobble as f32, into + (wobble % 3) as f32 - 1.0);
+        rail.mouse_move(
+            area(),
+            top(),
+            x + wobble as f32,
+            into + (wobble % 3) as f32 - 1.0,
+        );
     }
     assert_eq!(rail.rebuilds(), settled);
     // Hit-testing and laying out read the cache too.
@@ -495,9 +532,17 @@ fn left_and_right_shut_open_and_step_through_the_tree() {
     key(&mut rail, NamedKey::ArrowRight);
     assert!(rail.is_open(top3), "Right opens it");
     key(&mut rail, NamedKey::ArrowRight);
-    assert_eq!(rail.focus(), Some(RailFocus::List(backlog)), "then steps in");
+    assert_eq!(
+        rail.focus(),
+        Some(RailFocus::List(backlog)),
+        "then steps in"
+    );
     key(&mut rail, NamedKey::ArrowLeft);
-    assert_eq!(rail.focus(), Some(RailFocus::List(top3)), "and Left steps out");
+    assert_eq!(
+        rail.focus(),
+        Some(RailFocus::List(top3)),
+        "and Left steps out"
+    );
 }
 
 /// The menu key opens the focused row's menu — which is where *New list

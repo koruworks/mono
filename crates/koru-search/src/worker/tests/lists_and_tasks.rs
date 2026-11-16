@@ -59,7 +59,12 @@ fn node(id: &str, kind: &str, text: &str, attrs: Vec<ProjectedAttr>) -> Projecte
 }
 
 fn task(id: &str, text: &str) -> ProjectedNode {
-    node(id, "paragraph", text, vec![attr("koru.task", "bool", "true")])
+    node(
+        id,
+        "paragraph",
+        text,
+        vec![attr("koru.task", "bool", "true")],
+    )
 }
 
 /// One workspace named *Acme* with a system document, and whatever documents
@@ -201,7 +206,10 @@ fn shape(hits: &[SearchHit]) -> Vec<(Option<String>, Option<String>, String, Str
 #[test]
 fn a_list_is_a_result_of_its_own_and_leads_every_sort() {
     let mut world = World::new();
-    world.page("Backlog grooming notes", vec![a_node("the backlog is long")]);
+    world.page(
+        "Backlog grooming notes",
+        vec![a_node("the backlog is long")],
+    );
     world.settle();
     world.lists_changed(vec![
         a_list("l-top", None, "Top 3"),
@@ -226,7 +234,11 @@ fn a_list_is_a_result_of_its_own_and_leads_every_sort() {
         let list = first.list.as_ref().expect("a list hit says which list");
         assert_eq!(list.id, "l-back");
         assert_eq!(list.color.as_deref(), Some("teal"));
-        assert_eq!(list.path, vec!["Top 3".to_owned()], "its path, from the mirror");
+        assert_eq!(
+            list.path,
+            vec!["Top 3".to_owned()],
+            "its path, from the mirror"
+        );
         assert_eq!(first.breadcrumb, "Acme / Top 3 / Backlog");
         assert!(
             hits[1..].iter().all(|hit| hit.list.is_none()),
@@ -258,10 +270,16 @@ fn an_index_already_caught_up_gains_its_lists_with_no_edit() {
     let before = world.indexed();
 
     // Nothing is edited. The source can answer now, and a reconcile comes.
-    world.lists.set(Some(vec![a_list("l-back", None, "Backlog")]));
+    world
+        .lists
+        .set(Some(vec![a_list("l-back", None, "Backlog")]));
     world.settle();
     assert_eq!(world.find("backlog", true, false).len(), 1);
-    assert_eq!(world.indexed(), before, "and no document was re-read for it");
+    assert_eq!(
+        world.indexed(),
+        before,
+        "and no document was re-read for it"
+    );
 }
 
 /// **A read that fails is not an empty table.**
@@ -283,7 +301,11 @@ fn a_failed_read_keeps_the_lists_already_indexed() {
 
     world.lists_changed(vec![a_list("l-back", None, "Sprint")]);
     assert!(world.find("backlog", true, false).is_empty());
-    assert_eq!(world.find("sprint", true, false).len(), 1, "and it recovers");
+    assert_eq!(
+        world.find("sprint", true, false).len(),
+        1,
+        "and it recovers"
+    );
 }
 
 /// Renaming, nesting or deleting a list re-indexes no other document: only
@@ -331,9 +353,21 @@ fn list_hits_survive_a_listing_refresh() {
     }
     world.relist();
     world.settle();
-    assert_eq!(world.find("2027", false, false).len(), 1, "the rename landed");
-    assert_eq!(world.find("backlog", true, false).len(), 1, "the list is still there");
-    assert_eq!(world.find("acme", false, false).len(), 1, "and so is the workspace");
+    assert_eq!(
+        world.find("2027", false, false).len(),
+        1,
+        "the rename landed"
+    );
+    assert_eq!(
+        world.find("backlog", true, false).len(),
+        1,
+        "the list is still there"
+    );
+    assert_eq!(
+        world.find("acme", false, false).len(),
+        1,
+        "and so is the workspace"
+    );
 }
 
 /// **A list's name is never anybody else's evidence.** *Backlog budget* must
@@ -389,7 +423,11 @@ fn removing_a_workspace_removes_its_lists_and_their_words() {
     world.settle();
     world.lists_changed(vec![a_list("l-back", None, "Backlog")]);
     world.indexer.index().warm_fuzzy_vocabulary().unwrap();
-    assert_eq!(world.find("backlgo", true, false).len(), 1, "a typo finds it");
+    assert_eq!(
+        world.find("backlgo", true, false).len(),
+        1,
+        "a typo finds it"
+    );
 
     let workspace = world.workspace.to_storage();
     world.indexer.index.remove_workspace(&workspace).unwrap();
@@ -481,7 +519,10 @@ fn two_tasks_in_one_document_are_two_task_hits() {
     assert_eq!(unasked.len(), 3);
     assert!(unasked.iter().all(|hit| hit.task.is_none()));
     let scores: Vec<i64> = unasked.iter().map(|hit| hit.score as i64).collect();
-    assert!(scores.windows(2).all(|pair| pair[0] == pair[1]), "{scores:?}");
+    assert!(
+        scores.windows(2).all(|pair| pair[0] == pair[1]),
+        "{scores:?}"
+    );
 }
 
 /// A completed task stays searchable and says it is completed.
@@ -562,20 +603,26 @@ fn a_page_that_is_a_task_is_a_task_hit_through_its_title() {
     });
     assert_eq!(hits.len(), 1);
     assert_eq!(hits[0].field, field::TITLE);
-    assert_eq!(hits[0].node, None, "the hit's own node is what it always was");
+    assert_eq!(
+        hits[0].node, None,
+        "the hit's own node is what it always was"
+    );
     assert_eq!(hits[0].task.as_ref().unwrap().node, "root");
     assert_eq!(hits[0].title, "Plan the offsite");
 
     // Exactly one generated row, however often the page is walked.
-    world.project(page, vec![
-        node(
-            "root",
-            "document",
-            "Plan the offsite",
-            vec![attr("koru.due", "date", "2026-12-02")],
-        ),
-        a_node("book a venue"),
-    ]);
+    world.project(
+        page,
+        vec![
+            node(
+                "root",
+                "document",
+                "Plan the offsite",
+                vec![attr("koru.due", "date", "2026-12-02")],
+            ),
+            a_node("book a venue"),
+        ],
+    );
     world.settle();
     assert_eq!(
         world.count("SELECT COUNT(*) FROM attr_values WHERE kind = '@root-task'"),
@@ -583,10 +630,13 @@ fn a_page_that_is_a_task_is_a_task_hit_through_its_title() {
     );
 
     // Unmarking the root takes the row away with everything else.
-    world.project(page, vec![
-        node("root", "document", "Plan the offsite", Vec::new()),
-        a_node("book a venue"),
-    ]);
+    world.project(
+        page,
+        vec![
+            node("root", "document", "Plan the offsite", Vec::new()),
+            a_node("book a venue"),
+        ],
+    );
     world.settle();
     assert_eq!(
         world.count("SELECT COUNT(*) FROM attr_values WHERE kind = '@root-task'"),
@@ -659,9 +709,7 @@ fn an_authored_attribute_spelled_like_the_marker_is_neither_read_nor_removed() {
     let hits = world.find("glossary", false, true);
     let title = |document: DocumentId| {
         hits.iter()
-            .find(|hit| {
-                hit.field == field::TITLE && hit.document == Some(document.to_storage())
-            })
+            .find(|hit| hit.field == field::TITLE && hit.document == Some(document.to_storage()))
             .unwrap()
     };
     assert!(title(page).task.is_none(), "the role alone marks nothing");
@@ -807,7 +855,13 @@ fn with_neither_flag_the_answer_is_what_it_was() {
             .map(|hit| (hit.field.clone(), hit.snippet.clone(), hit.score as i64))
             .collect()
     };
-    for text in ["offsite", "ofsite", "offsite budget", "quarterly", "quarterlly"] {
+    for text in [
+        "offsite",
+        "ofsite",
+        "offsite budget",
+        "quarterly",
+        "quarterlly",
+    ] {
         assert_eq!(seen(&listed, text), seen(&plain, text), "{text}");
     }
     assert!(

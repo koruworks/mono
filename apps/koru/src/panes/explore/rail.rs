@@ -509,7 +509,9 @@ fn apply_move(
         }),
     );
     for i in 0..lists.len() {
-        lists[i].has_children = lists.get(i + 1).is_some_and(|next| next.depth > lists[i].depth);
+        lists[i].has_children = lists
+            .get(i + 1)
+            .is_some_and(|next| next.depth > lists[i].depth);
     }
     true
 }
@@ -856,7 +858,11 @@ impl TasksRail {
             }
         }
         let before = self.drawn_tops(area, top);
-        let mut next = self.drag.as_ref().map(|d| d.base.clone()).unwrap_or_default();
+        let mut next = self
+            .drag
+            .as_ref()
+            .map(|d| d.base.clone())
+            .unwrap_or_default();
         if !apply_move(&mut next, id, landing.0, landing.1) {
             return false;
         }
@@ -888,7 +894,9 @@ impl TasksRail {
         // Into, rather than beside: the landing names a parent the row did
         // not have, and no sibling to sit before.
         let was = landing_of(&drag.base, drag.id)?.0;
-        (before.is_none() && parent != was).then_some(parent).flatten()
+        (before.is_none() && parent != was)
+            .then_some(parent)
+            .flatten()
     }
 
     /// A release. `Some` when the row ended somewhere else and the table owes

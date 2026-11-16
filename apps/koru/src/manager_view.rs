@@ -1058,6 +1058,18 @@ impl View for ManagerView {
         }
     }
 
+    fn open_tasks_target(
+        &mut self,
+        target: koru_workspace_host::TasksTarget,
+        match_text: Option<&str>,
+    ) -> bool {
+        match self {
+            Self::Container(view) => view.open_tasks_target(target, match_text),
+            // A document popped into its own window hosts no Tasks tab.
+            Self::Document(_) => false,
+        }
+    }
+
     fn open_file_search_target(&mut self, file: NodeId) -> bool {
         match self {
             Self::Container(view) => view.open_file_search_target(file),
