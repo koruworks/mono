@@ -636,6 +636,23 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "crates/koru-workspaces-ui/src/state.rs",
         include_str!("../../../../../../../crates/koru-workspaces-ui/src/state.rs"),
     ),
+    // Batch 2b: the editor, document and host crates.
+    (
+        "crates/koru-markdown-view/src/document.rs",
+        include_str!("../../../../../../../crates/koru-markdown-view/src/document.rs"),
+    ),
+    (
+        "crates/koru-markdown-view/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-markdown-view/src/lib.rs"),
+    ),
+    (
+        "crates/koru-markdown-view/src/text.rs",
+        include_str!("../../../../../../../crates/koru-markdown-view/src/text.rs"),
+    ),
+    (
+        "crates/koru-markdown-view/src/view.rs",
+        include_str!("../../../../../../../crates/koru-markdown-view/src/view.rs"),
+    ),
 ];
 
 /// One domain crate's root: its records declared in `lib.rs` itself, and
@@ -1015,6 +1032,16 @@ pub(super) const CRATES: &[Crate] = &[
                 "dependency",
                 Module::Excluded("test-only: the dependency fence, compiled only under cfg(test)"),
             ),
+        ],
+    },
+    Crate {
+        owner: "koru-markdown-view",
+        lib: "crates/koru-markdown-view/src/lib.rs",
+        root: &["C-MARKDOWN-VIEW", "C-MARKDOWN-DOCUMENT"],
+        modules: &[
+            ("document", Module::Records(&["C-MARKDOWN-DOCUMENT"])),
+            ("text", Module::Records(&["C-MARKDOWN-VIEW"])),
+            ("view", Module::Records(&["C-MARKDOWN-VIEW"])),
         ],
     },
 ];

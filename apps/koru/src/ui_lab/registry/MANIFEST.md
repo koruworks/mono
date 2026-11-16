@@ -103,40 +103,40 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 13 |
-| domain crate source files | 156 |
-| domain crate lib.rs modules | 115 |
-| domain crate lib.rs public modules | 25 |
+| domain crates | 14 |
+| domain crate source files | 160 |
+| domain crate lib.rs modules | 118 |
+| domain crate lib.rs public modules | 26 |
 | domain crate modules excluded | 29 |
-| records | 166 |
+| records | 168 |
 | records: foundations | 59 |
 | records: controls | 62 |
-| records: application compositions | 45 |
-| records: domain crates | 46 |
+| records: application compositions | 47 |
+| records: domain crates | 48 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 57 |
 | kind: support | 32 |
-| kind: domain composition | 28 |
+| kind: domain composition | 30 |
 | token values listed | 174 |
-| symbols | 812 |
+| symbols | 861 |
 | symbols with typed recipes | 2 |
 | inspector identities | 41 |
 | inspector identity registration sites | 43 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 128 |
+| disposition: no story yet | 129 |
 | disposition: nonvisual | 32 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 5 |
+| disposition: boundary | 6 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 257 |
-| symbol story: nonvisual | 526 |
-| symbol story: boundary | 28 |
+| symbol story: no story yet | 260 |
+| symbol story: nonvisual | 562 |
+| symbol story: boundary | 38 |
 | A2UI: component | 6 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 9 |
-| A2UI: not supported | 787 |
+| A2UI: not supported | 836 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -522,7 +522,53 @@ drafts had left out only because of the old scan
 (`maintenance_deadline` on four surfaces, `SettingsSurface::set_spelling`)
 are recorded.
 
-## Batch 2b — editor, document and host crates (not started)
+## Batch 2b — editor, document and host crates
+
+Reviewed at `d4ad8af0` (branch `ui-lab/l1b`), 16 November 2026. The records
+are in `domain/`, a file per crate, beside batch 2a's; each crate's files
+are in `tests/drift/domain.rs`'s `SOURCES` and its `lib.rs` baseline in
+`CRATES`, so every check batch 2a describes now covers these crates too.
+
+### Sources reviewed
+
+"Read in full" is every line of a file's non-test code. "Declarations"
+is its module documentation, every public type, function, constant and
+enum member, its constructors and every inspector scope it opens, with
+the bodies between them searched rather than read. "Searched" is a file
+reached only through the bounded searches below.
+
+| Crate | Non-test files | Read in full | Declarations | Searched | `lib.rs` modules | Excluded | Records | Symbols | Component identities |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `koru-markdown-view` | 4 | 4 | 0 | 0 | 3 | 0 | 2 | 49 | — |
+
+### Records
+
+IDs marked * are minted here in batch 1's style.
+
+- `koru-markdown-view`: `C-MARKDOWN-VIEW`* (the reader a run's result,
+  the Artifacts column's result tab and the instructions view draw with)
+  and `C-MARKDOWN-DOCUMENT`* (a boundary: the file read as a Koru document
+  and written back as the Markdown a save stores — rich-text content, not
+  a control). The AI chat's reply bodies are not this crate's: they are
+  `koru-ai-ui`'s own `live_markdown` over `koru-markdown`, recorded on
+  `C-AI-CONVERSATION`; batch 2a's note pointing them here was wrong.
+
+### What building each surface needs
+
+- **Pure** — `MarkdownView::new` (no engine, worker or file of its own;
+  the host lends its `TextEngine` to lay out and draw);
+  `MarkdownDocument::of`/`of_document` (import and export in memory, in a
+  workspace nobody owns, with a blob source that holds nothing; the cost is
+  the file's, so a host calls it on its own worker).
+
+### Defects found (not fixed)
+
+- `koru-markdown-view`: the not-Markdown state joins its translated labels
+  to their values with a fixed `": "` (`view.rs` 364, 367, 373);
+  `MarkdownView::lines` is public and its own doc calls it "what a test
+  reads a document out of"; the surface opens no inspector scope.
+
+### Reconnaissance
 
 Candidate owners from the reconnaissance, counts at `3bd19e56`:
 

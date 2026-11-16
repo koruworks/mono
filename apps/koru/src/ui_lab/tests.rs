@@ -53,6 +53,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/domain/chats.rs"),
     ),
     (
+        "ui_lab/registry/domain/markdown_view.rs",
+        include_str!("registry/domain/markdown_view.rs"),
+    ),
+    (
         "ui_lab/registry/domain/runs.rs",
         include_str!("registry/domain/runs.rs"),
     ),
@@ -255,6 +259,7 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/domain/artifacts.rs",
     "ui_lab/registry/domain/canvas.rs",
     "ui_lab/registry/domain/chats.rs",
+    "ui_lab/registry/domain/markdown_view.rs",
     "ui_lab/registry/domain/runs.rs",
     "ui_lab/registry/domain/search.rs",
     "ui_lab/registry/domain/settings.rs",

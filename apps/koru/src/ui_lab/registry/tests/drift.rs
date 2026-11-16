@@ -1457,7 +1457,11 @@ fn every_domain_module_is_classified() {
     }
     owners.sort_unstable();
     owners.dedup();
-    assert_eq!(owners.len(), 13, "the thirteen domain UI crates");
+    assert_eq!(
+        owners.len(),
+        14,
+        "the thirteen domain UI crates and batch 2b's editor, document and host crates"
+    );
 }
 
 /// What one record's symbols add up to.

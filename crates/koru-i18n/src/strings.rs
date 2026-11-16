@@ -3744,13 +3744,22 @@ pub enum Key {
     UiLabAiDiagramsPurpose,
     UiLabAiAgentDefaultsName,
     UiLabAiAgentDefaultsPurpose,
+    UiLabMarkdownViewName,
+    UiLabMarkdownViewPurpose,
+    UiLabMarkdownDocumentName,
+    UiLabMarkdownDocumentPurpose,
+    UiLabOptionReading,
+    UiLabOptionMarkdownDocument,
+    UiLabOptionNotMarkdown,
+    UiLabOptionElsewhere,
+    UiLabOptionUnreadable,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2771] = [
+    pub const ALL: [Key; 2780] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6522,6 +6531,15 @@ impl Key {
         Key::UiLabAiDiagramsPurpose,
         Key::UiLabAiAgentDefaultsName,
         Key::UiLabAiAgentDefaultsPurpose,
+        Key::UiLabMarkdownViewName,
+        Key::UiLabMarkdownViewPurpose,
+        Key::UiLabMarkdownDocumentName,
+        Key::UiLabMarkdownDocumentPurpose,
+        Key::UiLabOptionReading,
+        Key::UiLabOptionMarkdownDocument,
+        Key::UiLabOptionNotMarkdown,
+        Key::UiLabOptionElsewhere,
+        Key::UiLabOptionUnreadable,
     ];
 }
 
@@ -18462,4 +18480,13 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabAiDiagramsPurpose, en: "Hands a reply’s diagram sources to the host’s layout worker and takes back the drawings to show, copy or save.", es: "Entrega las fuentes de diagramas de una respuesta al proceso de maquetación del anfitrión y recibe los dibujos para mostrarlos, copiarlos o guardarlos.", pt_br: "Entrega as fontes de diagramas de uma resposta ao processo de layout do host e recebe os desenhos para mostrar, copiar ou salvar.", de: "Übergibt die Diagrammquellen einer Antwort an den Layout-Worker des Hosts und nimmt die Zeichnungen zum Anzeigen, Kopieren oder Speichern zurück.", fr: "Transmet les sources de diagrammes d’une réponse au processus de mise en page de l’hôte et récupère les dessins à afficher, copier ou enregistrer.", ar: "يسلّم مصادر المخططات في الرد إلى عامل التخطيط لدى المضيف ويستعيد الرسوم لعرضها أو نسخها أو حفظها.", zh_hans: "把回复中的图表源交给宿主的排版进程，再取回绘制结果用于显示、复制或保存。", ja: "返信内の図のソースをホストのレイアウト処理に渡し、表示、コピー、保存のために描画結果を受け取ります。" },
     Row { key: Key::UiLabAiAgentDefaultsName, en: "Agent provider defaults", es: "Valores predeterminados de agentes", pt_br: "Padrões de provedores de agentes", de: "Standards für Agentenanbieter", fr: "Valeurs par défaut des agents", ar: "الإعدادات الافتراضية لمزودي الوكلاء", zh_hans: "智能体提供方默认设置", ja: "エージェントプロバイダーの既定値" },
     Row { key: Key::UiLabAiAgentDefaultsPurpose, en: "Takes the host’s agent settings — which agents show, their order and how a new chat starts — and the mark each provider wears.", es: "Recibe los ajustes de agentes del anfitrión (qué agentes se muestran, su orden y cómo empieza un chat nuevo) y la marca que lleva cada proveedor.", pt_br: "Recebe as configurações de agentes do host (quais agentes aparecem, sua ordem e como um novo chat começa) e a marca que cada provedor usa.", de: "Übernimmt die Agenteneinstellungen des Hosts – welche Agenten erscheinen, ihre Reihenfolge und wie ein neuer Chat beginnt – und das Zeichen jedes Anbieters.", fr: "Reçoit les réglages d’agents de l’hôte (agents affichés, leur ordre et le démarrage d’une nouvelle discussion) et la marque de chaque fournisseur.", ar: "يتلقى إعدادات الوكلاء من المضيف، أي الوكلاء الظاهرين وترتيبهم وكيف تبدأ المحادثة الجديدة، والعلامة التي يحملها كل مزود.", zh_hans: "接收宿主的智能体设置（显示哪些智能体、顺序以及新聊天如何开始），并给出每个提供方的标志。", ja: "表示するエージェント、その順序、新しいチャットの始まり方といったホストのエージェント設定と、各プロバイダーのマークを扱います。" },
+    Row { key: Key::UiLabMarkdownViewName, en: "Markdown reader", es: "Lector de Markdown", pt_br: "Leitor de Markdown", de: "Markdown-Leser", fr: "Lecteur Markdown", ar: "قارئ Markdown", zh_hans: "Markdown 阅读器", ja: "Markdown リーダー" },
+    Row { key: Key::UiLabMarkdownViewPurpose, en: "Shows a Markdown file the way Koru draws a document, a page at a time, and opens its text in a box to edit and save.", es: "Muestra un archivo Markdown como Koru dibuja un documento, una página cada vez, y abre su texto en un cuadro para editarlo y guardarlo.", pt_br: "Mostra um arquivo Markdown como o Koru desenha um documento, uma página por vez, e abre o texto numa caixa para editar e salvar.", de: "Zeigt eine Markdown-Datei so, wie Koru ein Dokument zeichnet, Seite für Seite, und öffnet ihren Text zum Bearbeiten und Speichern in einem Feld.", fr: "Affiche un fichier Markdown comme Koru dessine un document, une page à la fois, et ouvre son texte dans une zone pour le modifier et l’enregistrer.", ar: "يعرض ملف Markdown كما يرسم Koru المستند، صفحة تلو الأخرى، ويفتح نصه في مربع لتحريره وحفظه.", zh_hans: "像 Koru 绘制文档那样逐页显示 Markdown 文件，并在文本框中打开其文本以编辑和保存。", ja: "Markdown ファイルを Koru が文書を描くように1ページずつ表示し、テキストを編集・保存するための欄で開きます。" },
+    Row { key: Key::UiLabMarkdownDocumentName, en: "Markdown document content", es: "Contenido del documento Markdown", pt_br: "Conteúdo do documento Markdown", de: "Inhalt des Markdown-Dokuments", fr: "Contenu du document Markdown", ar: "محتوى مستند Markdown", zh_hans: "Markdown 文档内容", ja: "Markdown 文書の内容" },
+    Row { key: Key::UiLabMarkdownDocumentPurpose, en: "The file read as a Koru document and written back as the Markdown a save would store, drawn as content rather than as a control.", es: "El archivo leído como documento de Koru y reescrito como el Markdown que guardaría un guardado, dibujado como contenido y no como control.", pt_br: "O arquivo lido como documento do Koru e reescrito como o Markdown que um salvamento gravaria, desenhado como conteúdo e não como controle.", de: "Die Datei, als Koru-Dokument gelesen und als das Markdown zurückgeschrieben, das ein Speichern ablegen würde; als Inhalt gezeichnet, nicht als Steuerelement.", fr: "Le fichier lu comme document Koru et réécrit dans le Markdown qu’un enregistrement stockerait, dessiné comme contenu et non comme contrôle.", ar: "الملف مقروءًا كمستند Koru ومعادًا كتابته بصيغة Markdown التي سيخزنها الحفظ، ويُرسم كمحتوى لا كعنصر تحكم.", zh_hans: "读作 Koru 文档、再写回保存时会存储的 Markdown 的文件，作为内容而非控件绘制。", ja: "Koru の文書として読み込み、保存時に書き込まれる Markdown として書き戻したファイル。操作部品ではなく内容として描かれます。" },
+    Row { key: Key::UiLabOptionReading, en: "Still reading", es: "Leyendo", pt_br: "Lendo", de: "Wird gelesen", fr: "Lecture en cours", ar: "جارٍ القراءة", zh_hans: "正在读取", ja: "読み込み中" },
+    Row { key: Key::UiLabOptionMarkdownDocument, en: "Markdown document", es: "Documento Markdown", pt_br: "Documento Markdown", de: "Markdown-Dokument", fr: "Document Markdown", ar: "مستند Markdown", zh_hans: "Markdown 文档", ja: "Markdown 文書" },
+    Row { key: Key::UiLabOptionNotMarkdown, en: "Not Markdown", es: "No es Markdown", pt_br: "Não é Markdown", de: "Kein Markdown", fr: "Pas du Markdown", ar: "ليس Markdown", zh_hans: "不是 Markdown", ja: "Markdown ではない" },
+    Row { key: Key::UiLabOptionElsewhere, en: "On another device", es: "En otro dispositivo", pt_br: "Em outro dispositivo", de: "Auf einem anderen Gerät", fr: "Sur un autre appareil", ar: "على جهاز آخر", zh_hans: "在另一台设备上", ja: "別のデバイスにある" },
+    Row { key: Key::UiLabOptionUnreadable, en: "Unreadable", es: "Ilegible", pt_br: "Ilegível", de: "Nicht lesbar", fr: "Illisible", ar: "غير قابل للقراءة", zh_hans: "无法读取", ja: "読み取れない" },
 ];
