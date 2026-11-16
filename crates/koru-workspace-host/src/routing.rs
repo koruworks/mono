@@ -119,6 +119,12 @@ pub enum ModalKind {
     /// is swallowed, and a dictation is declined rather than landed in the
     /// document beneath it.
     Recording,
+    /// The *New bot* dialog (Bots, QUESTIONS O155): a name, a face and where
+    /// the Bot runs, over the Bots view. A small form with a focus ring of
+    /// its own, the recording modal's shape: every key is the dialog's while
+    /// it stands, a press outside it dismisses nothing, and a dictation is
+    /// declined rather than landed in what is beneath it.
+    NewBot,
 }
 
 /// A blocking surface that is also somewhere to type.

@@ -696,6 +696,12 @@ impl MainView {
     /// tab with nothing sent yet that is already open for it, brought
     /// forward rather than a second one beside it. `false` with no
     /// workspace to create in.
+    ///
+    /// The heading's `+` and the roster's *Create a bot* now open the *New
+    /// bot* dialog (QUESTIONS O155, `mainview/new_bot.rs`), whose *Open the
+    /// full form* puts this same form in the strip on the dialog's draft.
+    /// This door is kept for a caller that wants the form with no dialog.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(super) fn open_bot_create_tab(&mut self) -> bool {
         if !crate::bots::shown() {
             return false;

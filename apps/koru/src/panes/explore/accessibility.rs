@@ -546,7 +546,7 @@ impl ExploreView {
             _ if self.current.is_none() => {
                 (t(lang, Key::A11yEmptyWorkspace), Some(Key::CreateWorkspace))
             }
-            NavigatorMode::Bots => (t(lang, Key::BotsEmpty), None),
+            NavigatorMode::Bots => (t(lang, Key::BotsNoneYet), None),
             NavigatorMode::Files => (t(lang, Key::A11yEmptyFiles), Some(Key::A11yAddFiles)),
             NavigatorMode::Canvases => (t(lang, Key::CanvasesEmpty), Some(Key::CanvasNew)),
             NavigatorMode::Documents => (

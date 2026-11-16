@@ -97,6 +97,7 @@ pub(crate) mod linked_devices;
 mod move_to;
 mod nav;
 mod nav_debug;
+mod new_bot;
 mod new_document;
 mod new_list;
 mod open;
@@ -713,6 +714,10 @@ pub struct MainView {
     /// S8), by the BotId its draft reserves: it has no conversation to be
     /// found by. Never set beside [`Self::ai_chat_folder_ask`].
     bot_create_folder_ask: Option<koru_ai_core::bots::BotId>,
+    /// **The first-bot surfaces** (QUESTIONS O155, `mainview/new_bot.rs`):
+    /// the *New bot* dialog while it stands, the empty Bots view's state,
+    /// and the window's one clock for Bot faces.
+    first_bot: new_bot::FirstBot,
     /// **Whose each conversation is, as far as the window knows** (Bots
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
@@ -1874,6 +1879,7 @@ impl MainView {
             ai_panel: Panel::new(480.0, false),
             ai_chat_folder_ask: None,
             bot_create_folder_ask: None,
+            first_bot: Default::default(),
             bot_labels: crate::bots::labels::ChatLabels::default(),
             bot_trash: crate::bots::trash::BotTrash::default(),
             held_chat_opens: Vec::new(),
@@ -5559,6 +5565,7 @@ impl MainView {
             && !self.update_newer_modal_open()
             && !self.updates_modal
             && self.recording_modal.is_none()
+            && !self.new_bot_open()
     }
 
     /// Open on hover, close when the pointer leaves both the button and the
@@ -6130,7 +6137,8 @@ impl MainView {
         // **Creating one** (S8): the empty state's *Create a bot*; an
         // Unfinished row's Abandon, asked first; a page an abandoned
         // creation left, opened as an ordinary page.
-        let created = self.explore.bots_mut().take_wants_create() && self.open_bot_create_tab();
+        let created = self.explore.bots_mut().take_wants_create()
+            && self.open_new_bot_dialog(new_bot::Opener::Elsewhere);
         let asked = match self.explore.bots_mut().take_abandon_ask() {
             Some((request, name)) => {
                 self.ask_abandon_creation(name, trash::AbandonFrom::Roster(request))
@@ -8134,7 +8142,9 @@ impl MainView {
                 self.show_navigator(crate::panes::explore::NavigatorMode::Socials)
             }
             Outcome::NewAiChat => self.open_ai_chat_tab(),
-            Outcome::CreateBot => self.open_bot_create_tab(),
+            // The Bots heading's `+`: the New bot dialog (O155). The full
+            // create form is its *Open the full form*.
+            Outcome::CreateBot => self.open_new_bot_dialog(new_bot::Opener::Elsewhere),
             Outcome::DeleteAiChats(chats) => self.ask_delete_chats(chats),
             Outcome::AiChatMenu { chats, at } => self.open_chat_menu(chats, at),
             Outcome::PinAiChat(chat, pinned) => self.pin_ai_chat(chat, pinned),
@@ -10244,6 +10254,11 @@ impl MainView {
         if self.recording_modal.is_some() {
             return self.recording_mouse_down(x, y);
         }
+        // The New bot dialog, on the same terms: every press is its, and
+        // one outside its panel dismisses nothing (a name somebody typed).
+        if self.new_bot_open() {
+            return self.new_bot_mouse_down(x, y);
+        }
         if let Some(dialog) = self.import_dialog.as_mut() {
             let outcome = dialog.mouse_down(&mut self.engine, self.viewport, x, y);
             return self.settle_import(outcome);
@@ -10632,6 +10647,9 @@ impl MainView {
         if self.profile_wait_mouse_down(x, y) {
             return true;
         }
+        if self.bots_empty_mouse_down(x, y) {
+            return true;
+        }
         // A press in the document area focuses the pane it landed in before the
         // active view sees it. Single-group builds are unaffected; this is the
         // hook multi-pane input will need.
@@ -10765,6 +10783,9 @@ impl MainView {
         }
         if self.recording_modal.is_some() {
             return self.recording_mouse_up();
+        }
+        if self.new_bot_open() {
+            return self.new_bot_mouse_up();
         }
         let reminder_blocked = self.reminder_shell.overlay_live();
         if self.reminder_shell.mouse_up() || reminder_blocked {
@@ -11293,7 +11314,13 @@ impl View for MainView {
             || self.workspace_icon.is_some()
             || self.updates_modal
             || self.recording_modal.is_some()
+            || self.new_bot_open()
         {
+            return true;
+        }
+        // The empty Bots view covers the tab in front: no menu of a tab
+        // nobody can see.
+        if self.bots_empty_covers(x, y) {
             return true;
         }
         // **A right-click on a running session in the + menu's *Active* list**
@@ -11538,6 +11565,11 @@ impl View for MainView {
             self.tooltip.set_hover(None, Instant::now());
             return self.recording_mouse_move(x, y);
         }
+        // The New bot dialog, the same.
+        if self.new_bot_open() {
+            self.tooltip.set_hover(None, Instant::now());
+            return self.new_bot_mouse_move(x, y);
+        }
         // A document's lifted diagram viewer owns the pointer over the whole
         // window, for the same reason: a drag of the drawing must follow
         // the pointer past the pane, and chrome under its scrim stays quiet.
@@ -11618,7 +11650,10 @@ impl View for MainView {
         if self.updates_modal {
             return true;
         }
-        if self.recording_modal.is_some() {
+        if self.recording_modal.is_some() || self.new_bot_open() {
+            return true;
+        }
+        if self.bots_empty_covers(x, y) {
             return true;
         }
         if self.font_picker.is_some() {
@@ -11733,6 +11768,17 @@ impl View for MainView {
         }
         // Nothing in the setup modal scrolls; the wheel goes no further.
         if self.recording_modal.is_some() {
+            return;
+        }
+        // The New bot dialog's body scrolls when the window is short for
+        // it; the wheel goes no further either way.
+        if self.new_bot_open() {
+            self.new_bot_scroll(-Self::wheel_lines(delta) * 32.0);
+            return;
+        }
+        // Nothing in the empty Bots view scrolls, and the tab it covers
+        // must not scroll unseen.
+        if self.bots_empty_covers(self.pointer.0, self.pointer.1) {
             return;
         }
         if self.delegation_scroll(-Self::wheel_lines(delta) * 32.0) {
@@ -12029,6 +12075,9 @@ impl View for MainView {
         if let Some(modal) = &self.recording_modal {
             return modal.cursor_icon();
         }
+        if let Some(cursor) = self.new_bot_cursor() {
+            return cursor;
+        }
         if self.font_picker.is_some() || self.move_to.is_some() {
             return CursorIcon::Default;
         }
@@ -12198,6 +12247,11 @@ impl View for MainView {
             return CursorIcon::Grabbing;
         }
         match self.hover {
+            // The empty Bots view covers the tab in front: the cursor is
+            // its own, never the covered tab's.
+            Some(Hit::Content) | None if self.bots_empty_visible() => {
+                self.bots_empty_cursor().unwrap_or(CursorIcon::Default)
+            }
             Some(Hit::Content) | None => match &self.tabs().active_tab().view {
                 TabView::Welcome(w) => w.cursor_icon(),
                 TabView::Manage(w) => View::cursor_icon(w),
@@ -12648,6 +12702,10 @@ impl View for MainView {
     fn ai_chat_folder_chosen(&mut self, chosen: std::path::PathBuf) -> bool {
         // A create form's folder (Bots P1.8 S8), by its draft.
         if let Some(draft) = self.bot_create_folder_ask.take() {
+            // The New bot dialog's draft first (O155): it is in no tab.
+            if let Some(done) = self.new_bot_folder_chosen(draft, &chosen) {
+                return done;
+            }
             return self.bot_create_folder_chosen(draft, &chosen);
         }
         let Some((source, chat)) = self.ai_chat_folder_ask.take() else {
@@ -15287,6 +15345,12 @@ impl View for MainView {
             self.bot_trash
                 .awaiting()
                 .then(|| Instant::now() + std::time::Duration::from_millis(50)),
+            // The New bot dialog's creation and agent reads, only while it
+            // stands and one is on its way (O155).
+            self.new_bot_deadline(),
+            // **Every moving Bot face, at the one clock's next step**, and
+            // `None` while no working Bot's face is on screen.
+            self.bot_faces_deadline(),
             // **Not `tabs().active_tab()`, deliberately.** A feedback report is
             // sent by a worker that outlives the tab that wrote it, so the
             // window keeps ticking for it whatever is in front — otherwise a
@@ -15641,6 +15705,9 @@ impl View for MainView {
         // on a timer.
         let chats_changed = self.maintain_chats();
         let bots_changed = self.maintain_bots();
+        // The New bot dialog's pass, then every Bot face's pose: after the
+        // chat statuses and the roster's activity, which say who works.
+        let first_bot_changed = self.maintain_new_bot() | self.sync_bot_faces(now);
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document()
             | self.open_pending_bot_role()
@@ -15784,6 +15851,7 @@ impl View for MainView {
             || artifacts_changed
             || chats_changed
             || bots_changed
+            || first_bot_changed
             || socials_changed
             || probe_changed
             || search_changed
@@ -15966,6 +16034,12 @@ impl MainView {
             // would edit a page nobody can see.
             Blockers::Modal(ModalKind::Recording) => {
                 return self.recording_key(key, text, mods);
+            }
+            // The New bot dialog answers every key while it stands, for the
+            // same reason: a chord reaching what is under its scrim would
+            // act on something nobody can see.
+            Blockers::Modal(ModalKind::NewBot) => {
+                return self.new_bot_key(key, text, mods);
             }
             // An open context menu takes the keys it cares about (Esc, the
             // arrows, Enter) and lets nothing else through — a chord must not,
@@ -16220,6 +16294,11 @@ impl MainView {
             let changed = self.ai_chat.key(key, text, mods);
             let microphones = self.serve_chat_microphones();
             return self.save_pending_ai_credential() || changed || microphones;
+        }
+        // The empty Bots view covers the tab in front (O155): what would
+        // have reached that tab is the view's, or nobody's.
+        if let Some(handled) = self.bots_empty_key(key, mods) {
+            return handled;
         }
         // **Escape on a draft is "nothing happened".** Nothing was ever
         // written, so closing the tab is the whole of it — the trip Back
@@ -18270,6 +18349,12 @@ impl MainView {
         }
         if self.profile_wait_mouse_move(x, y) {
             return true;
+        }
+        // The empty Bots view covers the tab in front: the pointer over
+        // the content area is its own.
+        let empty_moved = self.bots_empty_mouse_move(x, y);
+        if self.bots_empty_covers(x, y) {
+            return empty_moved;
         }
         if let Some((dialog, _)) = self.confirm.as_mut() {
             // The scrim is modal over the entire window. Update button hover,

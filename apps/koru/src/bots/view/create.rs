@@ -136,6 +136,13 @@ pub(crate) struct CreateTab {
     /// is drawn beside it: the form keeps that and the actions row in view
     /// as answers arrive, until the person scrolls it themselves.
     reveal_owed: bool,
+    /// **This draft is the *New bot* dialog's** (QUESTIONS O155,
+    /// [`super::new_bot`]): it starts on the first agent of the person's
+    /// list and in the agent's automatic mode
+    /// (`crate::bots::first_bot`), where the create form starts on the
+    /// preferred agent and in its asking mode. Cleared when the draft
+    /// moves to the full form, which then applies its own rules.
+    pub(super) first_bot: bool,
 }
 
 impl CreateTab {
@@ -147,6 +154,7 @@ impl CreateTab {
             access_open: false,
             abandon_ask: false,
             reveal_owed: false,
+            first_bot: false,
         }
     }
 }
@@ -207,6 +215,14 @@ impl BotView {
         })
     }
 
+    /// The face a draft wears and the name whose initial it shows, once one
+    /// was picked (the *New bot* dialog picks one; the create form does
+    /// not, and leaves the face to the Bot's id).
+    pub(super) fn create_face(&self) -> Option<(u8, String)> {
+        let draft = self.create.as_deref()?.form.draft();
+        Some((draft.avatar?, draft.name.trim().to_owned()))
+    }
+
     pub(super) fn role_labels(&self) -> [String; 2] {
         [
             self.words(Words::BotsRoleWrite),
@@ -233,6 +249,19 @@ impl BotView {
         use koru_ai_ui::agent_catalog::config::modes;
         let provider = self.agent_provider()?;
         let listing = self.agent_listing()?;
+        // The *New bot* dialog's draft starts in the agent's automatic
+        // mode instead (O155): the one rule, in `first_bot`.
+        if self
+            .create
+            .as_deref()
+            .is_some_and(|create| create.first_bot)
+        {
+            return crate::bots::first_bot::starting_mode(
+                provider.as_str(),
+                &listing.offers(),
+                listing.default_mode.as_deref(),
+            );
+        }
         modes::default_mode(
             provider.as_str(),
             &listing.offers(),
@@ -1377,7 +1406,17 @@ impl BotView {
         if create.form.model_shown().is_some() || !create.form.editable() {
             return false;
         }
-        let Some(provider) = self.catalog.preferred(&self.agent_settings) else {
+        // The *New bot* dialog's draft starts on the first agent of the
+        // person's list (O155, `first_bot::default_agent`); the create form
+        // on the preferred one.
+        let provider = if create.first_bot {
+            crate::bots::first_bot::default_agent(
+                &self.catalog.control_agents(&self.agent_settings),
+            )
+        } else {
+            self.catalog.preferred(&self.agent_settings)
+        };
+        let Some(provider) = provider else {
             return false;
         };
         self.catalog.want(&provider);

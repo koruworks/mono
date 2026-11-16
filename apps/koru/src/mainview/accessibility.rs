@@ -396,6 +396,15 @@ impl MainView {
         if let Some(focus) = self.profile_wait_focus(&cx) {
             return Some(focus);
         }
+        // The empty Bots view covers the tab in front (O155): its button
+        // while the keyboard is on it, else the content region. Never a
+        // control of the covered tab, which is not published.
+        if self.bots_empty_visible() {
+            return Some(
+                self.bots_empty_focus(&cx)
+                    .unwrap_or_else(|| cx.surface(SHELL, parts::CONTENT)),
+            );
+        }
         // The document itself, when the active tab is one and its editor is
         // what has the keyboard. Read from `ViewState::active` and
         // `Body::focus` — the two states the caret is drawn from, not a second
@@ -479,6 +488,7 @@ impl MainView {
             }
         }
         rev.u64(self.profile_wait.revision);
+        self.revise_first_bot(rev);
         rev.bool(self.sidebar.is_open());
         rev.bool(self.ai_visible()).bool(self.ai_focused);
         if self.sidebar.is_open() {
@@ -602,6 +612,11 @@ impl MainView {
             return false;
         }
         if self.profile_wait_action(target, action) {
+            return true;
+        }
+        // The New bot dialog's controls, and the empty Bots view's button
+        // (O155).
+        if self.new_bot_action(target, action, data) || self.bots_empty_action(target, action) {
             return true;
         }
         // **An answer of the window's confirmation**, clicked: answered as a
@@ -958,6 +973,15 @@ impl MainView {
         if let Some(waiting) = self.profile_wait_semantics(cx) {
             self.bodies.borrow_mut().body_withheld(cx);
             return waiting;
+        }
+        // No Bot yet (O155): the content region holds the empty Bots view,
+        // and nothing of the tab it covers.
+        if let Some(empty) = self.bots_empty_semantics(cx) {
+            self.bodies.borrow_mut().body_withheld(cx);
+            return SemanticNode::new(cx.surface(SHELL, parts::CONTENT), Role::TabPanel)
+                .with_label(t(cx.lang, Key::BotsTitle))
+                .with_bounds(self.content())
+                .with_children(vec![empty]);
         }
         let tab = self.tabs().active_tab();
         let label = if tab.label.is_empty() {

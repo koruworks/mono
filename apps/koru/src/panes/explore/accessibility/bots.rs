@@ -125,7 +125,7 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                     Occurrence::surface(cx.window, cx.view, BOTS, EMPTY_PART),
                     Role::Label,
                 )
-                .with_label(t(cx.lang, Key::BotsEmpty))
+                .with_label(t(cx.lang, Key::BotsNoneYet))
                 .with_bounds(rect),
             );
         }
@@ -183,6 +183,8 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                     Some(
                         SemanticNode::new(bot_occurrence(cx, bot.id), Role::ListItem)
                             .with_label(roster.accessible_name(bot))
+                            // The row's device mark, in words (O155).
+                            .with_description(t(cx.lang, Key::BotsRunsOnThisComputer))
                             .with_bounds(rect)
                             .with_selected(roster.selected() == Some(bot.id))
                             .with_position(index)

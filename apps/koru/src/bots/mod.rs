@@ -9,11 +9,18 @@
 //! it or moves it to Trash, a conversation row moves one conversation to
 //! Trash, the roster's Archived filter unarchives, and the window's Trash
 //! restores ([`lifecycle`], [`trash`], S14). Its settings choose its agent's
-//! model, effort, mode and Fast ([`catalog`], S6–S7). *Create a bot* opens a
-//! Bot tab in create mode, and the roster lists creations that have not
-//! finished, with Retry and Abandon ([`creation`], S8). Nothing offers a
+//! model, effort, mode and Fast ([`catalog`], S6–S7). A Bot tab in create
+//! mode is the full create form, and the roster lists creations that have
+//! not finished, with Retry and Abandon ([`creation`], S8). Nothing offers a
 //! control that would lead nowhere: there is no permanent delete of a Bot,
 //! which is not built.
+//!
+//! **The first Bot** (QUESTIONS O155): with no Bot the main area says what
+//! one is ([`empty`]); *New bot* opens a small dialog over the window that
+//! asks for a name, a face and where the Bot runs
+//! ([`view::new_bot`], its defaults in [`first_bot`]) and creates through
+//! the create form's own commands; every Bot wears its face in its row and
+//! its tab's header ([`faces`]), moving only while it works.
 //!
 //! Two rules it is built under, the Chats view's:
 //!
@@ -25,6 +32,8 @@
 
 pub(crate) mod catalog;
 pub(crate) mod creation;
+pub(crate) mod empty;
+pub(crate) mod faces;
 pub(crate) mod first_bot;
 pub(crate) mod labels;
 pub(crate) mod library;

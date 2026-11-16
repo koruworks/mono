@@ -3892,13 +3892,59 @@ pub enum Key {
     BotsCreateAgentNotReady,
     /// Create was refused because the chosen agent (`{}`) is still listing its models (`agent_models_listing`). Non-English columns machine-written, awaiting a native read.
     BotsCreateAgentStillListing,
+    /// The Bots panel's one line while the person has no Bot (first-bot piece 2). The pitch is in the main area. Non-English columns machine-written, awaiting a native read.
+    BotsNoneYet,
+    /// The heading of the main area's empty view while the person has no Bot. Non-English columns machine-written, awaiting a native read.
+    BotsIntroTitle,
+    /// The empty view's paragraph. Says only what is true: a Bot runs on this computer while Koru is open (no cloud Bot exists). Non-English columns machine-written, awaiting a native read.
+    BotsIntroBody,
+    /// The empty view's examples line: jobs, never schedules or triggers (a new Bot does neither without a Routine). Non-English columns machine-written, awaiting a native read.
+    BotsIntroExamples,
+    /// The *New bot* dialog's close button, by name. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotClose,
+    /// The *New bot* dialog's name field: its placeholder and its accessible name. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotNamePlaceholder,
+    /// The accessible name of the dialog's large preview face. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotPreview,
+    /// The accessible name of the dialog's grid of faces. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotAvatar,
+    /// One face of the grid, by its number (`{}`, from 1). Non-English columns machine-written, awaiting a native read.
+    BotsNewBotFace,
+    /// The button that swaps the grid to the other twelve faces. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotOthers,
+    /// The accessible name of the dialog's *where it runs* control. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotRunsWhere,
+    /// The control's selected choice: the Bot runs on this computer. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotThisDevice,
+    /// The control's second choice, drawn but not selectable: remote Bots are not built. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotCloud,
+    /// The accessible name of the *Cloud* choice, which cannot be selected. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotCloudUnavailable,
+    /// Under the control: where the Bot runs, and that what it reads goes to its agent's model provider. Replaces the mock-up's *Nothing leaves your device*, which is not true. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotLocalNote,
+    /// Under the control: why *Cloud* cannot be chosen. No plan or purchase is named, because none exists. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotCloudNote,
+    /// The dialog's primary button. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotCreate,
+    /// The dialog's disclosure while closed: the agent and the folder are under it. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotMore,
+    /// The dialog's disclosure while open. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotLess,
+    /// The disclosure's summary, first half: the agent (`{}`) the new Bot will use. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotUses,
+    /// The disclosure's summary, second half: the folder (`{}`, a path) the new Bot will work in. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotWorksIn,
+    /// The label over the dialog's agent choices. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotAgent,
+    /// Opens the full create form on the same draft. Non-English columns machine-written, awaiting a native read.
+    BotsNewBotFullForm,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2654] = [
+    pub const ALL: [Key; 2677] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6553,6 +6599,29 @@ impl Key {
         Key::BotsAgentReadinessUnknown,
         Key::BotsCreateAgentNotReady,
         Key::BotsCreateAgentStillListing,
+        Key::BotsNoneYet,
+        Key::BotsIntroTitle,
+        Key::BotsIntroBody,
+        Key::BotsIntroExamples,
+        Key::BotsNewBotClose,
+        Key::BotsNewBotNamePlaceholder,
+        Key::BotsNewBotPreview,
+        Key::BotsNewBotAvatar,
+        Key::BotsNewBotFace,
+        Key::BotsNewBotOthers,
+        Key::BotsNewBotRunsWhere,
+        Key::BotsNewBotThisDevice,
+        Key::BotsNewBotCloud,
+        Key::BotsNewBotCloudUnavailable,
+        Key::BotsNewBotLocalNote,
+        Key::BotsNewBotCloudNote,
+        Key::BotsNewBotCreate,
+        Key::BotsNewBotMore,
+        Key::BotsNewBotLess,
+        Key::BotsNewBotUses,
+        Key::BotsNewBotWorksIn,
+        Key::BotsNewBotAgent,
+        Key::BotsNewBotFullForm,
     ];
 }
 
@@ -20611,4 +20680,28 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsAgentReadinessUnknown, en: "Koru couldn't tell whether {} is ready on this computer. Check that it's installed and signed in, then try again.", es: "Koru no pudo saber si {} está listo en este equipo. Comprueba que esté instalado y con la sesión iniciada, y vuelve a intentarlo.", pt_br: "O Koru não conseguiu saber se {} está pronto neste computador. Verifique se está instalado e com a sessão iniciada e tente de novo.", de: "Koru konnte nicht feststellen, ob {} auf diesem Computer bereit ist. Prüfen Sie, ob es installiert und angemeldet ist, und versuchen Sie es erneut.", fr: "Koru n'a pas pu déterminer si {} est prêt sur cet ordinateur. Vérifiez qu'il est installé et connecté, puis réessayez.", ar: "تعذّر على Koru معرفة ما إذا كان {} جاهزًا على هذا الكمبيوتر. تحقّق من أنه مثبّت وأنك سجّلت الدخول فيه، ثم حاول مرة أخرى.", zh_hans: "Koru 无法确定 {} 在这台电脑上是否已就绪。请检查它是否已安装并已登录，然后重试。", ja: "Koru は、{} がこのコンピューターで準備できているかを確認できませんでした。インストールされ、サインインしているかを確認してから、もう一度お試しください。" },
     Row { key: Key::BotsCreateAgentNotReady, en: "{} isn't ready on this computer, so the bot wasn't created. Set it up, then create the bot again.", es: "{} no está listo en este equipo, así que el bot no se creó. Configúralo y vuelve a crear el bot.", pt_br: "{} não está pronto neste computador, então o bot não foi criado. Configure-o e crie o bot de novo.", de: "{} ist auf diesem Computer nicht bereit, daher wurde der Bot nicht erstellt. Richten Sie es ein und erstellen Sie den Bot erneut.", fr: "{} n'est pas prêt sur cet ordinateur, le bot n'a donc pas été créé. Configurez-le, puis créez à nouveau le bot.", ar: "{} غير جاهز على هذا الكمبيوتر، لذا لم يُنشأ البوت. أعدّه ثم أنشئ البوت مرة أخرى.", zh_hans: "{} 在这台电脑上尚未就绪，因此未创建机器人。请先设置它，然后重新创建机器人。", ja: "{} はこのコンピューターで準備ができていないため、ボットは作成されませんでした。設定してから、もう一度ボットを作成してください。" },
     Row { key: Key::BotsCreateAgentStillListing, en: "{} is still listing its models, so the bot wasn't created. Try again in a moment.", es: "{} todavía está obteniendo la lista de sus modelos, así que el bot no se creó. Inténtalo de nuevo en un momento.", pt_br: "{} ainda está listando os modelos, então o bot não foi criado. Tente de novo em instantes.", de: "{} listet seine Modelle noch auf, daher wurde der Bot nicht erstellt. Versuchen Sie es gleich noch einmal.", fr: "{} est encore en train de lister ses modèles, le bot n'a donc pas été créé. Réessayez dans un instant.", ar: "لا يزال {} يعرض قائمة نماذجه، لذا لم يُنشأ البوت. حاول مجددًا بعد لحظة.", zh_hans: "{} 仍在列出其模型，因此未创建机器人。请稍后再试。", ja: "{} はまだモデルを一覧にしているため、ボットは作成されませんでした。少し待ってからもう一度お試しください。" },
+    // ------------------------------------------- Bots: the first-bot experience (QUESTIONS O155), piece 2: the empty view and the New bot dialog
+    Row { key: Key::BotsNoneYet, en: "No bots yet", es: "Aún no hay bots", pt_br: "Ainda não há bots", de: "Noch keine Bots", fr: "Aucun bot pour l’instant", ar: "لا توجد بوتات بعد", zh_hans: "还没有机器人", ja: "ボットはまだありません" },
+    Row { key: Key::BotsIntroTitle, en: "A bot is a chat that works on its own", es: "Un bot es un chat que trabaja por su cuenta", pt_br: "Um bot é uma conversa que trabalha por conta própria", de: "Ein Bot ist ein Chat, der selbstständig arbeitet", fr: "Un bot est une discussion qui travaille toute seule", ar: "البوت محادثة تعمل من تلقاء نفسها", zh_hans: "机器人是能自行工作的对话", ja: "ボットは、自分で作業を進めるチャットです" },
+    Row { key: Key::BotsIntroBody, en: "Give it a job and it keeps at it on this computer while Koru is open. What it makes lands in your workspace.", es: "Dale un trabajo y seguirá con él en este equipo mientras Koru esté abierto. Lo que produce llega a tu espacio de trabajo.", pt_br: "Dê a ele uma tarefa e ele continua nela neste computador enquanto o Koru estiver aberto. O que ele produz vai para o seu espaço de trabalho.", de: "Gib ihm eine Aufgabe, und er bleibt auf diesem Computer daran, solange Koru geöffnet ist. Was er erstellt, landet in deinem Arbeitsbereich.", fr: "Confiez-lui une mission et il s’y tient sur cet ordinateur tant que Koru est ouvert. Ce qu’il produit arrive dans votre espace de travail.", ar: "أعطه مهمة وسيواصل العمل عليها على هذا الكمبيوتر ما دام Koru مفتوحًا. ما ينتجه يصل إلى مساحة عملك.", zh_hans: "给它一项任务，只要 Koru 开着，它就会在这台电脑上持续处理。它的成果会放进你的工作区。", ja: "仕事を任せると、Koru を開いている間、このコンピューターで作業を続けます。作ったものはワークスペースに届きます。" },
+    Row { key: Key::BotsIntroExamples, en: "People use bots to put together a research digest, turn notes into tasks, or review a spec.", es: "La gente usa bots para preparar un resumen de investigación, convertir notas en tareas o revisar una especificación.", pt_br: "As pessoas usam bots para montar um resumo de pesquisa, transformar notas em tarefas ou revisar uma especificação.", de: "Bots werden zum Beispiel genutzt, um eine Recherche zusammenzufassen, Notizen in Aufgaben zu verwandeln oder eine Spezifikation zu prüfen.", fr: "On utilise des bots pour préparer une synthèse de recherche, transformer des notes en tâches ou relire une spécification.", ar: "يستخدم الناس البوتات لإعداد ملخص بحثي، أو تحويل الملاحظات إلى مهام، أو مراجعة مواصفة.", zh_hans: "人们用机器人整理研究摘要、把笔记变成任务，或审阅规格文档。", ja: "ボットは、調査のまとめの作成、メモからのタスク作成、仕様書のレビューなどに使われています。" },
+    Row { key: Key::BotsNewBotClose, en: "Close", es: "Cerrar", pt_br: "Fechar", de: "Schließen", fr: "Fermer", ar: "إغلاق", zh_hans: "关闭", ja: "閉じる" },
+    Row { key: Key::BotsNewBotNamePlaceholder, en: "Name your bot", es: "Ponle nombre a tu bot", pt_br: "Dê um nome ao seu bot", de: "Gib deinem Bot einen Namen", fr: "Nommez votre bot", ar: "سمِّ البوت", zh_hans: "给机器人起个名字", ja: "ボットに名前を付ける" },
+    Row { key: Key::BotsNewBotPreview, en: "Selected avatar", es: "Avatar seleccionado", pt_br: "Avatar selecionado", de: "Ausgewählter Avatar", fr: "Avatar sélectionné", ar: "الصورة الرمزية المحددة", zh_hans: "已选头像", ja: "選択中のアバター" },
+    Row { key: Key::BotsNewBotAvatar, en: "Avatar", es: "Avatar", pt_br: "Avatar", de: "Avatar", fr: "Avatar", ar: "الصورة الرمزية", zh_hans: "头像", ja: "アバター" },
+    Row { key: Key::BotsNewBotFace, en: "Face {}", es: "Cara {}", pt_br: "Rosto {}", de: "Gesicht {}", fr: "Visage {}", ar: "الوجه {}", zh_hans: "面孔 {}", ja: "顔 {}" },
+    Row { key: Key::BotsNewBotOthers, en: "Show me others", es: "Mostrar otros", pt_br: "Mostrar outros", de: "Andere anzeigen", fr: "En voir d’autres", ar: "عرض وجوه أخرى", zh_hans: "换一批", ja: "ほかの顔を表示" },
+    Row { key: Key::BotsNewBotRunsWhere, en: "Where this bot runs", es: "Dónde se ejecuta este bot", pt_br: "Onde este bot é executado", de: "Wo dieser Bot läuft", fr: "Où ce bot s’exécute", ar: "أين يعمل هذا البوت", zh_hans: "此机器人的运行位置", ja: "このボットの実行場所" },
+    Row { key: Key::BotsNewBotThisDevice, en: "This device", es: "Este dispositivo", pt_br: "Este dispositivo", de: "Dieses Gerät", fr: "Cet appareil", ar: "هذا الجهاز", zh_hans: "此设备", ja: "このデバイス" },
+    Row { key: Key::BotsNewBotCloud, en: "Cloud", es: "Nube", pt_br: "Nuvem", de: "Cloud", fr: "Cloud", ar: "السحابة", zh_hans: "云端", ja: "クラウド" },
+    Row { key: Key::BotsNewBotCloudUnavailable, en: "Cloud, not available yet", es: "Nube, aún no disponible", pt_br: "Nuvem, ainda não disponível", de: "Cloud, noch nicht verfügbar", fr: "Cloud, pas encore disponible", ar: "السحابة، غير متاحة بعد", zh_hans: "云端，暂不可用", ja: "クラウド（まだ利用できません）" },
+    Row { key: Key::BotsNewBotLocalNote, en: "Runs on this computer while Koru is open. What it reads goes to its agent's model provider.", es: "Se ejecuta en este equipo mientras Koru esté abierto. Lo que lee se envía al proveedor del modelo de su agente.", pt_br: "É executado neste computador enquanto o Koru estiver aberto. O que ele lê é enviado ao provedor do modelo do agente.", de: "Läuft auf diesem Computer, solange Koru geöffnet ist. Was er liest, geht an den Modellanbieter seines Agenten.", fr: "S’exécute sur cet ordinateur tant que Koru est ouvert. Ce qu’il lit est envoyé au fournisseur du modèle de son agent.", ar: "يعمل على هذا الكمبيوتر ما دام Koru مفتوحًا. ما يقرؤه يُرسل إلى مزوّد نموذج وكيله.", zh_hans: "Koru 开着时在这台电脑上运行。它读取的内容会发送给其智能体的模型提供商。", ja: "Koru を開いている間、このコンピューターで実行されます。読み取った内容は、エージェントのモデル提供元に送信されます。" },
+    Row { key: Key::BotsNewBotCloudNote, en: "Cloud isn't available yet.", es: "La nube aún no está disponible.", pt_br: "A nuvem ainda não está disponível.", de: "Die Cloud ist noch nicht verfügbar.", fr: "Le cloud n’est pas encore disponible.", ar: "السحابة غير متاحة بعد.", zh_hans: "云端暂不可用。", ja: "クラウドはまだ利用できません。" },
+    Row { key: Key::BotsNewBotCreate, en: "Create", es: "Crear", pt_br: "Criar", de: "Erstellen", fr: "Créer", ar: "إنشاء", zh_hans: "创建", ja: "作成" },
+    Row { key: Key::BotsNewBotMore, en: "More", es: "Más", pt_br: "Mais", de: "Mehr", fr: "Plus", ar: "المزيد", zh_hans: "更多", ja: "その他" },
+    Row { key: Key::BotsNewBotLess, en: "Less", es: "Menos", pt_br: "Menos", de: "Weniger", fr: "Moins", ar: "أقل", zh_hans: "收起", ja: "折りたたむ" },
+    Row { key: Key::BotsNewBotUses, en: "Uses {}.", es: "Usa {}.", pt_br: "Usa {}.", de: "Verwendet {}.", fr: "Utilise {}.", ar: "يستخدم {}.", zh_hans: "使用 {}。", ja: "{} を使用します。" },
+    Row { key: Key::BotsNewBotWorksIn, en: "Works in {}.", es: "Trabaja en {}.", pt_br: "Trabalha em {}.", de: "Arbeitet in {}.", fr: "Travaille dans {}.", ar: "يعمل في {}.", zh_hans: "在 {} 中工作。", ja: "{} で作業します。" },
+    Row { key: Key::BotsNewBotAgent, en: "Agent", es: "Agente", pt_br: "Agente", de: "Agent", fr: "Agent", ar: "الوكيل", zh_hans: "智能体", ja: "エージェント" },
+    Row { key: Key::BotsNewBotFullForm, en: "Open the full form", es: "Abrir el formulario completo", pt_br: "Abrir o formulário completo", de: "Vollständiges Formular öffnen", fr: "Ouvrir le formulaire complet", ar: "فتح النموذج الكامل", zh_hans: "打开完整表单", ja: "すべての項目を開く" },
 ];

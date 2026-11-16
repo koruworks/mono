@@ -218,7 +218,10 @@ fn the_bots_refusal_words_are_handed_to_the_chat_and_match_the_settings() {
             "bot_conversation_trashed",
             "bot_trashed",
             "bot_lifecycle_pending",
-            "bot_operation_pending"
+            "bot_operation_pending",
+            // Added to `BOT_REFUSALS` with the Routine retry refusal
+            // (4443d0a0); this list was not, and the test was red since.
+            "routine_retry_unsupported"
         ]
     );
     for (code, words) in BOT_REFUSALS {

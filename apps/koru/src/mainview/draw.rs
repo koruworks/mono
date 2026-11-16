@@ -206,6 +206,9 @@ impl MainView {
             .collect();
         if self.profile_wait_visible() {
             self.draw_profile_wait(scene, root);
+        } else if self.bots_empty_visible() {
+            // No Bot yet (O155): what a Bot is, in the tabs' place.
+            self.draw_bots_empty(scene, root);
         } else {
             for (path, rect) in self.panes.leaf_rects(self.content()) {
                 let Some(lane) = self.lane_rect_for(&path) else {
@@ -609,6 +612,8 @@ impl MainView {
         self.draw_delegation(scene, root);
         // The recording setup modal, over the menu row that opened it too.
         self.draw_recording(scene, root);
+        // The New bot dialog, over the Bots view it was opened from.
+        self.draw_new_bot(scene, root);
         // Above the update banner, below the modals: a toast is transient and a
         // dialog is not, so a dialog must never end up behind one.
         self.draw_toast(scene, root, now);

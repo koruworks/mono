@@ -29,8 +29,9 @@ impl ExploreView {
                     .semantics(Role::Heading)
                     .name_text(self.mode.label()),
             );
-        // The Bots heading's button is *Create a bot* (Bots P1.8 S8), while
-        // there is a workspace to create one in.
+        // The Bots heading's button is *New bot* (Bots P1.8 S8; QUESTIONS
+        // O155: it opens the New bot dialog), while there is a workspace to
+        // create one in.
         let creates_bot = self.mode == NavigatorMode::Bots && self.current.is_some();
         if width >= metrics::RAIL_SQUARE.value + Space::S3.px(theme::Profile::Desktop)
             && (!actions::available(self.mode).is_empty()
@@ -40,7 +41,7 @@ impl ExploreView {
             let (glyph, name) = if self.mode == NavigatorMode::Chats {
                 (icons::NOTE_PENCIL, koru_i18n::Key::ChatsNew)
             } else if creates_bot {
-                (icons::PLUS, koru_i18n::Key::BotsCreate)
+                (icons::PLUS, koru_i18n::Key::BotsNewBot)
             } else {
                 (icons::DOTS_THREE, koru_i18n::Key::A11yMoreActions)
             };

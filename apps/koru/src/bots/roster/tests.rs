@@ -390,25 +390,28 @@ fn unavailable_keeps_the_last_snapshot_and_never_reads_as_empty() {
     assert!(!frame.contains(EMPTY));
 }
 
-/// The empty roster is the approved sentence, and **two things to press**:
-/// *Create a bot* (S8), which the window opens as a create tab, and the
-/// Archived filter (S14).
+/// The empty roster is **one short line** (QUESTIONS O155): what a Bot is
+/// and *New bot* are the main area's while there is none, and the
+/// navigator heading keeps its `+`. One thing to press here: the Archived
+/// filter (S14). The roster's own ask still reaches the window, which opens
+/// the New bot dialog for it.
 #[test]
-fn an_empty_roster_says_what_bots_are_for_and_offers_create() {
+fn an_empty_roster_says_there_are_no_bots_yet() {
     let mut f = fixture();
     f.shown_with(Vec::new());
     let frame = frame_of(&f.roster);
     assert!(frame.contains(EMPTY));
     assert!(!frame.contains(NOTICE));
     let targets: Vec<_> = frame.hits().into_iter().map(|hit| hit.key).collect();
-    assert_eq!(
-        targets,
-        [CREATE, ARCHIVED_TOGGLE],
-        "Create, then the filter"
+    assert_eq!(targets, [ARCHIVED_TOGGLE], "the filter alone");
+    assert!(!frame.contains(CREATE), "no second New bot in the panel");
+    assert!(
+        !f.roster.keyboard_stops().contains(&CREATE),
+        "and the keyboard never lands on one that is not drawn"
     );
     let _ = f.commands.try_iter().count();
-    assert!(f.roster.press_unfinished(CREATE));
-    assert!(f.roster.take_wants_create(), "the window opens the form");
+    assert!(f.roster.ask_create());
+    assert!(f.roster.take_wants_create(), "the window opens the dialog");
     assert!(!f.roster.take_wants_create(), "once");
     f.nothing_asked();
     let words = frame
@@ -417,10 +420,7 @@ fn an_empty_roster_says_what_bots_are_for_and_offers_create() {
         .expect("the sentence is drawn")
         .rect;
     assert!(words.w > 0.0 && words.h > 0.0);
-    assert_eq!(
-        t(Lang::En, Words::BotsEmpty),
-        "Give a bot a standing job. Its conversations and work stay together here."
-    );
+    assert_eq!(t(Lang::En, Words::BotsNoneYet), "No bots yet");
 }
 
 /// **Selection is the Bot, not the row**: a refresh that reorders and adds
@@ -512,7 +512,8 @@ fn every_word_the_roster_draws_is_in_all_eight_languages() {
             Words::BotsTitle,
             Words::BotsLoading,
             Words::BotsUnavailable,
-            Words::BotsEmpty,
+            Words::BotsNoneYet,
+            Words::BotsRunsOnThisComputer,
             Words::BotsPaused,
         ] {
             assert!(!t(lang, key).trim().is_empty(), "{lang:?} {key:?}");

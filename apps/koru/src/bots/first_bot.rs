@@ -24,9 +24,6 @@
 //! `CreateForm::create`, leaves the folder as the managed default unless the
 //! person chose one, and sets the face with `CreateForm::choose_avatar`.
 
-// Called by the New bot dialog, the next piece of the first-bot work.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use std::path::{Path, PathBuf};
 
 use koru_ai_core::bots::BotId;
@@ -99,16 +96,24 @@ pub(crate) fn default_folder(channel_root: &Path, bot: BotId) -> PathBuf {
     koru_ai_core::bots::managed_folder(&koru_channel::ai_root_under(channel_root), bot)
 }
 
-/// [`default_folder`] under the channel root this window runs against: the
-/// `--root` it was launched with, else this channel's own. `None` when
-/// neither resolves (no local data directory in the environment), and then
-/// the dialog names no path.
-// Reads the process's arguments and environment, so no test calls it; the
-// rule it applies is `default_folder`'s, which the tests hold.
-#[allow(dead_code)] // called by the New bot dialog
+/// **The channel root this window runs against**: the `--root` it was
+/// launched with, else this channel's own. `None` when neither resolves (no
+/// local data directory in the environment), and then the dialog names no
+/// path. The dialog reads it once when it opens and works every folder it
+/// shows out from it with [`default_folder`], so a draft that takes new
+/// identities needs no second look.
+// Reads the process's arguments and environment (and, on macOS only, asks
+// whether two directories exist), so no test calls it; the rule applied to
+// what it answers is `default_folder`'s, which the tests hold.
+pub(crate) fn channel_root_here() -> Option<PathBuf> {
+    koru_workspace_host::cli::root_from_args().or_else(koru_channel::channel_root)
+}
+
+/// [`default_folder`] under [`channel_root_here`], for a caller that asks
+/// about one Bot once.
+#[allow(dead_code)] // the dialog keeps the root and asks `default_folder`
 pub(crate) fn default_folder_here(bot: BotId) -> Option<PathBuf> {
-    let root = koru_workspace_host::cli::root_from_args().or_else(koru_channel::channel_root)?;
-    Some(default_folder(&root, bot))
+    Some(default_folder(&channel_root_here()?, bot))
 }
 
 #[cfg(test)]

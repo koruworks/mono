@@ -77,6 +77,10 @@ pub(crate) enum Layer {
     /// The session-recording setup modal. Same argument as `Delegate`: the
     /// caption-menu row that opens it is gone before the modal answers.
     Recording,
+    /// The *New bot* dialog (Bots, QUESTIONS O155). Beside the other two
+    /// form-shaped modals: none of the three can stand with another, and
+    /// opening it takes any menu down.
+    NewBot,
     /// The place chooser an Alt+click on a reference opens. Above `Menu`:
     /// opening it takes any menu down, so the two never stand together, and
     /// it is the more recent of the two by construction.
@@ -104,7 +108,7 @@ impl Layer {
     /// projection publishes the standing blocker and nothing beneath it, and
     /// the test that every kind of blocker publishes the control it focuses
     /// walks *this* table rather than a second list of kinds to keep in step.
-    pub(crate) const ALL: [Self; 23] = [
+    pub(crate) const ALL: [Self; 24] = [
         Self::FontPicker,
         Self::MoveTo,
         Self::Search,
@@ -121,6 +125,7 @@ impl Layer {
         Self::NewList,
         Self::Delegate,
         Self::Recording,
+        Self::NewBot,
         Self::PlaceChooser,
         Self::Launcher,
         Self::Menu,
@@ -154,6 +159,10 @@ impl Layer {
             // A **modal**: the setup is a small form with its own focus ring,
             // and nothing underneath may receive keys while it stands.
             Self::Recording => Blockers::Modal(ModalKind::Recording),
+            // A **modal**, the recording setup's reason: a small form with
+            // a focus ring of its own, and its name field is not a
+            // dictation surface this release.
+            Self::NewBot => Blockers::Modal(ModalKind::NewBot),
             Self::PlaceChooser => Blockers::Modal(ModalKind::PlaceChooser),
             Self::Launcher => Blockers::Modal(ModalKind::Launcher),
             Self::Menu => Blockers::Modal(ModalKind::ContextMenu),
@@ -226,6 +235,7 @@ impl MainView {
             Layer::NewList => self.new_list.is_some(),
             Layer::Delegate => self.delegation_open(),
             Layer::Recording => self.recording_modal.is_some(),
+            Layer::NewBot => self.new_bot_open(),
             Layer::PlaceChooser => self.place_chooser.is_some(),
             Layer::Launcher => self.launcher.is_some(),
             Layer::Menu => self.menu.is_some(),

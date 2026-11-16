@@ -121,6 +121,13 @@ impl MainView {
         {
             return node;
         }
+        // The New bot dialog is projected in full (Bots, O155): its name
+        // field, its faces, where it runs and its buttons.
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::NewBot)
+            && let Some(node) = self.new_bot_semantics(cx)
+        {
+            return node;
+        }
         // The font picker is projected in full: a search field, the families
         // on screen and the toggle, not a hollow dialog.
         if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
@@ -192,6 +199,11 @@ impl MainView {
         }
         if blockers == Blockers::Prompt(koru_workspace_host::routing::PromptKind::FontPicker)
             && let Some(occurrence) = self.font_picker_focus(cx)
+        {
+            return occurrence;
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::NewBot)
+            && let Some(occurrence) = self.new_bot_focus(cx)
         {
             return occurrence;
         }
@@ -440,6 +452,7 @@ fn modal_keyword(kind: koru_workspace_host::routing::ModalKind) -> &'static str 
         K::ReminderOverlay => "reminders",
         K::ReminderManagement => "reminder-management",
         K::Recording => "recording",
+        K::NewBot => "new-bot",
         K::ContextMenu => "menu",
         K::PlaceChooser => "place-chooser",
         K::Launcher => "launcher",
@@ -477,6 +490,12 @@ pub(super) fn is_blocker_target(view: &MainView, target: Occurrence) -> bool {
         return view.menu_row_at(id).is_some() || view.names_a_live_menu(id);
     }
     if super::place_chooser::is_target(view, target) || super::launcher::is_target(view, target) {
+        return true;
+    }
+    // The New bot dialog's own controls, while it is what stands.
+    if view.blockers() == Blockers::Modal(koru_workspace_host::routing::ModalKind::NewBot)
+        && view.new_bot_is_target(target)
+    {
         return true;
     }
     // The reminder popover's own controls, when it is what is standing. A menu

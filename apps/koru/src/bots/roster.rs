@@ -22,9 +22,10 @@
 //! - **Asked, nothing back yet**: *Loading bots…* — never a zero claimed early.
 //! - **The service did not answer**: it says so, **over what it showed
 //!   before** — a failed read is never *you have no Bots*.
-//! - **The service answered with none**: the approved empty sentence, and
-//!   *Create a bot* under it (S8), which opens a Bot tab in create mode — the
-//!   same as the navigator heading's button.
+//! - **The service answered with none**: one short line, *No bots yet*
+//!   (QUESTIONS O155). What a Bot is and the *New bot* button are the main
+//!   area's while there is none (`bots::empty`), and the navigator heading
+//!   keeps its `+`.
 //!
 //! ## Unfinished creations (S8)
 //!
@@ -182,6 +183,14 @@ pub(crate) fn row_key(bot: BotId) -> Key {
     Key::model(bot.as_uuid().as_u128(), ROW_PART)
 }
 
+/// A row's *Runs on this computer* mark (QUESTIONS O155), under the Bot's
+/// own id.
+pub(crate) const RUNS_HERE_PART: &str = "bot-runs-here";
+
+pub(crate) fn runs_here_key(bot: BotId) -> Key {
+    Key::model(bot.as_uuid().as_u128(), RUNS_HERE_PART)
+}
+
 /// A Bot row's treatments, the library's: the open Bot on the card, the
 /// pointer's row tinted, the keyboard's ringed.
 static BOT_ROW_STATES: StateRecipe = StateRecipe {
@@ -235,11 +244,16 @@ pub(crate) struct RosterBot {
     /// The finished Archive or Trash the owner names as holding the Bot
     /// (`held_by`): what the tab's Unarchive names before its own read.
     pub held_by: Option<koru_ai_core::bots::BotLifecycleHolder>,
+    /// **The face the Bot wears** (QUESTIONS O155): the one the person
+    /// picked, else the one derived from its id, as the Bot itself says
+    /// (`Bot::avatar`). An index into `koru_draw::face::ROWS`.
+    pub avatar: u8,
 }
 
 impl From<Bot> for RosterBot {
     fn from(bot: Bot) -> Self {
         Self {
+            avatar: bot.avatar(),
             id: bot.id,
             name: bot.config.name,
             paused: bot.paused,
@@ -413,6 +427,12 @@ pub(crate) struct BotsRoster {
     creations_moved: Vec<BotRequestId>,
     /// Conversation titles as open Bot tabs show them (`know_titles`).
     titles: std::collections::HashMap<koru_ai_core::ChatId, String>,
+    // ------------------------------------------------ faces (O155)
+    /// **A copy of the window's one face clock** and the Bots it says are
+    /// working, handed in by the window (`set_faces`): what a row's face is
+    /// posed from. The roster owns no clock and asks for no frame.
+    face_clock: koru_draw::face::FaceClock,
+    face_working: Vec<BotId>,
 }
 
 impl BotsRoster {
@@ -465,6 +485,36 @@ impl BotsRoster {
     #[cfg(test)]
     pub(crate) fn work(&self) -> Work {
         self.work.get()
+    }
+
+    /// **The window's face clock, and the Bots that are working now**
+    /// (QUESTIONS O155): a working Bot's face moves, every other is still.
+    /// The window decides both from what it already knows
+    /// (`MainView::sync_bot_faces`).
+    pub(crate) fn set_faces(&mut self, clock: &koru_draw::face::FaceClock, working: &[BotId]) {
+        self.face_clock = clock.clone();
+        if self.face_working != working {
+            self.face_working = working.to_vec();
+        }
+    }
+
+    /// The Bots the activity read says have a reply running now: one of the
+    /// two things the window's face clock is told (the other is a Bot tab's
+    /// own conversation).
+    pub(crate) fn running_bots(&self) -> impl Iterator<Item = BotId> + '_ {
+        self.activity
+            .iter()
+            .filter(|entry| entry.state == BotActivityState::Running)
+            .map(|entry| entry.bot_id)
+    }
+
+    /// The pose `bot`'s face is drawn in now.
+    fn face_pose(&self, bot: &RosterBot) -> koru_draw::face::FacePose {
+        self.face_clock.pose(
+            bot.avatar,
+            self.face_working.contains(&bot.id),
+            std::time::Instant::now(),
+        )
     }
 
     pub(crate) fn selected(&self) -> Option<BotId> {
@@ -1283,7 +1333,7 @@ impl BotsRoster {
 
     /// **What the arrow keys walk, in the order the roster draws it**: the
     /// Bot rows, each followed by its running and Needs-you sub-rows; the
-    /// empty roster's *Create a bot*; the Unfinished group's
+    /// Unfinished group's
     /// *Open role page* and each row's Retry and Abandon; the Archived
     /// toggle; and while it is open each archived row and its Unarchive.
     /// Exactly the controls drawn now, so the keyboard never lands on one
@@ -1301,9 +1351,6 @@ impl BotsRoster {
                     .filter(|entry| entry.bot_id == bot.id)
                     .map(|entry| activity_key(entry.chat_id)),
             );
-        }
-        if self.load == Load::Ready && self.bots.is_empty() {
-            stops.push(CREATE);
         }
         if self
             .abandoned
@@ -1576,7 +1623,7 @@ impl BotsRoster {
         let mut primary = row("Bot primary")
             .id(key)
             .fill()
-            .min_h(metrics::NAV_ROW_MIN)
+            .min_h(super::faces::ROW_MIN)
             .pad_x(alias::ROW_PLATE_INSET)
             .gap(Space::S2)
             .items_center()
@@ -1589,7 +1636,20 @@ impl BotsRoster {
             .semantics(Role::ListItem)
             .name_text(self.accessible_name(bot))
             .selected(selected)
-            .child(icon(icons::ROBOT, IconSize::S).decorative())
+            // Its face (O155): the one it stores, else the one its id
+            // gives it; moving only while it works.
+            .child(
+                koru_draw::el::leaf(
+                    "Bot face",
+                    super::faces::FaceLeaf {
+                        face: bot.avatar,
+                        name: bot.name.clone(),
+                        pose: self.face_pose(bot),
+                        size: super::faces::ROW_FACE,
+                    },
+                )
+                .decorative(),
+            )
             .child(
                 text(&bot.name)
                     .named("Bot name")
@@ -1611,6 +1671,14 @@ impl BotsRoster {
                     .ink(Ink::Hint),
             );
         }
+        // Where it runs, as a mark with its own words (O155): every Bot
+        // runs on the computer that owns it, which is this one.
+        primary = primary.child(
+            icon(icons::DESKTOP, IconSize::S)
+                .alt(Words::BotsRunsOnThisComputer)
+                .id(runs_here_key(bot.id))
+                .ink(Ink::Hint),
+        );
         // The margins press the row's primary, so the whole band is the row.
         let mut block = col("Bot block").child(
             row("Bot row")
@@ -1696,21 +1764,14 @@ impl BotsRoster {
             root = root.child(Self::sentence("Bots notice", NOTICE, t(self.lang, notice)));
         }
         if self.load == Load::Ready && self.bots.is_empty() {
-            // No active Bot: *Create a bot* (S8), what has not finished,
-            // and the Archived filter (S14).
+            // No active Bot: one short line (O155: the pitch and *New bot*
+            // are the main area's, and the heading keeps its `+`), what has
+            // not finished, and the Archived filter (S14).
             return root
                 .child(Self::sentence(
                     "Bots empty",
                     EMPTY,
-                    t(self.lang, Words::BotsEmpty),
-                ))
-                .child(row("Bots create row").pad_x(alias::ROW_PLATE_INSET).child(
-                    self.text_button(
-                        "Bots create",
-                        CREATE,
-                        Words::BotsCreate,
-                        t(self.lang, Words::BotsCreate).to_owned(),
-                    ),
+                    t(self.lang, Words::BotsNoneYet),
                 ))
                 .children(self.unfinished_section())
                 .child(self.archived_section());

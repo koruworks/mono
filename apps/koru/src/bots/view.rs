@@ -99,12 +99,13 @@ mod actions;
 pub(crate) mod agent;
 pub(crate) mod context_library;
 pub(crate) mod context_routines;
-mod controls;
+pub(crate) mod controls;
 pub(crate) mod conversations;
 pub(crate) mod create;
 mod library;
 pub(crate) mod list;
 pub(crate) mod memory;
+pub(crate) mod new_bot;
 mod picker;
 pub(crate) mod region;
 pub(crate) use region::{Control, ControlRole};
@@ -193,11 +194,15 @@ pub(crate) struct BotFacts {
     pub home: WorkspaceId,
     pub provider: AiProviderId,
     pub main_chat: ChatId,
+    /// The face the Bot wears (QUESTIONS O155): its stored choice, else the
+    /// one its id gives it (`Bot::avatar`).
+    pub avatar: u8,
 }
 
 impl From<&RosterBot> for BotFacts {
     fn from(bot: &RosterBot) -> Self {
         Self {
+            avatar: bot.avatar,
             id: bot.id,
             name: bot.name.clone(),
             paused: bot.paused,
@@ -215,6 +220,7 @@ impl From<&RosterBot> for BotFacts {
 impl From<Bot> for BotFacts {
     fn from(bot: Bot) -> Self {
         Self {
+            avatar: bot.avatar(),
             id: bot.id,
             name: bot.config.name,
             paused: bot.paused,
@@ -436,6 +442,11 @@ pub(crate) struct BotView {
     /// (`take_creation_news`).
     /// Boxed: the tab is moved by value and kept small.
     creation_news: Option<Box<koru_ai_core::bots::BotCreation>>,
+    /// **The pose the header's face is drawn in** (QUESTIONS O155), as the
+    /// window last read it from its one face clock
+    /// (`MainView::sync_bot_faces`): still unless this Bot is working. The
+    /// tab owns no clock and asks for no frame for it.
+    face_pose: koru_draw::face::FacePose,
 }
 
 impl BotView {
@@ -514,7 +525,36 @@ impl BotView {
             created: false,
             roster_news: None,
             creation_news: None,
+            face_pose: koru_draw::face::FacePose::STILL,
         }
+    }
+
+    /// **The pose the header's face is drawn in**, from the window's clock.
+    /// `true` when it moved, and a repaint is owed.
+    pub(crate) fn set_face_pose(&mut self, pose: koru_draw::face::FacePose) -> bool {
+        let changed = self.face_pose != pose;
+        self.face_pose = pose;
+        changed
+    }
+
+    /// The pose the header's face is drawn in. Test only.
+    #[cfg(test)]
+    pub(crate) fn face_pose(&self) -> koru_draw::face::FacePose {
+        self.face_pose
+    }
+
+    /// The face this tab's Bot wears, once the tab knows its Bot.
+    pub(crate) fn avatar(&self) -> Option<u8> {
+        self.facts.as_ref().map(|facts| facts.avatar)
+    }
+
+    /// **Whether the conversation this tab shows has a reply running**, as
+    /// the window's chat status pass last set it (`maintain_chat_status`):
+    /// one of the two things that say a Bot is working (the other is the
+    /// roster's activity read).
+    pub(crate) fn conversation_working(&self) -> bool {
+        self.conversation()
+            .is_some_and(|view| view.status() == koru_chats_ui::ChatStatus::Working)
     }
 
     /// **Where this create tab's creation stands**, when one of its own
@@ -1367,7 +1407,20 @@ impl BotView {
             let mut title = row("Bot title")
                 .gap(Space::S2)
                 .items_center()
-                .child(icon(icons::ROBOT, IconSize::M).decorative())
+                // Its face (O155), beside its name: decorative, the name
+                // says who it is. Moving only while the Bot works.
+                .child(
+                    koru_draw::el::leaf(
+                        "Bot face",
+                        super::faces::FaceLeaf {
+                            face: facts.avatar,
+                            name: facts.name.clone(),
+                            pose: self.face_pose,
+                            size: super::faces::HEADER_FACE,
+                        },
+                    )
+                    .decorative(),
+                )
                 .child(
                     text(&facts.name)
                         .named("Bot name")
@@ -1448,7 +1501,20 @@ impl BotView {
                     row("Bot title")
                         .gap(Space::S2)
                         .items_center()
-                        .child(icon(icons::ROBOT, IconSize::M).decorative())
+                        // The face picked in the *New bot* dialog, when the
+                        // draft came from it (O155); else the Bots mark.
+                        .child(match self.create_face() {
+                            Some((face, name)) => koru_draw::el::leaf(
+                                "Bot face",
+                                super::faces::FaceLeaf::still(
+                                    face,
+                                    &name,
+                                    super::faces::HEADER_FACE,
+                                ),
+                            )
+                            .decorative(),
+                            None => icon(icons::ROBOT, IconSize::M).decorative(),
+                        })
                         .child(
                             text(label)
                                 .named("Bot name")
