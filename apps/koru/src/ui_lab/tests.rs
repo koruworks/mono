@@ -17,6 +17,8 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     ("ui_lab/placement.rs", include_str!("placement.rs")),
     ("ui_lab/registry.rs", include_str!("registry.rs")),
     ("ui_lab/shell.rs", include_str!("shell.rs")),
+    ("ui_lab/story.rs", include_str!("story.rs")),
+    ("ui_lab/tokens.rs", include_str!("tokens.rs")),
 ];
 
 /// The body of `fn main`, so a name that also appears in a helper or a

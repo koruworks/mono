@@ -31,7 +31,10 @@ fn source_variants(name: &str) -> Vec<&'static str> {
 }
 
 fn button() -> &'static Entry {
-    entry(BUTTON).expect("the seed registers the shared button")
+    ENTRIES
+        .iter()
+        .find(|entry| entry.catalog_id == BUTTON)
+        .expect("the seed registers the shared button")
 }
 
 #[test]
@@ -69,26 +72,22 @@ fn the_button_entry_names_the_real_button() {
     }
 }
 
+/// Each recipe carries its styles as the production type's own values: the
+/// dialog button's are `ButtonRole`, the compact action's `ActionStyle`, and
+/// neither list is borrowed from the other.
 #[test]
 fn each_recipe_lists_its_own_production_type() {
     let [dialog, compact] = button().recipes else {
         panic!("the button has a dialog recipe and a compact one");
     };
-    assert_eq!(
-        dialog.styles.type_path(),
-        std::any::type_name::<ButtonRole>()
-    );
-    assert_eq!(
-        compact.styles.type_path(),
-        std::any::type_name::<ActionStyle>()
-    );
     assert_eq!(dialog.styles, Styles::Dialog(&DIALOG_STYLES));
     assert_eq!(compact.styles, Styles::Compact(&COMPACT_STYLES));
 }
 
-/// The listed styles are exactly the enum's members, in its order. The slot
-/// functions match every member, so equal lengths and matching slots mean
-/// nothing is missing and nothing is listed twice.
+/// The listed styles are exactly the enum's members, in the order the source
+/// declares them. The registry's own constant assertion already holds each
+/// list to its enum at compile time; this reads `button.rs` itself, so the
+/// order shown in the Lab is the order a reader of the source sees.
 #[test]
 fn the_listed_styles_are_the_production_enums_members() {
     for (index, role) in DIALOG_STYLES.into_iter().enumerate() {
@@ -110,7 +109,8 @@ fn the_trial_story_resolves_to_the_dialog_recipe() {
     let (entry, recipe) = story(BUTTON_DIALOG_STORY).expect("the trial story is registered");
     assert_eq!(entry.catalog_id, BUTTON);
     assert_eq!(recipe.symbol, "koru_ui::button::draw_button");
-    assert_eq!(recipe.styles.len(), 3);
+    assert_eq!(recipe.styles, Styles::Dialog(&DIALOG_STYLES));
+    assert_eq!(recipe.controls, [Control::Label, Control::Style]);
     assert_eq!(recipe.a2ui, A2ui::NotSupported);
     assert_eq!(story("C-BUTTON/compact"), None);
     assert_eq!(story(""), None);
@@ -127,6 +127,13 @@ fn a_recipe_without_a_story_is_listed_as_such() {
 
 #[test]
 fn ids_are_unique_and_every_platform_has_an_answer() {
+    const PLATFORMS: [Platform; 5] = [
+        Platform::Windows,
+        Platform::MacOs,
+        Platform::Linux,
+        Platform::Android,
+        Platform::Ios,
+    ];
     for (index, entry) in ENTRIES.iter().enumerate() {
         assert!(
             ENTRIES[..index]
@@ -136,7 +143,7 @@ fn ids_are_unique_and_every_platform_has_an_answer() {
             entry.catalog_id
         );
         let listed: Vec<Platform> = entry.platforms.iter().map(|(p, _)| *p).collect();
-        assert_eq!(listed, Platform::ALL, "{}", entry.catalog_id);
+        assert_eq!(listed, PLATFORMS, "{}", entry.catalog_id);
     }
     let mut stories: Vec<&str> = ENTRIES
         .iter()
@@ -150,12 +157,69 @@ fn ids_are_unique_and_every_platform_has_an_answer() {
     stories.sort_unstable();
     stories.dedup();
     assert_eq!(stories.len(), count, "a story ID is registered twice");
+    // The Lab draws the Windows implementation; nothing is claimed for a
+    // platform nobody has looked at.
     assert_eq!(
-        button().availability(Platform::Windows),
-        Availability::Available
+        button().platforms,
+        [
+            (Platform::Windows, Availability::Available),
+            (Platform::MacOs, Availability::SharedSourceUnverified),
+            (Platform::Linux, Availability::SharedSourceUnverified),
+            (Platform::Android, Availability::NotAudited),
+            (Platform::Ios, Availability::NativePartial),
+        ]
     );
-    assert_eq!(
-        button().availability(Platform::Android),
-        Availability::NotAudited
-    );
+}
+
+/// Every word the registration puts on screen — a name, a purpose, a group
+/// heading, an input's name, a style's label — is a translation key, so it is
+/// present in all eight languages by construction. What a key cannot promise
+/// is that two options read differently, or that an identifier stayed out.
+#[test]
+fn every_displayed_string_is_translated_and_identifiers_are_not() {
+    for lang in koru_i18n::Lang::ALL {
+        let word = |key| koru_i18n::t(lang, key);
+        for entry in ENTRIES {
+            assert!(!word(entry.name).trim().is_empty());
+            let purpose = word(entry.purpose);
+            assert!(
+                !purpose.contains('\n'),
+                "{lang:?}: a purpose is one line: {purpose}"
+            );
+            // A technical identifier is shown as itself, never inside a
+            // translated sentence where a translator could change it.
+            for identifier in [entry.public_name, entry.catalog_id, entry.source.module] {
+                assert!(
+                    !purpose.contains(identifier) && !word(entry.name).contains(identifier),
+                    "{lang:?}: {identifier} leaked into translated text"
+                );
+            }
+            for recipe in entry.recipes {
+                for control in recipe.controls {
+                    assert!(!word(control.name()).trim().is_empty());
+                }
+            }
+        }
+        let mut headings: Vec<&str> = Family::ALL.iter().map(|f| word(f.heading())).collect();
+        headings.sort_unstable();
+        headings.dedup();
+        assert_eq!(headings.len(), Family::ALL.len(), "{lang:?}");
+        let mut styles: Vec<&str> = DIALOG_STYLES
+            .iter()
+            .map(|style| word(dialog_style_label(*style)))
+            .collect();
+        styles.sort_unstable();
+        styles.dedup();
+        assert_eq!(
+            styles.len(),
+            DIALOG_STYLES.len(),
+            "{lang:?}: two styles read the same"
+        );
+        assert_ne!(
+            word(Control::Label.name()),
+            word(Control::Style.name()),
+            "{lang:?}"
+        );
+    }
+    assert_ne!(Control::Label.part(), Control::Style.part());
 }

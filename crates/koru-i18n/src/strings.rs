@@ -3326,13 +3326,28 @@ pub enum Key {
     // ------ the UI Lab (`koru --ui`): its own window's words. A component's
     // source name and catalog ID are technical identifiers and are not here.
     UiLabTitle,
+    UiLabNavigator,
+    UiLabFamilyFoundations,
+    UiLabFamilyControls,
+    UiLabFamilyCompositions,
+    UiLabReset,
+    UiLabButtonName,
+    UiLabButtonPurpose,
+    UiLabControlLabel,
+    UiLabControlStyle,
+    UiLabStyleSecondary,
+    UiLabStylePrimary,
+    UiLabStyleDestructive,
+    UiLabButtonSampleLabel,
+    UiLabNotPressed,
+    UiLabPressCount,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2353] = [
+    pub const ALL: [Key; 2368] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5686,6 +5701,21 @@ impl Key {
         Key::MiniAppNextResults,
         Key::TaskCommandsPending,
         Key::UiLabTitle,
+        Key::UiLabNavigator,
+        Key::UiLabFamilyFoundations,
+        Key::UiLabFamilyControls,
+        Key::UiLabFamilyCompositions,
+        Key::UiLabReset,
+        Key::UiLabButtonName,
+        Key::UiLabButtonPurpose,
+        Key::UiLabControlLabel,
+        Key::UiLabControlStyle,
+        Key::UiLabStyleSecondary,
+        Key::UiLabStylePrimary,
+        Key::UiLabStyleDestructive,
+        Key::UiLabButtonSampleLabel,
+        Key::UiLabNotPressed,
+        Key::UiLabPressCount,
     ];
 }
 
@@ -17208,4 +17238,19 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::TaskCommandsPending, en: "Task changes are still being processed. Try again when they finish.", es: "Los cambios de las tareas aún se están procesando. Inténtalo de nuevo cuando terminen.", pt_br: "As alterações das tarefas ainda estão sendo processadas. Tente novamente quando terminarem.", de: "Aufgabenänderungen werden noch verarbeitet. Versuche es danach erneut.", fr: "Les modifications des tâches sont en cours de traitement. Réessayez ensuite.", ar: "لا تزال تغييرات المهام قيد المعالجة. حاول مجددًا بعد اكتمالها.", zh_hans: "任务更改仍在处理中。请在完成后重试。", ja: "タスクの変更を処理中です。完了してからもう一度お試しください。" },
     // ----------------------------------------------------------- the UI Lab
     Row { key: Key::UiLabTitle, en: "Koru UI Lab", es: "Laboratorio de interfaz de Koru", pt_br: "Laboratório de interface do Koru", de: "Koru UI-Labor", fr: "Laboratoire d’interface Koru", ar: "مختبر واجهة Koru", zh_hans: "Koru 界面实验室", ja: "Koru UI ラボ" },
+    Row { key: Key::UiLabNavigator, en: "Components", es: "Componentes", pt_br: "Componentes", de: "Komponenten", fr: "Composants", ar: "المكوّنات", zh_hans: "组件", ja: "コンポーネント" },
+    Row { key: Key::UiLabFamilyFoundations, en: "Foundations", es: "Fundamentos", pt_br: "Fundamentos", de: "Grundlagen", fr: "Fondations", ar: "الأساسيات", zh_hans: "基础", ja: "基礎" },
+    Row { key: Key::UiLabFamilyControls, en: "Controls", es: "Controles", pt_br: "Controles", de: "Steuerelemente", fr: "Contrôles", ar: "عناصر التحكم", zh_hans: "控件", ja: "コントロール" },
+    Row { key: Key::UiLabFamilyCompositions, en: "Application compositions", es: "Composiciones de la aplicación", pt_br: "Composições do aplicativo", de: "Anwendungskompositionen", fr: "Compositions de l’application", ar: "تركيبات التطبيق", zh_hans: "应用组合", ja: "アプリの構成" },
+    Row { key: Key::UiLabReset, en: "Reset", es: "Restablecer", pt_br: "Redefinir", de: "Zurücksetzen", fr: "Réinitialiser", ar: "إعادة التعيين", zh_hans: "重置", ja: "リセット" },
+    Row { key: Key::UiLabButtonName, en: "Button", es: "Botón", pt_br: "Botão", de: "Schaltfläche", fr: "Bouton", ar: "زر", zh_hans: "按钮", ja: "ボタン" },
+    Row { key: Key::UiLabButtonPurpose, en: "A labelled action in a dialog, styled by what it is for.", es: "Una acción con etiqueta en un diálogo, cuyo estilo indica para qué sirve.", pt_br: "Uma ação com rótulo em um diálogo, cujo estilo indica para que serve.", de: "Eine beschriftete Aktion in einem Dialog, deren Stil ihren Zweck zeigt.", fr: "Une action libellée dans une boîte de dialogue, dont le style indique le rôle.", ar: "إجراء له تسمية في مربع حوار، يدل نمطه على الغرض منه.", zh_hans: "对话框中带标签的操作，其样式表明用途。", ja: "ダイアログ内のラベル付きアクション。スタイルが用途を示します。" },
+    Row { key: Key::UiLabControlLabel, en: "Label", es: "Etiqueta", pt_br: "Rótulo", de: "Beschriftung", fr: "Libellé", ar: "التسمية", zh_hans: "标签", ja: "ラベル" },
+    Row { key: Key::UiLabControlStyle, en: "Style", es: "Estilo", pt_br: "Estilo", de: "Stil", fr: "Style", ar: "النمط", zh_hans: "样式", ja: "スタイル" },
+    Row { key: Key::UiLabStyleSecondary, en: "Secondary", es: "Secundario", pt_br: "Secundário", de: "Sekundär", fr: "Secondaire", ar: "ثانوي", zh_hans: "次要", ja: "セカンダリ" },
+    Row { key: Key::UiLabStylePrimary, en: "Primary", es: "Principal", pt_br: "Primário", de: "Primär", fr: "Principal", ar: "أساسي", zh_hans: "主要", ja: "プライマリ" },
+    Row { key: Key::UiLabStyleDestructive, en: "Destructive", es: "Destructivo", pt_br: "Destrutivo", de: "Destruktiv", fr: "Destructif", ar: "إتلافي", zh_hans: "破坏性", ja: "破壊的" },
+    Row { key: Key::UiLabButtonSampleLabel, en: "Save changes", es: "Guardar cambios", pt_br: "Salvar alterações", de: "Änderungen speichern", fr: "Enregistrer les modifications", ar: "حفظ التغييرات", zh_hans: "保存更改", ja: "変更を保存" },
+    Row { key: Key::UiLabNotPressed, en: "Not pressed yet", es: "Aún no se ha pulsado", pt_br: "Ainda não foi pressionado", de: "Noch nicht gedrückt", fr: "Pas encore pressé", ar: "لم يُضغط بعد", zh_hans: "尚未按下", ja: "まだ押されていません" },
+    Row { key: Key::UiLabPressCount, en: "Presses: {}", es: "Pulsaciones: {}", pt_br: "Pressionamentos: {}", de: "Betätigungen: {}", fr: "Pressions : {}", ar: "مرات الضغط: {}", zh_hans: "按下次数：{}", ja: "押した回数: {}" },
 ];

@@ -12,6 +12,13 @@
 //! takes. The components themselves stay with their owners; the Lab holds
 //! stories and fixtures only.
 //!
+//! This checkpoint is one trial: the shared dialog button in a three-region
+//! window ([`shell`]), with its label and style changed from the properties
+//! the registration lists, a visible result for pressing it, and Reset. Its
+//! state is [`story`]'s and lives in memory. There is no search, inspector,
+//! theme or width control and no way to name a story on the command line;
+//! those arrive with the gallery, not as placeholders here.
+//!
 //! ## What `run` starts, and what it must never start
 //!
 //! [`run`] is reached from `main` before any of the ordinary startup: the
@@ -27,12 +34,10 @@
 //! source, the way the Agent pins its worker dispatch.
 
 mod placement;
-// The window does not list anything yet: the registry's records are checked
-// against the production source by their own tests until the first story
-// reads them.
-#[allow(dead_code)]
 pub(crate) mod registry;
 mod shell;
+mod story;
+mod tokens;
 
 use koru_workspace_host::cli::UiCommand;
 
@@ -47,8 +52,15 @@ pub(crate) fn run(command: UiCommand) {
     koru_i18n::set_current(koru_i18n::Lang::for_system(
         koru_window::system_locale::system_locale().as_deref(),
     ));
+    // The one story this checkpoint has. The registry's own tests hold it in
+    // place, so a missing record is a broken build rather than a state a
+    // person can reach; it still ends here and not in an empty window.
+    let Some((entry, _)) = registry::story(registry::BUTTON_DIALOG_STORY) else {
+        eprintln!("Koru's UI Lab has no registered story to open");
+        std::process::exit(1);
+    };
     let placement = placement::Placement::in_memory(command.window_size);
-    if let Err(error) = koru_window::run(|_engine| shell::Lab::new(placement)) {
+    if let Err(error) = koru_window::run(|engine| shell::Lab::new(engine, placement, entry)) {
         eprintln!("Koru could not open the UI Lab window: {error}");
         std::process::exit(1);
     }

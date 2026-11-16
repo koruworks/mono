@@ -34,6 +34,21 @@ pub(crate) enum Family {
     Compositions,
 }
 
+impl Family {
+    /// The groups in the order the navigator shows them, whatever order the
+    /// entries were registered in.
+    pub(crate) const ALL: [Self; 3] = [Self::Foundations, Self::Controls, Self::Compositions];
+
+    /// The group's heading in the navigator.
+    pub(crate) fn heading(self) -> koru_i18n::Key {
+        match self {
+            Self::Foundations => koru_i18n::Key::UiLabFamilyFoundations,
+            Self::Controls => koru_i18n::Key::UiLabFamilyControls,
+            Self::Compositions => koru_i18n::Key::UiLabFamilyCompositions,
+        }
+    }
+}
+
 /// A platform an entry's availability is recorded for, one at a time: shared
 /// Rust source on one says nothing about a native adapter on another.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -43,16 +58,6 @@ pub(crate) enum Platform {
     Linux,
     Android,
     Ios,
-}
-
-impl Platform {
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Windows,
-        Self::MacOs,
-        Self::Linux,
-        Self::Android,
-        Self::Ios,
-    ];
 }
 
 /// What is known about an entry on one platform. Availability, not
@@ -106,19 +111,32 @@ pub(crate) enum Styles {
     Compact(&'static [ActionStyle]),
 }
 
-impl Styles {
-    /// The path of the type the styles are values of.
-    pub(crate) fn type_path(self) -> &'static str {
+/// One input of a recipe that a story lets a person change. The properties
+/// panel is built from a recipe's list of these, so it offers exactly the
+/// inputs the production call takes and nothing invented beside them.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Control {
+    /// The `label: &str` the recipe draws: free text.
+    Label,
+    /// One of the recipe's [`Styles`]: a choice.
+    Style,
+}
+
+impl Control {
+    /// What the panel calls this input.
+    pub(crate) fn name(self) -> koru_i18n::Key {
         match self {
-            Self::Dialog(_) => "koru_ui::button::ButtonRole",
-            Self::Compact(_) => "koru_ui::button::ActionStyle",
+            Self::Label => koru_i18n::Key::UiLabControlLabel,
+            Self::Style => koru_i18n::Key::UiLabControlStyle,
         }
     }
 
-    pub(crate) fn len(self) -> usize {
+    /// The stable part of the control's identity in the window: what the
+    /// pointer, the keyboard focus and a recipe's written steps refer to.
+    pub(crate) fn part(self) -> &'static str {
         match self {
-            Self::Dialog(styles) => styles.len(),
-            Self::Compact(styles) => styles.len(),
+            Self::Label => "label",
+            Self::Style => "style",
         }
     }
 }
@@ -129,6 +147,8 @@ pub(crate) struct Recipe {
     /// The symbol a caller invokes.
     pub(crate) symbol: &'static str,
     pub(crate) styles: Styles,
+    /// The inputs a story of this recipe exposes, in panel order.
+    pub(crate) controls: &'static [Control],
     pub(crate) a2ui: A2ui,
     pub(crate) story: Story,
 }
@@ -141,19 +161,15 @@ pub(crate) struct Entry {
     /// The component's public name, a technical identifier and never
     /// translated.
     pub(crate) public_name: &'static str,
+    /// What a person calls it, in the display language.
+    pub(crate) name: koru_i18n::Key,
+    /// One line on what it is for. Not documentation: the contract stays
+    /// with the component's owner.
+    pub(crate) purpose: koru_i18n::Key,
     pub(crate) family: Family,
     pub(crate) source: Source,
     pub(crate) platforms: [(Platform, Availability); 5],
     pub(crate) recipes: &'static [Recipe],
-}
-
-impl Entry {
-    pub(crate) fn availability(&self, platform: Platform) -> Availability {
-        self.platforms
-            .iter()
-            .find(|(listed, _)| *listed == platform)
-            .map_or(Availability::NotAudited, |(_, availability)| *availability)
-    }
 }
 
 /// The dialog button's styles, in the order `ButtonRole` declares them. The
@@ -182,6 +198,16 @@ pub(crate) const fn dialog_slot(role: ButtonRole) -> usize {
     }
 }
 
+/// What the style control calls `role`. The option's label is translated; the
+/// enum member it stands for is not, and is what a written recipe names.
+pub(crate) const fn dialog_style_label(role: ButtonRole) -> koru_i18n::Key {
+    match role {
+        ButtonRole::Secondary => koru_i18n::Key::UiLabStyleSecondary,
+        ButtonRole::Primary => koru_i18n::Key::UiLabStylePrimary,
+        ButtonRole::Destructive => koru_i18n::Key::UiLabStyleDestructive,
+    }
+}
+
 /// Where `style` sits in [`COMPACT_STYLES`].
 pub(crate) const fn compact_slot(style: ActionStyle) -> usize {
     match style {
@@ -191,6 +217,22 @@ pub(crate) const fn compact_slot(style: ActionStyle) -> usize {
         ActionStyle::Destructive => 3,
     }
 }
+
+// Each list is its enum, member for member and in order, or this file does
+// not compile: the slot functions match every member, so a list of the same
+// length whose every member sits in its own slot can be missing none.
+const _: () = {
+    let mut slot = 0;
+    while slot < DIALOG_STYLES.len() {
+        assert!(dialog_slot(DIALOG_STYLES[slot]) == slot);
+        slot += 1;
+    }
+    let mut slot = 0;
+    while slot < COMPACT_STYLES.len() {
+        assert!(compact_slot(COMPACT_STYLES[slot]) == slot);
+        slot += 1;
+    }
+};
 
 /// The catalog ID of the shared button.
 pub(crate) const BUTTON: &str = "C-BUTTON";
@@ -202,6 +244,8 @@ pub(crate) const BUTTON_DIALOG_STORY: &str = "C-BUTTON/dialog";
 pub(crate) const ENTRIES: &[Entry] = &[Entry {
     catalog_id: BUTTON,
     public_name: "KoruButton",
+    name: koru_i18n::Key::UiLabButtonName,
+    purpose: koru_i18n::Key::UiLabButtonPurpose,
     family: Family::Controls,
     source: Source {
         module: "koru_ui::button",
@@ -218,22 +262,19 @@ pub(crate) const ENTRIES: &[Entry] = &[Entry {
         Recipe {
             symbol: "koru_ui::button::draw_button",
             styles: Styles::Dialog(&DIALOG_STYLES),
+            controls: &[Control::Label, Control::Style],
             a2ui: A2ui::NotSupported,
             story: Story::Available(BUTTON_DIALOG_STORY),
         },
         Recipe {
             symbol: "koru_ui::button::ActionButton",
             styles: Styles::Compact(&COMPACT_STYLES),
+            controls: &[Control::Label, Control::Style],
             a2ui: A2ui::HostStyled,
             story: Story::NoStoryYet,
         },
     ],
 }];
-
-/// The entry filed under `catalog_id`.
-pub(crate) fn entry(catalog_id: &str) -> Option<&'static Entry> {
-    ENTRIES.iter().find(|entry| entry.catalog_id == catalog_id)
-}
 
 /// The entry and recipe a story ID runs.
 pub(crate) fn story(story_id: &str) -> Option<(&'static Entry, &'static Recipe)> {
