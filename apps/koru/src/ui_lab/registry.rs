@@ -411,6 +411,41 @@ const fn literal(ident: &'static str) -> Member {
     Member { ident, label: None }
 }
 
+const fn api(symbol: &'static str, options: &'static [OptionSet], a2ui: A2ui, story: Story) -> Api {
+    Api {
+        symbol,
+        options,
+        a2ui,
+        story,
+    }
+}
+
+/// A symbol with no option of its own that the catalog cannot name.
+const fn plain(symbol: &'static str, story: Story) -> Api {
+    api(symbol, &[], A2ui::NotSupported, story)
+}
+
+/// A symbol whose values are listed but that the catalog cannot name.
+const fn plain_with(symbol: &'static str, options: &'static [OptionSet], story: Story) -> Api {
+    api(symbol, options, A2ui::NotSupported, story)
+}
+
+const fn values(
+    name: koru_i18n::Key,
+    source: &'static str,
+    file: &'static str,
+    declared: Declared,
+    members: &'static [Member],
+) -> OptionSet {
+    OptionSet {
+        name,
+        source,
+        file,
+        declared,
+        members,
+    }
+}
+
 /// Shared Rust that ships in the desktop app: the Windows source is the
 /// production one, macOS and Linux build the same source unverified, and no
 /// mobile equivalent has been audited.
