@@ -330,6 +330,58 @@ impl AiChatView {
         self.surface.owned()
     }
 
+    // ---- A host-drawn empty transcript (`koru_ai_ui::owned`): a Bot tab
+    // draws its Bot's quick setup where an empty chat's greeting would be.
+
+    /// The host draws the empty transcript, or no longer does.
+    pub fn host_empty_transcript(&mut self, hosted: bool) -> bool {
+        self.surface.host_empty_transcript(hosted)
+    }
+
+    /// Whether the conversation shown is read and empty; `None` until read.
+    pub fn transcript_is_empty(&self) -> Option<bool> {
+        self.surface.transcript_is_empty()
+    }
+
+    /// The room the host draws in, while its content is what shows.
+    pub fn hosted_empty_area(&mut self) -> Option<Rect> {
+        self.surface.hosted_empty_area()
+    }
+
+    /// A press in the host's room that nothing of the chat's claimed.
+    pub fn take_hosted_press(&mut self) -> Option<(f32, f32)> {
+        self.surface.take_hosted_press()
+    }
+
+    /// The host's own content holds the keyboard, or gave it back.
+    pub fn set_host_keyboard(&mut self, held: bool) -> bool {
+        self.surface.set_host_keyboard(held)
+    }
+
+    /// [`View::draw`], with the host's painter for the empty transcript.
+    pub fn draw_hosting(
+        &mut self,
+        scene: &mut Scene,
+        workspace: &Workspace,
+        root: Affine,
+        paint: koru_ai_ui::EmptyTranscriptPaint<'_>,
+    ) {
+        self.before_draw(workspace);
+        self.surface.draw_hosting(scene, root, paint);
+    }
+
+    /// What every draw tells the surface first: the window's workspace, no
+    /// document of its own, and whether the Store holds what it owes.
+    fn before_draw(&mut self, workspace: &Workspace) {
+        let workspace_id = workspace
+            .current()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
+        self.surface.set_context_workspace(workspace_id);
+        self.surface.set_context_document(None);
+        self.surface
+            .submit_embedded_when_durable(workspace.owed() == 0);
+    }
+
     /// Lay the chat out in `area` of its host's view — a Bot tab puts it
     /// below its header. Input and drawing keep the host's coordinates: the
     /// surface hit-tests and paints inside its viewport wherever it sits.
@@ -678,13 +730,7 @@ impl View for AiChatView {
         _caret_on: bool,
         _pointer: (f32, f32),
     ) {
-        let workspace_id = workspace
-            .current()
-            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
-        self.surface.set_context_workspace(workspace_id);
-        self.surface.set_context_document(None);
-        self.surface
-            .submit_embedded_when_durable(workspace.owed() == 0);
+        self.before_draw(workspace);
         self.surface.draw(scene, root);
     }
 

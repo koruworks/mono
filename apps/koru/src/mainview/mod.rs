@@ -68,6 +68,7 @@ mod agent_mcp;
 mod agent_providers;
 mod bot_context;
 mod bot_lifecycle;
+mod bot_onboard;
 mod bots;
 mod canvas;
 mod canvas_chain;
@@ -718,6 +719,9 @@ pub struct MainView {
     /// the *New bot* dialog while it stands, the empty Bots view's state,
     /// and the window's one clock for Bot faces.
     first_bot: new_bot::FirstBot,
+    /// **A Bot's quick setup, the window's half** (QUESTIONS O155): the Role
+    /// writes this window has with a worker (`bot_onboard`).
+    bot_setups: bot_onboard::BotSetups,
     /// **Whose each conversation is, as far as the window knows** (Bots
     /// P1.8, B1): what `chat_tab` asks before choosing a chat tab or a Bot
     /// tab, and its one read off the window thread (`bots::labels`).
@@ -1880,6 +1884,7 @@ impl MainView {
             ai_chat_folder_ask: None,
             bot_create_folder_ask: None,
             first_bot: Default::default(),
+            bot_setups: Default::default(),
             bot_labels: crate::bots::labels::ChatLabels::default(),
             bot_trash: crate::bots::trash::BotTrash::default(),
             held_chat_opens: Vec::new(),
@@ -15196,6 +15201,7 @@ impl View for MainView {
     fn restore(&mut self, ws: &Workspace, settings: &Settings) {
         koru_editor::emoji::restore_usage(&settings.emoji_recents);
         chat_status::restore(&settings.chat_seen);
+        bot_onboard::restore(&settings.bot_setup);
         self.explore.restore_rail_order(&settings.rail_order);
         koru_editor::emoji::set_preferred_skin_tone(koru_editor::emoji::parse_skin_tone(
             &settings.emoji_skin_tone,
@@ -15281,6 +15287,7 @@ impl View for MainView {
                 .to_owned();
         settings.navigator_mode = self.explore.navigator_mode().token().to_owned();
         settings.chat_seen = chat_status::capture();
+        settings.bot_setup = bot_onboard::capture();
         settings.rail_order = self.explore.rail_order_storage();
         self.capture_session(settings);
     }
@@ -15708,7 +15715,8 @@ impl View for MainView {
         let bots_changed = self.maintain_bots();
         // The New bot dialog's pass, then every Bot face's pose: after the
         // chat statuses and the roster's activity, which say who works.
-        let first_bot_changed = self.maintain_new_bot() | self.sync_bot_faces(now);
+        let first_bot_changed =
+            self.maintain_new_bot() | self.sync_bot_faces(now) | self.maintain_bot_setup();
         let socials_changed = self.maintain_socials_navigation(now);
         let ai_document_opened = self.open_pending_ai_document()
             | self.open_pending_bot_role()

@@ -4094,13 +4094,74 @@ pub enum Key {
     BotsRoutinesMayStillBeOn,
     /// A restored Bot's sentence when some of its Routines need a look. Non-English columns machine-written, awaiting a native read.
     BotsRestoredCheckRoutines,
+    // ------------------------------------- a Bot's quick setup (QUESTIONS O155)
+    // Drawn over a Bot's empty main conversation: a greeting in the Bot's
+    // voice and a two-step card. A presentation, never a stored message.
+    /// The greeting over a Bot's empty main conversation; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupGreeting,
+    /// The setup card's title; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupTitle,
+    /// The card's control that ends the setup without doing its steps. Non-English columns machine-written, awaiting a native read.
+    BotsSetupSkipAll,
+    /// The accessible name of the card's list of steps. Non-English columns machine-written, awaiting a native read.
+    BotsSetupSteps,
+    /// Step 1 of the card. Non-English columns machine-written, awaiting a native read.
+    BotsSetupStepRole,
+    /// Step 2 of the card. Non-English columns machine-written, awaiting a native read.
+    BotsSetupStepContext,
+    /// A step's accessible name once it was saved: its number, how many there are, its name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupStepIsDone,
+    /// A step's accessible name while it is the one shown: its number, how many there are, its name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupStepIsCurrent,
+    /// A step's accessible name while it is neither saved nor shown: its number, how many there are, its name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupStepIsWaiting,
+    /// The accessible name of step 1's text; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupRoleLabel,
+    /// The placeholder of step 1's text. Non-English columns machine-written, awaiting a native read.
+    BotsSetupRolePlaceholder,
+    /// Under step 1's text: what Save does to the Role page; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupRoleNote,
+    /// The word before step 1's examples. Non-English columns machine-written, awaiting a native read.
+    BotsSetupTry,
+    /// An example that fills step 1's text: a research digest. Non-English columns machine-written, awaiting a native read.
+    BotsSetupExampleDigest,
+    /// An example that fills step 1's text: notes into tasks. Non-English columns machine-written, awaiting a native read.
+    BotsSetupExampleTasks,
+    /// An example that fills step 1's text: a spec review. Non-English columns machine-written, awaiting a native read.
+    BotsSetupExampleSpecs,
+    /// What the research digest example writes: a job, with no schedule. Non-English columns machine-written, awaiting a native read.
+    BotsSetupExampleDigestText,
+    /// What the notes example writes: a job, with no trigger. Non-English columns machine-written, awaiting a native read.
+    BotsSetupExampleTasksText,
+    /// What the spec review example writes: a job, with no trigger. Non-English columns machine-written, awaiting a native read.
+    BotsSetupExampleSpecsText,
+    /// Step 1's sentence when the Role could not be written. Non-English columns machine-written, awaiting a native read.
+    BotsSetupRoleFailed,
+    /// Leaves a step without saving it. Non-English columns machine-written, awaiting a native read.
+    BotsSetupSkip,
+    /// Step 2's sentence: what a context page is, and what it does not grant; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupContextHint,
+    /// Step 2's control that opens the page picker. Non-English columns machine-written, awaiting a native read.
+    BotsSetupBrowse,
+    /// Ends step 2, and the setup. Non-English columns machine-written, awaiting a native read.
+    BotsSetupDone,
+    /// The card once the setup ended; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupReady,
+    /// The finished card's way back to its steps. Non-English columns machine-written, awaiting a native read.
+    BotsSetupAgain,
+    /// Under the card; `{}` is the Bot's name. Non-English columns machine-written, awaiting a native read.
+    BotsSetupHint,
+    /// The History label before the card replaces a Role page's text. Non-English columns machine-written, awaiting a native read.
+    BotsSetupHistoryBefore,
+    /// The History label after the card replaced a Role page's text. Non-English columns machine-written, awaiting a native read.
+    BotsSetupHistoryAfter,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2755] = [
+    pub const ALL: [Key; 2784] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6856,6 +6917,35 @@ impl Key {
         Key::BotsRoutineChooseAccessAgain,
         Key::BotsRoutinesMayStillBeOn,
         Key::BotsRestoredCheckRoutines,
+        Key::BotsSetupGreeting,
+        Key::BotsSetupTitle,
+        Key::BotsSetupSkipAll,
+        Key::BotsSetupSteps,
+        Key::BotsSetupStepRole,
+        Key::BotsSetupStepContext,
+        Key::BotsSetupStepIsDone,
+        Key::BotsSetupStepIsCurrent,
+        Key::BotsSetupStepIsWaiting,
+        Key::BotsSetupRoleLabel,
+        Key::BotsSetupRolePlaceholder,
+        Key::BotsSetupRoleNote,
+        Key::BotsSetupTry,
+        Key::BotsSetupExampleDigest,
+        Key::BotsSetupExampleTasks,
+        Key::BotsSetupExampleSpecs,
+        Key::BotsSetupExampleDigestText,
+        Key::BotsSetupExampleTasksText,
+        Key::BotsSetupExampleSpecsText,
+        Key::BotsSetupRoleFailed,
+        Key::BotsSetupSkip,
+        Key::BotsSetupContextHint,
+        Key::BotsSetupBrowse,
+        Key::BotsSetupDone,
+        Key::BotsSetupReady,
+        Key::BotsSetupAgain,
+        Key::BotsSetupHint,
+        Key::BotsSetupHistoryBefore,
+        Key::BotsSetupHistoryAfter,
     ];
 }
 
@@ -21016,4 +21106,34 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsRoutineChooseAccessAgain, en: "Choose access again", es: "Elige el acceso de nuevo", pt_br: "Escolha o acesso novamente", de: "Zugriff erneut wählen", fr: "Choisissez à nouveau l'accès", ar: "اختر الوصول مجددًا", zh_hans: "请重新选择访问权限", ja: "アクセスを選び直してください" },
     Row { key: Key::BotsRoutinesMayStillBeOn, en: "These Routines may still be on: {}", es: "Estas rutinas pueden seguir activadas: {}", pt_br: "Estas rotinas ainda podem estar ativadas: {}", de: "Diese Routinen sind möglicherweise noch eingeschaltet: {}", fr: "Ces routines sont peut-être encore activées : {}", ar: "قد تكون هذه المهام الدورية ما زالت تعمل: \u{2068}{}\u{2069}", zh_hans: "这些例行任务可能仍处于开启状态：{}", ja: "次のルーティンはまだオンの可能性があります：{}" },
     Row { key: Key::BotsRestoredCheckRoutines, en: "Restored and paused. Check its Routines before you resume it.", es: "Restaurado y en pausa. Revisa sus rutinas antes de reanudarlo.", pt_br: "Restaurado e pausado. Confira as rotinas antes de retomá-lo.", de: "Wiederhergestellt und pausiert. Prüfe seine Routinen, bevor du ihn fortsetzt.", fr: "Restauré et en pause. Vérifiez ses routines avant de le reprendre.", ar: "تمت الاستعادة وهو متوقف مؤقتًا. راجع مهامه الدورية قبل استئنافه.", zh_hans: "已恢复并暂停。恢复运行前请检查它的例行任务。", ja: "復元され、一時停止中です。再開する前にルーティンを確認してください。" },
+    // ------------------------------------- a Bot's quick setup (QUESTIONS O155)
+    Row { key: Key::BotsSetupGreeting, en: "Hi, I'm {}. Tell me what you'd like me to do, or use the quick setup below. Either way, I'll ask for anything I'm missing.", es: "Hola, soy {}. Dime qué quieres que haga o usa la configuración rápida de abajo. En cualquier caso, te preguntaré lo que me falte.", pt_br: "Oi, eu sou {}. Diga o que você quer que eu faça ou use a configuração rápida abaixo. De qualquer forma, vou perguntar o que estiver faltando.", de: "Hallo, ich bin {}. Sag mir, was ich tun soll, oder nutze die Schnelleinrichtung unten. So oder so frage ich nach, wenn mir etwas fehlt.", fr: "Bonjour, je suis {}. Dites-moi ce que vous attendez de moi, ou utilisez la configuration rapide ci-dessous. Dans les deux cas, je vous demanderai ce qui me manque.", ar: "مرحبًا، أنا \u{2068}{}\u{2069}. أخبرني بما تريد أن أفعله، أو استخدم الإعداد السريع أدناه. في الحالتين سأسألك عن أي شيء ينقصني.", zh_hans: "你好，我是 {}。告诉我你想让我做什么，或使用下方的快速设置。无论哪种方式，缺少的信息我都会向你询问。", ja: "こんにちは、{} です。してほしいことを教えてください。下のクイック設定も使えます。どちらの場合も、足りない情報があればお尋ねします。" },
+    Row { key: Key::BotsSetupTitle, en: "Set up {}", es: "Configurar {}", pt_br: "Configurar {}", de: "{} einrichten", fr: "Configurer {}", ar: "إعداد \u{2068}{}\u{2069}", zh_hans: "设置 {}", ja: "{} を設定" },
+    Row { key: Key::BotsSetupSkipAll, en: "Skip setup", es: "Omitir configuración", pt_br: "Pular configuração", de: "Einrichtung überspringen", fr: "Passer la configuration", ar: "تخطي الإعداد", zh_hans: "跳过设置", ja: "設定をスキップ" },
+    Row { key: Key::BotsSetupSteps, en: "Setup steps", es: "Pasos de configuración", pt_br: "Etapas da configuração", de: "Einrichtungsschritte", fr: "Étapes de configuration", ar: "خطوات الإعداد", zh_hans: "设置步骤", ja: "設定の手順" },
+    Row { key: Key::BotsSetupStepRole, en: "Explain its role", es: "Explica su rol", pt_br: "Explique a função dele", de: "Rolle erklären", fr: "Expliquer son rôle", ar: "اشرح دوره", zh_hans: "说明它的职责", ja: "役割を説明する" },
+    Row { key: Key::BotsSetupStepContext, en: "Add context", es: "Añadir contexto", pt_br: "Adicionar contexto", de: "Kontext hinzufügen", fr: "Ajouter du contexte", ar: "أضف سياقًا", zh_hans: "添加背景信息", ja: "参考情報を追加する" },
+    Row { key: Key::BotsSetupStepIsDone, en: "Step {} of {}, {}: done", es: "Paso {} de {}, {}: hecho", pt_br: "Etapa {} de {}, {}: concluída", de: "Schritt {} von {}, {}: erledigt", fr: "Étape {} sur {}, {} : terminée", ar: "الخطوة \u{2068}{}\u{2069} من \u{2068}{}\u{2069}، \u{2068}{}\u{2069}: تمت", zh_hans: "第 {} 步，共 {} 步，{}：已完成", ja: "ステップ {}/{}、{}：完了" },
+    Row { key: Key::BotsSetupStepIsCurrent, en: "Step {} of {}, {}: current step", es: "Paso {} de {}, {}: paso actual", pt_br: "Etapa {} de {}, {}: etapa atual", de: "Schritt {} von {}, {}: aktueller Schritt", fr: "Étape {} sur {}, {} : étape en cours", ar: "الخطوة \u{2068}{}\u{2069} من \u{2068}{}\u{2069}، \u{2068}{}\u{2069}: الخطوة الحالية", zh_hans: "第 {} 步，共 {} 步，{}：当前步骤", ja: "ステップ {}/{}、{}：現在のステップ" },
+    Row { key: Key::BotsSetupStepIsWaiting, en: "Step {} of {}, {}: not done", es: "Paso {} de {}, {}: sin hacer", pt_br: "Etapa {} de {}, {}: não concluída", de: "Schritt {} von {}, {}: noch offen", fr: "Étape {} sur {}, {} : pas encore faite", ar: "الخطوة \u{2068}{}\u{2069} من \u{2068}{}\u{2069}، \u{2068}{}\u{2069}: لم تتم بعد", zh_hans: "第 {} 步，共 {} 步，{}：未完成", ja: "ステップ {}/{}、{}：未完了" },
+    Row { key: Key::BotsSetupRoleLabel, en: "What should {} do?", es: "¿Qué debe hacer {}?", pt_br: "O que {} deve fazer?", de: "Was soll {} tun?", fr: "Que doit faire {} ?", ar: "ماذا ينبغي أن يفعل \u{2068}{}\u{2069}؟", zh_hans: "{} 应该做什么？", ja: "{} に何をしてほしいですか？" },
+    Row { key: Key::BotsSetupRolePlaceholder, en: "Describe the job the way you'd brief a person.", es: "Describe el trabajo como se lo explicarías a una persona.", pt_br: "Descreva o trabalho como você explicaria a uma pessoa.", de: "Beschreibe die Aufgabe so, wie du sie einem Menschen erklären würdest.", fr: "Décrivez le travail comme vous l'expliqueriez à une personne.", ar: "صِف المهمة كما تشرحها لشخص.", zh_hans: "像向同事交代工作一样描述这项任务。", ja: "人に仕事を頼むときのように、内容を説明してください。" },
+    Row { key: Key::BotsSetupRoleNote, en: "Save puts this on {}'s Role page, in place of what is there. The earlier version stays in the page's history.", es: "Guardar pone este texto en la página del rol de {}, en lugar de lo que haya. La versión anterior queda en el historial de la página.", pt_br: "Salvar coloca este texto na página da função de {}, no lugar do que estiver lá. A versão anterior fica no histórico da página.", de: "Speichern schreibt diesen Text auf die Rollenseite von {} und ersetzt, was dort steht. Die frühere Fassung bleibt im Verlauf der Seite.", fr: "Enregistrer place ce texte sur la page du rôle de {}, à la place de ce qui s'y trouve. La version précédente reste dans l'historique de la page.", ar: "الحفظ يضع هذا النص في صفحة دور \u{2068}{}\u{2069} بدلًا مما فيها. تبقى النسخة السابقة في سجل الصفحة.", zh_hans: "保存后，这段文字会写入 {} 的职责页面并替换原有内容。之前的版本保留在页面的历史记录中。", ja: "保存すると、このテキストが {} の役割ページに書き込まれ、元の内容と置き換わります。以前の版はページの履歴に残ります。" },
+    Row { key: Key::BotsSetupTry, en: "Try", es: "Prueba", pt_br: "Experimente", de: "Zum Beispiel", fr: "Essayez", ar: "جرّب", zh_hans: "试试", ja: "例" },
+    Row { key: Key::BotsSetupExampleDigest, en: "Research digest", es: "Resumen de investigación", pt_br: "Resumo de pesquisa", de: "Recherche-Überblick", fr: "Synthèse de recherche", ar: "ملخص بحثي", zh_hans: "研究摘要", ja: "リサーチのまとめ" },
+    Row { key: Key::BotsSetupExampleTasks, en: "Turn notes into tasks", es: "Convertir notas en tareas", pt_br: "Transformar notas em tarefas", de: "Notizen in Aufgaben umwandeln", fr: "Transformer des notes en tâches", ar: "تحويل الملاحظات إلى مهام", zh_hans: "把笔记变成任务", ja: "メモをタスクにする" },
+    Row { key: Key::BotsSetupExampleSpecs, en: "Review a spec", es: "Revisar una especificación", pt_br: "Revisar uma especificação", de: "Eine Spezifikation prüfen", fr: "Relire une spécification", ar: "مراجعة مواصفة", zh_hans: "审阅规格说明", ja: "仕様をレビューする" },
+    Row { key: Key::BotsSetupExampleDigestText, en: "When I ask, read the pages I point you to and write up the notes worth keeping. Keep each summary under 80 words.", es: "Cuando te lo pida, lee las páginas que te indique y redacta las notas que merezca la pena conservar. Cada resumen debe tener menos de 80 palabras.", pt_br: "Quando eu pedir, leia as páginas que eu indicar e escreva as notas que vale a pena guardar. Mantenha cada resumo com menos de 80 palavras.", de: "Wenn ich dich darum bitte, lies die Seiten, die ich dir nenne, und halte die Notizen fest, die es wert sind. Jede Zusammenfassung bleibt unter 80 Wörtern.", fr: "Quand je te le demande, lis les pages que je t'indique et rédige les notes qui méritent d'être gardées. Chaque résumé doit faire moins de 80 mots.", ar: "عندما أطلب منك، اقرأ الصفحات التي أحددها لك واكتب الملاحظات التي تستحق الحفظ. اجعل كل ملخص أقل من ٨٠ كلمة.", zh_hans: "在我提出要求时，阅读我指定的页面，并写下值得保留的要点。每条摘要不超过 80 字。", ja: "依頼したときに、指定したページを読み、残す価値のあるメモをまとめてください。各要約は 80 語以内にしてください。" },
+    Row { key: Key::BotsSetupExampleTasksText, en: "When I give you a note, pull out anything I need to do and list each item as a task with a due date.", es: "Cuando te dé una nota, extrae todo lo que tengo que hacer y enumera cada cosa como una tarea con fecha límite.", pt_br: "Quando eu passar uma nota, separe tudo o que preciso fazer e liste cada item como uma tarefa com prazo.", de: "Wenn ich dir eine Notiz gebe, zieh alles heraus, was ich erledigen muss, und führe jeden Punkt als Aufgabe mit Fälligkeitsdatum auf.", fr: "Quand je te donne une note, relève tout ce que je dois faire et présente chaque point comme une tâche avec une échéance.", ar: "عندما أعطيك ملاحظة، استخرج كل ما عليّ فعله واذكر كل بند كمهمة لها تاريخ استحقاق.", zh_hans: "当我给你一条笔记时，找出我需要做的事情，并把每一项列为带截止日期的任务。", ja: "メモを渡したら、私がやるべきことを抜き出し、それぞれを期限付きのタスクとして挙げてください。" },
+    Row { key: Key::BotsSetupExampleSpecsText, en: "When I ask you to review a spec, read it and tell me what's missing or unclear.", es: "Cuando te pida revisar una especificación, léela y dime qué falta o qué no queda claro.", pt_br: "Quando eu pedir para revisar uma especificação, leia e me diga o que está faltando ou pouco claro.", de: "Wenn ich dich bitte, eine Spezifikation zu prüfen, lies sie und sag mir, was fehlt oder unklar ist.", fr: "Quand je te demande de relire une spécification, lis-la et dis-moi ce qui manque ou n'est pas clair.", ar: "عندما أطلب منك مراجعة مواصفة، اقرأها وأخبرني بما ينقصها أو بما هو غير واضح.", zh_hans: "当我请你审阅一份规格说明时，请阅读它，并告诉我哪些内容缺失或不清楚。", ja: "仕様のレビューを依頼したら、読んで、不足している点や不明確な点を教えてください。" },
+    Row { key: Key::BotsSetupRoleFailed, en: "The role wasn't saved. Try again.", es: "No se guardó el rol. Inténtalo de nuevo.", pt_br: "A função não foi salva. Tente novamente.", de: "Die Rolle wurde nicht gespeichert. Versuche es erneut.", fr: "Le rôle n'a pas été enregistré. Réessayez.", ar: "لم يُحفظ الدور. حاول مجددًا.", zh_hans: "职责未保存。请重试。", ja: "役割を保存できませんでした。もう一度お試しください。" },
+    Row { key: Key::BotsSetupSkip, en: "Skip", es: "Omitir", pt_br: "Pular", de: "Überspringen", fr: "Passer", ar: "تخطي", zh_hans: "跳过", ja: "スキップ" },
+    Row { key: Key::BotsSetupContextHint, en: "Pages {} gets as context when it starts a new task. It can already read every page in its workspace, and adding one here doesn't let it edit that page.", es: "Páginas que {} recibe como contexto al empezar una tarea nueva. Ya puede leer todas las páginas de su espacio de trabajo, y añadir una aquí no le permite editarla.", pt_br: "Páginas que {} recebe como contexto ao começar uma nova tarefa. Ele já pode ler todas as páginas do espaço de trabalho dele, e adicionar uma aqui não permite editá-la.", de: "Seiten, die {} als Kontext erhält, wenn eine neue Aufgabe beginnt. Alle Seiten im eigenen Arbeitsbereich kann der Bot bereits lesen; eine Seite hier hinzuzufügen erlaubt nicht, sie zu bearbeiten.", fr: "Pages que {} reçoit comme contexte au début d'une nouvelle tâche. Il peut déjà lire toutes les pages de son espace de travail, et en ajouter une ici ne lui permet pas de la modifier.", ar: "الصفحات التي يحصل عليها \u{2068}{}\u{2069} كسياق عند بدء مهمة جديدة. يستطيع بالفعل قراءة كل صفحات مساحة عمله، وإضافة صفحة هنا لا تسمح له بتعديلها.", zh_hans: "{} 开始新任务时会收到这些页面作为背景信息。它已经可以读取其工作区中的所有页面，在这里添加页面并不会让它获得编辑权限。", ja: "{} が新しいタスクを始めるときに参考情報として渡されるページです。ワークスペース内のすべてのページはすでに読めます。ここに追加しても、そのページを編集できるようにはなりません。" },
+    Row { key: Key::BotsSetupBrowse, en: "Browse workspace…", es: "Explorar el espacio de trabajo…", pt_br: "Procurar no espaço de trabalho…", de: "Arbeitsbereich durchsuchen…", fr: "Parcourir l'espace de travail…", ar: "تصفّح مساحة العمل…", zh_hans: "浏览工作区…", ja: "ワークスペースを参照…" },
+    Row { key: Key::BotsSetupDone, en: "Done", es: "Listo", pt_br: "Concluir", de: "Fertig", fr: "Terminé", ar: "تم", zh_hans: "完成", ja: "完了" },
+    Row { key: Key::BotsSetupReady, en: "{} is ready. You can change any of this later.", es: "{} está listo. Puedes cambiar todo esto más adelante.", pt_br: "{} está pronto. Você pode mudar tudo isso depois.", de: "{} ist bereit. Du kannst das alles später ändern.", fr: "{} est prêt. Vous pourrez modifier tout cela plus tard.", ar: "\u{2068}{}\u{2069} جاهز. يمكنك تغيير أي من هذا لاحقًا.", zh_hans: "{} 已准备就绪。这些设置之后都可以更改。", ja: "{} の準備ができました。これらは後から変更できます。" },
+    Row { key: Key::BotsSetupAgain, en: "Back to setup", es: "Volver a la configuración", pt_br: "Voltar à configuração", de: "Zurück zur Einrichtung", fr: "Revenir à la configuration", ar: "العودة إلى الإعداد", zh_hans: "返回设置", ja: "設定に戻る" },
+    Row { key: Key::BotsSetupHint, en: "Or skip it and just start typing. You can simply tell {} what to do.", es: "O sáltatela y empieza a escribir. Puedes decirle a {} directamente qué hacer.", pt_br: "Ou pule e comece a digitar. Você pode simplesmente dizer a {} o que fazer.", de: "Oder überspring sie und schreib einfach los. Du kannst {} auch direkt sagen, was zu tun ist.", fr: "Ou passez cette étape et commencez à écrire. Vous pouvez simplement dire à {} quoi faire.", ar: "أو تخطَّه وابدأ الكتابة مباشرة. يمكنك ببساطة أن تخبر \u{2068}{}\u{2069} بما يفعله.", zh_hans: "也可以跳过，直接开始输入。你可以直接告诉 {} 要做什么。", ja: "スキップして、そのまま入力を始めてもかまいません。{} に直接やることを伝えられます。" },
+    Row { key: Key::BotsSetupHistoryBefore, en: "Before quick setup changed the role", es: "Antes de que la configuración rápida cambiara el rol", pt_br: "Antes de a configuração rápida mudar a função", de: "Bevor die Schnelleinrichtung die Rolle geändert hat", fr: "Avant que la configuration rapide ne modifie le rôle", ar: "قبل أن يغيّر الإعداد السريع الدور", zh_hans: "快速设置更改职责之前", ja: "クイック設定が役割を変更する前" },
+    Row { key: Key::BotsSetupHistoryAfter, en: "Role from quick setup", es: "Rol desde la configuración rápida", pt_br: "Função da configuração rápida", de: "Rolle aus der Schnelleinrichtung", fr: "Rôle issu de la configuration rapide", ar: "الدور من الإعداد السريع", zh_hans: "来自快速设置的职责", ja: "クイック設定で設定した役割" },
 ];

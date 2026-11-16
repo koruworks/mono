@@ -686,3 +686,191 @@ fn an_ordinary_branch_still_offers_retry_on_a_copied_reply() {
     };
     assert_eq!(request.message_id, branch.copied_reply);
 }
+
+// ---------------------------------------- a host-drawn empty transcript
+
+/// A surface on an empty, read conversation, in a window-sized viewport.
+fn empty_chat(owned: bool) -> (ChatSurface, Receiver<Command>, ChatId) {
+    let chat = ChatId::new();
+    let (mut surface, commands) = if owned {
+        owned_surface(chat, WorkspaceId::new())
+    } else {
+        let mut surface = ChatSurface::new();
+        let (reader, commands, _updates) = Reader::test_pair();
+        surface.reader = Some(reader);
+        (surface, commands)
+    };
+    surface.viewport = Rect::new(0.0, 0.0, 720.0, 640.0);
+    surface.transcript = Some(chat_on(chat, codex()));
+    (surface, commands, chat)
+}
+
+/// The rooms a host's painter was given in one draw: one, or none.
+fn drawn(surface: &mut ChatSurface) -> Vec<Rect> {
+    let mut rooms = Vec::new();
+    surface.draw_hosting(
+        &mut vello::Scene::new(),
+        vello::kurbo::Affine::IDENTITY,
+        &mut |_, _, room| rooms.push(room),
+    );
+    rooms
+}
+
+/// **A host draws the empty transcript only where it asked to**: the
+/// greeting goes, the composer sits where it does once a chat has begun,
+/// and the painter gets the room above it, once per draw.
+#[test]
+fn a_host_draws_the_empty_transcript_in_the_greetings_place() {
+    let (mut surface, _commands, _) = empty_chat(true);
+    let centred = surface.composer_rect();
+    assert!(surface.greeting().is_some(), "the chat's own greeting");
+    assert_eq!(surface.hosted_empty_area(), None);
+    assert!(drawn(&mut surface).is_empty(), "nothing asked: no painter");
+
+    assert!(surface.host_empty_transcript(true));
+    assert!(
+        !surface.host_empty_transcript(true),
+        "said twice, changes once"
+    );
+    assert_eq!(surface.greeting(), None, "the host's opening");
+    let docked = surface.composer_rect();
+    assert!(docked.y > centred.y + 50.0, "the composer is at the bottom");
+    let room = surface.hosted_empty_area().expect("the host's room");
+    assert!(room.y + room.h <= docked.y, "above the composer");
+    assert_eq!(drawn(&mut surface), [room], "painted once, in that room");
+
+    assert!(surface.host_empty_transcript(false));
+    assert!(
+        surface.greeting().is_some(),
+        "given back: the greeting returns"
+    );
+    assert_eq!(surface.composer_rect(), centred);
+}
+
+/// **A chat whose host never asks is unchanged**, owned or not: the same
+/// greeting, the same centred composer, no room, no painter call and no
+/// press kept, whether it is drawn through `draw` or `draw_hosting`.
+#[test]
+fn a_surface_that_hosts_nothing_is_unchanged() {
+    for owned in [false, true] {
+        let (mut surface, _commands, _) = empty_chat(owned);
+        let composer = surface.composer_rect();
+        let greeting = surface.greeting().expect("an empty chat greets");
+        surface.draw(&mut vello::Scene::new(), vello::kurbo::Affine::IDENTITY);
+        assert!(drawn(&mut surface).is_empty(), "owned {owned}: no painter");
+        assert_eq!(surface.composer_rect(), composer, "owned {owned}");
+        assert_eq!(surface.greeting(), Some(greeting), "owned {owned}");
+        assert_eq!(surface.hosted_empty_area(), None);
+        let conversation = surface.conversation_rect();
+        surface.mouse_down(conversation.x + 20.0, conversation.y + 20.0);
+        assert_eq!(surface.take_hosted_press(), None, "owned {owned}");
+        assert!(!surface.set_host_keyboard(true), "nothing hosted");
+        assert!(!surface.host_holds_keyboard());
+    }
+}
+
+/// **The host's content shows only over a conversation that is read and
+/// holds nothing**: not before the read, not for another chat's
+/// transcript, not once a reply is on its way, and not while the
+/// conversation is unavailable.
+#[test]
+fn the_hosted_room_is_only_for_a_read_and_empty_conversation() {
+    let (mut surface, _commands, chat) = empty_chat(true);
+    surface.host_empty_transcript(true);
+    assert_eq!(surface.transcript_is_empty(), Some(true));
+    assert!(surface.hosted_empty_area().is_some());
+
+    let read = surface.transcript.take();
+    assert_eq!(surface.transcript_is_empty(), None, "not read yet");
+    assert_eq!(surface.hosted_empty_area(), None);
+    assert!(drawn(&mut surface).is_empty());
+
+    surface.transcript = Some(chat_on(ChatId::new(), codex()));
+    assert_eq!(surface.transcript_is_empty(), None, "another chat's");
+    assert_eq!(surface.hosted_empty_area(), None);
+
+    surface.transcript = read;
+    surface.attempt = Some(koru_ai_core::InferenceAttemptId::new());
+    assert_eq!(surface.transcript_is_empty(), Some(false), "a reply runs");
+    assert_eq!(surface.hosted_empty_area(), None);
+    assert!(drawn(&mut surface).is_empty());
+    surface.attempt = None;
+
+    surface.owned_unavailable(Unavailable::Unreachable);
+    assert_eq!(surface.hosted_empty_area(), None);
+    assert!(drawn(&mut surface).is_empty());
+    assert_eq!(surface.owned().map(|owned| owned.chat), Some(chat));
+}
+
+/// **A press in the host's room is the host's, once**; one on the composer
+/// is the composer's and is never handed over.
+#[test]
+fn a_press_in_the_hosted_room_is_kept_for_the_host() {
+    let (mut surface, _commands, _) = empty_chat(true);
+    surface.host_empty_transcript(true);
+    let room = surface.hosted_empty_area().expect("the host's room");
+    let at = (room.x + room.w * 0.5, room.y + room.h * 0.5);
+    assert!(surface.mouse_down(at.0, at.1));
+    assert_eq!(surface.take_hosted_press(), Some(at));
+    assert_eq!(surface.take_hosted_press(), None, "taken once");
+
+    let composer = surface.composer_rect();
+    surface.mouse_down(composer.x + 24.0, composer.y + 16.0);
+    assert_eq!(surface.take_hosted_press(), None, "the composer's own");
+    assert!(surface.focus == crate::Focus::Composer);
+}
+
+/// **The composer is the ordinary composer while the host draws**: typing
+/// reaches it, and it gives up its caret only while the host says its own
+/// content holds the keyboard.
+#[test]
+fn typing_reaches_the_composer_while_the_host_draws() {
+    let (mut surface, _commands, _) = empty_chat(true);
+    surface.host_empty_transcript(true);
+    surface.focus = crate::Focus::Composer;
+    for typed in ["h", "i"] {
+        assert!(surface.key(
+            &winit::keyboard::Key::Character(typed.into()),
+            Some(typed),
+            winit::keyboard::ModifiersState::empty(),
+        ));
+    }
+    assert_eq!(surface.composer.text(), "hi");
+    assert!(!surface.host_holds_keyboard());
+    assert!(surface.set_host_keyboard(true));
+    assert!(surface.host_holds_keyboard());
+    assert!(surface.set_host_keyboard(false));
+    assert!(!surface.host_holds_keyboard());
+}
+
+/// **Nothing of the host's reaches the conversation.** Drawing the host's
+/// content adds no message, and the first turn a hosted surface sends is,
+/// field for field, the turn the same surface sends hosting nothing.
+#[test]
+fn nothing_the_host_draws_enters_the_transcript_or_a_send() {
+    let send = |hosted: bool| {
+        let (mut surface, commands, chat) = empty_chat(true);
+        surface.host_empty_transcript(hosted);
+        assert_eq!(drawn(&mut surface).len(), usize::from(hosted));
+        let transcript = surface.transcript.as_ref().expect("read");
+        assert!(transcript.messages.is_empty(), "no message was added");
+        assert!(transcript.blocks.is_empty());
+        assert!(surface.pending_user.is_none());
+        surface.composer.set_text("Find three sources");
+        assert!(surface.send_composer());
+        let sent = drained(&commands);
+        assert_eq!(names(&sent), ["send"], "one turn and nothing beside it");
+        let Some(Command::Send(mut request)) = sent.into_iter().next() else {
+            unreachable!()
+        };
+        assert_eq!(request.chat_id, chat);
+        // What a turn mints for itself, and the chat it is for.
+        request.operation_id = uuid::Uuid::nil();
+        request.chat_id = ChatId::from_uuid(uuid::Uuid::nil());
+        request.destination_workspace = None;
+        request
+    };
+    let (plain, hosted) = (send(false), send(true));
+    assert_eq!(plain.markdown, "Find three sources");
+    assert_eq!(hosted, plain, "the same turn, hosted or not");
+}

@@ -11,7 +11,9 @@
 //! *Save*. The create form (S8) opens the same picker for its selected
 //! pages and, under *Choose a page…*, for an existing role page.
 //! Library Knowledge uses its own destination and draft; adding context
-//! never changes the access card's selected-page grants.
+//! never changes the access card's selected-page grants. The quick setup's
+//! *Browse workspace…* (QUESTIONS O155, [`super::onboard`]) is a third door
+//! to the same Knowledge: a page picked there is added and saved at once.
 
 use koru_ai_core::bots::BotPage;
 use koru_draw::geometry::Rect;
@@ -30,6 +32,8 @@ pub(super) enum Destination {
     Access,
     Role,
     Knowledge,
+    /// The quick setup's step 2: Knowledge, saved as soon as it is picked.
+    Setup,
 }
 
 impl BotView {
@@ -58,6 +62,7 @@ impl BotView {
             Destination::Role => super::create::CHOOSE_ROLE_PAGE,
             Destination::Access => ADD_PAGE,
             Destination::Knowledge => super::library::ADD,
+            Destination::Setup => super::onboard::BROWSE,
         }
     }
 
@@ -69,16 +74,20 @@ impl BotView {
     fn close_page_picker(&mut self) {
         self.picker = None;
         self.picker_hover = None;
-        if self.form_open() {
+        if self.form_open() || self.picker_destination == Destination::Setup {
             self.focus = Some(self.picker_anchor());
         }
     }
 
     /// The picker's panel: under *Add a page…*, kept inside the tab.
     fn picker_rect(&self) -> Rect {
-        let anchor = self
-            .with_frame(|_, frame| frame.node(self.picker_anchor()).map(|node| node.rect))
-            .unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, 0.0));
+        // The quick setup's control is in the setup's own frame.
+        let anchor = if self.picker_destination == Destination::Setup {
+            self.setup_browse_rect()
+        } else {
+            self.with_frame(|_, frame| frame.node(self.picker_anchor()).map(|node| node.rect))
+        }
+        .unwrap_or_else(|| Rect::new(0.0, 0.0, 0.0, 0.0));
         let height = self.picker.as_deref().map_or(0.0, EntityPicker::height);
         let w = koru_draw::theme::PANEL_W;
         let gap = koru_draw::theme::Space::S1.px(koru_draw::theme::Profile::Desktop);
@@ -107,8 +116,12 @@ impl BotView {
 
     /// Hits as the picker may offer them: not a page already selected.
     fn picker_hits(&self, hits: Vec<DocumentChoice>) -> Vec<DocumentChoice> {
+        let knowledge = matches!(
+            self.picker_destination,
+            Destination::Knowledge | Destination::Setup
+        );
         let pages = match self.picker_destination {
-            Destination::Knowledge => self.library.pages(),
+            Destination::Knowledge | Destination::Setup => self.library.pages(),
             Destination::Role => &[],
             Destination::Access => self.pages_shown(),
         };
@@ -119,7 +132,7 @@ impl BotView {
         hits.into_iter()
             .filter(|hit| !listed.contains(&hit.target.document))
             .filter(|hit| {
-                self.picker_destination != Destination::Knowledge
+                !knowledge
                     || self
                         .library
                         .held()
@@ -180,6 +193,9 @@ impl BotView {
                 }
                 Some(create) => {
                     create.form.add_page(page);
+                }
+                None if self.picker_destination == Destination::Setup => {
+                    self.setup_add_page(page);
                 }
                 None => {
                     if self.picker_destination == Destination::Knowledge {

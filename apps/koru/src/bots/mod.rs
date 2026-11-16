@@ -20,7 +20,10 @@
 //! asks for a name, a face and where the Bot runs
 //! ([`view::new_bot`], its defaults in [`first_bot`]) and creates through
 //! the create form's own commands; every Bot wears its face in its row and
-//! its tab's header ([`faces`]), moving only while it works.
+//! its tab's header ([`faces`]), moving only while it works. A new Bot's
+//! empty main conversation opens on a greeting and a two-step setup card
+//! ([`onboard`], [`view::onboard`]): a presentation over the chat, never a
+//! message in it.
 //!
 //! Two rules it is built under, the Chats view's:
 //!
@@ -40,6 +43,7 @@ pub(crate) mod library;
 pub(crate) mod lifecycle;
 pub(crate) mod link;
 pub(crate) mod memory;
+pub(crate) mod onboard;
 pub(crate) mod roster;
 pub(crate) mod routines;
 pub(crate) mod settings;

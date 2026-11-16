@@ -1144,7 +1144,11 @@ impl BotView {
     /// **The keyboard's order**: every focusable, enabled control in the
     /// frame, in tree order — the header's *Settings*, then the region's.
     pub(crate) fn focus_order(&self) -> Vec<Key> {
-        self.with_frame(|_, frame| focus_order(frame))
+        let mut order = self.with_frame(|_, frame| focus_order(frame));
+        // The quick setup's controls, after the tab's own (O155): empty
+        // whenever the setup does not show.
+        order.extend(self.setup_focus_order());
+        order
     }
 
     fn step_focus(&mut self, back: bool) -> bool {
@@ -1167,6 +1171,8 @@ impl BotView {
         }
         self.blur_fields_but(self.focus);
         self.reveal_focus();
+        // The quick setup scrolls its own room to the control (O155).
+        self.card.reveal.set(true);
         true
     }
 
@@ -1501,7 +1507,22 @@ impl BotView {
     /// keyboard's order. The field publishes its text; the access choice
     /// publishes its two segments as radio buttons, the chosen one
     /// selected.
+    ///
+    /// **Then the quick setup** over the Bot's empty main conversation
+    /// (O155, [`super::onboard`]), from its own frame, after the tab's own
+    /// controls as the keyboard reaches it: nothing while a form covers the
+    /// conversation or the setup does not show.
     pub(crate) fn controls(&self) -> Vec<Control> {
+        let mut roots = self.tab_controls();
+        if !self.form_open() {
+            roots.extend(self.setup_controls());
+        }
+        roots
+    }
+
+    /// The controls of the tab's own frame: [`Self::controls`] without the
+    /// quick setup.
+    fn tab_controls(&self) -> Vec<Control> {
         let labels = self.choice_labels();
         // Laid out on its own first: the list's rows come from the shared
         // list's geometry, which reads the tab's frame itself.
@@ -1747,6 +1768,10 @@ impl BotView {
         // controls by their own node.
         if click && self.inert_to_assistive(key) {
             return false;
+        }
+        // The quick setup's controls answer from their own frame (O155).
+        if let Some(done) = self.setup_accessibility_action(key, click) {
+            return done;
         }
         if let Some(done) = self.agent_accessibility_action(key, click) {
             return done;

@@ -1672,6 +1672,7 @@ mod create;
 mod library;
 mod lifecycle;
 mod memory;
+mod onboard;
 
 // ------------------------------------------- the first window run, finding 8
 

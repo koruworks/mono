@@ -106,6 +106,7 @@ mod library;
 pub(crate) mod list;
 pub(crate) mod memory;
 pub(crate) mod new_bot;
+pub(crate) mod onboard;
 mod picker;
 pub(crate) mod region;
 pub(crate) use region::{Control, ControlRole};
@@ -452,6 +453,10 @@ pub(crate) struct BotView {
     /// (`MainView::sync_bot_faces`): still unless this Bot is working. The
     /// tab owns no clock and asks for no frame for it.
     face_pose: koru_draw::face::FacePose,
+    /// **The quick setup over the Bot's empty main conversation** (QUESTIONS
+    /// O155): the card's state, its field and the room the chat gives it
+    /// ([`onboard`]). Boxed for the reason the settings are.
+    card: Box<onboard::Card>,
 }
 
 impl BotView {
@@ -533,6 +538,7 @@ impl BotView {
             roster_news: None,
             creation_news: None,
             face_pose: koru_draw::face::FacePose::STILL,
+            card: Box::default(),
         }
     }
 
@@ -803,6 +809,7 @@ impl BotView {
     pub(crate) fn hidden(&mut self) {
         self.routines.show(self.bot, false);
         self.memory.show(false);
+        self.setup_hidden();
         if self.create.is_some() {
             self.create_hidden();
             return;
@@ -1024,7 +1031,10 @@ impl BotView {
         let library = self.library_pass();
         let memory = self.memory_pass();
         let routines = self.routines_pass();
+        // Whether the tab draws the conversation's empty transcript (O155).
+        let setup = self.setup_pass();
         asked
+            || setup
             || answered
             || polled
             || listed
@@ -1922,6 +1932,10 @@ impl View for BotView {
         if let Some(handled) = self.list_key(key, mods) {
             return handled;
         }
+        // The quick setup's own controls while one has the keyboard (O155).
+        if let Some(handled) = self.setup_key(key, text, mods) {
+            return handled;
+        }
         if let Some(handled) = self.region_key(key, text, mods) {
             return handled;
         }
@@ -1955,8 +1969,18 @@ impl View for BotView {
             return false;
         }
         self.focus = None;
-        self.conversation_mut()
-            .is_some_and(|conversation| View::mouse_down(conversation, ws, x, y, ctrl))
+        let handled = self
+            .conversation_mut()
+            .is_some_and(|conversation| View::mouse_down(conversation, ws, x, y, ctrl));
+        // A press the chat handed back: on the quick setup the tab draws in
+        // its empty transcript, with nothing of the chat's over it (O155).
+        match self
+            .conversation_mut()
+            .and_then(AiChatView::take_hosted_press)
+        {
+            Some((x, y)) => self.setup_press(x, y) || handled,
+            None => handled,
+        }
     }
 
     fn mouse_move(&mut self, x: f32, y: f32) -> bool {
@@ -1967,6 +1991,16 @@ impl View for BotView {
             return self.agent_move(x, y);
         }
         self.pointer.set((x, y));
+        // Over the quick setup (O155): its controls light, and the chat
+        // still hears where the pointer is.
+        let (in_setup, setup_lit) = self.setup_move(x, y);
+        if in_setup {
+            let chat = self
+                .conversation
+                .as_mut()
+                .is_some_and(|conversation| View::mouse_move(conversation, x, y));
+            return setup_lit || chat;
+        }
         // Over the conversation with nothing lit there is nothing of the
         // tab's to light: no layout.
         let over_column = x <= self.column_right.get();
@@ -1975,11 +2009,11 @@ impl View for BotView {
         let lit =
             (self.facts.is_some() || self.create.is_some()) && over_tab && self.region_move(x, y);
         if self.form_open() {
-            return lit;
+            return lit || setup_lit;
         }
         let listed =
             (over_column || self.conversations.surface.hover().is_some()) && self.list_move(x, y);
-        let lit = lit || listed;
+        let lit = lit || listed || setup_lit;
         if over_column || !self.shows_conversation() {
             return lit;
         }
@@ -1998,6 +2032,7 @@ impl View for BotView {
             return self.agent_release();
         }
         self.region_release();
+        self.setup_release();
         if self.form_open() {
             return false;
         }
@@ -2048,6 +2083,16 @@ impl View for BotView {
         if !self.shows_conversation() {
             return;
         }
+        // The wheel over the quick setup scrolls it (O155).
+        let dy = match delta {
+            MouseScrollDelta::LineDelta(_, lines) => {
+                -lines * koru_draw::theme::metrics::ROW_MIN.value
+            }
+            MouseScrollDelta::PixelDelta(position) => -(position.y as f32),
+        };
+        if self.setup_scroll(x, y, dy) {
+            return;
+        }
         if let Some(conversation) = self.conversation_mut() {
             View::scroll_by(conversation, delta);
         }
@@ -2074,6 +2119,15 @@ impl View for BotView {
         }
         if self.form_open() {
             return CursorIcon::Default;
+        }
+        // Over the quick setup: the I-beam in its field, the arrow on the
+        // rest (O155).
+        if let Some(hot) = self.hot.filter(|hot| onboard::is_setup_key(*hot)) {
+            return if hot == onboard::ROLE_FIELD {
+                CursorIcon::Text
+            } else {
+                CursorIcon::Default
+            };
         }
         self.conversation()
             .map_or(CursorIcon::Default, View::cursor_icon)
@@ -2146,6 +2200,8 @@ impl View for BotView {
                 (header, header_frame, region, column, conversation_area)
             });
         self.place_conversation(conversation_area);
+        // The room the chat gives the quick setup, now the chat is placed.
+        self.place_setup();
         let p = koru_draw::theme::p();
         scene::fill(
             scene_out,
@@ -2187,6 +2243,9 @@ impl View for BotView {
         if !self.shows_conversation() || self.list_covers() {
             return;
         }
+        // The quick setup, laid out before the chat is borrowed to draw:
+        // the chat calls its painter where its own greeting would be.
+        let setup = crate::input_engine::with(|engine| self.setup_layout(engine));
         if let Some(conversation) = &mut self.conversation {
             let a = conversation_area;
             let _conversation = koru_draw::inspect::scope(
@@ -2202,16 +2261,43 @@ impl View for BotView {
                     );
                 },
             );
-            View::draw(
-                conversation,
-                scene_out,
-                workspace,
-                images,
-                root,
-                caret_on,
-                pointer,
-            );
+            match &setup {
+                Some((tree, frame)) => conversation.draw_hosting(
+                    scene_out,
+                    workspace,
+                    root,
+                    &mut |canvas, root, room| {
+                        let _setup = koru_draw::inspect::scope(
+                            "Bot setup",
+                            "container",
+                            root,
+                            scene::rect(room.x, room.y, room.w, room.h),
+                            |record| {
+                                record.property(
+                                    "layout",
+                                    "a greeting and a two-step card over an empty conversation",
+                                    "bots::view::onboard::BotView::setup_tree",
+                                );
+                            },
+                        );
+                        crate::input_engine::with(|engine| {
+                            frame.paint(tree, canvas, root, engine);
+                        });
+                    },
+                ),
+                None => View::draw(
+                    conversation,
+                    scene_out,
+                    workspace,
+                    images,
+                    root,
+                    caret_on,
+                    pointer,
+                ),
+            }
         }
+        // *Browse workspace…*'s picker floats over the conversation.
+        self.paint_picker(scene_out, root);
     }
 
     fn animating(&self) -> bool {
@@ -2231,8 +2317,13 @@ impl View for BotView {
             (self.conversations.awaiting()
                 || self.trash_awaiting()
                 || (!self.stale
-                    && (self.settings_open || self.context_library_visible)
+                    && (self.settings_open
+                        || self.context_library_visible
+                        || self.setup_reads_library())
                     && self.library.awaiting())
+                // A Role read or write with the window's worker (O155),
+                // shown only.
+                || (!self.stale && self.role_saving())
                 || (self.memory_available()
                     && !self.stale
                     && self.settings_open
@@ -2296,6 +2387,7 @@ impl View for BotView {
         let library = !self.stale && self.library_pass();
         let memory = self.memory_pass();
         let routines = !self.stale && self.routines_pass();
+        let setup = !self.stale && self.setup_pass();
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
         let folded = folded
@@ -2307,7 +2399,8 @@ impl View for BotView {
             || reread
             || library
             || memory
-            || routines;
+            || routines
+            || setup;
         let chat = self
             .conversation_mut()
             .is_some_and(|conversation| View::maintain(conversation, ws, now));

@@ -1250,6 +1250,10 @@ impl BotView {
     /// advertise; they once ignored it (the first window run's finding 8).
     /// `false` for any other key, a field not drawn, or one held inert.
     pub(crate) fn accessibility_set_value(&mut self, key: Key, text: &str) -> bool {
+        // The quick setup's text (O155), from its own frame.
+        if let Some(done) = self.setup_set_value(key, text) {
+            return done;
+        }
         if (key != NAME_FIELD && !FIELDS.contains(&key))
             || self.inert_to_assistive(key)
             || !self.with_frame(|_, frame| frame.contains(key))

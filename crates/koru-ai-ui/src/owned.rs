@@ -33,13 +33,59 @@
 //! **An ordinary surface never takes this path.** Every branch below is
 //! behind `owned.is_some()`, and the tests in `owned/tests.rs` pin the
 //! ordinary behaviour beside the owned one.
+//!
+//! ## A host-drawn empty transcript
+//!
+//! An empty chat opens on the chat's own greeting with the composer centred
+//! under it. A host may take that room instead
+//! ([`ChatSurface::host_empty_transcript`]): while the conversation is
+//! **read and holds nothing**, the surface draws no greeting, keeps the
+//! composer where it sits once a chat has begun, and hands the host the
+//! room above it.
+//!
+//! - [`ChatSurface::hosted_empty_area`] is that room, and `None` whenever
+//!   the host's content is not what shows: nothing asked, the conversation
+//!   not read yet, a message in it or on its way, or the conversation
+//!   unavailable.
+//! - [`ChatSurface::draw_hosting`] draws the surface and calls the host's
+//!   painter where the greeting would have been: over the transcript's
+//!   ground and under everything of the chat's that floats (its pickers,
+//!   panes and tooltips).
+//! - [`ChatSurface::take_hosted_press`] is a press in that room that
+//!   nothing of the chat's claimed first.
+//! - [`ChatSurface::set_host_keyboard`] says the host's own content holds
+//!   the keyboard, so the composer draws no caret beside the host's.
+//!
+//! **The surface knows nothing about what the host draws.** It takes no
+//! words, no elements and no state from it: only "I draw this room" and a
+//! painter. So nothing of the host's can reach the transcript, the stored
+//! chat, a draft or a request, and the composer is the ordinary composer
+//! throughout. The seam is not tied to an owned conversation; a surface
+//! whose host never asks is unchanged, which `owned/tests.rs` pins.
 
 use std::path::PathBuf;
 
 use koru_ai_core::{AiProviderId, ChatId, WorkspaceId};
+use koru_draw::geometry::Rect;
 
 use crate::ChatSurface;
 use crate::reader::{Command, Scopes};
+
+/// **A host's painter for the empty transcript**: the scene, the root
+/// transform and the room it may draw in, in the surface's coordinates.
+pub type HostPaint<'a> = &'a mut dyn FnMut(&mut vello::Scene, vello::kurbo::Affine, Rect);
+
+/// What a host that draws the empty transcript has said, and what the
+/// surface holds for it. All off by default.
+#[derive(Copy, Clone, Debug, Default, PartialEq)]
+pub(crate) struct HostedEmpty {
+    /// The host draws the empty transcript.
+    asked: bool,
+    /// A press in the hosted room that nothing of the chat's claimed.
+    press: Option<(f32, f32)>,
+    /// The host's own content holds the keyboard.
+    keyboard: bool,
+}
 
 /// The conversation a host binds a surface to, and what its owner admits.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -180,6 +226,108 @@ impl ChatSurface {
     /// The conversation this surface is bound to, if a host owns it.
     pub fn owned(&self) -> Option<&OwnedConversation> {
         self.owned.as_ref()
+    }
+
+    // ------------------------------------ a host-drawn empty transcript
+
+    /// **The host draws the empty transcript**, or no longer does. `true`
+    /// when that changed. Nothing is drawn differently until the
+    /// conversation is read and holds nothing ([`Self::hosted_empty_area`]).
+    pub fn host_empty_transcript(&mut self, hosted: bool) -> bool {
+        if self.hosted_empty.asked == hosted {
+            return false;
+        }
+        self.hosted_empty = HostedEmpty {
+            asked: hosted,
+            ..HostedEmpty::default()
+        };
+        true
+    }
+
+    /// **Whether the conversation shown is read and empty**: `None` until
+    /// it is read — for an owned surface, until the conversation it is
+    /// bound to is the one read — `Some(true)` while it holds no message
+    /// and none is on its way, `Some(false)` from the first one on.
+    pub fn transcript_is_empty(&self) -> Option<bool> {
+        let transcript = self.transcript.as_ref()?;
+        if self
+            .owned
+            .as_ref()
+            .is_some_and(|owned| owned.chat != transcript.chat.id)
+        {
+            return None;
+        }
+        Some(self.chat_is_empty())
+    }
+
+    /// Whether the host's content is what shows in the transcript's place.
+    pub(crate) fn hosts_empty(&self) -> bool {
+        self.hosted_empty.asked
+            && self.unavailable.is_none()
+            && !self.showing_setup()
+            && self.transcript_is_empty() == Some(true)
+    }
+
+    /// **The room the host draws in**: the conversation's, above the
+    /// composer, in the surface's coordinates. `None` whenever the host's
+    /// content is not what shows.
+    pub fn hosted_empty_area(&mut self) -> Option<Rect> {
+        if !self.hosts_empty() {
+            return None;
+        }
+        Some(self.conversation_rect())
+    }
+
+    /// **Draw the surface, and the host's empty transcript where it
+    /// shows**: `paint` is called at most once, in the greeting's place,
+    /// with the room [`Self::hosted_empty_area`] answers. It is not called
+    /// while the host's content is not what shows, and the surface then
+    /// draws exactly what [`Self::draw`] draws.
+    pub fn draw_hosting(
+        &mut self,
+        canvas: &mut vello::Scene,
+        root: vello::kurbo::Affine,
+        paint: HostPaint<'_>,
+    ) {
+        self.draw_with(canvas, root, Some(paint));
+    }
+
+    /// A press at `(x, y)` that is the host's: in its room, with the
+    /// host's content showing. Kept for [`Self::take_hosted_press`].
+    pub(crate) fn hosted_press_at(&mut self, x: f32, y: f32) -> bool {
+        let Some(area) = self.hosted_empty_area() else {
+            return false;
+        };
+        if !area.contains(x, y) {
+            return false;
+        }
+        self.hosted_empty.press = Some((x, y));
+        true
+    }
+
+    /// **A press in the host's room that nothing of the chat's claimed** —
+    /// no open picker, pane or menu over it. Taken once, by the host, after
+    /// it hands the surface a press.
+    pub fn take_hosted_press(&mut self) -> Option<(f32, f32)> {
+        self.hosted_empty.press.take()
+    }
+
+    /// **The host's own content holds the keyboard**, or gave it back: the
+    /// composer draws no caret while it does. The host routes the keys;
+    /// the surface only stops showing a second caret. `true` when that
+    /// changed.
+    pub fn set_host_keyboard(&mut self, held: bool) -> bool {
+        let held = held && self.hosted_empty.asked;
+        if self.hosted_empty.keyboard == held {
+            return false;
+        }
+        self.hosted_empty.keyboard = held;
+        true
+    }
+
+    /// Whether the host's content holds the keyboard, while it shows.
+    pub(crate) fn host_holds_keyboard(&self) -> bool {
+        self.hosted_empty.keyboard && self.hosts_empty()
     }
 
     /// Why the owned conversation is not shown, while it is not. Always

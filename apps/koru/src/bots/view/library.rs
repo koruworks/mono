@@ -46,7 +46,7 @@ pub(crate) enum Action {
 
 impl BotView {
     pub(super) fn library_pass(&mut self) -> bool {
-        if !(self.settings_open || self.context_library_visible)
+        if !(self.settings_open || self.context_library_visible || self.setup_reads_library())
             || self.facts.as_ref().is_some_and(|v| v.trashed)
         {
             return false;

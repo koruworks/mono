@@ -153,7 +153,7 @@ pub use dictation::{DictationPress, DictationShown};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
 pub use owned::{
-    OwnedConversation, OwnedOffers, Refusals as OwnedRefusals,
+    HostPaint as EmptyTranscriptPaint, OwnedConversation, OwnedOffers, Refusals as OwnedRefusals,
     Unavailable as ConversationUnavailable,
 };
 
@@ -789,6 +789,11 @@ pub struct ChatSurface {
     owned: Option<OwnedConversation>,
     /// Why the owned conversation is not shown, while it is not.
     unavailable: Option<owned::Unavailable>,
+    /// **A host draws the empty transcript** ([`owned`], *A host-drawn empty
+    /// transcript*): what it asked for, a press it is owed, and whether its
+    /// own content holds the keyboard. All off for every surface whose host
+    /// never asks, which then behaves exactly as it did.
+    hosted_empty: owned::HostedEmpty,
     /// How this surface's threads connect: ordinary, or first-party with
     /// `bots.manage` for an owned surface ([`Self::new_owned_at`]).
     scopes: reader::Scopes,
@@ -1196,6 +1201,7 @@ impl ChatSurface {
             wants_open_elsewhere: None,
             owned: None,
             unavailable: None,
+            hosted_empty: owned::HostedEmpty::default(),
             scopes: reader::Scopes::Ordinary,
             highlight: None,
             confirm: None,
@@ -2793,6 +2799,11 @@ impl ChatSurface {
             });
             return true;
         }
+        // A press on a host-drawn empty transcript that nothing of the
+        // chat's claimed above is the host's: kept for it to take.
+        if self.hosted_press_at(x, y) {
+            return true;
+        }
         self.response_selection = None;
         if self.composer.contains(x, y) {
             self.focus = Focus::Composer;
@@ -3392,6 +3403,17 @@ impl ChatSurface {
     }
 
     pub fn draw(&mut self, canvas: &mut Scene, root: Affine) {
+        self.draw_with(canvas, root, None);
+    }
+
+    /// [`Self::draw`], with the painter of a host-drawn empty transcript
+    /// when the host handed one in ([`Self::draw_hosting`]).
+    pub(crate) fn draw_with(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        host: Option<owned::HostPaint<'_>>,
+    ) {
         let p = theme::p();
         scene::fill(
             canvas,
@@ -3412,7 +3434,7 @@ impl ChatSurface {
         if self.showing_setup() {
             self.draw_setup(canvas, root);
         } else {
-            self.draw_chat(canvas, root);
+            self.draw_chat(canvas, root, host);
         }
         if let Some(confirm) = &self.confirm {
             confirm.draw(
@@ -6048,7 +6070,8 @@ impl ChatSurface {
     /// was waiting for one keeps the line it was already showing; another
     /// chat gets a new one.
     fn greeting(&mut self) -> Option<koru_i18n::Key> {
-        if !self.chat_is_empty() {
+        // A host that draws the empty transcript draws its own opening.
+        if !self.chat_is_empty() || self.hosts_empty() {
             return None;
         }
         let chat = self.transcript.as_ref().map(|t| t.chat.id);
@@ -6128,7 +6151,9 @@ impl ChatSurface {
         // block: the box stands on it rather than on the window's edge.
         let below = self.composer_footer_h();
         let bottom = self.viewport.y + self.viewport.h - COMPOSER_BOTTOM_MARGIN - below - height;
-        let y = if self.chat_is_empty() {
+        // A host-drawn empty transcript has the room above the composer:
+        // the composer stays where it sits once the chat has begun.
+        let y = if self.chat_is_empty() && !self.hosts_empty() {
             // The greeting, the composer and its row as one block, centred;
             // never lower than where the composer sits once the chat has begun.
             let above = role::title().metrics.line_height + GREETING_GAP + COMPOSER_GAP;
@@ -7151,7 +7176,9 @@ impl ChatSurface {
     }
 
     fn paint_composer_text(&mut self, canvas: &mut Scene, root: Affine) {
-        let focused = self.focus == Focus::Composer;
+        // One caret at a time: none here while the host's own content in
+        // the empty transcript holds the keyboard.
+        let focused = self.focus == Focus::Composer && !self.host_holds_keyboard();
         let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
         self.composer.set_focused(focused);
         self.composer
@@ -7421,7 +7448,7 @@ impl ChatSurface {
         );
     }
 
-    fn draw_chat(&mut self, canvas: &mut Scene, root: Affine) {
+    fn draw_chat(&mut self, canvas: &mut Scene, root: Affine, host: Option<owned::HostPaint<'_>>) {
         let p = theme::p();
         // **No title row.** A chat's name is its tab's in a workspace and
         // its row's in the Chats list; the surface itself starts with the
@@ -7430,7 +7457,16 @@ impl ChatSurface {
         // Over the transcript, under everything that floats over it.
         self.draw_add_pill(canvas, root);
         let composer = self.composer_rect();
-        self.draw_greeting(canvas, root);
+        // The empty transcript: the host's content where it asked to draw
+        // it, in the greeting's place and under everything that floats;
+        // else the chat's own greeting, exactly as before.
+        match host {
+            Some(paint) if self.hosts_empty() => {
+                let area = self.conversation_rect();
+                paint(canvas, root, area);
+            }
+            _ => self.draw_greeting(canvas, root),
+        }
         self.draw_queue(canvas, root);
         self.stored_open_link = None;
         let content = self.content_rect();
@@ -14587,7 +14623,7 @@ mod tests {
             .unwrap()
             .chat
             .agent_working_folder = Some("D:/work/koru".into());
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, None);
         assert_eq!(
             surface
                 .transcript
@@ -15828,7 +15864,7 @@ mod tests {
         chat.messages.push(user_message(&chat, "hello"));
         surface.transcript = Some(chat);
         surface.validated_ready = true;
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, None);
         let top = surface.viewport.y + 7.0 + BUTTON_H * 0.5;
         // Where the title's words were, and where the header's *Chats* was.
         for x in [
@@ -15860,7 +15896,7 @@ mod tests {
         surface.transcript = Some(transcript);
         surface.validated_ready = true;
 
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, None);
         assert_eq!(surface.privacy_button(), None);
         let toolbar = surface.composer_toolbar_rect();
         let plus = surface.plus_button();
@@ -16181,7 +16217,7 @@ mod tests {
     /// The composer as a person sees it: laid out at the window's width,
     /// so a long message wraps.
     fn drawn(surface: &mut ChatSurface) {
-        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+        surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, None);
     }
 
     /// A surface on a chat that has been sent `asked`, in a narrow window.
@@ -16562,7 +16598,7 @@ mod tests {
         surface.validated_ready = true;
         let line = surface.greeting().expect("a chat being made greets");
         for _ in 0..4 {
-            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY);
+            surface.draw_chat(&mut Scene::new(), Affine::IDENTITY, None);
             assert_eq!(surface.greeting(), Some(line), "the line holds still");
         }
         surface.transcript = Some(transcript());

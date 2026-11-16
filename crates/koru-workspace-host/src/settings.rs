@@ -1200,6 +1200,17 @@ pub struct Settings {
     /// it on its next save — every chat then reads as seen, which is the safe
     /// way to be wrong. Empty writes no line.
     pub chat_seen: String,
+    /// **The Bots whose quick setup the person ended, on this device**
+    /// (Bots, QUESTIONS O155): the `bot_setup=` line, a comma list of Bot
+    /// ids, opaque here: `apps/koru`'s `bots::onboard::SetupBook` reads and
+    /// writes it. Device-local, like [`chat_seen`](Self::chat_seen): the
+    /// card is a presentation of this install, not a fact about the Bot.
+    ///
+    /// **An older build ignores the line** (`from_text`'s `_ => {}`) and
+    /// drops it on its next save; a Bot whose conversation is still empty
+    /// then offers its setup again, which is the safe way to be wrong.
+    /// Empty writes no line.
+    pub bot_setup: String,
     /// **The order of the views down the rail, on this device**: the
     /// `rail_order=` line, a comma list of view tokens, opaque here —
     /// `apps/koru`'s `panes::sidebar::rail_order` reads and writes it, and
@@ -1525,6 +1536,7 @@ impl Default for Settings {
             close_behavior: koru_window::CloseBehavior::default(),
             last_export_dir: None,
             chat_seen: String::new(),
+            bot_setup: String::new(),
             rail_order: String::new(),
         }
     }
@@ -2434,6 +2446,8 @@ impl Settings {
                 }
                 // Read whole and untouched: its reader is the Chats list's.
                 "chat_seen" => s.chat_seen = value.to_owned(),
+                // Read whole and untouched: its reader is the Bots' setup.
+                "bot_setup" => s.bot_setup = value.to_owned(),
                 // Read whole and untouched too: its reader is the rail's.
                 "rail_order" => s.rail_order = value.to_owned(),
                 _ => {}
@@ -2647,6 +2661,9 @@ impl Settings {
         }
         if !self.chat_seen.is_empty() {
             out.push_str(&format!("chat_seen={}\n", self.chat_seen));
+        }
+        if !self.bot_setup.is_empty() {
+            out.push_str(&format!("bot_setup={}\n", self.bot_setup));
         }
         if !self.rail_order.is_empty() {
             out.push_str(&format!("rail_order={}\n", self.rail_order));
@@ -4133,6 +4150,27 @@ mod tests {
         assert_eq!(back.chat_seen, line);
         assert_eq!(back.ai_w, 420.0);
         assert!(!Settings::default().profile_body().contains("chat_seen="));
+    }
+
+    /// **The Bots whose quick setup was ended** (QUESTIONS O155) ride the
+    /// session file the same way: one opaque line, none while there is none,
+    /// and every other key reads as before beside it.
+    #[test]
+    fn the_bot_setup_line_round_trips_and_is_absent_when_empty() {
+        let line = "8b0c4d1e000040008000000000000001,8b0c4d1e000040008000000000000002";
+        let s = Settings {
+            bot_setup: line.into(),
+            chat_seen: "8b0c4d1e-0000-4000-8000-000000000001:12:-:u".into(),
+            ai_w: 420.0,
+            ..Settings::default()
+        };
+        let body = s.profile_body();
+        assert!(body.contains(&format!("bot_setup={line}\n")), "{body}");
+        let back = Settings::from_text(&body);
+        assert_eq!(back.bot_setup, line);
+        assert_eq!(back.chat_seen, s.chat_seen);
+        assert_eq!(back.ai_w, 420.0);
+        assert!(!Settings::default().profile_body().contains("bot_setup="));
     }
 
     /// **The rail's order** rides the session file the same way: one opaque

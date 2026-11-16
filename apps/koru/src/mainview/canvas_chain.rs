@@ -1926,8 +1926,33 @@ fn replace_page(
     write: &PageWrite,
     page: DocumentId,
 ) -> Result<(), Error> {
+    replace_page_text(
+        client,
+        write.workspace,
+        page,
+        &write.title,
+        &write.markdown,
+        (&write.before, &write.after),
+    )
+}
+
+/// [`replace_page`] for any caller that holds the words rather than a
+/// chain's write: `markdown` goes under `page`'s title in `workspace`,
+/// between the two History `labels` (before, after). `title` is only what
+/// the Markdown builder is given; the page's own title row is not touched.
+/// A Bot's quick setup writes its Role page through this
+/// (`mainview/bot_onboard.rs`).
+pub(super) fn replace_page_text(
+    client: &koru_api_client::Client,
+    workspace: koru_core::WorkspaceId,
+    page: DocumentId,
+    title: &str,
+    markdown: &str,
+    labels: (&str, &str),
+) -> Result<(), Error> {
     use koru_workspace::explore::{store_document, store_workspace};
-    let fresh = page_content(write)?;
+    let fresh = page_content(workspace, title, markdown)?;
+    let write_workspace = workspace;
     let marker = |label: &str| koru_store_wire::CaptureHistory {
         reason: "manual".into(),
         frontiers: None,
@@ -1935,13 +1960,13 @@ fn replace_page(
         message: None,
         boundary: None,
     };
-    let (workspace, document) = (store_workspace(write.workspace), store_document(page));
-    client.capture_history(workspace, document, &marker(&write.before))?;
+    let (workspace, document) = (store_workspace(write_workspace), store_document(page));
+    client.capture_history(workspace, document, &marker(labels.0))?;
     let factory: koru_workspace::store::ClientFactory = {
         let client = client.clone();
         Arc::new(move || Ok(client.clone()))
     };
-    koru_workspace::edit_foreign_document(factory, write.workspace, page, |doc| {
+    koru_workspace::edit_foreign_document(factory, write_workspace, page, |doc| {
         let root = koru_workspace::document_root(doc)
             .ok_or_else(|| Error::new(Code::InvalidRequest, "the page has no title row"))?;
         for child in doc.children(Parent::Node(root)).map_err(internal)? {
@@ -1959,19 +1984,32 @@ fn replace_page(
         }
         Ok(())
     })?;
-    client.capture_history(workspace, document, &marker(&write.after))?;
+    client.capture_history(workspace, document, &marker(labels.1))?;
     Ok(())
 }
 
 /// The page, built from Markdown the way Koru AI's export builds one.
 fn page_snapshot(write: &PageWrite) -> Result<Vec<u8>, Error> {
-    koru_import_markdown::document_snapshot(write.workspace, &write.title, &write.markdown)
+    snapshot_of(write.workspace, &write.title, &write.markdown)
+}
+
+fn snapshot_of(
+    workspace: koru_core::WorkspaceId,
+    title: &str,
+    markdown: &str,
+) -> Result<Vec<u8>, Error> {
+    koru_import_markdown::document_snapshot(workspace, title, markdown)
         .map_err(|_| Error::new(Code::InvalidRequest, "the page could not be built"))
 }
 
 /// What goes under a page's title, as cuttings to plant.
-fn page_content(write: &PageWrite) -> Result<Vec<koru_core::schema::Cutting>, Error> {
-    let built = WorkspaceDoc::from_snapshot(&page_snapshot(write)?).map_err(internal)?;
+fn page_content(
+    workspace: koru_core::WorkspaceId,
+    title: &str,
+    markdown: &str,
+) -> Result<Vec<koru_core::schema::Cutting>, Error> {
+    let built =
+        WorkspaceDoc::from_snapshot(&snapshot_of(workspace, title, markdown)?).map_err(internal)?;
     let Some(root) = koru_workspace::document_root(&built) else {
         return Ok(Vec::new());
     };
