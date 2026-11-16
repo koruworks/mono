@@ -16,6 +16,151 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     ("ui_lab.rs", include_str!("../ui_lab.rs")),
     ("ui_lab/placement.rs", include_str!("placement.rs")),
     ("ui_lab/registry.rs", include_str!("registry.rs")),
+    ("ui_lab/registry/app.rs", include_str!("registry/app.rs")),
+    (
+        "ui_lab/registry/app/companion_apps.rs",
+        include_str!("registry/app/companion_apps.rs"),
+    ),
+    (
+        "ui_lab/registry/app/leaf.rs",
+        include_str!("registry/app/leaf.rs"),
+    ),
+    (
+        "ui_lab/registry/app/mainview.rs",
+        include_str!("registry/app/mainview.rs"),
+    ),
+    (
+        "ui_lab/registry/app/mini_app.rs",
+        include_str!("registry/app/mini_app.rs"),
+    ),
+    (
+        "ui_lab/registry/app/os_surfaces.rs",
+        include_str!("registry/app/os_surfaces.rs"),
+    ),
+    (
+        "ui_lab/registry/app/pages.rs",
+        include_str!("registry/app/pages.rs"),
+    ),
+    (
+        "ui_lab/registry/app/panes.rs",
+        include_str!("registry/app/panes.rs"),
+    ),
+    (
+        "ui_lab/registry/app/tasks_view.rs",
+        include_str!("registry/app/tasks_view.rs"),
+    ),
+    (
+        "ui_lab/registry/compositions.rs",
+        include_str!("registry/compositions.rs"),
+    ),
+    (
+        "ui_lab/registry/controls.rs",
+        include_str!("registry/controls.rs"),
+    ),
+    (
+        "ui_lab/registry/domain.rs",
+        include_str!("registry/domain.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/agents.rs",
+        include_str!("registry/domain/agents.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/ai.rs",
+        include_str!("registry/domain/ai.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/app_shell.rs",
+        include_str!("registry/domain/app_shell.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/appearance.rs",
+        include_str!("registry/domain/appearance.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/artifacts.rs",
+        include_str!("registry/domain/artifacts.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/canvas.rs",
+        include_str!("registry/domain/canvas.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/chats.rs",
+        include_str!("registry/domain/chats.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/editor.rs",
+        include_str!("registry/domain/editor.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/markdown_view.rs",
+        include_str!("registry/domain/markdown_view.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/notifications.rs",
+        include_str!("registry/domain/notifications.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/runs.rs",
+        include_str!("registry/domain/runs.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/search.rs",
+        include_str!("registry/domain/search.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/session_view.rs",
+        include_str!("registry/domain/session_view.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/settings.rs",
+        include_str!("registry/domain/settings.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/shell_chrome.rs",
+        include_str!("registry/domain/shell_chrome.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/socials.rs",
+        include_str!("registry/domain/socials.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/voice.rs",
+        include_str!("registry/domain/voice.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/webview.rs",
+        include_str!("registry/domain/webview.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/window.rs",
+        include_str!("registry/domain/window.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/workspace_host.rs",
+        include_str!("registry/domain/workspace_host.rs"),
+    ),
+    (
+        "ui_lab/registry/foundations.rs",
+        include_str!("registry/foundations.rs"),
+    ),
+    (
+        "ui_lab/registry/native.rs",
+        include_str!("registry/native.rs"),
+    ),
+    (
+        "ui_lab/registry/native/android.rs",
+        include_str!("registry/native/android.rs"),
+    ),
+    (
+        "ui_lab/registry/native/ios.rs",
+        include_str!("registry/native/ios.rs"),
+    ),
+    (
+        "ui_lab/registry/native/macos.rs",
+        include_str!("registry/native/macos.rs"),
+    ),
     ("ui_lab/shell.rs", include_str!("shell.rs")),
     (
         "ui_lab/shell/semantics.rs",
@@ -164,7 +309,7 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
         "telemetry",
     ];
     for (file, source) in LAB_SOURCES {
-        for line in code_lines(source) {
+        for line in scanned_lines(file, source) {
             for forbidden in FORBIDDEN {
                 assert!(
                     !line.contains(forbidden),
@@ -175,15 +320,158 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
     }
 }
 
+/// **The registry's record files are data, and their data is paths.** A
+/// record names the production symbol it describes as a string literal —
+/// `"koru_settings_ui::SettingsSurface"` — and the inventory has to be able
+/// to name every UI crate, including the ones the Lab itself must never
+/// call. A literal is text the registry shows; it links nothing and runs
+/// nothing. So in these files, and only these, the scans read each code
+/// line with its string literals emptied: a `use`, a path expression or a
+/// call of a forbidden crate is still refused, exactly as strictly as
+/// anywhere else in the Lab, while a record may spell the path it records.
+/// Every other Lab file — the shell, the story, the registry's own module
+/// with the Button and the shell-facing functions — is scanned whole.
+const RECORD_FILES: &[&str] = &[
+    "ui_lab/registry/app.rs",
+    "ui_lab/registry/app/companion_apps.rs",
+    "ui_lab/registry/app/leaf.rs",
+    "ui_lab/registry/app/mainview.rs",
+    "ui_lab/registry/app/mini_app.rs",
+    "ui_lab/registry/app/os_surfaces.rs",
+    "ui_lab/registry/app/pages.rs",
+    "ui_lab/registry/app/panes.rs",
+    "ui_lab/registry/app/tasks_view.rs",
+    "ui_lab/registry/compositions.rs",
+    "ui_lab/registry/controls.rs",
+    "ui_lab/registry/domain.rs",
+    "ui_lab/registry/domain/agents.rs",
+    "ui_lab/registry/domain/ai.rs",
+    "ui_lab/registry/domain/app_shell.rs",
+    "ui_lab/registry/domain/appearance.rs",
+    "ui_lab/registry/domain/artifacts.rs",
+    "ui_lab/registry/domain/canvas.rs",
+    "ui_lab/registry/domain/chats.rs",
+    "ui_lab/registry/domain/editor.rs",
+    "ui_lab/registry/domain/markdown_view.rs",
+    "ui_lab/registry/domain/notifications.rs",
+    "ui_lab/registry/domain/runs.rs",
+    "ui_lab/registry/domain/search.rs",
+    "ui_lab/registry/domain/session_view.rs",
+    "ui_lab/registry/domain/settings.rs",
+    "ui_lab/registry/domain/shell_chrome.rs",
+    "ui_lab/registry/domain/socials.rs",
+    "ui_lab/registry/domain/voice.rs",
+    "ui_lab/registry/domain/webview.rs",
+    "ui_lab/registry/domain/window.rs",
+    "ui_lab/registry/domain/workspace_host.rs",
+    "ui_lab/registry/foundations.rs",
+    "ui_lab/registry/native.rs",
+    "ui_lab/registry/native/android.rs",
+    "ui_lab/registry/native/ios.rs",
+    "ui_lab/registry/native/macos.rs",
+];
+
+/// `line` with the contents of every `"…"` literal removed, quotes kept.
+/// A record file holds no raw string, no character literal of a quote and
+/// no literal that runs past its line — each would let text slip out of a
+/// literal unseen — so meeting one fails rather than guessing.
+fn outside_strings(file: &str, line: &str) -> String {
+    let refuse = || panic!("{file}: a record file uses only plain string literals: {line}");
+    let mut code = String::with_capacity(line.len());
+    let mut inside = false;
+    let mut escaped = false;
+    let mut previous = ' ';
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if inside {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                inside = false;
+                code.push(c);
+            }
+        } else {
+            let starts_token = !(previous.is_alphanumeric() || previous == '_');
+            // `r"…"` or `r#"…"#`: a raw literal, whose end this reading
+            // would not find. A `'"'` character literal likewise.
+            if (c == 'r' && starts_token && matches!(chars.peek(), Some('"' | '#')))
+                || (c == '\'' && chars.peek() == Some(&'"'))
+            {
+                refuse();
+            }
+            if c == '"' {
+                inside = true;
+            }
+            code.push(c);
+        }
+        previous = c;
+    }
+    assert!(
+        !inside,
+        "{file}: a record's string literal ends on its own line: {line}"
+    );
+    code
+}
+
+/// The code lines the scans read in `file`: whole, or with string literals
+/// emptied for a record file.
+fn scanned_lines(file: &'static str, source: &'static str) -> Vec<String> {
+    let record = RECORD_FILES.contains(&file);
+    code_lines(source)
+        .map(|line| {
+            if record {
+                outside_strings(file, line)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect()
+}
+
+/// The exemption above is narrow and does what it says: a record file's
+/// literal may name a forbidden crate, its code may not, and every other
+/// file is read with its literals intact.
+#[test]
+fn only_record_literals_may_spell_a_forbidden_path() {
+    let record = "ui_lab/registry/domain/settings.rs";
+    assert_eq!(
+        outside_strings(record, r#"support("koru_settings_ui::SettingsSurface"),"#),
+        r#"support(""),"#
+    );
+    assert_eq!(
+        outside_strings(record, r#"plain("a \"quoted\" koru_settings", x)"#),
+        r#"plain("", x)"#
+    );
+    assert!(
+        outside_strings(record, "use koru_settings_ui::SettingsSurface;").contains("koru_settings")
+    );
+    assert!(
+        outside_strings(record, r#"let _ = ("", koru_settings_ui::x());"#)
+            .contains("koru_settings")
+    );
+    // Not a record file: read whole.
+    assert!(!RECORD_FILES.contains(&"ui_lab/shell.rs"));
+    assert!(!RECORD_FILES.contains(&"ui_lab/registry.rs"));
+    // Every record file is a Lab source the scans read.
+    for file in RECORD_FILES {
+        assert!(
+            LAB_SOURCES.iter().any(|(listed, _)| listed == file),
+            "{file} is exempted but not scanned"
+        );
+    }
+}
+
 /// The Lab's only uses of the workspace host: the typed command, the one size
 /// constant its window shares with `--window-size`, the accessibility
 /// vocabulary every Koru window publishes through, and the hosted inspector.
 /// None of them is the ordinary application or anything it starts.
 #[test]
 fn the_lab_takes_only_what_it_is_listed_as_taking_from_the_workspace_host() {
-    let mut uses: Vec<&str> = LAB_SOURCES
+    let mut uses: Vec<String> = LAB_SOURCES
         .iter()
-        .flat_map(|(_, source)| code_lines(source))
+        .flat_map(|(file, source)| scanned_lines(file, source))
         .filter(|line| line.contains("koru_workspace_host"))
         .collect();
     uses.sort_unstable();
