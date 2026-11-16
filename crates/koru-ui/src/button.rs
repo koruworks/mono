@@ -316,6 +316,28 @@ impl<'a> ActionButton<'a> {
     }
 }
 
+/// **The keyboard-focus mark a shared control wears on its own shape**: the
+/// palette's `focus_ring`, twice a border's weight, on the control's rounded
+/// rectangle. The mark [`crate::chip::Chip`] and [`crate::toggle::Toggle`]
+/// have always drawn; the segmented control, the dropdown and the icon
+/// button draw theirs through this, so the three cannot drift apart.
+pub(crate) fn focus_stroke(
+    canvas: &mut Scene,
+    root: Affine,
+    palette: &theme::Palette,
+    rect: Rect,
+    radius: f32,
+    alpha: f32,
+) {
+    scene::stroke(
+        canvas,
+        root,
+        palette.focus_ring.multiply_alpha(alpha),
+        theme::BORDER_W * 2.0,
+        &scene::rrect(rect.x, rect.y, rect.w, rect.h, radius),
+    );
+}
+
 fn darkened(colour: vello::peniko::Color, amount: f32) -> vello::peniko::Color {
     let [r, g, b, a] = colour.components;
     vello::peniko::Color::new([r * amount, g * amount, b * amount, a])
