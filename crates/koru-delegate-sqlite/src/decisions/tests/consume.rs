@@ -9,7 +9,20 @@ pub(super) fn ready() -> (
     BotExecutionFence,
     Vec<u8>,
 ) {
-    let (mut h, record, _clock) = lifecycle::koru_enrollment_ready();
+    let (h, record, request, fence, payload, _clock) = ready_with_clock();
+    (h, record, request, fence, payload)
+}
+
+/// [`ready`], keeping the ledger's clock so a test can move it.
+fn ready_with_clock() -> (
+    Harness,
+    DecisionRecord,
+    PrepareNativeResult,
+    BotExecutionFence,
+    Vec<u8>,
+    std::sync::Arc<std::sync::atomic::AtomicI64>,
+) {
+    let (mut h, record, clock) = lifecycle::koru_enrollment_ready();
     let record = crate::test_support::record_enrollment(&mut h.db, &record).unwrap();
     let record = crate::test_support::stop_origin(&mut h.db, &record, 1000).unwrap();
     let host = HostInstanceId::from_uuid(uuid::Uuid::new_v4());
@@ -32,7 +45,7 @@ pub(super) fn ready() -> (
         panic!("edit")
     };
     let payload = edit.payload.as_slice().to_vec();
-    (h, record, request, fence, payload)
+    (h, record, request, fence, payload, clock)
 }
 
 #[test]
@@ -398,4 +411,106 @@ fn decision_consume_replay_under_a_new_transition_licenses_nothing_and_records_n
     assert_eq!(replay.intent, first.intent);
     assert!(replay.execute.is_none());
     assert_eq!(count(&h), projections, "no new projection");
+}
+
+/// O150: a positively recorded save settles the decision once. A lost reply
+/// is retried by a stateless caller under a new transition; that replay is a
+/// read and records no second projection. The settled decision has no
+/// deadline any more: expiry cannot reach it, while a person's Stop still can.
+#[test]
+fn decision_durable_save_settles_once_replays_under_a_new_transition_and_has_no_deadline() {
+    let (mut h, record, request, fence, payload, clock) = ready_with_clock();
+    h.db.consume_decision_edit(
+        &expected(&record),
+        DecisionTransitionId::mint(),
+        &request,
+        &payload,
+        &fence,
+        &h.proof,
+        h.boot,
+    )
+    .unwrap();
+    h.db.confirm_native_result(&ConfirmNativeResult {
+        key: request.key.clone(),
+        request_fingerprint: request.request_fingerprint,
+        observation: NativeResultObservation::Durable {
+            evidence: koru_delegate_core::NativeResultReference {
+                operation_id: request.key.operation_id,
+                workspace: request.destination,
+                document: request.target.unwrap(),
+                version: vec![7, 7, 7],
+                title: "Approved page".into(),
+                confirmed_at_ms: 1000,
+                kind: koru_delegate_core::NativeResultKind::EditedPage,
+            },
+        },
+    })
+    .unwrap();
+    let outcome =
+        h.db.decision_retained_effect(fence.owner, fence.run, record.receipt.decision)
+            .unwrap()
+            .unwrap();
+    assert!(matches!(outcome, DecisionRetainedEffect::Durable { .. }));
+    let consumed = h.read(record.receipt.decision).unwrap();
+    let count = |h: &Harness| -> i64 {
+        h.db.conn()
+            .query_row(
+                "SELECT count(*) FROM bot_decision_publications WHERE run_id=?1",
+                [fence.run.to_storage()],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    let before = count(&h);
+    // The settlement commits; its caller never sees the reply (a lost reply
+    // looks the same to the ledger).
+    let _lost =
+        h.db.settle_decision_effect(&expected(&consumed), DecisionTransitionId::mint(), &outcome)
+            .unwrap();
+    let settled = h.read(record.receipt.decision).unwrap();
+    assert_eq!(settled.receipt.state.phase, DecisionPhase::Settled);
+    assert_eq!(
+        settled
+            .receipt
+            .closure
+            .as_ref()
+            .map(|closure| closure.reason),
+        Some(DecisionClosureReason::Completed)
+    );
+    assert_eq!(count(&h), before + 1, "one DecisionResolved Control");
+    // The retry under a new transition reads the retained settlement.
+    let replay =
+        h.db.settle_decision_effect(&expected(&consumed), DecisionTransitionId::mint(), &outcome)
+            .unwrap();
+    assert_eq!(replay.receipt, settled.receipt);
+    assert_eq!(count(&h), before + 1, "no second projection");
+    // Past the original deadline, expiry cannot settle it another way; a
+    // person's Stop is still accepted and never reopens the settlement.
+    clock.store(
+        settled.receipt.deadline.deadline_at_ms + 1,
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    let ticket =
+        h.db.decision_wait_execution(fence.owner, fence.run)
+            .unwrap()
+            .unwrap()
+            .expected;
+    assert!(
+        h.db.request_decision_cleanup(
+            &ticket,
+            DecisionTransitionId::mint(),
+            DecisionClosureReason::Expired
+        )
+        .is_err()
+    );
+    h.db.request_decision_cleanup(
+        &ticket,
+        DecisionTransitionId::mint(),
+        DecisionClosureReason::Canceled,
+    )
+    .unwrap();
+    assert_eq!(
+        h.read(record.receipt.decision).unwrap().receipt,
+        settled.receipt
+    );
 }
