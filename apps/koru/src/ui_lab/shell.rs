@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **The Lab's one window**, on the shared single-window runner.
+//! **The Lab's own window**: the gallery, its story and its controls.
 //!
 //! [`Lab`] is a `koru_window::WindowApp` and nothing more: it is handed a
 //! text engine, draws into a scene, and answers pointer and key events. It is
 //! not a workspace view and is built from none of the workspace host's
 //! startup, so it has no profile, no Store session, no settings file and no
 //! background worker of its own. Closing the window ends the process.
+//!
+//! It is written against one window and stays that way. The process has a
+//! second one, the inspector's panel, and [`super::windows`] is what runs the
+//! two side by side: it hands this window's events and frames to `Lab`
+//! unchanged, so the story's state is the same value whether or not the
+//! inspector is open. What the window offers a screen reader is
+//! [`semantics`]'s, read from the same frame.
 //!
 //! ```text
 //! col  UI Lab                         the window, on the ground surface
@@ -130,6 +137,8 @@ struct Laid {
     frame: Frame,
     /// The style control's segments, measured where they were drawn.
     segments: Option<Segmented>,
+    /// The client size the frame was laid out at, in logical pixels.
+    size: (f32, f32),
 }
 
 impl Laid {
@@ -692,6 +701,9 @@ impl Lab {
             .id(key)
             .hit()
             .focusable()
+            // The element layer has no text-field role; the window's
+            // semantics publish this node as one, with its value.
+            .semantics(Role::Group)
             .name(control.name())
             .action(el::Action::Focus),
             Control::Style => el::boxed("Style choice")
@@ -1001,9 +1013,15 @@ impl WindowApp for Lab {
                 }
             },
         );
-        self.laid = Some(Laid { frame, segments });
+        self.laid = Some(Laid {
+            frame,
+            segments,
+            size: (w, h),
+        });
     }
 }
+
+mod semantics;
 
 #[cfg(test)]
 mod tests;

@@ -15,9 +15,11 @@
 //! This checkpoint is one trial: the shared dialog button in a three-region
 //! window ([`shell`]), with its label and style changed from the properties
 //! the registration lists, a visible result for pressing it, and Reset. Its
-//! state is [`story`]'s and lives in memory. There is no search, inspector,
-//! theme or width control and no way to name a story on the command line;
-//! those arrive with the gallery, not as placeholders here.
+//! state is [`story`]'s and lives in memory. F12 opens the same inspector
+//! the app has, in a window of its own ([`windows`]), over the Lab's own
+//! elements and the production button they hold. There is no search, theme
+//! or width control and no way to name a story on the command line; those
+//! arrive with the gallery, not as placeholders here.
 //!
 //! ## What `run` starts, and what it must never start
 //!
@@ -25,10 +27,12 @@
 //! update reopen claim, the file log, the taskbar hand-off and Jump List, the
 //! Agent link, the Store, persisted search and the workspace host. It then
 //! starts exactly two things: the display language, from the operating
-//! system's locale, and one window on `koru_window`'s single-window runner.
-//! It reads no Koru preference, so the theme, font and density are the
+//! system's locale, and the Lab's window on `koru_window`'s multi-window
+//! runner, which opens the inspector's panel beside it while F12 has it
+//! open. It reads no Koru preference, so the theme, font and density are the
 //! built-in defaults whatever the working app is set to, and the element
 //! layer's fixture theme is never pinned here even when its variable is set.
+//! Neither window's size or position is read from or written to a file.
 //!
 //! No type can hold that ordering, so `tests.rs` pins it by reading the
 //! source, the way the Agent pins its worker dispatch.
@@ -38,6 +42,7 @@ pub(crate) mod registry;
 mod shell;
 mod story;
 mod tokens;
+mod windows;
 
 use koru_workspace_host::cli::UiCommand;
 
@@ -60,7 +65,10 @@ pub(crate) fn run(command: UiCommand) {
         std::process::exit(1);
     };
     let placement = placement::Placement::in_memory(command.window_size);
-    if let Err(error) = koru_window::run(|engine| shell::Lab::new(engine, placement, entry)) {
+    let opened = koru_window::run_windows(|engine| {
+        windows::LabWindows::new(shell::Lab::new(engine, placement, entry))
+    });
+    if let Err(error) = opened {
         eprintln!("Koru could not open the UI Lab window: {error}");
         std::process::exit(1);
     }

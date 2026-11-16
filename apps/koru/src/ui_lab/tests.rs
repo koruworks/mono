@@ -17,8 +17,13 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     ("ui_lab/placement.rs", include_str!("placement.rs")),
     ("ui_lab/registry.rs", include_str!("registry.rs")),
     ("ui_lab/shell.rs", include_str!("shell.rs")),
+    (
+        "ui_lab/shell/semantics.rs",
+        include_str!("shell/semantics.rs"),
+    ),
     ("ui_lab/story.rs", include_str!("story.rs")),
     ("ui_lab/tokens.rs", include_str!("tokens.rs")),
+    ("ui_lab/windows.rs", include_str!("windows.rs")),
 ];
 
 /// The body of `fn main`, so a name that also appears in a helper or a
@@ -170,10 +175,12 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
     }
 }
 
-/// The Lab's only uses of the workspace host are the typed command and the
-/// one size constant its window shares with `--window-size`.
+/// The Lab's only uses of the workspace host: the typed command, the one size
+/// constant its window shares with `--window-size`, the accessibility
+/// vocabulary every Koru window publishes through, and the hosted inspector.
+/// None of them is the ordinary application or anything it starts.
 #[test]
-fn the_lab_takes_only_the_command_and_a_constant_from_the_workspace_host() {
+fn the_lab_takes_only_what_it_is_listed_as_taking_from_the_workspace_host() {
     let mut uses: Vec<&str> = LAB_SOURCES
         .iter()
         .flat_map(|(_, source)| code_lines(source))
@@ -184,9 +191,25 @@ fn the_lab_takes_only_the_command_and_a_constant_from_the_workspace_host() {
         uses,
         [
             "const MIN_SIZE: (f32, f32) = koru_workspace_host::settings::MIN_WINDOW_SIZE;",
+            "use koru_workspace_host::accessibility::{",
+            "use koru_workspace_host::accessibility::{PaneAccessibility, Resolved, Slots};",
             "use koru_workspace_host::cli::UiCommand;",
+            "use koru_workspace_host::hosted_inspector::{HostedInspector, PanelEvent};",
         ]
     );
+}
+
+/// The inspector the Lab hosts is the memory-only one, and the Lab has no
+/// other way to it: the facade is made by the constructor that reads and
+/// writes no geometry file, once.
+#[test]
+fn the_labs_inspector_is_made_in_memory_and_nowhere_else() {
+    let made: Vec<&str> = LAB_SOURCES
+        .iter()
+        .flat_map(|(_, source)| code_lines(source))
+        .filter(|line| line.contains("HostedInspector::"))
+        .collect();
+    assert_eq!(made, ["inspector: HostedInspector::in_memory(),"]);
 }
 
 /// Every source file under `ui_lab` is on the list the checks above read, so
