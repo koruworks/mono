@@ -185,23 +185,24 @@ async fn a_metadata_refusal_sees_no_body_frame_and_no_ack_at_either_size_bound()
         )
         .await
         .unwrap();
-        // The refusal is never an upload completion.
-        let ended = loop {
-            match client.next().await {
-                Ok(Event::Uploaded { .. }) => panic!("a refusal acknowledged an upload"),
-                Ok(_) => {}
-                Err(error) => break error,
+        // The refusal is never an upload completion. It ends that upload
+        // only: the stream stays open for the read direction.
+        let refused = loop {
+            match client.next().await.unwrap() {
+                Event::Uploaded { .. } => panic!("a refusal acknowledged an upload"),
+                Event::UploadRefused { reason, .. } => break reason,
+                _ => {}
             }
         };
-        assert_eq!(ended.code(), "cloud_stored_document_bytes_limit");
-        // Whatever else the client wrote before it ended, none of it is body.
-        drop(client);
-        while let Ok(received) = records::read(&mut reader, Instant::now() + WAIT, &budget).await {
-            assert!(
-                matches!(received.record(), Record::Peer(PeerFrame::Error { .. })),
-                "length {length}: a record other than the closing error followed the start"
-            );
-        }
+        assert_eq!(refused.code(), "cloud_stored_document_bytes_limit");
+        assert!(client.upload.is_none());
+        assert!(client.status().transfer.closed.is_none());
+        // Nothing follows the start: no body, and no closing error either.
+        writes_nothing(&mut client, &mut reader, &budget).await;
+        assert!(
+            client.status().transfer.closed.is_none(),
+            "length {length}: the refused upload closed the stream"
+        );
     }
 }
 

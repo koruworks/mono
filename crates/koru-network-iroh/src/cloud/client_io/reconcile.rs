@@ -139,24 +139,72 @@ struct HeldUpload {
 
 /// Retained by the Workspace host across ordinary carrier renewal. Scope
 /// replacement drops the old handle; no hold survives account/incarnation loss.
-#[derive(Clone, Debug, Default)]
-pub struct UploadAdmissionHolds(
-    Arc<std::sync::Mutex<AdmissionState>>,
-    Arc<tokio::sync::Notify>,
-);
+#[derive(Clone)]
+pub struct UploadAdmissionHolds {
+    state: Arc<std::sync::Mutex<AdmissionState>>,
+    /// This holder's own wake. A Profile session and its authority
+    /// Workspace's session share one state, and each must hear a release:
+    /// one shared permit would wake whichever of them happened to ask first.
+    wake: Arc<tokio::sync::Notify>,
+    clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+}
 
 #[derive(Debug, Default)]
 struct AdmissionState {
     observation: Option<Observation>,
     held: std::collections::HashMap<Unit, HeldUpload>,
+    wakes: Vec<std::sync::Weak<tokio::sync::Notify>>,
+}
+
+impl Default for UploadAdmissionHolds {
+    fn default() -> Self {
+        Self::with_clock(epoch_millis)
+    }
+}
+
+impl std::fmt::Debug for UploadAdmissionHolds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UploadAdmissionHolds")
+            .field("state", &self.state)
+            .finish_non_exhaustive()
+    }
 }
 
 impl UploadAdmissionHolds {
+    /// Wall-clock milliseconds from `clock`, so a test can cross the
+    /// 60-second resource cycle without waiting for it.
+    pub fn with_clock(clock: impl Fn() -> i64 + Send + Sync + 'static) -> Self {
+        Self {
+            state: Default::default(),
+            wake: Default::default(),
+            clock: Arc::new(clock),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, AdmissionState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The same holds with a wake of its own, for one session's reconciler.
+    fn session(&self) -> Self {
+        let wake = Arc::new(tokio::sync::Notify::new());
+        let mut state = self.state();
+        state.wakes.retain(|wake| wake.strong_count() != 0);
+        state.wakes.push(Arc::downgrade(&wake));
+        drop(state);
+        Self {
+            state: self.state.clone(),
+            wake,
+            clock: self.clock.clone(),
+        }
+    }
+
     pub fn observe(&self, observation: Observation) {
-        if !observation.current(epoch_millis()) {
+        let now = (self.clock)();
+        if !observation.current(now) {
             return;
         }
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut state = self.state();
         if state
             .observation
             .is_some_and(|old| old.binding != observation.binding)
@@ -164,35 +212,28 @@ impl UploadAdmissionHolds {
             state.held.clear();
         }
         state.observation = Some(observation);
+        // A resource hold is released by its 60-second cycle alone, never by
+        // an observation: logical usage says nothing about that resource.
         let ready = state.held.values().any(|held| {
-            !held.hold.reason.resource()
-                && held.hold.clone().retry(Some(observation), epoch_millis())
+            !held.hold.reason.resource() && held.hold.clone().retry(Some(observation), now)
         });
         if ready {
-            self.1.notify_one();
+            state
+                .wakes
+                .retain(|wake| wake.upgrade().map(|wake| wake.notify_one()).is_some());
         }
     }
 
     pub async fn changed(&self) {
-        self.1.notified().await;
+        self.wake.notified().await;
     }
 
     pub fn active(&self) -> bool {
-        !self
-            .0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .held
-            .is_empty()
+        !self.state().held.is_empty()
     }
 
     pub fn reason(&self, unit: Unit) -> Option<Reason> {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .held
-            .get(&unit)
-            .map(|held| held.hold.reason)
+        self.state().held.get(&unit).map(|held| held.hold.reason)
     }
 }
 
@@ -265,7 +306,7 @@ where
     }
 
     pub fn with_admission_holds(mut self, holds: UploadAdmissionHolds) -> Self {
-        self.admission = holds;
+        self.admission = holds.session();
         self
     }
 
@@ -457,13 +498,29 @@ where
                 version,
                 _messages: messages,
             });
+            // A timed resource retry may offer its start only while this
+            // stream's current policy answers every start before any body
+            // (M2.TRANSFER-DECISION §4). Any other worker would be sent the
+            // whole document again, so there the hold stays and its cycle is
+            // not spent. Quota and plan holds wait for their own evidence.
+            let deciding = self.client.upload_decision_required();
             let held = {
-                let mut state = self.admission.0.lock().unwrap_or_else(|e| e.into_inner());
+                let now = (self.admission.clock)();
+                let mut state = self.admission.state();
                 let observation = state.observation;
                 state.held.get_mut(&unit).is_some_and(|held| {
-                    pass.local_version.as_ref() == Some(&held.head)
-                        && (held.hold.reason.resource()
-                            || !held.hold.retry(observation, epoch_millis()))
+                    // Still the refused candidate while nothing local lies
+                    // beyond its head and what Cloud already holds: a download
+                    // merged since then moves the local version without adding
+                    // anything to offer. With nothing left to offer, the export
+                    // below answers `None` and retires the hold.
+                    let mut covered = held.head.clone();
+                    covered.merge(&remote.version);
+                    pass.local_version.as_ref().is_some_and(|local| {
+                        covered.includes_vv(local)
+                            && koru_replication::reconcile::missing(local, &remote.version).upload
+                    }) && ((held.hold.reason.resource() && !deciding)
+                        || !held.hold.retry(observation, now))
                 })
             };
             if held {
@@ -510,12 +567,7 @@ where
                 Event::Downloaded(unit)
             }
             super::Event::Uploaded { unit, batch } => {
-                self.admission
-                    .0
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .held
-                    .remove(&unit);
+                self.admission.state().held.remove(&unit);
                 let pass = self.pass.as_mut().ok_or(Error::Invalid)?;
                 if pass.unit != unit || !matches!(pass.step, Step::Upload) {
                     return Err(Error::Invalid);
@@ -557,8 +609,8 @@ where
                 }
                 let head = pass.uploaded_version.clone().ok_or(Error::Invalid)?;
                 {
-                    let mut state = self.admission.0.lock().unwrap_or_else(|e| e.into_inner());
-                    let now = epoch_millis();
+                    let now = (self.admission.clock)();
+                    let mut state = self.admission.state();
                     let hold = match state.observation {
                         Some(observation) => {
                             Hold::new(reason, observation.binding, Some(observation), None, now)
@@ -629,6 +681,10 @@ where
                     pass.uploaded_version = Some(export.version().clone());
                     pass.step = Step::Send(export);
                 } else {
+                    // Cloud already holds everything here, so a hold on this
+                    // unit names a candidate that no longer exists.
+                    let unit = self.pass.as_ref().ok_or(Error::Invalid)?.unit;
+                    self.admission.state().held.remove(&unit);
                     self.verify()?;
                 }
                 Ok(Event::Progress)

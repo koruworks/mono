@@ -11,6 +11,7 @@ use loro::{ExportMode, LoroDoc, VersionVector};
 
 type SyncClient = Reconciler<'static, ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
+mod admission;
 mod claim;
 mod live;
 
