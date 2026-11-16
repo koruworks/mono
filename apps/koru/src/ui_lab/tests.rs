@@ -178,6 +178,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     ),
     ("ui_lab/stories.rs", include_str!("stories.rs")),
     (
+        "ui_lab/stories/actions.rs",
+        include_str!("stories/actions.rs"),
+    ),
+    (
         "ui_lab/stories/choices.rs",
         include_str!("stories/choices.rs"),
     ),
@@ -337,6 +341,35 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
             }
         }
     }
+}
+
+/// **The Lab puts nothing on the system clipboard of its own accord.** A
+/// field a person types in copies and pastes through the shared text input,
+/// which is theirs to do. Nothing else may: the copy affordance's story
+/// shows the confirmation without the copy, so no Lab source names the
+/// clipboard or calls the affordance's `click`, which writes it.
+#[test]
+fn the_lab_never_writes_the_clipboard_itself() {
+    const FORBIDDEN: &[&str] = &[
+        "koru_clipboard",
+        "clipboard::",
+        "put_plain",
+        "affordance.click(",
+        "CopyAffordance::click(",
+    ];
+    for (file, source) in LAB_SOURCES {
+        for line in scanned_lines(file, source) {
+            for forbidden in FORBIDDEN {
+                assert!(
+                    !line.contains(forbidden),
+                    "{file} names `{forbidden}`: {line}"
+                );
+            }
+        }
+    }
+    // The story that could have: it confirms, and never clicks.
+    let story = include_str!("stories/actions.rs");
+    assert!(code_lines(story).any(|line| line.contains("affordance.confirm(")));
 }
 
 /// **The registry's record files are data, and their data is paths.** A

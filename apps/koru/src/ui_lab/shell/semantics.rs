@@ -684,8 +684,11 @@ impl Lab {
                 _ => false,
             };
         }
-        if let Some((control, options)) = self
-            .segmented_controls()
+        let segmented = self
+            .laid
+            .as_ref()
+            .map_or(Vec::new(), |laid| self.segmented_controls(&laid.frame));
+        if let Some((control, options)) = segmented
             .into_iter()
             .find(|(control, _)| control.options_surface() == surface)
         {

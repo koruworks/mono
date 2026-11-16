@@ -330,87 +330,112 @@ const COMPOSE_INTO: OptionSet = values(
 // ---------------------------------------------------------------- records
 
 const ACTION_RECORDS: [Entry; 4] = [
-    record(
-        "C-ICON-BUTTON",
-        "KoruIconButton",
-        Key::UiLabIconButtonName,
-        Key::UiLabIconButtonPurpose,
-        Kind::Widget,
-        Some("C-ICON"),
-        &["KoruIconButton"],
-        ui("koru_ui::icon_button", ICON_BUTTON),
-        DESKTOP_PHONES_PARTIAL,
-        &[
-            widget_with(
-                "koru_ui::icon_button::IconButton",
-                &[ICON_TONE, ICON_METRICS],
+    storied(
+        record(
+            "C-ICON-BUTTON",
+            "KoruIconButton",
+            Key::UiLabIconButtonName,
+            Key::UiLabIconButtonPurpose,
+            Kind::Widget,
+            Some("C-ICON"),
+            &["KoruIconButton"],
+            ui("koru_ui::icon_button", ICON_BUTTON),
+            DESKTOP_PHONES_PARTIAL,
+            &[
+                widget_with(
+                    "koru_ui::icon_button::IconButton",
+                    &[ICON_TONE, ICON_METRICS],
+                ),
+                widget_with("koru_ui::icon_button::draw_toned", &[ICON_TONE]),
+                widget("koru_ui::icon_button::draw"),
+                widget("koru_ui::icon_button::draw_with"),
+                widget("koru_ui::icon_button::draw_with_in"),
+                widget("koru_ui::icon_button::draw_label_with"),
+                // Geometry: the square a button's plate fills in its slot.
+                support("koru_ui::icon_button::hover_chip"),
+                support("koru_ui::icon_button::State"),
+            ],
+        ),
+        &[staged(
+            "koru_ui::icon_button::draw_focused",
+            &[
+                Control::Tone,
+                Control::Size,
+                Control::Selected,
+                Control::Disabled,
+            ],
+            &[ICON_TONE, ICON_METRICS],
+            ICON_BUTTON_STORY,
+        )],
+    ),
+    storied(
+        record(
+            "C-BUTTON-GROUP",
+            "KoruButtonGroup",
+            Key::UiLabButtonGroupName,
+            Key::UiLabButtonGroupPurpose,
+            Kind::Widget,
+            Some("C-ICON"),
+            &["KoruButtonGroup"],
+            ui(
+                "koru_ui::button_group",
+                "crates/koru-ui/src/button_group.rs",
             ),
-            widget_with("koru_ui::icon_button::draw_toned", &[ICON_TONE]),
-            widget_with(
-                "koru_ui::icon_button::draw_focused",
-                &[ICON_TONE, ICON_METRICS],
+            DESKTOP_NOT_ON_PHONES,
+            &[support("koru_ui::button_group::slots_right")],
+        ),
+        &[staged(
+            "koru_ui::button_group::ButtonGroup",
+            &[Control::Disabled],
+            &[],
+            BUTTON_GROUP_STORY,
+        )],
+    ),
+    storied(
+        record(
+            "C-SPLIT-BUTTON",
+            "KoruSplitButton",
+            Key::UiLabSplitButtonName,
+            Key::UiLabSplitButtonPurpose,
+            Kind::Widget,
+            None,
+            &["KoruSplitButton"],
+            ui(
+                "koru_ui::split_button",
+                "crates/koru-ui/src/split_button.rs",
             ),
-            widget("koru_ui::icon_button::draw"),
-            widget("koru_ui::icon_button::draw_with"),
-            widget("koru_ui::icon_button::draw_with_in"),
-            widget("koru_ui::icon_button::draw_label_with"),
-            widget("koru_ui::icon_button::hover_chip"),
-            support("koru_ui::icon_button::State"),
-        ],
-    ),
-    record(
-        "C-BUTTON-GROUP",
-        "KoruButtonGroup",
-        Key::UiLabButtonGroupName,
-        Key::UiLabButtonGroupPurpose,
-        Kind::Widget,
-        Some("C-ICON"),
-        &["KoruButtonGroup"],
-        ui(
-            "koru_ui::button_group",
-            "crates/koru-ui/src/button_group.rs",
+            DESKTOP_NOT_ON_PHONES,
+            &[support("koru_ui::split_button::SplitPart")],
         ),
-        DESKTOP_NOT_ON_PHONES,
-        &[
-            widget("koru_ui::button_group::ButtonGroup"),
-            support("koru_ui::button_group::slots_right"),
-        ],
+        &[staged(
+            "koru_ui::split_button::SplitButton",
+            &[Control::Tone, Control::Disabled],
+            &[SPLIT_TONE],
+            SPLIT_BUTTON_STORY,
+        )],
     ),
-    record(
-        "C-SPLIT-BUTTON",
-        "KoruSplitButton",
-        Key::UiLabSplitButtonName,
-        Key::UiLabSplitButtonPurpose,
-        Kind::Widget,
-        None,
-        &["KoruSplitButton"],
-        ui(
-            "koru_ui::split_button",
-            "crates/koru-ui/src/split_button.rs",
+    storied(
+        record(
+            "C-COPY",
+            "KoruCopyAffordance",
+            Key::UiLabCopyAffordanceName,
+            Key::UiLabCopyAffordancePurpose,
+            Kind::Widget,
+            Some("C-COPY"),
+            &[],
+            ui(
+                "koru_ui::copy_affordance",
+                "crates/koru-ui/src/copy_affordance.rs",
+            ),
+            DESKTOP_PHONES_PARTIAL,
+            &[support("koru_ui::copy_affordance::Outcome")],
         ),
-        DESKTOP_NOT_ON_PHONES,
-        &[
-            widget_with("koru_ui::split_button::SplitButton", &[SPLIT_TONE]),
-            support("koru_ui::split_button::SplitPart"),
-        ],
-    ),
-    record(
-        "C-COPY",
-        "KoruCopyAffordance",
-        Key::UiLabCopyAffordanceName,
-        Key::UiLabCopyAffordancePurpose,
-        Kind::Widget,
-        Some("C-COPY"),
-        &[],
-        ui(
-            "koru_ui::copy_affordance",
-            "crates/koru-ui/src/copy_affordance.rs",
-        ),
-        DESKTOP_PHONES_PARTIAL,
-        &[
-            widget("koru_ui::copy_affordance::CopyAffordance"),
-            support("koru_ui::copy_affordance::Outcome"),
-        ],
+        &[staged(
+            "koru_ui::copy_affordance::CopyAffordance",
+            &[Control::Text],
+            &[],
+            COPY_STORY,
+        )],
     ),
 ];
 

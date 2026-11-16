@@ -1799,7 +1799,7 @@ impl Lab {
         // Each choice shown as segments: its labels, the one in force, and
         // the shared control measured where the frame put its slot.
         let segments: Vec<(Control, Vec<String>, Option<usize>, Segmented)> = self
-            .segmented_controls()
+            .segmented_controls(&frame)
             .into_iter()
             .filter_map(|(control, options)| {
                 let node = frame.node(control_key(control))?;
@@ -1857,8 +1857,11 @@ impl Lab {
                 self.story
                     .iter()
                     .flat_map(|story| story.controls())
-                    .map(|control| control_key(*control))
-                    .filter(|key| self.is_story_dropdown(*key)),
+                    .filter(|control| {
+                        control.input() == registry::Input::Choice
+                            && !preview::drawn_as_segments(&frame, **control)
+                    })
+                    .map(|control| control_key(*control)),
             )
             .filter(|key| frame.contains(*key))
             .map(|key| {

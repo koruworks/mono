@@ -26,6 +26,10 @@
 //! which story it belongs to: free text is a field, a choice among a few is
 //! the shared segmented control, a choice among many is the shared dropdown,
 //! and a yes or a no is the shared switch. A story may have several of each.
+//! "A few" is at most [`SEGMENTS_MAX`] options whose segments fit the
+//! properties column in the display language: four long words in French do
+//! not, and are a dropdown there. The tree decides, where it can measure;
+//! everything after reads what the last frame drew ([`SEGMENTS`]).
 //!
 //! **A widget story's component is one slot and its parts.** The slot is
 //! sized by the story's [`Widget`](crate::ui_lab::stories::Widget), which
@@ -47,6 +51,19 @@ pub(super) const TOKEN: &str = "ui-lab.token";
 /// The most options a choice shows side by side. Past this it is a dropdown:
 /// fifteen spacing steps do not fit a properties column.
 const SEGMENTS_MAX: usize = 4;
+
+/// What a choice's control is called in the tree when it is drawn as
+/// segments. The frame's node of that name is how the window knows, after
+/// layout, which of the two controls a choice was given.
+pub(super) const SEGMENTS: &str = "Property segments";
+
+/// Whether `frame` drew `control`'s choice as segments.
+pub(super) fn drawn_as_segments(frame: &Frame, control: Control) -> bool {
+    control.input() == Input::Choice
+        && frame
+            .node(control_key(control))
+            .is_some_and(|node| node.name == SEGMENTS)
+}
 
 /// What a person reads for an option.
 pub(super) fn option_text(label: &OptionLabel) -> String {
@@ -76,27 +93,24 @@ impl Lab {
             .find(|control| control_key(*control) == key)
     }
 
-    /// The choices the story shows as segments, each with its options:
-    /// those with few enough to stand side by side.
-    pub(super) fn segmented_controls(&self) -> Vec<(Control, Vec<StoryOption>)> {
+    /// The choices `frame` drew as segments, each with its options.
+    pub(super) fn segmented_controls(&self, frame: &Frame) -> Vec<(Control, Vec<StoryOption>)> {
         let Some(story) = self.story.as_ref() else {
             return Vec::new();
         };
         story
             .controls()
             .iter()
-            .filter(|control| control.input() == Input::Choice)
+            .filter(|control| drawn_as_segments(frame, **control))
             .map(|control| (*control, story.options(*control)))
-            .filter(|(_, options)| options.len() <= SEGMENTS_MAX)
             .collect()
     }
 
-    /// The choice `key` is the segmented control of.
+    /// The choice `key` is the segmented control of, in the last frame.
     pub(super) fn segmented_of(&self, key: Key) -> Option<Control> {
         let control = self.control_of(key)?;
-        let story = self.story.as_ref()?;
-        (control.input() == Input::Choice && story.options(control).len() <= SEGMENTS_MAX)
-            .then_some(control)
+        let frame = &self.laid.as_ref()?.frame;
+        drawn_as_segments(frame, control).then_some(control)
     }
 
     /// The yes-or-no input `key` is the switch of.
@@ -342,11 +356,6 @@ impl Lab {
             .action(el::Action::Click)
             .action(el::Action::Focus);
         }
-        if self.is_story_dropdown(key) {
-            return self
-                .dropdown(engine, key, control.name())
-                .align_self(Align::Start);
-        }
         let labels: Vec<String> = self.story.as_ref().map_or(Vec::new(), |story| {
             story
                 .options(control)
@@ -355,10 +364,18 @@ impl Lab {
                 .collect()
         });
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
+        // Side by side while they are few and fit the column; a list
+        // otherwise.
+        let room = PROPERTIES_WIDTH.value - 2.0 * PANEL_INSET.token.px(Profile::Desktop);
+        if labels.len() > SEGMENTS_MAX || Segmented::width(engine, &labels) > room {
+            return self
+                .dropdown(engine, key, control.name())
+                .align_self(Align::Start);
+        }
         // The shared segmented control, in a slot its own size: it is the
         // control that is pressed, and it rings itself under the keyboard.
         el::leaf(
-            "Property segments",
+            SEGMENTS,
             Slot {
                 width: Segmented::width(engine, &labels),
                 height: Segmented::H,

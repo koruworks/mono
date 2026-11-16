@@ -44,7 +44,6 @@ pub(crate) enum PartRole {
     /// Pressed for an effect.
     Button,
     /// A button that stays down: on or off.
-    #[allow(dead_code)] // Until the split button's story.
     Pressed(bool),
     /// A switch: on or off.
     Switch(bool),
@@ -211,11 +210,16 @@ pub(crate) trait Widget: Sync {
     fn result(&self, story: &WidgetStory) -> Option<String>;
 }
 
+mod actions;
 mod choices;
 mod pickers;
 
 /// Every widget story the Lab can run.
 pub(crate) const ALL: &[&dyn Widget] = &[
+    &actions::IconButtonStory,
+    &actions::ButtonGroupStory,
+    &actions::SplitButtonStory,
+    &actions::CopyStory,
     &choices::ToggleStory,
     &choices::ChipStory,
     &choices::SegmentedStory,
@@ -229,6 +233,18 @@ pub(crate) const ALL: &[&dyn Widget] = &[
 /// A string of the Lab's, in the display language.
 fn text(key: koru_i18n::Key) -> &'static str {
     koru_i18n::t(koru_i18n::current(), key)
+}
+
+/// The line under a component that is pressed for an effect: how often it
+/// has been, in the words the Button's story uses.
+fn presses_line(presses: u64) -> String {
+    match presses {
+        0 => text(koru_i18n::Key::UiLabNotPressed).to_owned(),
+        presses => koru_i18n::fill(
+            text(koru_i18n::Key::UiLabPressCount),
+            &[&koru_i18n::number::decimal(koru_i18n::current(), presses)],
+        ),
+    }
 }
 
 /// The line under a component that chooses: what is chosen now.

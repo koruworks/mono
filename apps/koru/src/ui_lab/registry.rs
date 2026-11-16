@@ -400,11 +400,9 @@ pub(crate) enum Control {
     Padding,
     /// The recipe's tone: the option set of that name the recipe lists
     /// ([`OptionSet::name`]): a choice.
-    #[allow(dead_code)] // Offered by the first widget story that has one.
     Tone,
     /// The recipe's size or metrics, from the option set of that name: a
     /// choice.
-    #[allow(dead_code)] // Offered by the first widget story that has one.
     Size,
     /// The `disabled` or `enabled: bool` the production call takes: a yes
     /// or a no.
@@ -415,6 +413,12 @@ pub(crate) enum Control {
     /// Whether the component leads with its optional glyph or mark slot
     /// (`Toggle::icon`, `Chip::leading`): a yes or a no.
     Leading,
+    /// The on state a production call takes as a `bool` (`State::active`):
+    /// a yes or a no.
+    Selected,
+    /// Text the component is handed that it does not draw: what a copy
+    /// affordance would copy. Free text.
+    Text,
 }
 
 impl Control {
@@ -431,6 +435,8 @@ impl Control {
             Self::Disabled => koru_i18n::Key::UiLabControlDisabled,
             Self::Pending => koru_i18n::Key::UiLabOptionPending,
             Self::Leading => koru_i18n::Key::UiLabControlLeading,
+            Self::Selected => koru_i18n::Key::UiLabOptionSelected,
+            Self::Text => koru_i18n::Key::UiLabControlText,
         }
     }
 
@@ -448,6 +454,8 @@ impl Control {
             Self::Disabled => "disabled",
             Self::Pending => "pending",
             Self::Leading => "leading",
+            Self::Selected => "selected",
+            Self::Text => "text",
         }
     }
 
@@ -463,17 +471,21 @@ impl Control {
             Self::Tone => "ui-lab.tone",
             Self::Size => "ui-lab.size",
             // Free text and a yes or a no have no options.
-            Self::Label | Self::Placeholder | Self::Disabled | Self::Pending | Self::Leading => {
-                "ui-lab.text"
-            }
+            Self::Label
+            | Self::Placeholder
+            | Self::Disabled
+            | Self::Pending
+            | Self::Leading
+            | Self::Selected
+            | Self::Text => "ui-lab.text",
         }
     }
 
     pub(crate) const fn input(self) -> Input {
         match self {
-            Self::Label | Self::Placeholder => Input::Text,
+            Self::Label | Self::Placeholder | Self::Text => Input::Text,
             Self::Style | Self::Gap | Self::Padding | Self::Tone | Self::Size => Input::Choice,
-            Self::Disabled | Self::Pending | Self::Leading => Input::Toggle,
+            Self::Disabled | Self::Pending | Self::Leading | Self::Selected => Input::Toggle,
         }
     }
 }
@@ -764,6 +776,11 @@ pub(crate) const SWATCH_STORY: &str = "C-SWATCH/choice";
 pub(crate) const COLOR_PICKER_ROW_STORY: &str = "C-COLOR-PICKER-ROW/row";
 pub(crate) const STEPPER_STORY: &str = "C-STEPPER/scale";
 pub(crate) const PREVIEW_TILE_STORY: &str = "C-PREVIEW-TILE/choice";
+/// The shared action widgets (`stories/actions.rs`).
+pub(crate) const ICON_BUTTON_STORY: &str = "C-ICON-BUTTON/button";
+pub(crate) const BUTTON_GROUP_STORY: &str = "C-BUTTON-GROUP/cluster";
+pub(crate) const SPLIT_BUTTON_STORY: &str = "C-SPLIT-BUTTON/split";
+pub(crate) const COPY_STORY: &str = "C-COPY/confirm";
 
 /// A widget symbol a story drives: its inputs, the option sets it takes,
 /// and the story's ID. It takes no style of the two button enums, and no

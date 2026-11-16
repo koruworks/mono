@@ -4285,6 +4285,18 @@ pub enum Key {
     /// A stepper's two buttons, as a screen reader names them.
     UiLabStepLess,
     UiLabStepMore,
+    /// A story input: text the component is handed and does not draw.
+    UiLabControlText,
+    /// A split button's first half, as a screen reader names it.
+    UiLabPartAction,
+    /// Under a story's split button: how often each half was pressed.
+    UiLabResultSplit,
+    /// Under a story's button group: the button pressed last.
+    UiLabResultLastPressed,
+    /// Under a story's copy icon: what a press would have put on the
+    /// clipboard, and that nothing was pressed yet.
+    UiLabResultCopied,
+    UiLabResultNotCopied,
     // **Text in pictures and PDFs: long files** (OCR Plan 3.2, EXPERIENCE §4).
     /// A file's right-click entry: read the rest of a file that stopped at
     /// the page limit.
@@ -4373,7 +4385,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3323] = [
+    pub const ALL: [Key; 3329] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7638,6 +7650,12 @@ impl Key {
         Key::UiLabResultValue,
         Key::UiLabStepLess,
         Key::UiLabStepMore,
+        Key::UiLabControlText,
+        Key::UiLabPartAction,
+        Key::UiLabResultSplit,
+        Key::UiLabResultLastPressed,
+        Key::UiLabResultCopied,
+        Key::UiLabResultNotCopied,
         Key::ReadingReadAllPages,
         Key::ReadingReadAgain,
         Key::ReadingDetails,
@@ -20133,6 +20151,12 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabResultValue, en: "Value: {}", es: "Valor: {}", pt_br: "Valor: {}", de: "Wert: {}", fr: "Valeur : {}", ar: "القيمة: {}", zh_hans: "值：{}", ja: "値: {}" },
     Row { key: Key::UiLabStepLess, en: "Less", es: "Menos", pt_br: "Menos", de: "Weniger", fr: "Moins", ar: "أقل", zh_hans: "减少", ja: "減らす" },
     Row { key: Key::UiLabStepMore, en: "More", es: "Más", pt_br: "Mais", de: "Mehr", fr: "Plus", ar: "أكثر", zh_hans: "增加", ja: "増やす" },
+    Row { key: Key::UiLabControlText, en: "Text", es: "Texto", pt_br: "Texto", de: "Text", fr: "Texte", ar: "النص", zh_hans: "文本", ja: "テキスト" },
+    Row { key: Key::UiLabPartAction, en: "Action", es: "Acción", pt_br: "Ação", de: "Aktion", fr: "Action", ar: "الإجراء", zh_hans: "操作", ja: "アクション" },
+    Row { key: Key::UiLabResultSplit, en: "Action presses: {}; menu presses: {}", es: "Pulsaciones de la acción: {}; del menú: {}", pt_br: "Pressionamentos da ação: {}; do menu: {}", de: "Aktion betätigt: {}; Menü betätigt: {}", fr: "Pressions sur l'action : {} ; sur le menu : {}", ar: "مرات ضغط الإجراء: {}؛ مرات ضغط القائمة: {}", zh_hans: "操作按下次数：{}；菜单按下次数：{}", ja: "アクションの押下回数: {}、メニューの押下回数: {}" },
+    Row { key: Key::UiLabResultLastPressed, en: "Last pressed: {}", es: "Última pulsación: {}", pt_br: "Último pressionado: {}", de: "Zuletzt betätigt: {}", fr: "Dernière pression : {}", ar: "آخر ما ضُغط: {}", zh_hans: "最近按下：{}", ja: "最後に押したボタン: {}" },
+    Row { key: Key::UiLabResultCopied, en: "Would have copied: {}", es: "Se habría copiado: {}", pt_br: "Teria copiado: {}", de: "Hätte kopiert: {}", fr: "Aurait copié : {}", ar: "كان سيُنسخ: {}", zh_hans: "本应复制：{}", ja: "コピーされるはずの内容: {}" },
+    Row { key: Key::UiLabResultNotCopied, en: "Nothing copied yet", es: "Aún no se ha copiado nada", pt_br: "Nada copiado ainda", de: "Noch nichts kopiert", fr: "Rien n'a encore été copié", ar: "لم يُنسخ شيء بعد", zh_hans: "尚未复制任何内容", ja: "まだ何もコピーしていません" },
     // Text in pictures and PDFs: long files (OCR Plan 3.2). The wording is
     // EXPERIENCE §4's own.
     Row { key: Key::ReadingReadAllPages, en: "Read all pages", es: "Leer todas las páginas", pt_br: "Ler todas as páginas", de: "Alle Seiten lesen", fr: "Lire toutes les pages", ar: "قراءة كل الصفحات", zh_hans: "读取所有页面", ja: "すべてのページを読み取る" },

@@ -444,3 +444,186 @@ fn a_preview_tile_is_chosen_and_shares_the_row_with_the_other() {
         );
     });
 }
+
+#[test]
+fn the_icon_button_is_drawn_as_its_inputs_say_and_counts_presses() {
+    english(|| {
+        let (mut lab, mut engine) = staged(registry::ICON_BUTTON_STORY);
+        let drawn_as = |lab: &mut Lab, engine: &mut TextEngine| {
+            let records = inspected(lab, engine, SIZE);
+            let button = component_at(&records, "KoruIconButton", lab.rect(SUBJECT).unwrap());
+            (
+                property(button, "state").to_owned(),
+                property(button, "tone").to_owned(),
+                property(button, "metrics").to_owned(),
+            )
+        };
+        // As it opens: the default tone, the standard metrics, at rest.
+        let (state, tone, metrics) = drawn_as(&mut lab, &mut engine);
+        assert_eq!(
+            state,
+            "State { hovered: false, active: false, disabled: false }"
+        );
+        assert_eq!(tone, "", "the default tone is not reported");
+        assert_eq!(
+            metrics,
+            format!("{:?}", koru_ui::icon_button::Metrics::STANDARD)
+        );
+        assert_eq!(result(&lab), "Not pressed yet");
+        assert!(press(&mut lab, &mut engine, SUBJECT));
+        assert_eq!(result(&lab), "Presses: 1");
+
+        // Each input is the production value of that name.
+        let story = lab.story.as_mut().unwrap();
+        assert!(story.choose(Control::Tone, 2));
+        assert!(story.choose(Control::Size, 2));
+        assert!(story.set_flag(Control::Selected, true));
+        lab.pointer_left();
+        let (state, tone, metrics) = drawn_as(&mut lab, &mut engine);
+        assert!(state.contains("active: true"));
+        assert_eq!(tone, "Quiet");
+        assert_eq!(
+            metrics,
+            format!("{:?}", koru_ui::icon_button::Metrics::COMPACT)
+        );
+        // The slot is the compact control's own measured size.
+        let slot = lab.rect(SUBJECT).unwrap();
+        assert_eq!(
+            slot.w,
+            koru_ui::icon_button::Metrics::COMPACT.control_width()
+        );
+        assert_eq!(
+            node(&lab, "s:ui-lab.part#button").toggled,
+            Some(Toggled::True)
+        );
+
+        // Disabled: drawn so, published so, and a press counts nothing.
+        lab.story
+            .as_mut()
+            .unwrap()
+            .set_flag(Control::Disabled, true);
+        let (state, ..) = drawn_as(&mut lab, &mut engine);
+        assert!(state.contains("disabled: true"));
+        assert!(node(&lab, "s:ui-lab.part#button").disabled);
+        click_part(&mut lab, &mut engine, "button");
+        assert_eq!(result(&lab), "Presses: 1");
+    });
+}
+
+#[test]
+fn the_button_group_answers_a_press_with_the_button_that_was_pressed() {
+    english(|| {
+        let (mut lab, mut engine) = staged(registry::BUTTON_GROUP_STORY);
+        assert_eq!(result(&lab), "Not pressed yet");
+        // One group, three production icon buttons inside it, in the
+        // corners `slots_right` gives them.
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let slot = lab.rect(SUBJECT).unwrap();
+        let group = records
+            .iter()
+            .position(|record| record.name == "KoruButtonGroup")
+            .expect("the group is drawn");
+        assert_eq!(property(&records[group], "buttons"), "3");
+        let buttons: Vec<_> = records
+            .iter()
+            .filter(|record| record.name == "KoruIconButton" && record.parent == Some(group))
+            .collect();
+        assert_eq!(buttons.len(), 3);
+        assert_eq!(
+            property(buttons[2], "tone"),
+            "Danger",
+            "Close is the red one"
+        );
+        let parts = lab.laid.as_ref().unwrap().parts.clone();
+        assert_eq!(parts[2].rect.x + parts[2].rect.w, slot.x + slot.w);
+        assert_eq!(parts[0].rect.w, theme::CAPTION_BTN);
+
+        assert!(click_part(&mut lab, &mut engine, "maximize"));
+        assert_eq!(result(&lab), "Last pressed: Maximize");
+        assert!(key(&mut lab, &mut engine, NamedKey::ArrowRight));
+        assert!(key(&mut lab, &mut engine, NamedKey::Enter));
+        assert_eq!(result(&lab), "Last pressed: Close window");
+        // Disabled, no button answers.
+        press(&mut lab, &mut engine, control_key(Control::Disabled));
+        click_part(&mut lab, &mut engine, "minimize");
+        assert_eq!(result(&lab), "Last pressed: Close window");
+    });
+}
+
+#[test]
+fn the_split_buttons_two_halves_are_pressed_and_focused_apart() {
+    english(|| {
+        let (mut lab, mut engine) = staged(registry::SPLIT_BUTTON_STORY);
+        assert_eq!(result(&lab), "Action presses: 0; menu presses: 0");
+        assert!(click_part(&mut lab, &mut engine, "action"));
+        assert!(click_part(&mut lab, &mut engine, "menu"));
+        assert_eq!(result(&lab), "Action presses: 1; menu presses: 1");
+        // The menu target stays down while its menu would be open, and the
+        // keyboard is on that half alone.
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let drawn = component_at(&records, "KoruSplitButton", lab.rect(SUBJECT).unwrap());
+        assert_eq!(property(drawn, "menu focused / open"), "true / true");
+        assert_eq!(
+            node(&lab, "s:ui-lab.part#menu").toggled,
+            Some(Toggled::True)
+        );
+        // The two halves meet and fill the component.
+        let parts = lab.laid.as_ref().unwrap().parts.clone();
+        assert_eq!(parts[0].rect.x + parts[0].rect.w, parts[1].rect.x);
+        // The tone is the production enum's; a disabled action keeps the
+        // menu's target.
+        assert!(lab.story.as_mut().unwrap().choose(Control::Tone, 3));
+        press(&mut lab, &mut engine, control_key(Control::Disabled));
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let drawn = component_at(&records, "KoruSplitButton", lab.rect(SUBJECT).unwrap());
+        assert_eq!(property(drawn, "tone"), "Warning");
+        assert_eq!(property(drawn, "action enabled"), "false");
+        click_part(&mut lab, &mut engine, "action");
+        assert!(click_part(&mut lab, &mut engine, "menu"));
+        assert_eq!(result(&lab), "Action presses: 1; menu presses: 2");
+    });
+}
+
+#[test]
+fn the_copy_icon_confirms_and_says_what_it_would_have_copied() {
+    english(|| {
+        let (mut lab, mut engine) = staged(registry::COPY_STORY);
+        assert_eq!(result(&lab), "Nothing copied yet");
+        let glyph = |lab: &mut Lab, engine: &mut TextEngine| {
+            let records = inspected(lab, engine, SIZE);
+            let icon = component_at(&records, "KoruIconButton", lab.rect(SUBJECT).unwrap());
+            property(icon, "icon name").to_owned()
+        };
+        assert!(glyph(&mut lab, &mut engine).contains("COPY"));
+        // What would be copied is the story's text input.
+        lab.set_field(&mut engine, control_key(Control::Text), "fn main() {}");
+        assert!(press(&mut lab, &mut engine, SUBJECT));
+        assert_eq!(result(&lab), "Would have copied: fn main() {}");
+        assert!(glyph(&mut lab, &mut engine).contains("CHECK"));
+        // Reset turns the check back and forgets the text.
+        press(&mut lab, &mut engine, RESET);
+        assert_eq!(result(&lab), "Nothing copied yet");
+        assert!(glyph(&mut lab, &mut engine).contains("COPY"));
+    });
+}
+
+/// A choice is segments only while its words fit the properties column.
+/// The split button's four tones do not in French: there the same input is
+/// the shared dropdown, with the same options, and nothing overflows.
+#[test]
+fn a_choice_whose_words_do_not_fit_the_column_is_a_list_instead() {
+    koru_i18n::with_current(koru_i18n::Lang::Fr, || {
+        let (mut lab, mut engine) = staged(registry::SPLIT_BUTTON_STORY);
+        assert_sound(&lab, "the split button in French");
+        let tone = control_key(Control::Tone);
+        assert!(lab.laid.as_ref().unwrap().segments.is_empty());
+        assert!(lab.is_dropdown(tone));
+        let field = node(&lab, "s:ui-lab.control#tone");
+        assert_eq!(field.role, NativeRole::ComboBox);
+        assert!(field.value.is_some());
+        assert!(press(&mut lab, &mut engine, tone));
+        assert_eq!(lab.menu.as_ref().unwrap().choices.len(), 4);
+        assert!(lab.choose_from_menu(&mut engine, 3));
+        assert_eq!(widget(&lab).choice(Control::Tone), 3);
+    });
+}

@@ -28,7 +28,7 @@ from the Android and iOS apps are in the registry and in none of those, and
 no page shows a phone's cell. The macOS share extension and the desktop's
 system surfaces are native and are listed.
 
-**Seventeen records have a story**: the nine the gallery opened with, and
+**Twenty-one records have a story**: the nine the gallery opened with, and
 the shared widgets plan L4b has reached (see *L4b batch 1* below). A record
 with a story names the symbol the
 story drives as a `Recipe`: its typed styles, the inputs the properties
@@ -54,6 +54,10 @@ column offers, and the option sets the symbol takes. Its Windows cell is
 | `C-COLOR-PICKER-ROW/row` | Color picker row | `koru_ui::color_picker_row::ColorPickerRow`: its label, its swatches, one chosen |
 | `C-STEPPER/scale` | Stepper | `koru_ui::stepper::Stepper`: a value from 1 to 5, each button dimmed at its end |
 | `C-PREVIEW-TILE/choice` | Preview tile | `koru_ui::preview_tile::PreviewTile`: two theme tiles, one chosen |
+| `C-ICON-BUTTON/button` | Icon button | `koru_ui::icon_button::draw_focused`: tone, metrics, selected, disabled; press count |
+| `C-BUTTON-GROUP/cluster` | Button group | `koru_ui::button_group::ButtonGroup`: the caption's three, the button pressed last; disabled |
+| `C-SPLIT-BUTTON/split` | Split button | `koru_ui::split_button::SplitButton`: tone, disabled action; each half's presses |
+| `C-COPY/confirm` | Copy affordance | `koru_ui::copy_affordance::CopyAffordance`: the icon confirms; what it would have copied |
 
 The text input's story drives three of `InputStyle`'s four constructors;
 `bare` draws no box and waits for a story of its own, as do `invalid` and the
@@ -213,8 +217,13 @@ One list, deduplicated; each batch's section below has the lines.
   stroke their own edge in `focus_ring` at twice a border's weight. Three
   spellings of one idea. The shared search box (`InputStyle::search`)
   draws no focus state at all, so the Lab still rings its search field
-  itself. `Stepper` and `PreviewTile` draw none either: in their stories
+  itself. `Stepper`, `PreviewTile`, `CopyAffordance::draw_icon` and
+  `IconButton::draw` (so `ButtonGroup`) draw none either: in their stories
   the Lab's own ring stands in, and says so.
+- **English in a shared painter** (L4b batch 1): `CopyAffordance`'s
+  tooltip is the literal `"Copy"` and its `TOAST` the literal
+  `"Copied to Clipboard"`; `button::draw_help_button` draws the literal
+  `"Help"`.
 - **Controls with nothing behind them**: every create and edit control in
   the iOS app (the store services refuse each one) and its Add image,
   which inserts a fixed 1×1 picture; `SearchSurface::is_global_search`
@@ -267,17 +276,17 @@ batch's counts.
 | kind: native adapter | 35 |
 | token values listed | 174 |
 | symbols | 2391 |
-| symbols with typed recipes | 18 |
+| symbols with typed recipes | 22 |
 | inspector identities | 61 |
 | inspector identity registration sites | 64 |
-| disposition: story exists | 17 |
-| disposition: no story yet | 196 |
+| disposition: story exists | 21 |
+| disposition: no story yet | 192 |
 | disposition: nonvisual | 62 |
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
-| symbol story: available | 17 |
-| symbol story: no story yet | 437 |
-| symbol story: nonvisual | 1675 |
+| symbol story: available | 21 |
+| symbol story: no story yet | 432 |
+| symbol story: nonvisual | 1676 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
 | A2UI: component | 11 |
@@ -293,7 +302,7 @@ about each platform.
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 17 | 270 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| Windows | 21 | 266 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
 | macOS | 0 | 1 | 286 | 0 | 1 | 3 | 34 | 8 | 0 |
 | Linux | 0 | 0 | 286 | 0 | 0 | 7 | 36 | 3 | 1 |
 | Android | 0 | 18 | 0 | 73 | 13 | 196 | 28 | 3 | 2 |
@@ -2469,10 +2478,10 @@ few questions (`ui_lab/stories.rs`).
 | `C-COLOR-PICKER-ROW` | `C-COLOR-PICKER-ROW/row` | runs |
 | `C-STEPPER` | `C-STEPPER/scale` | runs |
 | `C-PREVIEW-TILE` | `C-PREVIEW-TILE/choice` | runs |
-| `C-ICON-BUTTON` | | no story yet |
-| `C-BUTTON-GROUP` | | no story yet |
-| `C-SPLIT-BUTTON` | | no story yet |
-| `C-COPY` | | no story yet |
+| `C-ICON-BUTTON` | `C-ICON-BUTTON/button` | runs; six narrower entry points have no story of their own (below) |
+| `C-BUTTON-GROUP` | `C-BUTTON-GROUP/cluster` | runs |
+| `C-SPLIT-BUTTON` | `C-SPLIT-BUTTON/split` | runs |
+| `C-COPY` | `C-COPY/confirm` | runs; its timing and tooltip do not (below) |
 | `C-BUTTON` | `C-BUTTON/dialog` (from the first trial) | its other symbols have no story yet |
 
 **Left out of this batch by decision**, and still "no story yet":
@@ -2528,6 +2537,57 @@ story forces them.
   theme's ground, as the appearance settings' tiles do. **The tile has no
   keyboard-focus state** either (its border lights under the pointer
   only), so the window rings it; `alpha` has no input.
+- **Icon button** (`icon_button::draw_focused`, the entry point that takes
+  every input): *Tone* is `Tone` (Default, Danger, Quiet), *Size* is
+  `Metrics` (STANDARD in a caption button's slot, INLINE in a 28 px
+  square, COMPACT at its own measured size), *Selected* is `State::active`
+  and *Disabled* `State::disabled`. The glyph is a pin. `draw`,
+  `draw_toned`, `draw_with`, `draw_with_in` and the `IconButton` builder
+  call the same painter with fewer inputs and stay "no story yet": there
+  is no disposition that says "shown by another symbol's story", and one
+  record still runs one story (see *What the machinery does not do*).
+  `IconButton` is run inside the button group's story. `draw_label_with`
+  (a word such as `Aa` in the button's chip) has no story yet.
+  `hover_chip` is geometry and is now recorded as nonvisual.
+- **Button group** (`ButtonGroup::new`, `slots_right`, `action_at`): the
+  cluster the window caption's three controls are: minimize, maximize and
+  a danger-toned close, each an `IconButton` whose typed action is its
+  index. A press is answered by the group's own `action_at`, and the line
+  under it names the button. *Disabled* sets every button's
+  `State::disabled`. **`IconButton::draw` takes no focus**, so the window
+  rings the button the keyboard is on.
+- **Split button** (`SplitButton { .. }.draw(glyph, badge)`): *Tone* is
+  `SplitTone`; *Disabled* is `action_enabled: false`, which leaves the
+  menu its own target. The two halves are pressed, hovered and focused
+  apart and each has its count; the menu target stays down while "its"
+  menu would be open — the menu itself is the caller's and is not shown.
+  **An example, not the motion:** `reveal` and `chevron_turn` are numbers
+  the caller animates; the story draws each at rest or at its end.
+- **Copy affordance** (`CopyAffordance::confirm`, `draw_icon`): *Text* is
+  what a copy would copy. **The Lab never touches the clipboard**:
+  `CopyAffordance::click` writes the system clipboard, so a press runs
+  `confirm` — the half of `click` that shows the check — and the line
+  under the icon says what would have been copied. **An example, not the
+  timing:** in the app the check holds 0.8 s and turns back on the host's
+  maintenance clock (`maintain`), and a tooltip rises on hover
+  (`set_hover`, `draw_tooltip`); the Lab runs no clock, so the check holds
+  until Reset and the tooltip is not shown. The affordance draws no
+  keyboard-focus state, so the window rings it.
+
+### What the machinery does not do yet
+
+- **One story a record.** A record's page runs its first story; the
+  registry's tests hold `Entry::story_id` to that. A record whose symbols
+  need different stories (the Button's eight other symbols, the icon
+  button's narrower entry points) needs a way to choose between recipes
+  on its page before each can have one.
+- **No clock.** Nothing in the Lab advances time, so a component that
+  animates or times out (the copy affordance's return, a tooltip's delay,
+  a split button's reveal) shows its states and not its motion.
+- **A choice that is too wide is a list.** A choice is the segmented
+  control while it has four options or fewer *and* they fit the properties
+  column in the display language; the split button's four tones do not in
+  French and are a dropdown there.
 
 ## Keeping the inventory true
 
