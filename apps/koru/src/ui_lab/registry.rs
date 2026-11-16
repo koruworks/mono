@@ -610,6 +610,9 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     app::COMPANION_APPS,
     native::ANDROID,
     native::IOS,
+    native::MACOS,
+    app::OS_SURFACES,
+    domain::NOTIFICATIONS,
 ];
 
 /// Every record, flattened.

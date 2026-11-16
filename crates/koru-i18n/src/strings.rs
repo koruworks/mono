@@ -4075,13 +4075,23 @@ pub enum Key {
     UiLabIosShareDestinationPurpose,
     UiLabIosShareExtensionName,
     UiLabIosShareExtensionPurpose,
+    UiLabMacosShareExtensionName,
+    UiLabMacosShareExtensionPurpose,
+    UiLabStoreTrayName,
+    UiLabStoreTrayPurpose,
+    UiLabStoreFailureDialogName,
+    UiLabStoreFailureDialogPurpose,
+    UiLabMacNotificationOwnerName,
+    UiLabMacNotificationOwnerPurpose,
+    UiLabSystemNotificationsName,
+    UiLabSystemNotificationsPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3102] = [
+    pub const ALL: [Key; 3112] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7184,6 +7194,16 @@ impl Key {
         Key::UiLabIosShareDestinationPurpose,
         Key::UiLabIosShareExtensionName,
         Key::UiLabIosShareExtensionPurpose,
+        Key::UiLabMacosShareExtensionName,
+        Key::UiLabMacosShareExtensionPurpose,
+        Key::UiLabStoreTrayName,
+        Key::UiLabStoreTrayPurpose,
+        Key::UiLabStoreFailureDialogName,
+        Key::UiLabStoreFailureDialogPurpose,
+        Key::UiLabMacNotificationOwnerName,
+        Key::UiLabMacNotificationOwnerPurpose,
+        Key::UiLabSystemNotificationsName,
+        Key::UiLabSystemNotificationsPurpose,
     ];
 }
 
@@ -19455,4 +19475,14 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabIosShareDestinationPurpose, en: "Where a staged share lands when the app opens: recent destinations, each file’s name and note, and the profile and workspace to save into.", es: "Dónde termina un elemento compartido pendiente cuando se abre la aplicación: los destinos recientes, el nombre y la nota de cada archivo y el perfil y el espacio de trabajo donde guardar.", pt_br: "Onde um compartilhamento pendente vai parar quando o aplicativo abre: os destinos recentes, o nome e a nota de cada arquivo e o perfil e o espaço de trabalho onde salvar.", de: "Wohin eine vorgemerkte Freigabe beim Öffnen der App kommt: letzte Ziele, Name und Notiz jeder Datei sowie Profil und Arbeitsbereich zum Speichern.", fr: "Où arrive un partage en attente à l’ouverture de l’application : les destinations récentes, le nom et la note de chaque fichier, et le profil et l’espace de travail où enregistrer.", ar: "أين تذهب مشاركة مجهّزة عند فتح التطبيق: الوجهات الأخيرة، واسم كل ملف وملاحظته، والملف الشخصي ومساحة العمل للحفظ فيهما.", zh_hans: "应用打开时待处理分享的去处：最近的目的地、每个文件的名称和备注，以及要保存到的个人资料和工作区。", ja: "アプリを開いたときに保留中の共有を保存する場所を選びます。最近の保存先、各ファイルの名前とメモ、保存するプロフィールとワークスペースです。" },
     Row { key: Key::UiLabIosShareExtensionName, en: "iOS share extension", es: "Extensión para compartir de iOS", pt_br: "Extensão de compartilhamento do iOS", de: "iOS-Teilen-Erweiterung", fr: "Extension de partage iOS", ar: "امتداد المشاركة في iOS", zh_hans: "iOS 分享扩展", ja: "iOS の共有拡張" },
     Row { key: Key::UiLabIosShareExtensionPurpose, en: "Koru’s row in the iOS share sheet: a workspace picker from the app’s snapshot, then staging the items into the inbox the app imports.", es: "La fila de Koru en la hoja de compartir de iOS: un selector de espacios de trabajo a partir de la instantánea de la aplicación y, después, la preparación de los elementos en la bandeja que importa la aplicación.", pt_br: "A linha do Koru na folha de compartilhamento do iOS: um seletor de espaços de trabalho a partir do instantâneo do aplicativo e, depois, a preparação dos itens na caixa de entrada que o aplicativo importa.", de: "Korus Zeile im Teilen-Blatt von iOS: eine Arbeitsbereichsauswahl aus dem Abbild der App, dann das Vormerken der Elemente im Eingang, den die App importiert.", fr: "La ligne de Koru dans la feuille de partage d’iOS : un sélecteur d’espace de travail tiré de l’instantané de l’application, puis la mise en attente des éléments dans la boîte que l’application importe.", ar: "صف Koru في ورقة المشاركة في iOS: منتقي مساحات عمل من لقطة التطبيق، ثم تجهيز العناصر في صندوق الوارد الذي يستورده التطبيق.", zh_hans: "Koru 在 iOS 分享面板中的一行：根据应用快照选择工作区，然后把内容暂存到应用会导入的收件箱。", ja: "iOS の共有シートにある Koru の行です。アプリのスナップショットからワークスペースを選び、アプリが取り込む受信箱に項目を置きます。" },
+    Row { key: Key::UiLabMacosShareExtensionName, en: "macOS share extension", es: "Extensión para compartir de macOS", pt_br: "Extensão de compartilhamento do macOS", de: "macOS-Teilen-Erweiterung", fr: "Extension de partage macOS", ar: "امتداد المشاركة في macOS", zh_hans: "macOS 分享扩展", ja: "macOS の共有拡張" },
+    Row { key: Key::UiLabMacosShareExtensionPurpose, en: "Koru’s row in the macOS share sheet: a one-line saving notice while the items are staged into the inbox, then Koru comes to the front.", es: "La fila de Koru en la hoja de compartir de macOS: un aviso de una línea mientras los elementos se preparan en la bandeja y, después, Koru pasa al frente.", pt_br: "A linha do Koru na folha de compartilhamento do macOS: um aviso de uma linha enquanto os itens são preparados na caixa de entrada e, depois, o Koru vem para a frente.", de: "Korus Zeile im Teilen-Blatt von macOS: ein einzeiliger Hinweis, während die Elemente im Eingang vorgemerkt werden, dann kommt Koru nach vorn.", fr: "La ligne de Koru dans la feuille de partage de macOS : un avis d’une ligne pendant la mise en attente des éléments dans la boîte, puis Koru passe au premier plan.", ar: "صف Koru في ورقة المشاركة في macOS: إشعار من سطر واحد أثناء تجهيز العناصر في صندوق الوارد، ثم يصبح Koru في المقدمة.", zh_hans: "Koru 在 macOS 分享面板中的一行：把内容暂存到收件箱时显示一行保存提示，然后 Koru 切到前台。", ja: "macOS の共有シートにある Koru の行です。項目を受信箱に置くあいだ 1 行の保存のお知らせを表示し、その後 Koru が前面に出ます。" },
+    Row { key: Key::UiLabStoreTrayName, en: "Store tray menu", es: "Menú de la bandeja del almacén", pt_br: "Menu da bandeja do armazenamento", de: "Infobereichsmenü des Speichers", fr: "Menu de la zone de notification du stockage", ar: "قائمة علبة النظام للمخزن", zh_hans: "存储托盘菜单", ja: "ストアのトレイメニュー" },
+    Row { key: Key::UiLabStoreTrayPurpose, en: "The Store’s notification-area icon and menu: open its folder, back it up through the system’s dialogs, start with Windows and quit.", es: "El icono del área de notificación del almacén y su menú: abrir su carpeta, hacer una copia de seguridad con los diálogos del sistema, iniciarlo con Windows y salir.", pt_br: "O ícone da área de notificação do armazenamento e seu menu: abrir a pasta, fazer backup pelos diálogos do sistema, iniciar com o Windows e sair.", de: "Das Infobereichssymbol des Speichers und sein Menü: Ordner öffnen, über die Systemdialoge sichern, mit Windows starten und beenden.", fr: "L’icône de la zone de notification du stockage et son menu : ouvrir son dossier, le sauvegarder via les boîtes de dialogue du système, démarrer avec Windows et quitter.", ar: "أيقونة المخزن في منطقة الإشعارات وقائمتها: فتح مجلده، ونسخه احتياطيًا عبر نوافذ النظام، وبدء تشغيله مع Windows، والخروج.", zh_hans: "存储在通知区域的图标及其菜单：打开它的文件夹、通过系统对话框备份、随 Windows 启动和退出。", ja: "通知領域にあるストアのアイコンとメニューです。フォルダーを開く、システムのダイアログでバックアップする、Windows と一緒に起動する、終了するがあります。" },
+    Row { key: Key::UiLabStoreFailureDialogName, en: "Store start-up failure box", es: "Aviso de fallo al iniciar el almacén", pt_br: "Aviso de falha ao iniciar o armazenamento", de: "Startfehlermeldung des Speichers", fr: "Boîte d’échec de démarrage du stockage", ar: "مربع فشل بدء تشغيل المخزن", zh_hans: "存储启动失败提示框", ja: "ストアの起動失敗ボックス" },
+    Row { key: Key::UiLabStoreFailureDialogPurpose, en: "The system message box a Store started without a console shows when it cannot start.", es: "El cuadro de mensaje del sistema que muestra un almacén iniciado sin consola cuando no puede arrancar.", pt_br: "A caixa de mensagem do sistema que um armazenamento iniciado sem console mostra quando não consegue iniciar.", de: "Das Systemmeldungsfenster, das ein ohne Konsole gestarteter Speicher zeigt, wenn er nicht starten kann.", fr: "La boîte de message du système qu’affiche un stockage lancé sans console lorsqu’il ne peut pas démarrer.", ar: "مربع رسالة النظام الذي يعرضه مخزن بدأ دون وحدة تحكم عندما يتعذر عليه البدء.", zh_hans: "没有控制台启动的存储无法启动时显示的系统消息框。", ja: "コンソールなしで起動したストアが開始できないときに表示する、システムのメッセージボックスです。" },
+    Row { key: Key::UiLabMacNotificationOwnerName, en: "macOS notification owner", es: "Propietario de notificaciones de macOS", pt_br: "Proprietário de notificações do macOS", de: "macOS-Benachrichtigungseigner", fr: "Propriétaire des notifications macOS", ar: "مالك الإشعارات في macOS", zh_hans: "macOS 通知所有者", ja: "macOS の通知オーナー" },
+    Row { key: Key::UiLabMacNotificationOwnerPurpose, en: "The small macOS helper app that owns Koru’s notifications and gives their three actions their titles in the person’s language.", es: "La pequeña aplicación auxiliar de macOS que posee las notificaciones de Koru y da a sus tres acciones los títulos en el idioma de la persona.", pt_br: "O pequeno aplicativo auxiliar do macOS que é dono das notificações do Koru e dá às suas três ações os títulos no idioma da pessoa.", de: "Die kleine macOS-Hilfs-App, der Korus Benachrichtigungen gehören und die ihren drei Aktionen Titel in der Sprache der Person gibt.", fr: "La petite application auxiliaire macOS qui possède les notifications de Koru et donne à leurs trois actions leurs titres dans la langue de la personne.", ar: "تطبيق macOS المساعد الصغير الذي يملك إشعارات Koru ويعطي إجراءاتها الثلاثة عناوينها بلغة الشخص.", zh_hans: "一个小型 macOS 辅助应用，拥有 Koru 的通知，并用用户的语言为其三个操作命名。", ja: "Koru の通知を所有し、3 つの操作にその人の言語で名前を付ける小さな macOS の補助アプリです。" },
+    Row { key: Key::UiLabSystemNotificationsName, en: "System reminder notifications", es: "Notificaciones de recordatorio del sistema", pt_br: "Notificações de lembrete do sistema", de: "Erinnerungsbenachrichtigungen des Systems", fr: "Notifications de rappel du système", ar: "إشعارات التذكير في النظام", zh_hans: "系统提醒通知", ja: "システムのリマインダー通知" },
+    Row { key: Key::UiLabSystemNotificationsPurpose, en: "A reminder as the operating system shows it: the title and body Koru supplies, its sound and its Open, Snooze and Handled actions.", es: "Un recordatorio tal como lo muestra el sistema operativo: el título y el texto que aporta Koru, su sonido y sus acciones Abrir, Posponer y Hecho.", pt_br: "Um lembrete como o sistema operacional o mostra: o título e o texto que o Koru fornece, seu som e as ações Abrir, Adiar e Feito.", de: "Eine Erinnerung, wie das Betriebssystem sie zeigt: Titel und Text von Koru, ihr Ton und die Aktionen Öffnen, Schlummern und Erledigt.", fr: "Un rappel tel que le système d’exploitation l’affiche : le titre et le texte fournis par Koru, son son et ses actions Ouvrir, Répéter et Traité.", ar: "تذكير كما يعرضه نظام التشغيل: العنوان والنص اللذان يقدّمهما Koru، وصوته، وإجراءات فتح وتأجيل وتمت المعالجة.", zh_hans: "操作系统显示的提醒：Koru 提供的标题和正文、提示音，以及“打开”“稍后提醒”“已处理”操作。", ja: "OS が表示するリマインダーです。Koru が渡すタイトルと本文、音、「開く」「スヌーズ」「対応済み」の操作があります。" },
 ];

@@ -40,9 +40,11 @@ use koru_i18n::Key;
 
 mod android;
 mod ios;
+mod macos;
 
 pub(super) const ANDROID: &[Entry] = android::RECORDS;
 pub(super) const IOS: &[Entry] = ios::RECORDS;
+pub(super) const MACOS: &[Entry] = macos::RECORDS;
 
 /// A Compose screen or a SwiftUI view: drawn only on its own platform.
 const fn view(symbol: &'static str) -> Api {
@@ -104,4 +106,14 @@ const IOS_SYSTEM: [(Platform, Availability); 5] = [
     (Platform::Linux, Availability::NotApplicable),
     (Platform::Android, Availability::NotApplicable),
     (Platform::Ios, Availability::NativeOwned),
+];
+
+/// A native adapter the macOS desktop package carries beside the app. It
+/// is packaged; nothing here says it has been run.
+const MACOS_APP: [(Platform, Availability); 5] = [
+    (Platform::Windows, Availability::NotApplicable),
+    (Platform::MacOs, Availability::Existing),
+    (Platform::Linux, Availability::NotApplicable),
+    (Platform::Android, Availability::NotApplicable),
+    (Platform::Ios, Availability::NotApplicable),
 ];

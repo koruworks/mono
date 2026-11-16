@@ -103,66 +103,66 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 20 |
-| domain crate source files | 360 |
-| domain crate lib.rs modules | 247 |
+| domain crates | 21 |
+| domain crate source files | 365 |
+| domain crate lib.rs modules | 251 |
 | domain crate lib.rs public modules | 121 |
 | domain crate modules excluded | 73 |
-| app crates baselined | 3 |
-| app source files | 308 |
-| app files baselined | 21 |
-| app modules classified | 245 |
-| app modules excluded | 117 |
-| records: app crates | 60 |
+| app crates baselined | 5 |
+| app source files | 342 |
+| app files baselined | 23 |
+| app modules classified | 265 |
+| app modules excluded | 135 |
+| records: app crates | 63 |
 | native files: Android | 24 |
 | native files: iOS | 10 |
-| native files: macOS | 0 |
+| native files: macOS | 1 |
 | native composables | 89 |
-| native views | 29 |
-| native entry points baselined | 28 |
-| records: native platforms | 34 |
-| records | 327 |
+| native views | 30 |
+| native entry points baselined | 30 |
+| records: native platforms | 35 |
+| records | 332 |
 | records: foundations | 61 |
 | records: controls | 88 |
-| records: application compositions | 178 |
-| records: domain crates | 113 |
+| records: application compositions | 183 |
+| records: domain crates | 114 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 71 |
+| kind: support | 72 |
 | kind: domain composition | 57 |
-| kind: app-local | 55 |
-| kind: native adapter | 34 |
+| kind: app-local | 58 |
+| kind: native adapter | 35 |
 | token values listed | 174 |
-| symbols | 2354 |
+| symbols | 2378 |
 | symbols with typed recipes | 2 |
 | inspector identities | 60 |
 | inspector identity registration sites | 63 |
 | disposition: story exists | 1 |
 | disposition: no story yet | 211 |
 | disposition: nonvisual | 62 |
-| disposition: platform-only | 32 |
-| disposition: boundary | 21 |
+| disposition: platform-only | 33 |
+| disposition: boundary | 25 |
 | symbol story: available | 1 |
 | symbol story: no story yet | 451 |
-| symbol story: nonvisual | 1648 |
-| symbol story: platform-only | 97 |
-| symbol story: boundary | 157 |
+| symbol story: nonvisual | 1664 |
+| symbol story: platform-only | 98 |
+| symbol story: boundary | 164 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2302 |
+| A2UI: not supported | 2326 |
 <!-- counts:end -->
 
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 34 | 7 | 0 |
-| macOS | 0 | 0 | 285 | 0 | 1 | 1 | 34 | 6 | 0 |
-| Linux | 0 | 0 | 285 | 0 | 0 | 4 | 34 | 3 | 1 |
-| Android | 0 | 18 | 0 | 0 | 13 | 17 | 16 | 1 | 262 |
-| iOS | 0 | 14 | 0 | 1 | 13 | 17 | 20 | 1 | 261 |
+| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| macOS | 0 | 1 | 285 | 0 | 1 | 3 | 34 | 8 | 0 |
+| Linux | 0 | 0 | 285 | 0 | 0 | 7 | 36 | 3 | 1 |
+| Android | 0 | 18 | 0 | 0 | 13 | 18 | 20 | 1 | 262 |
+| iOS | 0 | 14 | 0 | 1 | 13 | 18 | 24 | 1 | 261 |
 <!-- cells:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1693,6 +1693,95 @@ Defects found here (not fixed):
   use "equivalent Koru semantic tokens", but iOS's accent is a green
   (`KoruColor.accent`, `Theme.swift` 14) and Android's primary a blue
   (`Theme.kt` 123).
+
+### macOS (`apps/macos/KoruShare`)
+
+One Swift file, `ShareViewController.swift` (293 lines), **read in full**
+and compiled into the checks: `C-MACOS-SHARE-EXTENSION`* (AppKit; a
+one-line "saving" view while the items are staged into the channel's
+inbox, then the app is brought forward). `koru-release`'s packager is the
+only list of the Mac's native sources — it compiles this file with
+`apps/ios/KoruShared/ShareInbox.swift` (the shared inbox format, excluded:
+it draws nothing) — and the drift checks hold every Swift path it names to
+a baseline. The desktop app draws nothing else in AppKit; its Mac-native
+menus and window chrome are batch 2b's `C-SYSTEM-MENUS` and
+`C-WINDOW-FRAME`. Desktop counterpart: none on Windows; the iOS extension
+`C-IOS-SHARE-EXTENSION` writes the same inbox. Disposition: platform-only.
+
+Defect (not fixed): "Saving to Koru…" is a hard-coded English literal
+(`ShareViewController.swift` 37), where the iOS extension's is a
+localized string; the extension has no catalog.
+
+### Operating-system surfaces of the desktop
+
+The two candidates batch 3 left to this one, now recorded (the files are
+compiled into `tests/drift/app.rs`, whose checks cover them as app crates;
+`app crates baselined` is five):
+
+- `apps/koru-store-server` (34 non-test files; `lib.rs`, `main.rs`,
+  `tray.rs` and `log.rs` **read in full**, the other 30 by their module
+  documentation and **searched** for `rfd`, `MessageBox`, `tray-icon`,
+  `muda`, `winit` and inspector scopes — none outside those two files;
+  `daemon/fake_cloud.rs`, behind the test-support feature, is left out like
+  a test). Its `lib.rs` is baselined: `tray` and `log` hold records, the
+  other 18 modules are the Store worker and are excluded with a reason.
+  `C-STORE-TRAY`* — the notification-area icon and menu (open the Store's
+  folder, *Backup Store…* through the system's save and message dialogs,
+  *Start on Windows startup*, *Quit*) and `C-STORE-FAILURE-DIALOG`* — the
+  `MessageBoxW` a Store started without a console shows when it cannot
+  start. Both `AppLocal` with their visible part a boundary, as batch 3's
+  `C-AGENT-TRAY` is: `NativeOwned` on Windows, `Unavailable` on macOS and
+  Linux (the tray is a stub that answers `None`, the dialog a stub that
+  shows nothing), `NotApplicable` on the phones (they embed the Store and
+  run no Store process; CATCHUP files the tray under *Deliberately
+  desktop*).
+- `apps/koru-notification-owner` (`main.rs`, 92 lines, **read in full**;
+  baselined with no modules): `C-MAC-NOTIFICATION-OWNER`* — the macOS
+  helper app that owns Koru's notifications and gives their three actions
+  their titles from `koru-i18n` in the system's language. `NativeOwned` on
+  macOS; not applicable elsewhere (on Windows it prints that it is
+  Mac-only, and the package's COM activator owns activation).
+
+And one crate the brief named, recorded for the surface it hands the
+system:
+
+- `crates/koru-native-notifications` (5 non-test files: `lib.rs` **read in
+  full**; `sounds.rs`, `mac_owner.rs`, `windows.rs` and `macos.rs` by
+  declarations, with the toast XML and the `UNUserNotificationCenter`
+  calls searched). `C-SYSTEM-NOTIFICATIONS`* — a reminder as the operating
+  system draws it: the title and body Koru supplies, the sound (the
+  `BundledTone` table is an option set), and the Open, Snooze and Handled
+  actions. `Support`, its visible part a boundary, as batch 2b's OS-owned
+  records are. `NativeOwned` on Windows and macOS; `Unavailable` on Linux
+  (`UnavailableNotifications` answers every call `Unsupported`) and on the
+  phones (mobile CATCHUP, *Reminders — Wanted, phase 2*: neither phone
+  schedules or delivers reminders). Its `lib.rs` is baselined in
+  `tests/drift/domain.rs` with the domain crates, which are now 21.
+
+Not recorded, each for its reason:
+
+- `apps/koru-com-notification` (`main.rs`, 50 lines, read in full): the
+  Windows COM activation broker the package starts for a notification's
+  button; invisible and short-lived, it draws nothing.
+- `crates/koru-mobile-host` (12 non-test files, 11,349 lines),
+  `koru-mobile-native` (3, the Android JNI shim, a `cdylib`) and
+  `koru-mobile-ios` (1, the iOS C ABI, a `staticlib`) — the only crates
+  with a native-library edge; there is no UniFFI or Swift bridge crate.
+  Their module documentation was read and their sources **searched** (no
+  `koru-draw`, `koru-ui`, vello, parley or winit anywhere in them): they
+  marshal generated Protobuf requests between the phones' native screens
+  and the embedded Store, and draw nothing. The UI-facing shapes they carry (the run view, the document
+  projection, the transfer and Cloud states) are drawn by the native
+  records above, which is where they are counted.
+- `crates/koru-share-inbox` (1 file): the Rust reader of the share inbox
+  both share extensions write; draws nothing.
+
+Defect (not fixed): `ActionLabels::default()` supplies English "Open",
+"Snooze" and "Handled" (`koru-native-notifications` `lib.rs` 241–249)
+while the type's own documentation says adapters "must not embed an
+English fallback" (230–232). The Store's tray menu, backup dialogs and
+failure box are English throughout (`tray.rs` 119, 252–255, 409–433;
+`log.rs` 182; the crate has no `koru-i18n`), as batch 3 recorded.
 
 ## Notes for later batches
 

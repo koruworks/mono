@@ -852,6 +852,26 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../crates/koru-markdown-view/src/view.rs"),
     ),
     (
+        "crates/koru-native-notifications/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-native-notifications/src/lib.rs"),
+    ),
+    (
+        "crates/koru-native-notifications/src/mac_owner.rs",
+        include_str!("../../../../../../../crates/koru-native-notifications/src/mac_owner.rs"),
+    ),
+    (
+        "crates/koru-native-notifications/src/macos.rs",
+        include_str!("../../../../../../../crates/koru-native-notifications/src/macos.rs"),
+    ),
+    (
+        "crates/koru-native-notifications/src/sounds.rs",
+        include_str!("../../../../../../../crates/koru-native-notifications/src/sounds.rs"),
+    ),
+    (
+        "crates/koru-native-notifications/src/windows.rs",
+        include_str!("../../../../../../../crates/koru-native-notifications/src/windows.rs"),
+    ),
+    (
         "crates/koru-session-view/src/cursor.rs",
         include_str!("../../../../../../../crates/koru-session-view/src/cursor.rs"),
     ),
@@ -1937,6 +1957,19 @@ pub(super) const CRATES: &[Crate] = &[
             ("document", Module::Records(&["C-MARKDOWN-DOCUMENT"])),
             ("text", Module::Records(&["C-MARKDOWN-VIEW"])),
             ("view", Module::Records(&["C-MARKDOWN-VIEW"])),
+        ],
+    },
+    // Batch 4: the operating system's notification surface. Every module is
+    // private and the root re-exports what the record names.
+    Crate {
+        owner: "koru-native-notifications",
+        lib: "crates/koru-native-notifications/src/lib.rs",
+        root: &["C-SYSTEM-NOTIFICATIONS"],
+        modules: &[
+            ("mac_owner", Module::Records(&["C-SYSTEM-NOTIFICATIONS"])),
+            ("macos", Module::Records(&["C-SYSTEM-NOTIFICATIONS"])),
+            ("sounds", Module::Records(&["C-SYSTEM-NOTIFICATIONS"])),
+            ("windows", Module::Records(&["C-SYSTEM-NOTIFICATIONS"])),
         ],
     },
     Crate {

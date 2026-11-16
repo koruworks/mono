@@ -34,6 +34,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/app/mini_app.rs"),
     ),
     (
+        "ui_lab/registry/app/os_surfaces.rs",
+        include_str!("registry/app/os_surfaces.rs"),
+    ),
+    (
         "ui_lab/registry/app/pages.rs",
         include_str!("registry/app/pages.rs"),
     ),
@@ -94,6 +98,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/domain/markdown_view.rs"),
     ),
     (
+        "ui_lab/registry/domain/notifications.rs",
+        include_str!("registry/domain/notifications.rs"),
+    ),
+    (
         "ui_lab/registry/domain/runs.rs",
         include_str!("registry/domain/runs.rs"),
     ),
@@ -148,6 +156,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     (
         "ui_lab/registry/native/ios.rs",
         include_str!("registry/native/ios.rs"),
+    ),
+    (
+        "ui_lab/registry/native/macos.rs",
+        include_str!("registry/native/macos.rs"),
     ),
     ("ui_lab/shell.rs", include_str!("shell.rs")),
     ("ui_lab/story.rs", include_str!("story.rs")),
@@ -320,6 +332,7 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/app/leaf.rs",
     "ui_lab/registry/app/mainview.rs",
     "ui_lab/registry/app/mini_app.rs",
+    "ui_lab/registry/app/os_surfaces.rs",
     "ui_lab/registry/app/pages.rs",
     "ui_lab/registry/app/panes.rs",
     "ui_lab/registry/app/tasks_view.rs",
@@ -335,6 +348,7 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/domain/chats.rs",
     "ui_lab/registry/domain/editor.rs",
     "ui_lab/registry/domain/markdown_view.rs",
+    "ui_lab/registry/domain/notifications.rs",
     "ui_lab/registry/domain/runs.rs",
     "ui_lab/registry/domain/search.rs",
     "ui_lab/registry/domain/session_view.rs",
@@ -349,6 +363,7 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/native.rs",
     "ui_lab/registry/native/android.rs",
     "ui_lab/registry/native/ios.rs",
+    "ui_lab/registry/native/macos.rs",
 ];
 
 /// `line` with the contents of every `"…"` literal removed, quotes kept.

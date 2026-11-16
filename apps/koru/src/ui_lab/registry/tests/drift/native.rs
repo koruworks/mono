@@ -205,6 +205,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "apps/ios/KoruShare/ShareViewController.swift",
         include_str!("../../../../../../../apps/ios/KoruShare/ShareViewController.swift"),
     ),
+    (
+        "apps/macos/KoruShare/ShareViewController.swift",
+        include_str!("../../../../../../../apps/macos/KoruShare/ShareViewController.swift"),
+    ),
 ];
 
 /// The Android app's manifest: every component a launcher, a share sheet, a
@@ -220,6 +224,10 @@ const ANDROID_SETTINGS: &str =
 /// (the app, an extension) or a test bundle.
 const IOS_PROJECT: &str =
     include_str!("../../../../../../../apps/ios/KoruMobile.xcodeproj/project.pbxproj");
+
+/// The release packager, which compiles the macOS share extension's Swift
+/// with `swiftc`: the only list of the Mac's native sources.
+const MAC_PACKAGER: &str = include_str!("../../../../../../../crates/koru-release/src/package.rs");
 
 /// The language a native owner is written in.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -238,6 +246,7 @@ const OWNERS: &[(&str, Language, &str)] = &[
     ),
     ("ios/KoruMobile", Language::Swift, "apps/ios/KoruMobile/"),
     ("ios/KoruShare", Language::Swift, "apps/ios/KoruShare/"),
+    ("macos/KoruShare", Language::Swift, "apps/macos/KoruShare/"),
 ];
 
 /// Whether a record's owner is a native platform's.
@@ -805,11 +814,38 @@ const IOS_ROUTES: &[(&str, Module)] = &[
     ("diagnostics", Module::Records(&["C-IOS-SETTINGS"])),
 ];
 
+/// The Swift the release packager compiles into the macOS share extension,
+/// by the path it names.
+const MAC_PACKAGED: &[(&str, Module)] = &[
+    (
+        "apps/ios/KoruShared/ShareInbox.swift",
+        Module::Excluded(
+            "the inbox format the iOS and macOS extensions and the iOS app compile; draws nothing",
+        ),
+    ),
+    (
+        "apps/macos/KoruShare/ShareViewController.swift",
+        Module::Records(&["C-MACOS-SHARE-EXTENSION"]),
+    ),
+];
+
 /// Every door into the Apple UI — an Xcode target (an app, an extension, a
-/// widget, a notification service would each be one) and a route of the
-/// iOS root's navigation stack — is classified.
+/// widget, a notification service would each be one), a route of the iOS
+/// root's navigation stack, and the Swift the macOS packager compiles — is
+/// classified.
 #[test]
 fn the_apple_entry_points_are_classified() {
+    // Every string literal that names a native Swift source, each once.
+    let mut packaged: Vec<String> = Vec::new();
+    for (at, _) in MAC_PACKAGER.match_indices("\"apps/") {
+        let rest = &MAC_PACKAGER[at + 1..];
+        let literal = &rest[..rest.find('"').expect("a path literal closes")];
+        if literal.ends_with(".swift") && !packaged.iter().any(|known| known == literal) {
+            packaged.push(literal.to_owned());
+        }
+    }
+    check_entry_points("the macOS packager's Swift", packaged, MAC_PACKAGED);
+
     let section = IOS_PROJECT
         .split("/* Begin PBXNativeTarget section */")
         .nth(1)
@@ -862,7 +898,8 @@ pub(super) fn counts() -> Vec<(&'static str, usize)> {
                 + ANDROID_ROUTES.len()
                 + ANDROID_MODULES.len()
                 + IOS_TARGETS.len()
-                + IOS_ROUTES.len(),
+                + IOS_ROUTES.len()
+                + MAC_PACKAGED.len(),
         ),
         ("records: native platforms", native_records().count()),
     ]

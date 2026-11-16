@@ -1257,6 +1257,147 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "apps/koru-agent/src/windows_identity.rs",
         include_str!("../../../../../../../apps/koru-agent/src/windows_identity.rs"),
     ),
+    // Batch 4: the app crates that own only an operating-system surface.
+    // `daemon/fake_cloud.rs` is behind the test-support feature, off in
+    // every product build, and is left out like a test file.
+    (
+        "apps/koru-store-server/src/attributes.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/attributes.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/cli.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/cli.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/cloud_inspection.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/cloud_inspection.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/cloud_inspection_host.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/cloud_inspection_host.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/console.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/console.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/blob_sync.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/blob_sync.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/cloud_driver.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/cloud_driver.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/cloud_sync.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/cloud_sync.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/cloud_sync/comparison.rs",
+        include_str!(
+            "../../../../../../../apps/koru-store-server/src/daemon/cloud_sync/comparison.rs"
+        ),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/cloud_sync/driver.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/cloud_sync/driver.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/cloud_sync/live.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/cloud_sync/live.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/cloud_sync/rooms.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/cloud_sync/rooms.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/dispatch.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/dispatch.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/memory.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/memory.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/session_io.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/session_io.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/daemon/store_jobs.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/daemon/store_jobs.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/derived.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/derived.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/events_feed.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/events_feed.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/host.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/host.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/lib.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/lib.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/log.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/log.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/main.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/main.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/projection.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/projection.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/replication.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/replication.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/root_inspection.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/root_inspection.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/search.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/search.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/store_backup.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/store_backup.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/sync_control.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/sync_control.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/systemdoc.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/systemdoc.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/tagnames.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/tagnames.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/tasks.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/tasks.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/tray.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/tray.rs"),
+    ),
+    (
+        "apps/koru-notification-owner/src/main.rs",
+        include_str!("../../../../../../../apps/koru-notification-owner/src/main.rs"),
+    ),
 ];
 
 /// The app crates, as Rust code names them, and where their source is.
@@ -1264,6 +1405,11 @@ const CRATES: &[(&str, &str)] = &[
     ("koru", "apps/koru/src/"),
     ("koru_document", "apps/koru-document/src/"),
     ("koru_agent", "apps/koru-agent/src/"),
+    ("koru_store_server", "apps/koru-store-server/src/"),
+    (
+        "koru_notification_owner",
+        "apps/koru-notification-owner/src/",
+    ),
 ];
 
 /// Whether a record's owner is one of the app crates.
@@ -2201,6 +2347,100 @@ pub(super) const ROOTS: &[Root] = &[
                 Module::Excluded("test-only: #[cfg(test)] client-side baselines, ignored as a set"),
             ),
         ],
+    },
+    // Batch 4: the Store owns only operating-system surfaces; everything
+    // else in it is the Store worker.
+    Root {
+        owner: "koru-store-server",
+        file: "apps/koru-store-server/src/lib.rs",
+        own: &[],
+        modules: &[
+            (
+                "attributes",
+                Module::Excluded("io: the attribute query service the daemon serves"),
+            ),
+            (
+                "cli",
+                Module::Excluded("orchestration: the Store's command line"),
+            ),
+            (
+                "cloud_inspection",
+                Module::Excluded(
+                    "io: native inspection and edit of an exact Cloud copy; draws nothing",
+                ),
+            ),
+            (
+                "cloud_inspection_host",
+                Module::Excluded("io: one selector-only inspection admission per native host"),
+            ),
+            (
+                "console",
+                Module::Excluded("io: attaching a console for the invocations that print"),
+            ),
+            (
+                "daemon",
+                Module::Excluded(
+                    "orchestration: the Store worker, its typed jobs and the Cloud and blob drivers",
+                ),
+            ),
+            (
+                "derived",
+                Module::Excluded("data: where the derived read model lives"),
+            ),
+            (
+                "events_feed",
+                Module::Excluded("io: the commit feed's exit into the events worker"),
+            ),
+            (
+                "host",
+                Module::Excluded("orchestration: the standalone process adapter main.rs calls"),
+            ),
+            ("log", Module::Records(&["C-STORE-FAILURE-DIALOG"])),
+            (
+                "projection",
+                Module::Excluded("io: the projection layer beside the store"),
+            ),
+            (
+                "replication",
+                Module::Excluded(
+                    "io: the adapter between the Store and the replication data plane",
+                ),
+            ),
+            (
+                "root_inspection",
+                Module::Excluded("io: the read-only root-catalog inventory command"),
+            ),
+            (
+                "search",
+                Module::Excluded("io: the search index beside the read model"),
+            ),
+            (
+                "store_backup",
+                Module::Excluded(
+                    "io: the one-file backup the tray's Backup item writes; its dialogs are C-STORE-TRAY",
+                ),
+            ),
+            (
+                "sync_control",
+                Module::Excluded("io: the Store end of the Agent's replication control session"),
+            ),
+            (
+                "systemdoc",
+                Module::Excluded("data: where a workspace's system document is found"),
+            ),
+            (
+                "tagnames",
+                Module::Excluded("data: the tag names the search index reads"),
+            ),
+            ("tasks", Module::Excluded("io: the tasks query service")),
+            ("tray", Module::Records(&["C-STORE-TRAY"])),
+        ],
+    },
+    Root {
+        owner: "koru-notification-owner",
+        file: "apps/koru-notification-owner/src/main.rs",
+        own: &["C-MAC-NOTIFICATION-OWNER"],
+        modules: &[],
     },
 ];
 
