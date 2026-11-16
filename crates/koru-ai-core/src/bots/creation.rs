@@ -84,6 +84,14 @@ pub struct BotCreationConfig {
     pub model: ModelSelection,
     pub mode: Option<String>,
     pub fast: Option<bool>,
+    /// The face the person picked ([`BotConfig::avatar`]). Absent means
+    /// none: the Bot's face is derived from its id. Omitted when absent, so
+    /// a request that names no face has the bytes, and so the fingerprint,
+    /// it had before the field existed, and a `creation_v2` receipt written
+    /// before it still decodes and still matches its replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 23)))]
+    pub avatar: Option<u8>,
 }
 
 impl std::fmt::Debug for BotCreationConfig {
@@ -103,6 +111,7 @@ impl BotCreationConfig {
             model: self.model.clone(),
             mode: self.mode.clone(),
             fast: self.fast,
+            avatar: self.avatar,
         }
     }
 
@@ -120,7 +129,7 @@ impl BotCreationConfig {
         {
             return Err(BotError::Invalid);
         }
-        Ok(())
+        validate_avatar(self.avatar)
     }
 }
 

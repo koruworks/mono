@@ -482,6 +482,7 @@ fn config() -> BotCreationConfig {
         },
         mode: None,
         fast: None,
+        avatar: None,
     }
 }
 

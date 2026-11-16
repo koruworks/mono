@@ -26,6 +26,7 @@ fn bot() -> Bot {
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: Vec::new(),

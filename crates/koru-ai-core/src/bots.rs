@@ -16,6 +16,8 @@ pub mod policy;
 pub mod replay;
 pub use lifecycle::*;
 pub use policy::*;
+pub mod avatar;
+pub use avatar::*;
 pub mod creation;
 pub use creation::*;
 pub mod library;
@@ -53,6 +55,15 @@ pub struct BotConfig {
     pub model: ModelSelection,
     pub mode: Option<String>,
     pub fast: Option<bool>,
+    /// The face the person picked for the Bot: an index into the face table
+    /// ([`BOT_AVATAR_COUNT`]). Absent means none was picked, and the face is
+    /// derived from the Bot's id ([`Bot::avatar`]). Omitted when absent, so
+    /// a Bot with no choice serializes, and every stored receipt, captured
+    /// Routine source and request fingerprint that holds one is, exactly as
+    /// before the field existed (ai.db 24).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(range(min = 0, max = 23)))]
+    pub avatar: Option<u8>,
 }
 
 impl std::fmt::Debug for BotConfig {
@@ -1094,7 +1105,7 @@ pub fn validate_config(config: &BotConfig, workspace: WorkspaceId) -> Result<(),
     {
         return Err(BotError::Invalid);
     }
-    Ok(())
+    validate_avatar(config.avatar)
 }
 
 /// The model portion of canonical Bot validation, also used by bounded

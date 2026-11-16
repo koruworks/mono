@@ -282,7 +282,7 @@ impl Repository {
                 "SELECT user_scope_id,home_workspace_id,owner_device_id,name,
           role_workspace_id,role_document_id,working_folder,provider,model,reasoning,mode,fast,
           revision,policy_revision,access,paused,folder_lock_request_id,folder_frozen_at_ms,
-          created_at_ms,updated_at_ms,lifecycle FROM bots WHERE bot_id=?1",
+          created_at_ms,updated_at_ms,lifecycle,avatar FROM bots WHERE bot_id=?1",
                 [id.to_storage()],
                 |r| {
                     let get = |i| r.get::<_, String>(i);
@@ -308,6 +308,7 @@ impl Repository {
                         r.get::<_, i64>(18)?,
                         r.get::<_, i64>(19)?,
                         get(20)?,
+                        r.get::<_, Option<u8>>(21)?,
                     ))
                 },
             )
@@ -351,6 +352,7 @@ impl Repository {
                     },
                     mode: r.10,
                     fast: r.11,
+                    avatar: r.21,
                 },
                 revision: r.12,
                 policy_revision: r.13,
@@ -513,13 +515,13 @@ impl Repository {
             tx.execute("INSERT INTO chats(id,title,current_provider,current_model,current_reasoning,created_at_ms,updated_at_ms,profile_id,agent_working_folder,agent_mode,agent_fast)
               VALUES(?1,?2,?3,?4,?5,?6,?6,?7,?8,?9,?10)",params![bot.main_chat.to_storage(),bot.config.name,bot.config.model.provider.as_str(),bot.config.model.requested_model,bot.config.model.default_reasoning.as_token(),bot.created_at_ms,profile.to_storage(),bot.config.working_folder,bot.config.mode,bot.config.fast]).map_err(bad)?;
         }
-        tx.execute("INSERT INTO bots(bot_id,user_scope_id,home_workspace_id,owner_device_id,name,role_workspace_id,role_document_id,working_folder,provider,model,reasoning,mode,fast,revision,policy_revision,access,created_at_ms,updated_at_ms)
-          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)
+        tx.execute("INSERT INTO bots(bot_id,user_scope_id,home_workspace_id,owner_device_id,name,role_workspace_id,role_document_id,working_folder,provider,model,reasoning,mode,fast,revision,policy_revision,access,created_at_ms,updated_at_ms,avatar)
+          VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)
           ON CONFLICT(bot_id) DO UPDATE SET
           role_owned=CASE WHEN bots.role_workspace_id=excluded.role_workspace_id AND bots.role_document_id=excluded.role_document_id THEN bots.role_owned ELSE 0 END,
           role_creation_request_id=CASE WHEN bots.role_workspace_id=excluded.role_workspace_id AND bots.role_document_id=excluded.role_document_id THEN bots.role_creation_request_id ELSE NULL END,
-          name=excluded.name,role_workspace_id=excluded.role_workspace_id,role_document_id=excluded.role_document_id,working_folder=excluded.working_folder,provider=excluded.provider,model=excluded.model,reasoning=excluded.reasoning,mode=excluded.mode,fast=excluded.fast,revision=excluded.revision,policy_revision=excluded.policy_revision,access=excluded.access,updated_at_ms=excluded.updated_at_ms",
-          params![bot.id.to_storage(),bot.user_scope.to_storage(),bot.home_workspace.to_storage(),bot.owner_device.to_storage(),bot.config.name,bot.config.role.workspace.to_storage(),bot.config.role.document.to_storage(),bot.config.working_folder,bot.config.model.provider.as_str(),bot.config.model.requested_model,bot.config.model.default_reasoning.as_token(),bot.config.mode,bot.config.fast,bot.revision,bot.policy_revision,match bot.access{BotAccess::Default=>"default",BotAccess::Workspace=>"workspace"},bot.created_at_ms,bot.updated_at_ms]).map_err(bad)?;
+          name=excluded.name,role_workspace_id=excluded.role_workspace_id,role_document_id=excluded.role_document_id,working_folder=excluded.working_folder,provider=excluded.provider,model=excluded.model,reasoning=excluded.reasoning,mode=excluded.mode,fast=excluded.fast,revision=excluded.revision,policy_revision=excluded.policy_revision,access=excluded.access,updated_at_ms=excluded.updated_at_ms,avatar=excluded.avatar",
+          params![bot.id.to_storage(),bot.user_scope.to_storage(),bot.home_workspace.to_storage(),bot.owner_device.to_storage(),bot.config.name,bot.config.role.workspace.to_storage(),bot.config.role.document.to_storage(),bot.config.working_folder,bot.config.model.provider.as_str(),bot.config.model.requested_model,bot.config.model.default_reasoning.as_token(),bot.config.mode,bot.config.fast,bot.revision,bot.policy_revision,match bot.access{BotAccess::Default=>"default",BotAccess::Workspace=>"workspace"},bot.created_at_ms,bot.updated_at_ms,bot.config.avatar]).map_err(bad)?;
         if expected.is_none() {
             tx.execute(
                 "INSERT INTO bot_chats VALUES(?1,?2,'main',?3)",

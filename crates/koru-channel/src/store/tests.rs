@@ -223,3 +223,14 @@ fn the_artifacts_root_is_a_sibling_of_a_conventional_store_and_inside_a_bare_roo
     let bare = std::path::Path::new("bare-temp-root");
     assert_eq!(artifacts_root_beside(bare), bare.join("artifacts"));
 }
+
+#[test]
+fn the_ai_root_sits_under_the_channel_root_beside_the_store() {
+    let channel = std::path::Path::new("R");
+    assert_eq!(ai_root_under(channel), channel.join("ai"));
+    assert_ne!(ai_root_under(channel), store_root_under(channel));
+    assert!(
+        !ai_root_under(channel).starts_with(store_root_under(channel)),
+        "clearing the store must not clear a Bot's working folder"
+    );
+}

@@ -106,6 +106,18 @@ pub fn store_root_under(channel_root: &std::path::Path) -> PathBuf {
     channel_root.join("store")
 }
 
+/// Where Koru AI keeps its own data on this machine, given a channel root:
+/// `ai.db`, and under `bots/` the folder each Bot works in when the person
+/// chose none. `Koru\<segment>i`, beside `store/`, and `R/ai` under a
+/// `--root R`.
+///
+/// The one place that join happens, so the gateway that opens the AI worker
+/// there and the window that shows a new Bot's default folder before the Bot
+/// exists cannot drift apart. Resolving the path creates nothing.
+pub fn ai_root_under(channel_root: &std::path::Path) -> PathBuf {
+    channel_root.join("ai")
+}
+
 /// Where the events journal lives, given a store root — the one rule, so the
 /// gateway that opens it, the agent's tray row that reveals it and the
 /// standalone events host cannot drift apart.

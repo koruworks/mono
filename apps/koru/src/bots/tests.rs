@@ -28,6 +28,7 @@ pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: Vec::new(),

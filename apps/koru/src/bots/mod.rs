@@ -25,6 +25,7 @@
 
 pub(crate) mod catalog;
 pub(crate) mod creation;
+pub(crate) mod first_bot;
 pub(crate) mod labels;
 pub(crate) mod library;
 pub(crate) mod lifecycle;

@@ -41,6 +41,7 @@ implies a thing being hit.
 | `geometry.rs` | `Rect` and the shared column arithmetic |
 | `icons.rs` | Phosphor codepoints, by name, with two invariants pinned by tests |
 | `image.rs`, `tile.rs`, `pill.rs` | Decoded-image cache, the workspace tile, the pill shape |
+| `face.rs` | A Bot's face: 24 faces drawn from one index and a name, still unless a `FaceClock` says its Bot is working |
 
 ## Three things that will surprise you
 

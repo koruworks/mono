@@ -3,6 +3,7 @@
 use rusqlite::Connection;
 
 use super::*;
+mod avatar;
 mod decisions;
 mod library;
 mod memory_identity;

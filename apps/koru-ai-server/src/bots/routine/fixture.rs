@@ -81,6 +81,7 @@ impl Fixture {
                 },
                 mode: None,
                 fast: None,
+                avatar: None,
             },
             access: BotAccess::Default,
             selected_pages: vec![],

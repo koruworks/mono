@@ -41,7 +41,7 @@ pub mod tint;
 pub use build_info::{BuildInfo, RELEASE_NOTES_FILE, build_info};
 pub use channel::ReleaseChannel;
 pub use store::{
-    SEGMENTS, artifacts_root_beside, channel_root, channel_root_of, delegate_root_beside,
-    events_root_beside, looks_synced, segment, segment_of, shared_root, store_root, store_root_of,
-    store_root_under,
+    SEGMENTS, ai_root_under, artifacts_root_beside, channel_root, channel_root_of,
+    delegate_root_beside, events_root_beside, looks_synced, segment, segment_of, shared_root,
+    store_root, store_root_of, store_root_under,
 };

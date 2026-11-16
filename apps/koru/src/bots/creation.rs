@@ -110,6 +110,9 @@ pub(crate) struct Draft {
     pub access: AccessDraft,
     /// A folder the person chose; `None` is the managed default.
     pub folder: Option<String>,
+    /// The face the person picked (an index into `koru_draw::face::ROWS`);
+    /// `None` leaves it to the owner, which derives one from the BotId.
+    pub avatar: Option<u8>,
 }
 
 /// What an answer settled, for the tab to act on.
@@ -182,6 +185,7 @@ impl CreateForm {
                     pages: Vec::new(),
                 },
                 folder: None,
+                avatar: None,
             },
             live: None,
             ended: None,
@@ -366,6 +370,20 @@ impl CreateForm {
         true
     }
 
+    /// **The face the person picked** in the *New bot* dialog. Only a face
+    /// of the table is taken; like every input, it cannot change once the
+    /// owner holds the creation. `None` returns to the derived face.
+    #[cfg_attr(not(test), allow(dead_code))] // called by the New bot dialog
+    pub(crate) fn choose_avatar(&mut self, avatar: Option<u8>) -> bool {
+        if !self.editable()
+            || avatar.is_some_and(|face| face >= koru_ai_core::bots::BOT_AVATAR_COUNT)
+        {
+            return false;
+        }
+        self.draft.avatar = avatar;
+        true
+    }
+
     pub(crate) fn use_managed_folder(&mut self) -> bool {
         if !self.editable() || self.draft.folder.is_none() {
             return false;
@@ -465,6 +483,7 @@ impl CreateForm {
                 model: model.model,
                 mode: model.mode.or(asking),
                 fast: model.fast,
+                avatar: draft.avatar,
             },
             access: draft.access.access,
             selected_pages: pages,

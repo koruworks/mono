@@ -47,14 +47,15 @@ fn canonical(
 ) -> Result<(BotRoutineCanonical, ProfileId), BotError> {
     settled(conn, owner(slot), slot.bot)?;
     let source = bounded::source(conn, owner(slot), slot.bot)?;
-    let (name,role_workspace,role_document,mode,fast,paused):(String,String,String,Option<String>,Option<bool>,bool) = conn.query_row("SELECT
+    let (name,role_workspace,role_document,mode,fast,paused,avatar):(String,String,String,Option<String>,Option<bool>,bool,Option<u8>) = conn.query_row("SELECT
         CASE WHEN typeof(name)='text' AND length(CAST(name AS BLOB)) BETWEEN 1 AND 512 THEN name END,
         CASE WHEN typeof(role_workspace_id)='text' AND length(CAST(role_workspace_id AS BLOB))=36 THEN role_workspace_id END,
         CASE WHEN typeof(role_document_id)='text' AND length(CAST(role_document_id AS BLOB))=36 THEN role_document_id END,
         CASE WHEN mode IS NULL OR (typeof(mode)='text' AND length(CAST(mode AS BLOB))<=128) THEN mode ELSE 1 END,
         CASE WHEN fast IS NULL OR (typeof(fast)='integer' AND fast IN (0,1)) THEN fast ELSE 'invalid' END,
-        CASE WHEN typeof(paused)='integer' AND paused IN (0,1) THEN paused END
-        FROM bots WHERE bot_id=?1", [slot.bot.to_storage()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).map_err(bad)?;
+        CASE WHEN typeof(paused)='integer' AND paused IN (0,1) THEN paused END,
+        CASE WHEN avatar IS NULL OR (typeof(avatar)='integer' AND avatar BETWEEN 0 AND 23) THEN avatar ELSE 'invalid' END
+        FROM bots WHERE bot_id=?1", [slot.bot.to_storage()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?))).map_err(bad)?;
     if paused {
         return Err(BotError::Settling);
     }
@@ -72,6 +73,7 @@ fn canonical(
             model: source.model,
             mode,
             fast,
+            avatar,
         },
     };
     canonical.validate().map_err(|_| BotError::Storage)?;

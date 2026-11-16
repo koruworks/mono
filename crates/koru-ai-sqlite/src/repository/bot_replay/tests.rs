@@ -35,6 +35,7 @@ fn fixture(repo: &mut Repository) -> (Bot, PendingTurn, BotSubmission) {
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],
@@ -223,6 +224,9 @@ fn populated_v16_migrates_twice_without_changing_chat_bot_or_receipt() {
         connection,
         bot_replay_fail_after_commit: false,
     };
+    // Today's code names `bots.avatar` (ai24): borrowed while the v16 rows
+    // are written, returned before the migration below runs.
+    repo.lend_avatar_column();
     let (bot, _, submission) = fixture(&mut repo);
     let ordinary = ChatId::new();
     repo.create_chat(&chat(ordinary, 0)).unwrap();
@@ -252,6 +256,7 @@ fn populated_v16_migrates_twice_without_changing_chat_bot_or_receipt() {
     )
     .unwrap();
     tx.commit().unwrap();
+    repo.return_avatar_column();
     let before = repo.messages(ordinary).unwrap();
     db::prepare(&mut repo.connection).unwrap();
     db::prepare(&mut repo.connection).unwrap();

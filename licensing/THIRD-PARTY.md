@@ -171,6 +171,7 @@ and to no customers, which is worth noting rather than acting on.
 | `crates/koru-blocks/assets/TypeScript.sublime-syntax` | **Apache-2.0, © Microsoft** (TypeScript-Sublime-Plugin, machine-converted by `bat`) | Its README said "MIT, Sublime HQ". That was wrong, and bat's history shows the source. Corrected; it is in every package's notices, and the file itself is now fetched from bat v0.24.0 rather than committed ✅ |
 | `apps/android/gradlew*`, `gradle/wrapper/gradle-wrapper.jar` | Apache-2.0, Gradle authors | Build tooling, not shipped; fetched (Gradle 9.8.1), not committed ✅ |
 | `contracts/gen/` | Ours, generated from our `.proto` | ✅ |
+| `crates/koru-draw/src/face.rs`: eight eye outlines (SVG path data) and 24 rows of placement numbers | **CC0 1.0**, DiceBear, the "Initial Face" avatar style (<https://www.dicebear.com/styles/initial-face/>) | Design data only, copied into the source as constants (2026-11-16); it is a few hundred bytes with no upstream file to fetch. No DiceBear library code (MIT) is linked or copied, no SVG is shipped and nothing is fetched at run time. The colors are Koru's palette and the animation is Koru's own. CC0 is a public-domain dedication: nothing is owed in a binary, and it is listed here anyway. The license was checked by the maintainers on 2026-11-16 ✅ |
 
 ## Fonts (fetched at build time, shipped in every package)
 

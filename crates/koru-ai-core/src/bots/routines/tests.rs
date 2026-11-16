@@ -147,6 +147,7 @@ pub(super) fn preparation() -> BotRoutinePreparation {
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
     };
     let identity = RoutineDefinitionIdentity {

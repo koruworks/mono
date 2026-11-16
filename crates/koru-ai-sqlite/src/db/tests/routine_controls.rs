@@ -6,7 +6,7 @@ use super::library::{foreign_keys_held, snapshot};
 use super::*;
 use std::collections::BTreeMap;
 
-fn ai23() -> Schema {
+pub(super) fn ai23() -> Schema {
     Schema {
         database: crate::DATABASE_FILE,
         understood: 23,
@@ -46,7 +46,7 @@ const ROWS: &str = "
   ('scope','archive',3,'owned_role','store',NULL,NULL,'home','role',NULL,'role_creation_receipt','absent','remove','unavailable',NULL,'child-role',5),
   ('scope','archive',4,'attachment_copy','ai','chat',NULL,NULL,NULL,'attachment','exclusive_attachment','archived','restore','conflict',NULL,NULL,6);";
 
-fn populated() -> Connection {
+pub(super) fn populated() -> Connection {
     let c = populated_ai22();
     assert_eq!(user_version(&c).unwrap(), 22);
     c.execute_batch(ROWS).unwrap();
@@ -54,7 +54,7 @@ fn populated() -> Connection {
 }
 
 /// Every foreign key of every table, as `PRAGMA foreign_key_list` reports it.
-fn foreign_keys(c: &Connection) -> BTreeMap<String, Vec<String>> {
+pub(super) fn foreign_keys(c: &Connection) -> BTreeMap<String, Vec<String>> {
     let tables: Vec<String> = c
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
         .unwrap()
@@ -387,8 +387,9 @@ fn migration_ai22_build_refuses_ai23_before_preflight_or_configuration() {
 
 #[test]
 fn migration_fresh_database_reaches_ai23_with_an_empty_grant_table() {
-    let c = open_in_memory().unwrap();
-    assert_eq!(SCHEMA_VERSION, 23);
+    // Stopped at ai23: this build goes on to ai24 (`avatar.rs`).
+    let mut c = Connection::open_in_memory().unwrap();
+    prepare_ai23(&mut c);
     assert_eq!(user_version(&c).unwrap(), 23);
     assert_eq!(
         c.query_row("SELECT count(*) FROM bot_routine_grants", [], |r| r
@@ -435,9 +436,20 @@ fn migration_ai23_through_the_real_open_of_a_populated_ai22_file() {
     };
     for _ in 0..2 {
         let c = open(&path).unwrap();
-        assert_eq!(user_version(&c).unwrap(), 23);
+        // The real open runs every later step too.
+        assert_eq!(user_version(&c).unwrap(), SCHEMA_VERSION);
         let after = snapshot(&c);
         for (name, (_, rows)) in &before {
+            if name == "bots" {
+                // ai24 appends one nullable column, NULL in every old row.
+                let kept: Vec<String> = after[name]
+                    .1
+                    .iter()
+                    .map(|row| format!("{}]", row.strip_suffix(", Null]").unwrap()))
+                    .collect();
+                assert_eq!(rows, &kept, "raw rows changed: {name}");
+                continue;
+            }
             assert_eq!(rows, &after[name].1, "raw rows changed: {name}");
         }
         assert!(after["bot_routine_grants"].1.is_empty());

@@ -165,6 +165,7 @@ pub(super) fn fixture_bot() -> Bot {
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],
@@ -415,4 +416,87 @@ fn changing_role_reference_never_transfers_owned_proof() {
             .unwrap()
             .is_some()
     );
+}
+
+#[test]
+fn a_picked_face_is_stored_read_back_changed_and_cleared_and_none_stays_null() {
+    let mut repo = Repository::in_memory().unwrap();
+    let profile = ProfileId::new();
+    let stored = |repo: &Repository, bot: BotId| -> Option<i64> {
+        repo.connection
+            .query_row(
+                "SELECT avatar FROM bots WHERE bot_id=?1",
+                [bot.to_storage()],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    // No face picked: NULL in the row, absent on the Bot, and absent from
+    // the stored receipt, whose bytes are those of a Bot before the column.
+    let plain = fixture_bot();
+    let request = BotRequestId::mint();
+    repo.save_bot(&plain, profile, request, "plain", None)
+        .unwrap();
+    assert_eq!(stored(&repo, plain.id), None);
+    assert_eq!(repo.bot(plain.id).unwrap().unwrap().config.avatar, None);
+    let outcome: String = repo
+        .connection
+        .query_row(
+            "SELECT outcome_json FROM bot_command_receipts WHERE request_id=?1",
+            [request.to_storage()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert!(!outcome.contains("avatar"), "{outcome}");
+    // The face it draws is the one derived from its id, inside the table.
+    assert_eq!(
+        repo.bot(plain.id).unwrap().unwrap().avatar(),
+        derived_avatar(plain.id)
+    );
+
+    // A picked face, at both ends of the table.
+    let mut bot = fixture_bot();
+    bot.config.avatar = Some(23);
+    let create = BotRequestId::mint();
+    assert_eq!(
+        repo.save_bot(&bot, profile, create, "create", None)
+            .unwrap(),
+        bot
+    );
+    assert_eq!(stored(&repo, bot.id), Some(23));
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap(), bot);
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap().avatar(), 23);
+    // The retained receipt replays the Bot with its face.
+    assert_eq!(
+        repo.bot_receipt(bot.user_scope, create, "create").unwrap(),
+        Some(bot.clone())
+    );
+    // Changed by an update, and listed with it.
+    bot.config.avatar = Some(0);
+    bot.revision = 2;
+    repo.save_bot(&bot, profile, BotRequestId::mint(), "change", Some(1))
+        .unwrap();
+    assert_eq!(stored(&repo, bot.id), Some(0));
+    let listed = repo.bots(bot.user_scope, bot.home_workspace).unwrap();
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].config.avatar, Some(0));
+    // Cleared: back to the derived face.
+    bot.config.avatar = None;
+    bot.revision = 3;
+    repo.save_bot(&bot, profile, BotRequestId::mint(), "clear", Some(2))
+        .unwrap();
+    assert_eq!(stored(&repo, bot.id), None);
+    assert_eq!(
+        repo.bot(bot.id).unwrap().unwrap().avatar(),
+        derived_avatar(bot.id)
+    );
+    // A value outside the table never reaches the row.
+    bot.config.avatar = Some(BOT_AVATAR_COUNT);
+    bot.revision = 4;
+    assert!(
+        repo.save_bot(&bot, profile, BotRequestId::mint(), "outside", Some(3))
+            .is_err()
+    );
+    assert_eq!(stored(&repo, bot.id), None);
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap().revision, 3);
 }

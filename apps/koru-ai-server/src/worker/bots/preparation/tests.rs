@@ -105,6 +105,7 @@ fn update(folder: &str) -> BotCommand {
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
     }
 }

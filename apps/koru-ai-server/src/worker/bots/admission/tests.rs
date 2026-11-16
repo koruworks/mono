@@ -68,6 +68,7 @@ fn fixture() -> (Repository, Bot, Arc<Authority>, BotSubmissionIntent) {
             },
             mode: Some("ask".into()),
             fast: Some(false),
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],

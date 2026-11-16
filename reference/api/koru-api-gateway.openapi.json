@@ -4405,6 +4405,14 @@
       "BotConfig": {
         "additionalProperties": false,
         "properties": {
+          "avatar": {
+            "description": "The face the person picked for the Bot: an index into the face table\n([`BOT_AVATAR_COUNT`]). Absent means none was picked, and the face is\nderived from the Bot's id ([`Bot::avatar`]). Omitted when absent, so\na Bot with no choice serializes, and every stored receipt, captured\nRoutine source and request fingerprint that holds one is, exactly as\nbefore the field existed (ai.db 24).",
+            "format": "uint8",
+            "maximum": 23,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "fast": {
             "nullable": true,
             "type": "boolean"
@@ -4558,6 +4566,14 @@
         "additionalProperties": false,
         "description": "A new Bot's name and runtime defaults. Its Role and folder come from the\ncreation's own choices.",
         "properties": {
+          "avatar": {
+            "description": "The face the person picked ([`BotConfig::avatar`]). Absent means\nnone: the Bot's face is derived from its id. Omitted when absent, so\na request that names no face has the bytes, and so the fingerprint,\nit had before the field existed, and a `creation_v2` receipt written\nbefore it still decodes and still matches its replay.",
+            "format": "uint8",
+            "maximum": 23,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
           "fast": {
             "nullable": true,
             "type": "boolean"
@@ -5352,6 +5368,30 @@
               "attachment_id"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "One Routine of the Bot. `document_id` is the Routine's Schedule\ndocument, whose id is its Schedule id, so it names the Routine.",
+            "properties": {
+              "document_id": {
+                "$ref": "#/components/schemas/DocumentId"
+              },
+              "subject": {
+                "enum": [
+                  "routine"
+                ],
+                "type": "string"
+              },
+              "workspace_id": {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            },
+            "required": [
+              "subject",
+              "workspace_id",
+              "document_id"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -5818,6 +5858,13 @@
             "description": "Identity reservation only, never an executable submission.",
             "enum": [
               "routine_draft"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "An edit of one Routine's own access (ai.db 23). Its receipt is read by\nthe Routine access owner, never as a Bot's pending change.",
+            "enum": [
+              "update_routine_access"
             ],
             "type": "string"
           }
@@ -6633,8 +6680,21 @@
       "BotRoutineDetail": {
         "additionalProperties": false,
         "properties": {
+          "access": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineGrantSummary"
+              }
+            ],
+            "description": "The grant the Routine runs under now: the one it was set up with\nuntil its access is edited, the edited one after."
+          },
           "access_at_setup": {
-            "$ref": "#/components/schemas/BotRoutineGrantSummary"
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineGrantSummary"
+              }
+            ],
+            "description": "The original grant, frozen at creation."
           },
           "bot_id": {
             "$ref": "#/components/schemas/BotId"
@@ -6676,6 +6736,7 @@
           "bot_revision",
           "observed_at_ms",
           "creation",
+          "access",
           "access_at_setup",
           "configured_model",
           "destination",

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod avatar;
 mod branch;
 pub(in crate::worker::bots) mod chat;
 mod conversations;
@@ -270,6 +271,7 @@ pub(super) fn fixture() -> (Repository, Arc<Authority>, BotCommand) {
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],

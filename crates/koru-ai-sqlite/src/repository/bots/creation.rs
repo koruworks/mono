@@ -366,8 +366,8 @@ impl Repository {
         .map_err(|_| BotError::Storage)?;
         let owned = record.authored();
         tx.execute(
-            "INSERT INTO bots(bot_id,user_scope_id,home_workspace_id,owner_device_id,name,role_workspace_id,role_document_id,role_owned,role_creation_request_id,working_folder,provider,model,reasoning,mode,fast,revision,policy_revision,access,created_at_ms,updated_at_ms)
-             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,1,1,?16,?17,?17)",
+            "INSERT INTO bots(bot_id,user_scope_id,home_workspace_id,owner_device_id,name,role_workspace_id,role_document_id,role_owned,role_creation_request_id,working_folder,provider,model,reasoning,mode,fast,revision,policy_revision,access,created_at_ms,updated_at_ms,avatar)
+             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,1,1,?16,?17,?17,?18)",
             params![
                 bot.id.to_storage(),
                 bot.user_scope.to_storage(),
@@ -388,7 +388,8 @@ impl Repository {
                     BotAccess::Default => "default",
                     BotAccess::Workspace => "workspace",
                 },
-                now
+                now,
+                bot.config.avatar
             ],
         )
         .map_err(bad)?;

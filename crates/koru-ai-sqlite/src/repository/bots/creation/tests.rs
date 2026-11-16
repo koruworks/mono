@@ -35,6 +35,7 @@ fn record(authored: bool) -> BotCreationRecord {
             },
             mode: Some("plan".into()),
             fast: Some(true),
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![BotPage {
@@ -851,4 +852,80 @@ fn abandon_ends_a_creation_keeps_its_bot_id_and_cannot_end_a_finished_one() {
         repo.abandon_bot_creation(done.user_scope, done_request, &ready, 9),
         Err(BotError::Conflict)
     );
+}
+
+#[test]
+fn a_creation_carries_its_picked_face_into_the_receipt_and_the_bot() {
+    let mut repo = Repository::in_memory().unwrap();
+    // Without a face, the stored receipt has the bytes it always had.
+    let plain = record(false);
+    let plain_request = BotRequestId::mint();
+    repo.begin_bot_creation(plain_request, &plain, HASH, 1)
+        .unwrap();
+    let json = |repo: &Repository, request: BotRequestId| -> String {
+        repo.connection
+            .query_row(
+                "SELECT outcome_json FROM bot_command_receipts WHERE request_id=?1",
+                [request.to_storage()],
+                |r| r.get(0),
+            )
+            .unwrap()
+    };
+    assert!(!json(&repo, plain_request).contains("avatar"));
+
+    let mut intent = record(false);
+    intent.config.avatar = Some(17);
+    let scope = intent.user_scope;
+    let request = BotRequestId::mint();
+    let begun = repo.begin_bot_creation(request, &intent, HASH, 1).unwrap();
+    assert_eq!(begun.record.config.avatar, Some(17));
+    assert!(json(&repo, request).contains("\"avatar\":17"));
+    // An exact repeat returns it; the same request with another face is a
+    // different intent.
+    assert_eq!(
+        repo.begin_bot_creation(request, &intent, HASH, 2)
+            .unwrap()
+            .record,
+        intent
+    );
+    // Read back from storage, the record still names the face.
+    assert_eq!(
+        repo.bot_creation(scope, request)
+            .unwrap()
+            .unwrap()
+            .record
+            .config
+            .avatar,
+        Some(17)
+    );
+    let ready = folder_ready(&intent);
+    repo.advance_bot_creation(
+        scope,
+        request,
+        &intent,
+        &ready,
+        BotReceiptStage::Prepared,
+        2,
+    )
+    .unwrap();
+    // A step may not change the face: it is part of the immutable intent.
+    let mut other = ready.clone();
+    other.config.avatar = Some(3);
+    assert!(!ready.same_intent(&other));
+    let (receipt, bot) = repo
+        .complete_bot_creation(scope, request, &ready, ProfileId::new(), 9)
+        .unwrap();
+    assert_eq!(receipt.record.config.avatar, Some(17));
+    assert_eq!(bot.config.avatar, Some(17));
+    assert_eq!(repo.bot(intent.bot).unwrap(), Some(bot.clone()));
+    assert_eq!(bot.avatar(), 17);
+    let stored: Option<i64> = repo
+        .connection
+        .query_row(
+            "SELECT avatar FROM bots WHERE bot_id=?1",
+            [intent.bot.to_storage()],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, Some(17));
 }

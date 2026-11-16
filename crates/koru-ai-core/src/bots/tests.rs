@@ -49,6 +49,7 @@ fn bot_model_rejects_settings_it_does_not_understand() {
         model: selection.clone(),
         mode: None,
         fast: None,
+        avatar: None,
     };
     let mut encoded = serde_json::to_value(&config).unwrap();
     assert_eq!(
@@ -212,6 +213,7 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
             },
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],

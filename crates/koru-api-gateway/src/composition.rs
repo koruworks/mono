@@ -54,7 +54,7 @@ pub(crate) fn open(
     sessions: Option<koru_api_gateway_core::SessionBridge>,
 ) -> Result<Composition, String> {
     let segment = config.build.segment.as_str();
-    let ai_root = config.channel_root.join("ai");
+    let ai_root = koru_channel::ai_root_under(&config.channel_root);
     // Sibling of a conventional store/ directory, inside a bare test root —
     // koru-channel owns the rule. The old inside-the-root location is passed
     // as the legacy dir so an existing journal is adopted by rename.

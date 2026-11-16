@@ -132,6 +132,10 @@ fn staged(chat: ChatId) -> AttachmentRecord {
 fn populated_ai17() -> Repository {
     let mut repo = Repository::at_schema(17).unwrap();
     assert_eq!(repo.schema_version().unwrap(), 17);
+    // Today's code names `bots.avatar` (ai24): borrowed while the rows are
+    // written, returned below before anything is compared or migrated.
+    let pristine = bots_definition(&repo.connection);
+    repo.lend_avatar_column();
     // Bot A: main, additional and branched conversations, a bound Run with
     // its replay row, a sent attachment and a prepared Start receipt.
     let (a, _, a_profile) = new_bot(&mut repo);
@@ -268,7 +272,22 @@ fn populated_ai17() -> Repository {
             .into_iter()
             .collect()
     );
+    repo.return_avatar_column();
+    assert_eq!(bots_definition(&repo.connection), pristine);
     repo
+}
+
+/// The stored definition of `bots`, without whitespace.
+fn bots_definition(conn: &Connection) -> String {
+    conn.query_row(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='bots'",
+        [],
+        |r| r.get::<_, String>(0),
+    )
+    .unwrap()
+    .chars()
+    .filter(|c| !c.is_whitespace())
+    .collect()
 }
 
 type Snapshot = BTreeMap<String, (Option<String>, Vec<String>)>;

@@ -18,6 +18,7 @@ pub mod chip;
 pub mod diagram;
 pub mod el;
 pub mod emoji;
+pub mod face;
 pub mod geometry;
 pub mod icons;
 pub mod image;

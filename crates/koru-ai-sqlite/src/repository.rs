@@ -81,6 +81,39 @@ impl Repository {
         })
     }
 
+    /// **For a fixture older than ai24 that is populated through today's
+    /// code.** Writing and reading a Bot name `bots.avatar`, which ai24
+    /// added, so today's code cannot write a Bot into an older schema as it
+    /// is. Such a fixture borrows a bare column of that name while it is
+    /// populated and gives it back ([`Self::return_avatar_column`]) before
+    /// anything is compared or migrated: what the step under test sees is
+    /// the older shape. Production code never looks at the schema to decide
+    /// what to write.
+    #[cfg(test)]
+    pub(crate) fn lend_avatar_column(&self) {
+        self.connection
+            .execute_batch("ALTER TABLE bots ADD COLUMN avatar INTEGER")
+            .unwrap();
+    }
+
+    /// Take the borrowed column away again. The fixture picked no face, so
+    /// no value goes with it.
+    #[cfg(test)]
+    pub(crate) fn return_avatar_column(&self) {
+        let picked: i64 = self
+            .connection
+            .query_row(
+                "SELECT count(*) FROM bots WHERE avatar IS NOT NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(picked, 0, "an older-schema fixture picked a face");
+        self.connection
+            .execute_batch("ALTER TABLE bots DROP COLUMN avatar")
+            .unwrap();
+    }
+
     pub fn schema_version(&self) -> Result<i64, OpenError> {
         db::user_version(&self.connection)
     }

@@ -384,6 +384,7 @@ fn role_pending(repository: &mut Repository, authority: &Authority, bot: &Bot) -
             model: bot.config.model.clone(),
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],

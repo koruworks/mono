@@ -37,6 +37,7 @@ pub(crate) fn authored(phase: BotCreationPhase) -> BotCreationRecord {
             model: model(),
             mode: None,
             fast: None,
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],
@@ -81,6 +82,7 @@ fn the_wire_commands_are_closed_and_strict() {
             model: model(),
             mode: None,
             fast: Some(false),
+            avatar: None,
         },
         access: BotAccess::Default,
         selected_pages: vec![],
@@ -580,4 +582,98 @@ fn only_terminal_reasons_refuse_retry_and_an_abandoned_view_names_what_may_exist
         Ok(Some(marked))
     );
     assert!(!open.encode().unwrap().contains("abandoned"));
+}
+
+/// A `CreateBotWithRole` with fixed identities, so its bytes can be pinned.
+fn fixed_create(avatar: Option<u8>) -> BotCommand {
+    BotCommand::CreateBotWithRole {
+        request_id: "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d".parse().unwrap(),
+        bot_id: "6f1d2c3b-4a59-4e68-9777-8695a4b3c2d1".parse().unwrap(),
+        home_workspace: WorkspaceId::parse("11111111-2222-4333-8444-555555555555").unwrap(),
+        role: BotRoleInput::Authored {
+            title: "Scout".into(),
+            markdown: String::new(),
+        },
+        folder: BotFolderChoice::Managed {},
+        config: BotCreationConfig {
+            name: "Scout".into(),
+            model: model(),
+            mode: Some("auto".into()),
+            fast: None,
+            avatar,
+        },
+        access: BotAccess::Default,
+        selected_pages: vec![],
+    }
+}
+
+#[test]
+fn a_creation_request_without_a_face_has_exactly_the_bytes_it_had_before_ai24() {
+    // The owner fingerprints the request's JSON (blake3 over these bytes),
+    // and a replay must match the fingerprint stored with the receipt. This
+    // is the request as a build before the avatar field serialized it: if
+    // it moves, every creation in flight across an upgrade is refused as
+    // `request_conflict`.
+    let plain = serde_json::to_string(&fixed_create(None)).unwrap();
+    assert_eq!(
+        plain,
+        r#"{"command":"create_bot_with_role","request_id":"0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d","bot_id":"6f1d2c3b-4a59-4e68-9777-8695a4b3c2d1","home_workspace":"11111111-2222-4333-8444-555555555555","role":{"kind":"authored","title":"Scout","markdown":""},"folder":{"kind":"managed"},"config":{"name":"Scout","model":{"provider":"agent-codex","requested_model":"fixture","default_reasoning":"default"},"mode":"auto","fast":null},"access":"default","selected_pages":[]}"#
+    );
+    // Replayed, the same request gives the same bytes; a face changes them,
+    // so the same request id with another face is a different request.
+    assert_eq!(plain, serde_json::to_string(&fixed_create(None)).unwrap());
+    let picked = serde_json::to_string(&fixed_create(Some(7))).unwrap();
+    assert_eq!(
+        picked,
+        plain.replace(r#""fast":null}"#, r#""fast":null,"avatar":7}"#)
+    );
+    assert_eq!(
+        picked,
+        serde_json::to_string(&fixed_create(Some(7))).unwrap()
+    );
+    assert_ne!(
+        picked,
+        serde_json::to_string(&fixed_create(Some(8))).unwrap()
+    );
+    // Both read back as themselves, and a request that predates the field
+    // reads back with no face.
+    for command in [fixed_create(None), fixed_create(Some(7))] {
+        let json = serde_json::to_string(&command).unwrap();
+        assert_eq!(serde_json::from_str::<BotCommand>(&json).unwrap(), command);
+    }
+}
+
+#[test]
+fn a_creation_receipt_keeps_its_face_and_one_written_before_ai24_still_decodes() {
+    let plain = authored(BotCreationPhase::Intent);
+    let encoded = plain.encode().unwrap();
+    assert!(!encoded.contains("avatar"), "{encoded}");
+    assert_eq!(BotCreationRecord::decode(&encoded), Ok(Some(plain.clone())));
+
+    let mut picked = plain.clone();
+    picked.config.avatar = Some(23);
+    let encoded = picked.encode().unwrap();
+    assert!(encoded.contains(r#""avatar":23"#), "{encoded}");
+    assert_eq!(
+        BotCreationRecord::decode(&encoded),
+        Ok(Some(picked.clone()))
+    );
+    // The face is part of the immutable intent, and it reaches the Bot.
+    assert!(!plain.same_intent(&picked));
+    assert!(picked.same_intent(&picked.without_seed()));
+    let mut done = authored(BotCreationPhase::RoleVerified);
+    done.config.avatar = Some(23);
+    let bot = done.bot(9).unwrap();
+    assert_eq!(bot.config.avatar, Some(23));
+    assert_eq!(bot.avatar(), 23);
+    let derived = authored(BotCreationPhase::RoleVerified).bot(9).unwrap();
+    assert_eq!(derived.config.avatar, None);
+    assert_eq!(derived.avatar(), derived_avatar(derived.id));
+    // A face outside the table is refused before anything is stored.
+    let mut outside = plain.clone();
+    outside.config.avatar = Some(BOT_AVATAR_COUNT);
+    assert_eq!(outside.config.validate(), Err(BotError::Invalid));
+    assert_eq!(outside.encode(), Err(BotError::Invalid));
+    // The maximal-evidence bound still holds with a face.
+    assert!(picked.with_maximal_evidence().encode().is_ok());
 }
