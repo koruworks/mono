@@ -28,6 +28,7 @@ fn case() -> Case {
     };
     Case {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner,
             bot,

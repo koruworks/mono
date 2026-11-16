@@ -68,6 +68,30 @@ fn fence(
     })
 }
 
+/// The Control fence of a receipt during a child wait: the origin while no
+/// successor is recorded, or the successor whose input was acknowledged.
+fn child_fence(
+    receipt: &BotDeliveryReceipt,
+    wait: &crate::ChildWaitRecord,
+    resume: Option<&koru_delegate_core::children::ChildResume>,
+) -> Result<DecisionFence, BotLedgerError> {
+    if receipt.attempt == wait.origin.attempt && receipt.generation == wait.origin.generation {
+        require(resume.is_none())?;
+        return Ok(wait.origin);
+    }
+    let resume = resume.ok_or(BotLedgerError::Fenced)?;
+    let (attempt, generation, session, _) =
+        resume.consumer_identity().ok_or(BotLedgerError::Fenced)?;
+    require(receipt.attempt == attempt && receipt.generation == generation)?;
+    Ok(DecisionFence {
+        attempt,
+        generation,
+        session: session.ok_or(BotLedgerError::Fenced)?,
+        turn: resume.accepted_turn().ok_or(BotLedgerError::Fenced)?,
+        ..wait.origin
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn record_on(
     tx: &Transaction<'_>,
@@ -93,16 +117,49 @@ fn record_on(
     require(current.expected == *expected)?;
     // Completion needs a settled decision and no owed cleanup; a retained-only
     // or unknown-work receipt is history and may be recorded in any open wait.
+    let child = match current.wait.reason {
+        BotWaitReason::Child {} => {
+            let child = super::super::rows::child::wait(tx, expected.run, expected.wait)?
+                .ok_or(BotLedgerError::Stale)?;
+            let resume = super::super::rows::child::resume(tx, &child)?;
+            Some((child, resume))
+        }
+        _ => None,
+    };
     if outcome == DecisionDeliveryOutcome::Completed {
-        require(
-            current
-                .decision_state
-                .as_ref()
-                .is_some_and(|s| s.phase == DecisionPhase::Settled)
-                && current.wait.phase != BotWaitPhase::CleanupPending,
-        )?;
+        require(match &child {
+            // M6: a child wait completes only through its acknowledged
+            // successor, while nothing of the wait is being cleaned up.
+            Some((_, resume)) => {
+                current.wait.phase == BotWaitPhase::ResumeReserved
+                    && current.wait.cleanup.is_none()
+                    && resume
+                        .as_ref()
+                        .is_some_and(|resume| resume.accepted_turn().is_some())
+            }
+            None => {
+                current
+                    .decision_state
+                    .as_ref()
+                    .is_some_and(|s| s.phase == DecisionPhase::Settled)
+                    && current.wait.phase != BotWaitPhase::CleanupPending
+            }
+        })?;
     }
-    let fence = fence(receipt, &current.wait, current.resume.as_ref())?;
+    let fence = match &child {
+        Some((record, resume)) => child_fence(receipt, record, resume.as_ref())?,
+        None => fence(receipt, &current.wait, current.resume.as_ref())?,
+    };
+    if let Some((record, _)) = &child {
+        // The origin's own turn was delivered while it waited: the parent's
+        // turn stands as its answer and no request may stay open. The phase
+        // is moved by the cleanup request that follows, never here.
+        if receipt.attempt == record.origin.attempt
+            && receipt.generation == record.origin.generation
+        {
+            crate::children::settle_parent_stopped_on(tx, expected.wait, now)?;
+        }
+    }
     // The same successor-aware receipt owner as the non-exclusive path.
     let event = crate::bots::delivery_on(tx, receipt, now)?;
     let context = control::context(tx, expected.owner, expected.run, expected.wait)?;

@@ -44,6 +44,18 @@ impl RunsDb {
                         };
                 }
                 (BotWaitReason::Capacity {}|BotWaitReason::NativeExpired {}|BotWaitReason::OverlappingPrompt {},None,None)=>{}
+                // M6: a child wait has no decision on either side. It settles
+                // when its cleanup is confirmed, or, with no request open,
+                // when its successor's continuation input was acknowledged.
+                (BotWaitReason::Child {},None,None)=>{
+                    let child=super::super::rows::child::wait(tx,expected.run,expected.wait)?.ok_or(BotLedgerError::Stale)?;
+                    cleanup_required=wait.cleanup.is_some() || wait.phase==BotWaitPhase::CleanupPending;
+                    if !cleanup_required && wait.phase!=BotWaitPhase::Settled {
+                        let open:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_child_requests WHERE wait_id=?1 AND state='open')",[expected.wait.to_storage()],|r|r.get(0)).map_err(sql)?;
+                        let acknowledged=super::super::rows::child::resume(tx,&child)?.is_some_and(|resume|resume.accepted_turn().is_some());
+                        require(!open && acknowledged && wait.phase==BotWaitPhase::ResumeReserved)?;
+                    }
+                }
                 _=>return Err(BotLedgerError::Conflict),
             }
             if cleanup_required {

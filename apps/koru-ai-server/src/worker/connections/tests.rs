@@ -23,6 +23,7 @@ use koru_delegate_core::{
 
 fn provenance(fence: &BotExecutionFence) -> BotProvenance {
     BotProvenance {
+        parent: None,
         routine: None,
         owner: fence.owner,
         bot: fence.bot,

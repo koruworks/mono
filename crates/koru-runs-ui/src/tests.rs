@@ -476,6 +476,32 @@ fn a_gap_is_rendered_as_a_gap_and_an_unknown_step_keeps_its_place() {
     );
 }
 
+/// Cohort `m6_sweeps_inert`: the M6 marker and step have no sentence yet.
+/// The marker says nothing and the step reads as a step this build does not
+/// know; neither borrows another marker's or step's words.
+#[test]
+fn m6_sweeps_inert_waiting_for_bot_borrows_no_other_sentence() {
+    let waiting = koru_delegate_core::transition_bot(
+        &RunStatus::running(),
+        &koru_delegate_core::RunEvent::WaitingForBot,
+    )
+    .unwrap();
+    assert!(words::attention(Lang::En, &waiting).is_empty());
+    let both = koru_delegate_core::transition_bot(
+        &waiting,
+        &koru_delegate_core::RunEvent::WaitingForInput,
+    )
+    .unwrap();
+    assert_eq!(
+        words::attention(Lang::En, &both),
+        [t(Lang::En, Key::RunNeedsInput).to_owned()]
+    );
+    assert_eq!(
+        words::step(Lang::En, StepKind::WaitingForBot),
+        t(Lang::En, Key::RunStepUnknown)
+    );
+}
+
 // ------------------------------------------------------ UC7 provenance
 
 #[test]

@@ -145,10 +145,15 @@ impl BotWaitPhase {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "reason", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BotWaitReason {
-    Decision { decision: DecisionId },
+    Decision {
+        decision: DecisionId,
+    },
     Capacity {},
     NativeExpired {},
     OverlappingPrompt {},
+    /// M6: the Run asked other Bots and waits for their requests to settle.
+    /// It names no decision; each request names this wait.
+    Child {},
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

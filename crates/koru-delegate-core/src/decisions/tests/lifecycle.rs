@@ -342,6 +342,7 @@ fn decision_cleanup_cannot_use_origin_retirement_for_live_successor() {
         retained_effect_outcome: Some(DecisionRetainedEffect::Durable {
             key: r.candidate_native_key(&binding()).unwrap(),
             reference: NativeResultReference {
+                version_id: None,
                 operation_id: uuid(12),
                 workspace: edit().workspace,
                 document: edit().target,

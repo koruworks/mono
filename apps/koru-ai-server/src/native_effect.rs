@@ -345,6 +345,7 @@ pub fn confirm_record_as<F>(
     fail: &dyn Fn(&'static str) -> F,
 ) -> Result<NativeResultIntentView, F> {
     let reference = NativeResultReference {
+        version_id: None,
         operation_id: intent.key.operation_id,
         workspace: evidence.workspace,
         document: evidence.document,

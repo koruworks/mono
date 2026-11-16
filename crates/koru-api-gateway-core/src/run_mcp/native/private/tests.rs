@@ -104,6 +104,7 @@ impl Tool {
         let policy = captured(workspace, if granted { &held } else { &[] });
         let delegate = PrivateDelegate::new(&world, live.clone(), policy.clone());
         let provenance = BotProvenance {
+            parent: None,
             routine: None,
             owner,
             bot: live.bot,

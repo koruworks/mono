@@ -218,6 +218,12 @@ uuid_id!(
     PrivateDispatcherId,
     "dispatcher"
 );
+uuid_id!(
+    /// One request a Bot Run made of another Bot (M6). Minted by the AI owner
+    /// with the child Run's id; the stable name of the request everywhere.
+    ChildRequestId,
+    "child-request"
+);
 
 /// Which attempt of a run is current — the fence §7.5 and §7.6 rely on.
 ///

@@ -50,11 +50,24 @@ pub(super) fn execution(
             (wait, None, None, None)
         }
     };
-    let cleanup_target = match &resume {
-        Some(resume) => {
+    // A child wait has no decision and keeps its own resume row: once a
+    // successor is recorded, the successor is the physical cleanup subject.
+    let child_resume = match wait.reason {
+        BotWaitReason::Child {} => {
+            let child = rows::child::wait(conn, run, wait.wait)?
+                .ok_or_else(|| corrupt("bot_wait_runtime", "reason"))?;
+            rows::child::resume(conn, &child)?
+        }
+        _ => None,
+    };
+    let cleanup_target = match (&resume, &child_resume) {
+        (Some(resume), _) => {
             DecisionCleanupTarget::from_resume(resume).map_err(|_| BotLedgerError::Invalid)?
         }
-        None => {
+        (None, Some(resume)) => resume
+            .cleanup_target()
+            .map_err(|_| BotLedgerError::Invalid)?,
+        (None, None) => {
             let origin = authority::attempt(conn, &wait.origin)?;
             DecisionCleanupTarget::Origin {
                 fence: wait.origin,

@@ -105,6 +105,9 @@ pub(crate) fn inventory(
         occupied: 0,
     };
     let (mut decisions, mut nondecision) = (0usize, 0usize);
+    // M6: child waits share the decision cap; an unqualified child release
+    // is occupied but is kept out of the corruption test.
+    let (mut children, mut unqualified_child) = (0usize, 0usize);
     for execution in executions {
         let mut capacity = BotExecutionCapacity::Occupied;
         if let Some(wait) = open_wait(conn, &execution)? {
@@ -174,7 +177,61 @@ pub(crate) fn inventory(
                         };
                     }
                 }
-                _ => nondecision += 1,
+                BotWaitReason::Child {} => {
+                    children += 1;
+                    let child = rows::child::wait(conn, execution.run, wait.wait)?
+                        .ok_or_else(|| corrupt("bot_wait_runtime", "reason"))?;
+                    let resumed: bool = conn
+                        .query_row(
+                            "SELECT EXISTS(SELECT 1 FROM bot_child_resumes WHERE wait_id=?1)",
+                            [wait.wait.to_storage()],
+                            |r| r.get(0),
+                        )
+                        .map_err(sql)?;
+                    // Only an origin whose stop is proven and that has no
+                    // successor may be discounted. `hold_requested`,
+                    // `resume_reserved`, a cleanup with a resume row and a
+                    // cleanup without release evidence are plainly occupied.
+                    if matches!(
+                        wait.phase,
+                        BotWaitPhase::Retired | BotWaitPhase::CleanupPending
+                    ) && wait.release.is_some()
+                        && !resumed
+                    {
+                        // A failed check is not an error here: the Run counts
+                        // as occupied and its owner ends the wait. Nothing
+                        // this wait holds can fail the whole inventory.
+                        let latest: Option<i64> = conn
+                            .query_row(
+                                "SELECT max(generation) FROM run_attempts WHERE run_id=?1",
+                                [execution.run.to_storage()],
+                                |r| r.get(0),
+                            )
+                            .map_err(sql)?;
+                        let qualified = execution.state == BotAdmissionState::Executing
+                            && execution.active_since_ms.is_none()
+                            && child.enrollment.is_some()
+                            && rows::child::correlate_release(conn, &child).is_ok()
+                            && latest == Some(i64::from(wait.origin.generation.get()))
+                            && !crate::native_results::held_for_bot(
+                                conn,
+                                execution.owner,
+                                execution.bot,
+                            )?;
+                        if qualified {
+                            capacity = BotExecutionCapacity::QualifiedChildRelease {
+                                wait: wait.wait,
+                                revision: wait.revision,
+                                origin: wait.origin,
+                            };
+                        } else {
+                            unqualified_child += 1;
+                        }
+                    }
+                }
+                BotWaitReason::Capacity {}
+                | BotWaitReason::NativeExpired {}
+                | BotWaitReason::OverlappingPrompt {} => nondecision += 1,
             }
         }
         if capacity == BotExecutionCapacity::Occupied {
@@ -185,9 +242,9 @@ pub(crate) fn inventory(
             capacity,
         });
     }
-    if decisions > DECISION_WAIT_LIMIT
+    if decisions + children > DECISION_WAIT_LIMIT
         || nondecision > crate::BOT_HOST_EXECUTION_LIMIT
-        || result.occupied > crate::BOT_HOST_EXECUTION_LIMIT
+        || result.occupied - unqualified_child > crate::BOT_HOST_EXECUTION_LIMIT
     {
         return Err(corrupt("bot_admissions", "host_capacity"));
     }

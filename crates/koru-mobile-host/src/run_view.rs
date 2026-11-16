@@ -310,6 +310,8 @@ fn step_row(entry: &TimelineEntry) -> TimelineRow {
         | StepKind::AttachmentRejected
         | StepKind::ChildSessionDetected
         | StepKind::ControlReturned
+        // M6 sweep: a field-free step; the phone shows its token as any other.
+        | StepKind::WaitingForBot
         | StepKind::ArtifactRegistered
         // The holder count stays on the desktop; the phone shows the step.
         | StepKind::ScopeBusy { .. }

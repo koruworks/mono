@@ -4,6 +4,18 @@
 //! by the real migration order. No file, Profile or Store is opened.
 use super::*;
 
+/// Schema 11 exactly, with the production preflight: what `crate::db::prepare`
+/// did when this cohort was written, before schema 12 existed.
+fn eleven_schema() -> Schema {
+    Schema {
+        database: DATABASE_NAME,
+        understood: 11,
+        migrations: &MIGRATIONS[..11],
+    }
+}
+fn prepare_eleven(connection: &mut Connection) -> Result<(), OpenError> {
+    koru_sqlite::prepare_with_preflight(&eleven_schema(), connection, refuse_retained_decisions)
+}
 fn ten_schema() -> Schema {
     Schema {
         database: DATABASE_NAME,
@@ -63,10 +75,8 @@ const DECISION_TRIGGERS: [&str; 2] = ["bot_decisions_immutable", "bot_decisions_
 
 #[test]
 fn m5_runs11_migration_fresh_database_reaches_11() {
-    let c = koru_sqlite::open_in_memory(&SCHEMA).unwrap();
-    assert_eq!(RUNS_SCHEMA_VERSION, 11);
+    let c = koru_sqlite::open_in_memory(&eleven_schema()).unwrap();
     assert_eq!(user_version(&c).unwrap(), 11);
-    assert_eq!(MIGRATIONS.len(), 11);
     assert_eq!(MIGRATIONS[10].to, 11);
     assert_eq!(MIGRATIONS[10].name, "030_runs_private_operations.sql");
     let s = snapshot(&c);
@@ -88,7 +98,7 @@ fn m5_runs11_migration_fresh_database_reaches_11() {
     assert_fk(&c);
     // Through the production opener too, which runs the preflight.
     let mut again = Connection::open_in_memory().unwrap();
-    crate::db::prepare(&mut again).unwrap();
+    prepare_eleven(&mut again).unwrap();
     assert_eq!(user_version(&again).unwrap(), 11);
     assert_eq!(
         snapshot(&again).keys().collect::<Vec<_>>(),
@@ -100,7 +110,7 @@ fn m5_runs11_migration_fresh_database_reaches_11() {
 fn m5_runs11_migration_populated_10_with_no_decision_keeps_every_other_row_and_object() {
     let mut c = populated_ten();
     let before = snapshot(&c);
-    crate::db::prepare(&mut c).unwrap();
+    prepare_eleven(&mut c).unwrap();
     assert_eq!(user_version(&c).unwrap(), 11);
     let after = snapshot(&c);
     let recreated: Vec<&str> = ["bot_decisions"]
@@ -177,7 +187,7 @@ fn m5_runs11_migration_populated_10_with_no_decision_keeps_every_other_row_and_o
         );
     }
     // A second open runs no step and changes nothing.
-    crate::db::prepare(&mut c).unwrap();
+    prepare_eleven(&mut c).unwrap();
     assert_eq!(snapshot(&c), after);
 }
 
@@ -187,7 +197,7 @@ fn m5_runs11_migration_children_still_require_their_recreated_parent() {
     let c2 = {
         let mut c = populated_nine();
         koru_sqlite::prepare(&ten_schema(), &mut c).unwrap();
-        crate::db::prepare(&mut c).unwrap();
+        prepare_eleven(&mut c).unwrap();
         c
     };
     let mut w = wait();
@@ -230,7 +240,7 @@ fn m5_runs11_migration_preflight_refuses_a_retained_decision_and_changes_nothing
     c.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF;")
         .unwrap();
     let before = snapshot(&c);
-    let error = crate::db::prepare(&mut c).unwrap_err();
+    let error = prepare_eleven(&mut c).unwrap_err();
     let OpenError::Storage {
         database,
         operation,
@@ -266,7 +276,7 @@ fn m5_runs11_migration_preflight_refuses_a_retained_decision_and_changes_nothing
             .unwrap(),
         1
     );
-    assert!(crate::db::prepare(&mut c).is_err());
+    assert!(prepare_eleven(&mut c).is_err());
     assert_eq!(user_version(&c).unwrap(), 10);
 }
 
@@ -328,7 +338,7 @@ fn m5_runs11_migration_closing_fk_guard_rolls_back_the_recreate() {
 
 #[test]
 fn m5_runs11_migration_a_10_build_refuses_11() {
-    let mut c = koru_sqlite::open_in_memory(&SCHEMA).unwrap();
+    let mut c = koru_sqlite::open_in_memory(&eleven_schema()).unwrap();
     let before = snapshot(&c);
     assert!(matches!(
         koru_sqlite::prepare(&ten_schema(), &mut c),

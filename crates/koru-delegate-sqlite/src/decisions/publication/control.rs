@@ -140,6 +140,13 @@ pub(super) fn request_on(
         if observed.wait.cleanup.is_some() {
             return Err(BotLedgerError::Stale);
         }
+        if observed.wait.reason == (BotWaitReason::Child {}) {
+            // M6, in this order: settle every open request of the wait as
+            // `parent_stopped`, close a resume row, then move the phase. The
+            // table's trigger refuses the phase while a request is open.
+            crate::children::settle_parent_stopped_on(tx, expected.wait, now)?;
+            crate::children::close_resume_on(tx, expected.wait, now)?;
+        }
         tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",
                     params![expected.wait.to_storage(),next_wait.get(),now,expected.revision.get()]).map_err(sql)?;
         None
@@ -202,7 +209,13 @@ pub(super) fn context(
         DecisionPublicationBase {
             workspace: applied.identity.workspace,
             document: applied.identity.document,
-            source_schema: 5u8.try_into().map_err(|_| BotLedgerError::Invalid)?,
+            // The applied projection left the document at 5, or at 6 when it
+            // was already there.
+            source_schema: if u8::from(applied.identity.source_schema) == 6 {
+                applied.identity.source_schema
+            } else {
+                5u8.try_into().map_err(|_| BotLedgerError::Invalid)?
+            },
             observed_created_at_ms: predecessor.observed_created_at_ms,
             timeline_len: predecessor.timeline_start,
             subject_digest: applied.identity.subject_digest,

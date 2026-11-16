@@ -53,17 +53,23 @@ pub(crate) fn attention(lang: Lang, status: &RunStatus) -> Vec<String> {
         return Vec::new();
     };
     set.iter()
-        .map(|marker| {
-            t(
-                lang,
-                match marker {
-                    Attention::ApprovalRequired => Key::RunNeedsApproval,
-                    Attention::WaitingForInput => Key::RunNeedsInput,
-                    Attention::ChildSessionDetected => Key::RunNeedsChildStopped,
-                    Attention::FinishedNeedingAttention => Key::RunNeedsAttentionNoResult,
-                },
+        .filter_map(|marker| {
+            Some(
+                t(
+                    lang,
+                    match marker {
+                        Attention::ApprovalRequired => Key::RunNeedsApproval,
+                        Attention::WaitingForInput => Key::RunNeedsInput,
+                        Attention::ChildSessionDetected => Key::RunNeedsChildStopped,
+                        Attention::FinishedNeedingAttention => Key::RunNeedsAttentionNoResult,
+                        // M6 sweep: a Bot Run waiting for another Bot has no
+                        // sentence here yet. Nothing sets the marker in this
+                        // build; saying nothing is better than a wrong sentence.
+                        Attention::WaitingForBot => return None,
+                    },
+                )
+                .to_owned(),
             )
-            .to_owned()
         })
         .collect()
 }
@@ -177,6 +183,10 @@ pub(crate) fn step(lang: Lang, kind: StepKind) -> String {
         )
         .to_owned(),
         StepKind::WaitingForInput => t(lang, Key::RunStepWaitingForInput).to_owned(),
+        // M6 sweep: no sentence exists yet for a Bot waiting on another Bot,
+        // and nothing writes the step in this build. It reads as the step this
+        // build does not know, never as a different step.
+        StepKind::WaitingForBot => t(lang, Key::RunStepUnknown).to_owned(),
         StepKind::AttachmentAccepted => t(lang, Key::RunStepAttachmentAccepted).to_owned(),
         StepKind::AttachmentRejected => t(lang, Key::RunStepAttachmentRejected).to_owned(),
         StepKind::ChildSessionDetected => t(lang, Key::RunStepChildSession).to_owned(),

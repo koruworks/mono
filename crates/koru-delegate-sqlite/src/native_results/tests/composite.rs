@@ -601,6 +601,7 @@ fn routine_native_corrupt_companions_never_read_drain_or_make_policy_effective()
         let retained = h.db.native_result(&h.request.key).unwrap().unwrap();
         let binding = retained.pending_effect().unwrap().binding;
         let evidence = NativeResultReference {
+            version_id: None,
             operation_id: retained.key.operation_id,
             workspace: retained.destination,
             document: retained.target,

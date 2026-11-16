@@ -148,6 +148,7 @@ fn full_fixture(
         run: RunId::mint(),
         generation: AttemptGeneration::FIRST,
         provenance: koru_delegate_core::BotProvenance {
+            parent: None,
             routine: None,
             owner: koru_delegate_core::BotOwner {
                 user_scope: owner.user_scope,

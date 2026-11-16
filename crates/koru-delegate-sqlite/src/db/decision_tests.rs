@@ -4,6 +4,7 @@ use super::*;
 use rusqlite::{params_from_iter, types::Value};
 use std::collections::BTreeMap;
 
+mod children;
 mod constraints;
 mod private;
 mod publication;
@@ -227,11 +228,18 @@ fn assert_fk(c: &Connection) {
 
 #[test]
 fn decision_migration_runs10_preserves_populated_runs9_objects_rows_and_foreign_keys() {
+    // Schema 10 exactly: this is the 9 to 10 step's own evidence. Schema 12
+    // adds a column to one of these older tables, which has its own cohort.
+    let ten = Schema {
+        database: DATABASE_NAME,
+        understood: 10,
+        migrations: &MIGRATIONS[..10],
+    };
     let mut c = populated_nine();
     let before = snapshot(&c);
-    koru_sqlite::prepare(&SCHEMA, &mut c).unwrap();
+    koru_sqlite::prepare(&ten, &mut c).unwrap();
     println!("Rust-linked SQLite {}", rusqlite::version());
-    assert_eq!(user_version(&c).unwrap(), RUNS_SCHEMA_VERSION);
+    assert_eq!(user_version(&c).unwrap(), 10);
     let after = snapshot(&c);
     for (name, value) in before {
         assert_eq!(after[&name], value, "changed old object/bytes: {name}");
@@ -256,7 +264,7 @@ fn decision_migration_runs10_preserves_populated_runs9_objects_rows_and_foreign_
         assert_eq!(nullable, 0, "nullable text primary key: {table}");
     }
     assert_fk(&c);
-    koru_sqlite::prepare(&SCHEMA, &mut c).unwrap();
+    koru_sqlite::prepare(&ten, &mut c).unwrap();
     assert_eq!(snapshot(&c), after);
 }
 

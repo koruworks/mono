@@ -6,6 +6,9 @@ use crate::LedgerError;
 mod repository;
 pub(crate) use repository::bounded_owned_executions;
 pub(crate) use repository::delivery_on;
+pub(crate) use repository::{
+    barrier_on, execution_fresh_on, insert_admission_on, intent_exists_on, queued_on, reconcile_on,
+};
 pub(crate) mod routines;
 pub use routines::RoutinePolicyRecord;
 pub use routines::{
@@ -49,6 +52,13 @@ pub enum BotExecutionCapacity {
     QualifiedDecisionRelease {
         wait: BotWaitId,
         decision: koru_delegate_core::decisions::DecisionId,
+        revision: koru_delegate_core::decisions::DecisionRevision,
+        origin: koru_delegate_core::decisions::DecisionFence,
+    },
+    /// M6: a child wait whose origin stop is proven and that has no
+    /// successor. The Run keeps its Bot; its host slot is free.
+    QualifiedChildRelease {
+        wait: BotWaitId,
         revision: koru_delegate_core::decisions::DecisionRevision,
         origin: koru_delegate_core::decisions::DecisionFence,
     },
@@ -619,4 +629,168 @@ pub trait BotLedger {
         &mut self,
         receipt: &BotDeliveryReceipt,
     ) -> Result<koru_delegate_core::EventId, BotLedgerError>;
+
+    // M6 child requests. Every method below has a default body that refuses,
+    // so a ledger double that does not model child requests keeps compiling
+    // and can never report one as admitted, waiting or resumed.
+
+    /// One ask, in one transaction: replay first, then every limit, then the
+    /// child admissions, the parent's wait (born `hold_requested`, its
+    /// cleanup intent frozen), the request rows and the waiting Control. A
+    /// refusal is an `Ok(Refused)` that committed nothing.
+    fn request_child(
+        &mut self,
+        request: &koru_delegate_core::children::ChildRequest,
+        boot: koru_delegate_core::DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<koru_delegate_core::children::ChildRequestOutcome, BotLedgerError> {
+        let _ = (request, boot, base);
+        Err(BotLedgerError::Fenced)
+    }
+    /// The parent Run's requests in creation order, at most three, with its
+    /// open child wait. `now_ms` only reports elapsed time; it settles nothing.
+    fn read_child_requests(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        now_ms: i64,
+    ) -> Result<koru_delegate_core::children::ChildRequests, BotLedgerError> {
+        let _ = (owner, run, now_ms);
+        Err(BotLedgerError::Fenced)
+    }
+    /// The request a Run is the child of, if any. Read-only.
+    fn child_request_of(
+        &self,
+        owner: BotOwner,
+        child_run: RunId,
+        now_ms: i64,
+    ) -> Result<Option<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        let _ = (owner, child_run, now_ms);
+        Err(BotLedgerError::Fenced)
+    }
+    /// The Run's open child wait with its retained cleanup subject; `None`
+    /// when the Run has no open child wait.
+    fn child_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::ChildWaitExecution>, BotLedgerError> {
+        let _ = (owner, run);
+        Err(BotLedgerError::Fenced)
+    }
+    /// The delegate-owned observation behind `ReadBotChildWait`. Read-only
+    /// and historical: it never grants permission to stop.
+    fn read_bot_child_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: BotWaitId,
+    ) -> Result<Option<koru_delegate_core::children::BotChildWaitObservation>, BotLedgerError> {
+        let _ = (owner, bot, run, wait);
+        Err(BotLedgerError::Fenced)
+    }
+    /// Settle as `timed_out` each named open request whose running clock, by
+    /// this boot's stored interval, could have reached the budget. Returns
+    /// the requests it settled; a request already settled is left as it is.
+    fn settle_child_requests(
+        &mut self,
+        owner: BotOwner,
+        boot: koru_delegate_core::DelegateBootId,
+        due: &[koru_delegate_core::ChildRequestId],
+    ) -> Result<Vec<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        let _ = (owner, boot, due);
+        Err(BotLedgerError::Fenced)
+    }
+    /// One transition of every running child clock on this computer: a clock
+    /// of this boot is folded up to `counted_until_ms` and restarted at
+    /// `resume_at_ms`; a clock left running by an older boot is adopted at
+    /// `resume_at_ms` with its stored elapsed time. Never a timer write.
+    fn fold_child_clocks(
+        &mut self,
+        device: koru_delegate_core::DeviceId,
+        boot: koru_delegate_core::DelegateBootId,
+        counted_until_ms: i64,
+        resume_at_ms: i64,
+    ) -> Result<Vec<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        let _ = (device, boot, counted_until_ms, resume_at_ms);
+        Err(BotLedgerError::Fenced)
+    }
+    /// At most `limit` (1..=16) open child waits of this computer strictly
+    /// after `after`, oldest first, through the child open-wait index.
+    /// Identity only, never authority.
+    fn child_resume_runs(
+        &self,
+        device: koru_delegate_core::DeviceId,
+        after: Option<&crate::ChildWaitCursor>,
+        limit: usize,
+    ) -> Result<Vec<crate::ChildWaitRun>, BotLedgerError> {
+        let _ = (device, after, limit);
+        Err(BotLedgerError::Fenced)
+    }
+    /// Retain the AI owner's answer to the enroll call for a child wait.
+    fn record_child_enrollment(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        reply: &koru_delegate_core::children::BotChildWaitEnrollmentReply,
+    ) -> Result<crate::ChildWaitRecord, BotLedgerError> {
+        let _ = (expected, reply);
+        Err(BotLedgerError::Fenced)
+    }
+    /// Retain the proven origin stop: the wait becomes `retired` and the
+    /// parent's active interval closes.
+    fn record_child_origin_stop(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        release: &OriginWaitStop,
+    ) -> Result<crate::ChildWaitRecord, BotLedgerError> {
+        let _ = (expected, release);
+        Err(BotLedgerError::Fenced)
+    }
+    /// Open the parent's successor attempt for a resumable child wait when a
+    /// host slot is free. `proof` is required for a Routine parent only.
+    fn reserve_child_successor(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        host: koru_delegate_core::HostInstanceId,
+        fingerprint: [u8; 32],
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<crate::ChildSuccessorReservation, BotLedgerError> {
+        let _ = (expected, host, fingerprint, proof);
+        Err(BotLedgerError::Fenced)
+    }
+    fn bind_child_successor(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        creation: IdempotencyKey,
+        host: koru_delegate_core::HostInstanceId,
+        session: koru_delegate_core::SessionId,
+    ) -> Result<crate::ChildWaitExecution, BotLedgerError> {
+        let _ = (expected, creation, host, session);
+        Err(BotLedgerError::Fenced)
+    }
+    /// Record the continuation input of a child successor. With an
+    /// acknowledgment, the `Resume` Control that clears the waiting marker
+    /// commits in the same transaction under `transition`.
+    fn record_child_resume_input(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        input: IdempotencyKey,
+        fingerprint: [u8; 32],
+        acknowledgment: Option<&DecisionInputAcknowledgment>,
+    ) -> Result<crate::ChildWaitExecution, BotLedgerError> {
+        let _ = (expected, transition, input, fingerprint, acknowledgment);
+        Err(BotLedgerError::Fenced)
+    }
+    /// The durably acknowledged continuation of the Run's current attempt
+    /// when it is a recorded child-wait successor; `None` otherwise.
+    fn child_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::ChildAcknowledgedContinuation>, BotLedgerError> {
+        let _ = (owner, run);
+        Err(BotLedgerError::Fenced)
+    }
 }

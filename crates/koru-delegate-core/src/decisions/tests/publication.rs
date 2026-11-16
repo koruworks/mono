@@ -83,7 +83,9 @@ fn decision_projection_preserves_opaque_bytes_and_bounds() {
     assert!(encode_decision_frame(&p).is_ok());
     assert!(DecisionPreparedDelta::new(vec![0; DECISION_DELTA_BYTES + 1]).is_err());
     assert!(serde_json::from_str::<DecisionSourceSchema>("2").is_err());
-    assert!(serde_json::from_str::<DecisionSourceSchema>("6").is_err());
+    // M6 admits Bot Run format 6; the first refused value is now 7.
+    assert!(serde_json::from_str::<DecisionSourceSchema>("6").is_ok());
+    assert!(serde_json::from_str::<DecisionSourceSchema>("7").is_err());
     let debug = format!("{p:?}");
     assert!(!debug.contains("255, 255"));
     assert!(debug.contains("REDACTED"));

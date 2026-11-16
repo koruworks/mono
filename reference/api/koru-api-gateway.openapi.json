@@ -1733,6 +1733,13 @@
               "finished_needing_attention"
             ],
             "type": "string"
+          },
+          {
+            "description": "A Bot Run asked other Bots and waits for their requests to settle\n(M6). Set when the wait opens; cleared when the Run is resumed.",
+            "enum": [
+              "waiting_for_bot"
+            ],
+            "type": "string"
           }
         ]
       },
@@ -6175,6 +6182,20 @@
           "owner": {
             "$ref": "#/components/schemas/BotOwner"
           },
+          "parent": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChildParent"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "The Bot Run that asked for this one (M6). **Omitted from the\nserialized form whenever it is absent**, so a submission or a header\nwithout a parent keeps exactly its earlier bytes and every digest\ncomputed over them. It is provenance: it grants nothing."
+          },
           "policy_revision": {
             "format": "uint64",
             "minimum": 0,
@@ -8531,6 +8552,38 @@
           "pinned_documents"
         ],
         "type": "object"
+      },
+      "ChildParent": {
+        "additionalProperties": false,
+        "description": "Who asked for a child Run (M6). Identities only; never authority.",
+        "properties": {
+          "bot": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "chat_id": {
+            "description": "The asking Bot's conversation. An existing AI identity, as `chat_id`.",
+            "format": "uuid",
+            "type": "string"
+          },
+          "child_request": {
+            "$ref": "#/components/schemas/ChildRequestId"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunId"
+          }
+        },
+        "required": [
+          "run",
+          "bot",
+          "chat_id",
+          "child_request"
+        ],
+        "type": "object"
+      },
+      "ChildRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
       },
       "ChoiceIntent": {
         "description": "What choosing an offered option means, as the agent classified it. The\nsurface focuses a rejection first and never picks between two options of\none intent on the person's behalf.",
@@ -13498,6 +13551,11 @@
               "type": "integer"
             },
             "type": "array"
+          },
+          "version_id": {
+            "description": "The immutable Store version this save produced (M6). **Omitted from\nthe serialized form whenever it is absent**, so a reference written\nbefore it existed keeps exactly its bytes. Absent means the result can\nnever be handed over as a pinned page.",
+            "nullable": true,
+            "type": "string"
           },
           "workspace": {
             "$ref": "#/components/schemas/WorkspaceId"
@@ -20897,6 +20955,21 @@
               "step": {
                 "enum": [
                   "control_returned"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "step"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A Bot Run asked other Bots and waits for them (M6). No fields.",
+            "properties": {
+              "step": {
+                "enum": [
+                  "waiting_for_bot"
                 ],
                 "type": "string"
               }

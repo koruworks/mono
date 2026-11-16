@@ -2,6 +2,7 @@
 
 use super::*;
 use rusqlite::{Row, types::FromSql};
+pub(super) mod child;
 mod native;
 mod resume;
 pub(super) use resume::accepted_input;

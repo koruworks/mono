@@ -193,7 +193,8 @@ fn decision_migration_runs10_publication_payload_null_cohorts_and_exact_byte_lim
         ("decision_revision", integer(1)),
         ("run_sequence", integer(0)),
         ("run_sequence", Value::Real(1.5)),
-        ("source_schema", integer(6)),
+        // M6 admits Bot Run format 6; the first refused value is now 7.
+        ("source_schema", integer(7)),
         ("state", text("unknown")),
     ] {
         row_case(&c, "bot_decision_publications", &row, column, value, false);

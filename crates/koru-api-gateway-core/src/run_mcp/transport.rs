@@ -191,6 +191,12 @@ pub(super) async fn handle(
             RunToolAuthority::BotDecisionWait {
                 provenance, policy, ..
             } => native::call(&state, authority, provenance, policy, true, params).await,
+            // M6 sweep: a Run in a child wait is fenced exactly as a Run in a
+            // decision wait (reads pass, new mutations are refused). Nothing
+            // produces this classification until the child tools exist.
+            RunToolAuthority::BotChildWait {
+                provenance, policy, ..
+            } => native::call(&state, authority, provenance, policy, true, params).await,
             RunToolAuthority::Ordinary {} => tools::call(&state, authority, params).await,
         }
     })

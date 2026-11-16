@@ -147,6 +147,7 @@ impl Resumed {
             request_fingerprint: self.approved.request_fingerprint,
             observation: NativeResultObservation::Durable {
                 evidence: NativeResultReference {
+                    version_id: None,
                     operation_id: self.approved.key.operation_id,
                     workspace: self.approved.destination,
                     document: self.approved.target.unwrap(),

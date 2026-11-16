@@ -9,6 +9,7 @@ fn launch_selection_allows_thirteen_bot_tools_and_preserves_six_ordinary_tools()
     let workspace = WorkspaceId::new();
     let bot = RunToolAuthority::Bot {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner: BotOwner {
                 user_scope: koru_store_core::UserScopeId::new(),

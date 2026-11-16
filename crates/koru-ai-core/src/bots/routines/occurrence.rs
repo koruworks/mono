@@ -147,6 +147,7 @@ impl BotRoutineCapturedSources {
             submission_version: 2,
             submission: BotSubmission {
                 provenance: BotProvenance {
+                    parent: None,
                     owner: self.slot.owner,
                     bot: self.slot.bot,
                     submission: ids.submission,

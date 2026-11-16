@@ -67,6 +67,7 @@ fn cleanup_republishes_late_durable_proof_after_failed_and_lost_canonical_ack_on
         .unwrap();
     settle_unknown(&mut h, &request, fence.owner.device);
     let evidence = NativeResultReference {
+        version_id: None,
         operation_id: request.key.operation_id,
         workspace: request.destination,
         document: intent.target,
@@ -638,6 +639,7 @@ fn interrupted_delivery_cleanup_replays_after_late_durable_registration() {
     // The canonical status is durable but its capacity cleanup was interrupted.
     // Exact result evidence may arrive before the owner retries that cleanup.
     let evidence = NativeResultReference {
+        version_id: None,
         operation_id: request.key.operation_id,
         workspace: request.destination,
         document: intent.target,

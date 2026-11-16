@@ -30,8 +30,12 @@ pub use koru_sqlite::OpenError;
 /// schema 9 retains Routine routing, linkage and independent policy defenses;
 /// schema 10 adds decision, wait, resume and exact publication receipt storage;
 /// schema 11 recreates the provably empty `bot_decisions` with the kinds
-/// `private_operation` and `browser_origin`, and adds `bot_private_effects`.
-pub const RUNS_SCHEMA_VERSION: i64 = 11;
+/// `private_operation` and `browser_origin`, and adds `bot_private_effects`;
+/// schema 12 adds child requests: `bot_wait_runtime` and
+/// `bot_decision_publications` are rebuilt with every row kept (the reason
+/// `child`, source schema 6), `bot_child_requests` and `bot_child_resumes`
+/// are new, and a saved result keeps its Store version id.
+pub const RUNS_SCHEMA_VERSION: i64 = 12;
 /// The file's name inside the delegate root.
 pub const DATABASE_NAME: &str = "runs.db";
 
@@ -100,6 +104,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         to: 11,
         name: "030_runs_private_operations.sql",
         sql: include_str!("../migrations/030_runs_private_operations.sql"),
+        columns: &[],
+    },
+    Migration {
+        to: 12,
+        name: "031_runs_bot_children.sql",
+        sql: include_str!("../migrations/031_runs_bot_children.sql"),
         columns: &[],
     },
 ];

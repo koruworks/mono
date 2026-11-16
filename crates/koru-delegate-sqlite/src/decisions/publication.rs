@@ -15,6 +15,7 @@ mod observe;
 mod rows;
 mod settle;
 mod write;
+pub(crate) use lifecycle::commit_child_control_on;
 
 pub(super) fn read(
     conn: &Connection,
@@ -81,6 +82,18 @@ fn correlate(
             | BotWaitReason::NativeExpired {}
             | BotWaitReason::OverlappingPrompt {},
         ) => require(*fence == wait.origin)?,
+        // M6: a child wait names no decision. Its projections carry the
+        // origin's fence, or the acknowledged fence of its recorded successor.
+        (None, BotWaitReason::Child {}) => {
+            if *fence != wait.origin {
+                require(child_consumer_matches(
+                    conn,
+                    identity.run,
+                    wait.wait,
+                    fence,
+                )?)?;
+            }
+        }
         _ => return Err(corrupt("bot_decision_publications", "decision_id")),
     }
     if matches!(record.state, DecisionProjectionState::Applied { .. }) {
@@ -96,6 +109,32 @@ fn correlate(
         }
     }
     Ok(())
+}
+
+/// Whether `fence` is the acknowledged consumer of this child wait: its
+/// recorded successor's attempt, generation, session and accepted turn.
+fn child_consumer_matches(
+    conn: &Connection,
+    run: RunId,
+    wait: BotWaitId,
+    fence: &DecisionFence,
+) -> Result<bool, BotLedgerError> {
+    let Some(child) = super::rows::child::wait(conn, run, wait)? else {
+        return Ok(false);
+    };
+    let Some(resume) = super::rows::child::resume(conn, &child)? else {
+        return Ok(false);
+    };
+    let Some((attempt, generation, session, _)) = resume.consumer_identity() else {
+        return Ok(false);
+    };
+    Ok(fence.owner == resume.origin.owner
+        && fence.bot == resume.origin.bot
+        && fence.run == resume.origin.run
+        && fence.attempt == attempt
+        && fence.generation == generation
+        && Some(fence.session) == session
+        && Some(fence.turn) == resume.accepted_turn())
 }
 
 fn consumer_matches(resume: &DecisionResume, fence: &DecisionFence) -> bool {

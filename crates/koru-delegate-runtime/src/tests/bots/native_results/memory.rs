@@ -130,6 +130,7 @@ fn memory_receipts_reconcile_after_effects_off_without_saved_result_publication(
         NativeResultDisposition::ReconcileOnly
     );
     let evidence = NativeResultReference {
+        version_id: None,
         operation_id: edit.key.operation_id,
         workspace: edit.destination,
         document: first.target,

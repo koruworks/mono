@@ -479,6 +479,7 @@ fn verified_native_result_is_registered_once_and_partial_result_survives_termina
         .prepare_native_effect(&request, device)
         .unwrap();
     let evidence = NativeResultReference {
+        version_id: None,
         operation_id: request.key.operation_id,
         workspace: request.destination,
         document: intent.target,
@@ -599,6 +600,7 @@ fn failed_run_publication_keeps_verified_pending_and_recovery_never_leases_again
         .prepare_native_effect(&request, device)
         .unwrap();
     let evidence = NativeResultReference {
+        version_id: None,
         operation_id: request.key.operation_id,
         workspace: request.destination,
         document: intent.target,

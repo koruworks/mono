@@ -230,6 +230,90 @@ pub(super) fn build_target(
     Ok(target)
 }
 
+/// M6: the two Controls a child wait owes besides its cleanup. `ChildWaiting`
+/// is the wait's first projection, composed over the document owner's `base`
+/// in the transaction that admits the ask; it marks the Run as waiting and
+/// writes one step. `Resume` clears the marker when the successor's input is
+/// acknowledged, over the wait's own retained context. Neither carries a
+/// decision, a fact or any content.
+pub(crate) fn commit_child_control_on(
+    tx: &Transaction<'_>,
+    wait: &crate::ChildWaitRecord,
+    transition: DecisionTransitionId,
+    action: DecisionControlAction,
+    base: Option<&DecisionPublicationBase>,
+    now: i64,
+) -> Result<DecisionProjectionRecord, BotLedgerError> {
+    let owner = wait.origin.owner;
+    let run = wait.origin.run;
+    let current = super::super::rows::by_wait(tx, run, wait.wait)?.ok_or(BotLedgerError::Stale)?;
+    require(current.reason == (BotWaitReason::Child {}))?;
+    let context = match (&action, base) {
+        (DecisionControlAction::ChildWaiting {}, Some(base)) => control::ControlContext {
+            base: base.clone(),
+            predecessor: base.predecessor.clone(),
+            bookkeeping: base.bookkeeping.clone(),
+        },
+        (DecisionControlAction::Resume { .. }, None) => {
+            control::context(tx, owner, run, wait.wait)?
+        }
+        _ => return Err(BotLedgerError::Invalid),
+    };
+    require(!context.predecessor.status.is_terminal())?;
+    let fence = context
+        .bookkeeping
+        .as_ref()
+        .map(|b| b.boundary.fence)
+        .unwrap_or(wait.origin);
+    let (event, kind) = match action {
+        DecisionControlAction::ChildWaiting {} => {
+            (RunEvent::WaitingForBot, StepKind::WaitingForBot)
+        }
+        DecisionControlAction::Resume { via } => (RunEvent::Resume, StepKind::Resumed { via }),
+        _ => return Err(BotLedgerError::Invalid),
+    };
+    let status =
+        transition_bot(&context.predecessor.status, &event).map_err(|_| BotLedgerError::Fenced)?;
+    let step = TimelineEntry::new(
+        kind,
+        TimelineRefs::new([TimelineRef::Attempt {
+            attempt: fence.attempt,
+        }])
+        .map_err(|_| BotLedgerError::Invalid)?,
+        now,
+    );
+    let target = RunProjectionTargetV1::Control {
+        version: DecisionVersionV1,
+        predecessor: context.predecessor.clone(),
+        effects: DecisionProjectionEffects {
+            event: Some(event),
+            status,
+            failure_reason: context.predecessor.failure_reason,
+            economics_at_ms: None,
+            steps: DecisionList::new(vec![step]).map_err(|_| BotLedgerError::Invalid)?,
+            models: DecisionList::default(),
+            publications: DecisionList::default(),
+        },
+        fence,
+        disposition: None,
+        wait_phase: current.phase,
+        reason: current.reason,
+        action,
+        retained_bookkeeping: context.bookkeeping.clone(),
+        flush: DecisionList::default(),
+        delivery: None,
+    };
+    insert::insert_on(
+        tx,
+        owner,
+        transition,
+        wait.wait,
+        &context.base,
+        &target,
+        now,
+    )
+}
+
 impl RunsDb {
     pub fn consume_decision_edit(
         &mut self,

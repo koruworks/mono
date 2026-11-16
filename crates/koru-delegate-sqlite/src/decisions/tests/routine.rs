@@ -92,6 +92,7 @@ fn durable(request: &PrepareNativeResult, record: &DecisionRecord) -> ConfirmNat
         request_fingerprint: request.request_fingerprint,
         observation: NativeResultObservation::Durable {
             evidence: NativeResultReference {
+                version_id: None,
                 operation_id: edit.operation_id,
                 workspace: edit.workspace,
                 document: edit.target,
@@ -260,6 +261,7 @@ fn routine_decision_page_this_routine_created_does_not_ask() {
         request_fingerprint: create.request_fingerprint,
         observation: NativeResultObservation::Durable {
             evidence: NativeResultReference {
+                version_id: None,
                 operation_id: create.key.operation_id,
                 workspace,
                 document: prepared.target,

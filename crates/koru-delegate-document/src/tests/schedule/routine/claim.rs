@@ -52,6 +52,7 @@ pub(super) fn prepared_document() -> (ScheduleDocument, RoutinePrepared) {
         submission_version: 2,
         submission: BotSubmission {
             provenance: BotProvenance {
+                parent: None,
                 owner: association.owner,
                 bot: association.bot,
                 submission: ids.submission,

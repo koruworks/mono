@@ -37,6 +37,7 @@
 
 mod attempts;
 mod bots;
+mod children;
 mod claims;
 mod clock;
 mod crash;
@@ -62,6 +63,10 @@ pub use bots::{
     BotLedgerError, BotOwnedExecution, BotReservation, BotSettlement, QueuedBotAdmission,
     RoutineHeldCursor, RoutineOccurrenceFact, RoutinePage, RoutinePolicyRecord,
     RoutineQueuedCursor, RoutineRecoveryEntry, RoutineSlotCursor,
+};
+pub use children::{
+    CHILD_GRAPH_EDGE_LIMIT, CHILD_RESUME_RUN_PAGE, ChildAcknowledgedContinuation,
+    ChildSuccessorReservation, ChildWaitCursor, ChildWaitExecution, ChildWaitRecord, ChildWaitRun,
 };
 pub use claims::{ClaimedSlot, SkippedSlot, SlotClaim};
 pub use clock::{Clock, SystemClock};

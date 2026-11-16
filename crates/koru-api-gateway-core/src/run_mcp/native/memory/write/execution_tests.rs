@@ -507,6 +507,7 @@ impl BotDelegatePort for Owner {
                     Some("stage") => intent.stage = NativeResultStage::Verified,
                     Some("evidence") => {
                         intent.verified = Some(NativeResultReference {
+                            version_id: None,
                             operation_id: intent.key.operation_id,
                             workspace: intent.destination,
                             document: intent.target,
@@ -607,6 +608,7 @@ impl Fixture {
             device: DeviceId::new(),
         };
         let provenance = BotProvenance {
+            parent: None,
             owner,
             bot: BotId::mint(),
             submission: BotRequestId::mint(),

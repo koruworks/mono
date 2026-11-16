@@ -33,6 +33,7 @@ pub(crate) fn fixture() -> (RunDocument, RunProjectionIntent) {
     };
     let bot: BotId = id();
     header.bot = Some(BotProvenance {
+        parent: None,
         owner,
         bot,
         submission: id(),

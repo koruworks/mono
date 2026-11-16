@@ -42,6 +42,7 @@ fn prepared() -> RoutinePrepared {
         submission_version: 2,
         submission: BotSubmission {
             provenance: BotProvenance {
+                parent: None,
                 owner,
                 bot: slot.bot,
                 submission: ids.submission,

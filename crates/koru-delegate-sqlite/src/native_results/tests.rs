@@ -59,6 +59,7 @@ impl Harness {
         };
         let submission = BotSubmission {
             provenance: BotProvenance {
+                parent: None,
                 routine: None,
                 owner: BotOwner {
                     user_scope: serde_json::from_value(serde_json::json!(fixtures::v4(0xb0)))
@@ -187,6 +188,7 @@ impl Harness {
     fn evidence(&self) -> NativeResultReference {
         let r = self.db.native_result(&self.request.key).unwrap().unwrap();
         NativeResultReference {
+            version_id: None,
             operation_id: r.key.operation_id,
             workspace: r.destination,
             document: r.target,

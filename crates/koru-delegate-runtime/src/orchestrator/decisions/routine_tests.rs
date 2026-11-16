@@ -339,6 +339,7 @@ fn routine_decision_successor_keeps_routine_provenance() {
                 request_fingerprint: request.request_fingerprint,
                 observation: NativeResultObservation::Durable {
                     evidence: NativeResultReference {
+                        version_id: None,
                         operation_id: request.key.operation_id,
                         workspace: request.destination,
                         document: request.target.unwrap(),

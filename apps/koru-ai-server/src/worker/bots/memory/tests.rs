@@ -86,6 +86,7 @@ fn enabled_memory_commands_still_refuse_missing_authority_and_manage_permission(
         run: RunId::mint(),
         generation: koru_delegate_core::AttemptGeneration::FIRST,
         provenance: koru_delegate_core::BotProvenance {
+            parent: None,
             routine: None,
             owner: koru_delegate_core::BotOwner {
                 user_scope: UserScopeId::new(),

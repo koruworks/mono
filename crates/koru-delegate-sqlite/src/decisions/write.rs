@@ -72,25 +72,36 @@ pub(super) fn cap(tx: &Connection, owner: BotOwner) -> Result<(), BotLedgerError
     // Identity-only bounded device probe, including nondecision cleanup. The
     // 53rd row detects overflow of 50 retained waits + two occupied Runs. Do
     // not scan an unbounded excluded prefix to find this owner's decisions.
-    let mut q=tx.prepare("SELECT CASE WHEN typeof(user_scope)='text' AND length(CAST(user_scope AS BLOB))=36 THEN user_scope END,CASE WHEN reason IN ('decision','capacity','native_expired','overlapping_prompt') THEN reason END FROM bot_wait_runtime INDEXED BY bot_wait_runtime_recovery WHERE device_id=?1 AND phase<>'settled' ORDER BY updated_at_ms,wait_id LIMIT 53").map_err(sql)?;
+    let mut q=tx.prepare("SELECT CASE WHEN typeof(user_scope)='text' AND length(CAST(user_scope AS BLOB))=36 THEN user_scope END,CASE WHEN reason IN ('decision','capacity','native_expired','overlapping_prompt','child') THEN reason END FROM bot_wait_runtime INDEXED BY bot_wait_runtime_recovery WHERE device_id=?1 AND phase<>'settled' ORDER BY updated_at_ms,wait_id LIMIT 53").map_err(sql)?;
     let mut rows = q.query([owner.device.to_storage()]).map_err(sql)?;
-    let (mut total, mut device, mut subject) = (0, 0, 0);
+    // M6: a child wait is neither a decision of some owner nor one of the two
+    // cleanup waits. It is counted apart and shares the device cap of 50.
+    let (mut total, mut device, mut subject, mut children) = (0, 0, 0, 0);
     while let Some(row) = rows.next().map_err(sql)? {
         total += 1;
         let user: String = row.get(0).map_err(sql)?;
         let parsed: BotOwner =
             serde_json::from_value(serde_json::json!({"user_scope":user,"device":owner.device}))
                 .map_err(|_| corrupt("bot_wait_runtime", "user_scope"))?;
-        if row.get::<_, String>(1).map_err(sql)? == "decision" {
-            device += 1;
-            if parsed.user_scope == owner.user_scope {
-                subject += 1;
+        match row
+            .get::<_, Option<String>>(1)
+            .map_err(sql)?
+            .ok_or_else(|| corrupt("bot_wait_runtime", "reason"))?
+            .as_str()
+        {
+            "decision" => {
+                device += 1;
+                if parsed.user_scope == owner.user_scope {
+                    subject += 1;
+                }
             }
+            "child" => children += 1,
+            _ => {}
         }
     }
     if total >= 53
-        || total - device > 2
-        || device >= DECISION_WAIT_LIMIT
+        || total - device - children > 2
+        || device + children >= DECISION_WAIT_LIMIT
         || subject >= DECISION_WAIT_LIMIT
     {
         return Err(BotLedgerError::Capacity);
@@ -121,6 +132,14 @@ pub(crate) fn prepare_on(
         });
     }
     encoded(&(binding, proof), DECISION_FRAME_BYTES)?;
+    // M6: a child Run never asks a private-operation question. A one-use
+    // approval would hand private content to a parent that holds no grant,
+    // so the ledger refuses it whatever the gateway did.
+    if matches!(binding, DecisionBindingV1::PrivateOperation(_))
+        && crate::children::is_child_run_on(tx, f.run)?
+    {
+        return Err(BotLedgerError::Fenced);
+    }
     let admitted = authority::fresh(tx, binding, proof, true)?;
     authority::selected_denial(tx, binding, proof, &admitted)?;
     // One operation id, one meaning. An edit refuses an id a page intent or a

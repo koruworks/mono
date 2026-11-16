@@ -286,6 +286,12 @@ pub(crate) fn prepare_on(
         if admitted.submission.provenance.routine.is_some() || private.routine.is_some() {
             return Err(PrivateLedgerError::RoutineDecisionUnsupported);
         }
+        // M6: a child Run never asks a private-operation question. Its
+        // connections were reduced to what its parent also holds, so a one-use
+        // approval would hand private content to a parent with no grant.
+        if crate::children::is_child_run_on(tx, f.run)? {
+            return Err(BotLedgerError::Fenced.into());
+        }
         if crate::private_effects::operation_id_taken_on(tx, f.run, private.operation_id)? {
             return Err(BotLedgerError::Conflict.into());
         }

@@ -31,16 +31,36 @@ fn only_vouched_bot_context_can_interrupt_a_created_run_without_fake_start() {
         )
         .is_err()
     );
-    // Every other pair is identical: the Bot entry adds exactly one row.
+    // Every other pair is identical, except the one event only the Bot owner
+    // may apply (M6): a running Bot Run can be marked as waiting for another
+    // Bot. The Bot entry adds that event's rows and exactly one more.
     let mut differing = Vec::new();
+    let mut waiting = Vec::new();
     for state in every_state() {
         for event in every_event() {
             if transition(&state, &event) != crate::transition_bot(&state, &event) {
-                differing.push((state.clone(), event));
+                if event == RunEvent::WaitingForBot {
+                    waiting.push(state.clone());
+                } else {
+                    differing.push((state.clone(), event));
+                }
             }
         }
     }
     assert_eq!(differing, vec![(RunStatus::Created, event)]);
+    assert!(!waiting.is_empty());
+    assert!(
+        waiting
+            .iter()
+            .all(|state| matches!(state, RunStatus::Running { .. }))
+    );
+    assert_eq!(
+        waiting.len(),
+        every_state()
+            .iter()
+            .filter(|state| matches!(state, RunStatus::Running { .. }))
+            .count()
+    );
 }
 
 use Attention::*;
@@ -139,6 +159,8 @@ fn every_event() -> Vec<RunEvent> {
         E::ApprovalRequired,
         E::ApprovalResolved,
         E::WaitingForInput,
+        // M6: refused for every ordinary Run, so the table has no row for it.
+        E::WaitingForBot,
         E::ChildSessionDetected,
         E::ChildSessionTerminated,
         E::HandoverRequested,
@@ -161,6 +183,7 @@ fn every_event() -> Vec<RunEvent> {
             | E::ApprovalRequired
             | E::ApprovalResolved
             | E::WaitingForInput
+            | E::WaitingForBot
             | E::ChildSessionDetected
             | E::ChildSessionTerminated
             | E::HandoverRequested

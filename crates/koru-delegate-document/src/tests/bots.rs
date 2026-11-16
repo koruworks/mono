@@ -8,6 +8,7 @@ pub(super) fn bot_header() -> RunHeader {
         folder: BotWorkingFolder::new("D:/owner/bot".into()).unwrap(),
     };
     value.bot = Some(BotProvenance {
+        parent: None,
         routine: None,
         owner: BotOwner {
             user_scope: koru_store_core::UserScopeId::new(),
@@ -23,6 +24,7 @@ pub(super) fn bot_header() -> RunHeader {
         continued_from: None,
     });
     value.native_results.push(NativeResultReference {
+        version_id: None,
         operation_id: v4(45),
         workspace: WorkspaceId::from_uuid(v4(46)),
         document: DocumentId::from_uuid(v4(47)),

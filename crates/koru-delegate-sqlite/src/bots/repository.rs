@@ -418,7 +418,195 @@ fn charge(record: &BotAdmissionRecord, now: i64) -> i64 {
     record.active_elapsed_at(now).min(i64::MAX as u64) as i64
 }
 
+// M6: the admission owner's own checks and its one insert, shared with the
+// child-request transaction so a child admission is written exactly as
+// `admit_bot` writes one.
+pub(crate) fn barrier_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+) -> Result<Option<BotAdmissionBarrier>, BotLedgerError> {
+    barrier(conn, owner, bot)
+}
+pub(crate) fn reconcile_on(
+    conn: &Connection,
+    key: &BotSubmissionKey,
+) -> Result<Option<BotAdmissionRecord>, BotLedgerError> {
+    reconcile(conn, key)
+}
+pub(crate) fn queued_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+) -> Result<i64, BotLedgerError> {
+    Ok(conn.query_row("SELECT count(*) FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state='queued'",
+        params![owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|r|r.get(0)).map_err(sql)?)
+}
+pub(crate) fn intent_exists_on(conn: &Connection, run: RunId) -> Result<bool, BotLedgerError> {
+    Ok(conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1)",
+            [run.to_storage()],
+            |r| r.get(0),
+        )
+        .map_err(sql)?)
+}
+/// The ordinary Run intent and the queued admission, with the next global
+/// queue sequence. Every check is the caller's.
+pub(crate) fn insert_admission_on(
+    tx: &Connection,
+    submission: &BotSubmission,
+    payload: &str,
+    ordinary: &str,
+    now: i64,
+) -> Result<(), BotLedgerError> {
+    let p = &submission.provenance;
+    let sequence: i64 = tx
+        .query_row(
+            "SELECT COALESCE(MAX(queue_sequence),0)+1 FROM bot_admissions",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(sql)?;
+    tx.execute("INSERT INTO run_intents(run_id,workspace_id,payload_json,state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'pending',?4,?4)",
+        params![submission.request.run.to_storage(),submission.workspace.to_storage(),ordinary,now]).map_err(sql)?;
+    tx.execute("INSERT INTO bot_admissions(run_id,queue_sequence,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,payload_json,state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'queued',?10,?10)",
+        params![submission.request.run.to_storage(),sequence,p.owner.user_scope.to_storage(),p.owner.device.to_storage(),p.bot.to_storage(),p.submission.to_storage(),p.config_revision,p.policy_revision,payload,now]).map_err(sql)?;
+    Ok(())
+}
+/// The Routine link, its grant barrier and (for `dispatch`) the Bot's barrier
+/// of a Routine Run; nothing for an interactive Run.
+pub(crate) fn execution_fresh_on(
+    conn: &Connection,
+    admitted: &BotAdmissionRecord,
+    proof: Option<&FreshBotPolicyProof>,
+    dispatch: bool,
+) -> Result<(), BotLedgerError> {
+    super::routines::execution::fresh(conn, admitted, proof, dispatch)
+}
+
 impl BotLedger for RunsDb {
+    fn request_child(
+        &mut self,
+        request: &koru_delegate_core::children::ChildRequest,
+        boot: koru_delegate_core::DelegateBootId,
+        base: &koru_delegate_core::decisions::DecisionPublicationBase,
+    ) -> Result<koru_delegate_core::children::ChildRequestOutcome, BotLedgerError> {
+        RunsDb::request_child(self, request, boot, base)
+    }
+    fn read_child_requests(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        now_ms: i64,
+    ) -> Result<koru_delegate_core::children::ChildRequests, BotLedgerError> {
+        RunsDb::read_child_requests(self, owner, run, now_ms)
+    }
+    fn child_request_of(
+        &self,
+        owner: BotOwner,
+        child_run: RunId,
+        now_ms: i64,
+    ) -> Result<Option<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        RunsDb::child_request_of(self, owner, child_run, now_ms)
+    }
+    fn child_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::ChildWaitExecution>, BotLedgerError> {
+        RunsDb::child_wait_execution(self, owner, run)
+    }
+    fn read_bot_child_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: koru_delegate_core::decisions::BotWaitId,
+    ) -> Result<Option<koru_delegate_core::children::BotChildWaitObservation>, BotLedgerError> {
+        RunsDb::read_bot_child_wait(self, owner, bot, run, wait)
+    }
+    fn settle_child_requests(
+        &mut self,
+        owner: BotOwner,
+        boot: koru_delegate_core::DelegateBootId,
+        due: &[koru_delegate_core::ChildRequestId],
+    ) -> Result<Vec<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        RunsDb::settle_child_requests(self, owner, boot, due)
+    }
+    fn fold_child_clocks(
+        &mut self,
+        device: DeviceId,
+        boot: koru_delegate_core::DelegateBootId,
+        counted_until_ms: i64,
+        resume_at_ms: i64,
+    ) -> Result<Vec<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        RunsDb::fold_child_clocks(self, device, boot, counted_until_ms, resume_at_ms)
+    }
+    fn child_resume_runs(
+        &self,
+        device: DeviceId,
+        after: Option<&crate::ChildWaitCursor>,
+        limit: usize,
+    ) -> Result<Vec<crate::ChildWaitRun>, BotLedgerError> {
+        RunsDb::child_resume_runs(self, device, after, limit)
+    }
+    fn record_child_enrollment(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        reply: &koru_delegate_core::children::BotChildWaitEnrollmentReply,
+    ) -> Result<crate::ChildWaitRecord, BotLedgerError> {
+        RunsDb::record_child_enrollment(self, expected, reply)
+    }
+    fn record_child_origin_stop(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        release: &koru_delegate_core::decisions::OriginWaitStop,
+    ) -> Result<crate::ChildWaitRecord, BotLedgerError> {
+        RunsDb::record_child_origin_stop(self, expected, release)
+    }
+    fn reserve_child_successor(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        host: koru_delegate_core::HostInstanceId,
+        fingerprint: [u8; 32],
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<crate::ChildSuccessorReservation, BotLedgerError> {
+        RunsDb::reserve_child_successor(self, expected, host, fingerprint, proof)
+    }
+    fn bind_child_successor(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        creation: IdempotencyKey,
+        host: koru_delegate_core::HostInstanceId,
+        session: koru_delegate_core::SessionId,
+    ) -> Result<crate::ChildWaitExecution, BotLedgerError> {
+        RunsDb::bind_child_successor(self, expected, creation, host, session)
+    }
+    fn record_child_resume_input(
+        &mut self,
+        expected: &koru_delegate_core::decisions::DecisionWaitExpected,
+        transition: koru_delegate_core::decisions::DecisionTransitionId,
+        input: IdempotencyKey,
+        fingerprint: [u8; 32],
+        acknowledgment: Option<&koru_delegate_core::decisions::DecisionInputAcknowledgment>,
+    ) -> Result<crate::ChildWaitExecution, BotLedgerError> {
+        RunsDb::record_child_resume_input(
+            self,
+            expected,
+            transition,
+            input,
+            fingerprint,
+            acknowledgment,
+        )
+    }
+    fn child_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<crate::ChildAcknowledgedContinuation>, BotLedgerError> {
+        RunsDb::child_acknowledged_continuation(self, owner, run)
+    }
     fn begin_bot_wait_cleanup(
         &mut self,
         fence: &DecisionFence,
@@ -824,29 +1012,53 @@ impl BotLedger for RunsDb {
         }
         let ordinary =
             serde_json::to_string(&submission.request).map_err(|_| BotLedgerError::Invalid)?;
-        self.write_with_error(WriteOp::AdmitBot,|tx,now| {
-            let p=&submission.provenance;
-            let key=BotSubmissionKey {owner:p.owner,bot:p.bot,request:p.submission};
-            if let Some(existing)=reconcile(tx,&key)? {
-                return if existing.submission==*submission {Ok(existing)} else {Err(BotLedgerError::Conflict)};
+        self.write_with_error(WriteOp::AdmitBot, |tx, now| {
+            let p = &submission.provenance;
+            let key = BotSubmissionKey {
+                owner: p.owner,
+                bot: p.bot,
+                request: p.submission,
+            };
+            if let Some(existing) = reconcile(tx, &key)? {
+                return if existing.submission == *submission {
+                    Ok(existing)
+                } else {
+                    Err(BotLedgerError::Conflict)
+                };
             }
             // Generic admission can replay retained facts but cannot create Routine work.
-            if submission_version != 1 { return Err(BotLedgerError::Fenced); }
-            let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1)",[submission.request.run.to_storage()],|r|r.get(0)).map_err(sql)?;
-            if exists { return Err(BotLedgerError::Conflict); }
-            if let Some(b)=barrier(tx,p.owner,p.bot)? {
-                if p.config_revision<b.epoch { return Err(BotLedgerError::Stale); }
-                if b.paused { return Err(BotLedgerError::Fenced); }
+            if submission_version != 1 {
+                return Err(BotLedgerError::Fenced);
             }
-            let pending:i64=tx.query_row("SELECT count(*) FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state='queued'",
-                params![p.owner.user_scope.to_storage(),p.owner.device.to_storage(),p.bot.to_storage()],|r|r.get(0)).map_err(sql)?;
-            if pending>=BOT_PENDING_LIMIT as i64 { return Err(BotLedgerError::Capacity); }
-            let sequence:i64=tx.query_row("SELECT COALESCE(MAX(queue_sequence),0)+1 FROM bot_admissions",[],|r|r.get(0)).map_err(sql)?;
-            tx.execute("INSERT INTO run_intents(run_id,workspace_id,payload_json,state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'pending',?4,?4)",
-                params![submission.request.run.to_storage(),submission.workspace.to_storage(),ordinary,now]).map_err(sql)?;
-            tx.execute("INSERT INTO bot_admissions(run_id,queue_sequence,user_scope,device_id,bot_id,request_id,config_revision,policy_revision,payload_json,state,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,'queued',?10,?10)",
-                params![submission.request.run.to_storage(),sequence,p.owner.user_scope.to_storage(),p.owner.device.to_storage(),p.bot.to_storage(),p.submission.to_storage(),p.config_revision,p.policy_revision,payload,now]).map_err(sql)?;
-            required(tx,submission.request.run)
+            // M6: a child Run is admitted only with its request, by `request_child`.
+            // An ordinary Submit that names a parent would be a child with no
+            // request row, so only the exact replay above ever succeeds.
+            if p.parent.is_some() {
+                return Err(BotLedgerError::Fenced);
+            }
+            let exists: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM run_intents WHERE run_id=?1)",
+                    [submission.request.run.to_storage()],
+                    |r| r.get(0),
+                )
+                .map_err(sql)?;
+            if exists {
+                return Err(BotLedgerError::Conflict);
+            }
+            if let Some(b) = barrier(tx, p.owner, p.bot)? {
+                if p.config_revision < b.epoch {
+                    return Err(BotLedgerError::Stale);
+                }
+                if b.paused {
+                    return Err(BotLedgerError::Fenced);
+                }
+            }
+            if queued_on(tx, p.owner, p.bot)? >= BOT_PENDING_LIMIT as i64 {
+                return Err(BotLedgerError::Capacity);
+            }
+            insert_admission_on(tx, submission, &payload, &ordinary, now)?;
+            required(tx, submission.request.run)
         })
     }
     fn bot_execution(&self, run: RunId) -> Result<Option<BotExecutionRecord>, BotLedgerError> {
@@ -992,6 +1204,10 @@ impl BotLedger for RunsDb {
             }
             tx.execute("INSERT INTO bot_admission_barriers(user_scope,device_id,bot_id,epoch,paused,request_id,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?7) ON CONFLICT(user_scope,device_id,bot_id) DO UPDATE SET epoch=excluded.epoch,paused=excluded.paused,request_id=excluded.request_id,updated_at_ms=excluded.updated_at_ms",
                 params![b.owner.user_scope.to_storage(),b.owner.device.to_storage(),b.bot.to_storage(),b.epoch,b.paused,b.request.to_storage(),now]).map_err(sql)?;
+            // M6: pausing a Bot folds and pauses the clocks of the requests it
+            // waits on, in this transaction. Unpausing restarts them at the
+            // clock owner's next fold, which knows the delegate's boot.
+            if b.paused { crate::children::fold_parent_on(tx,b.owner,b.bot,now)?; }
             Ok(b.clone())
         })
     }
@@ -1014,8 +1230,12 @@ impl BotLedger for RunsDb {
             let busy:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_admissions WHERE user_scope=?1 AND device_id=?2 AND bot_id=?3 AND state IN ('reserved','executing'))",
                 params![p.owner.user_scope.to_storage(),p.owner.device.to_storage(),p.bot.to_storage()],|r|r.get(0)).map_err(sql)?;
             if busy {return Ok(BotReservation::BotBusy)}
-            let hosts=crate::decisions::execution_inventory_on(tx,p.owner.device)?.occupied;
-            if hosts>=BOT_HOST_EXECUTION_LIMIT {return Ok(BotReservation::HostBusy)}
+            // M6: a free slot is offered to queued work only while every child
+            // wait that could be resumed right now could also be served. With
+            // no such wait this is the former test, occupied >= limit.
+            let inventory=crate::decisions::execution_inventory_on(tx,p.owner.device)?;
+            let free=BOT_HOST_EXECUTION_LIMIT-inventory.occupied.min(BOT_HOST_EXECUTION_LIMIT);
+            if free<=crate::children::due_on(tx,&inventory,now)? {return Ok(BotReservation::HostBusy)}
             tx.execute("UPDATE bot_admissions SET state='reserved',updated_at_ms=?2 WHERE run_id=?1",params![run.to_storage(),now]).map_err(sql)?;
             Ok(BotReservation::Acquired)
         })
@@ -1096,6 +1316,9 @@ impl BotLedger for RunsDb {
             if attempts::latest(tx,run)?.is_some_and(|a|!a.retired || !a.phase.is_terminal()) {return Err(BotLedgerError::Fenced)}
             tx.execute("UPDATE bot_admissions SET state=?2,active_elapsed_ms=?3,active_since_ms=NULL,updated_at_ms=?4 WHERE run_id=?1",
                 params![run.to_storage(),if outcome==BotSettlement::Settled {"settled"} else {"refused"},charge(&record,now),now]).map_err(sql)?;
+            // M6: the one statement a child's settlement adds. It closes the
+            // child's own request and reads nothing of the parent's.
+            crate::children::settle_child_ended_on(tx,run,now)?;
             // Cancelled requests must not be recovered as ordinary runnable intents.
             tx.execute("UPDATE run_intents SET state='abandoned',updated_at_ms=?2 WHERE run_id=?1 AND state='pending'",params![run.to_storage(),now]).map_err(sql)?;
             Ok(())

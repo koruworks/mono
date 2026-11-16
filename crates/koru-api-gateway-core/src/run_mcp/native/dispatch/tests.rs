@@ -196,6 +196,7 @@ impl Fixture {
             connections: Default::default(),
         };
         let provenance = BotProvenance {
+            parent: None,
             routine: None,
             owner,
             bot,

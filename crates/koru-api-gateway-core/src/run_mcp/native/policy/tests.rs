@@ -13,6 +13,7 @@ fn fixture() -> (BotProvenance, CapturedBotPolicy, FreshBotPolicyProof) {
     };
     let bot = BotId::mint();
     let provenance = BotProvenance {
+        parent: None,
         owner,
         bot,
         submission: BotRequestId::mint(),

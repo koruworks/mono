@@ -84,6 +84,9 @@ impl RunsDb {
             BotWaitReason::NativeExpired {} => "native_expired",
             BotWaitReason::OverlappingPrompt {} => "overlapping_prompt",
             BotWaitReason::Decision { .. } => return Err(BotLedgerError::Invalid),
+            // A child wait is born in the transaction that admits its ask
+            // (`request_child`), never through this cleanup-only entry.
+            BotWaitReason::Child {} => return Err(BotLedgerError::Invalid),
         };
         self.write_with_error(crate::WriteOp::RecordDecisionProjection,|tx,now|{
             authority::owner(tx,fence.owner,fence.run)?;
@@ -131,7 +134,9 @@ impl RunsDb {
             require(bookkeeping.boundary.fence==*fence && bookkeeping.boundary.resulting.session_after==Some(observed))?;
             let inventory=super::super::occupancy::inventory(tx,fence.owner.device)?;
             require(inventory.occupied<=crate::BOT_HOST_EXECUTION_LIMIT && inventory.owned.iter().any(|r|r.execution.run==fence.run && r.capacity==crate::BotExecutionCapacity::Occupied))?;
-            let count:i64=tx.query_row("SELECT count(*) FROM (SELECT wait_id FROM bot_wait_runtime INDEXED BY bot_wait_runtime_recovery WHERE device_id=?1 AND phase<>'settled' AND reason<>'decision' LIMIT 3)",[fence.owner.device.to_storage()],|r|r.get(0)).map_err(sql)?;
+            // Two cleanup-only waits at most. A child wait (M6) is neither a
+            // decision nor a cleanup wait and is counted with the decision cap.
+            let count:i64=tx.query_row("SELECT count(*) FROM (SELECT wait_id FROM bot_wait_runtime INDEXED BY bot_wait_runtime_recovery WHERE device_id=?1 AND phase<>'settled' AND reason NOT IN ('decision','child') LIMIT 3)",[fence.owner.device.to_storage()],|r|r.get(0)).map_err(sql)?;
             if count>=2 {return Err(BotLedgerError::Capacity)}
             let wait=BotWaitId::mint();
             tx.execute("INSERT INTO bot_wait_runtime(wait_id,run_id,user_scope,device_id,bot_id,attempt_id,generation,session_id,turn_id,observed_sequence,reason,phase,revision,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,'cleanup_pending',1,?12,?12)",params![wait.to_storage(),fence.run.to_storage(),fence.owner.user_scope.to_storage(),fence.owner.device.to_storage(),fence.bot.to_storage(),fence.attempt.to_storage(),fence.generation.get(),fence.session.to_string(),fence.turn.to_string(),observed.get(),reason_name,now]).map_err(sql)?;

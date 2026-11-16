@@ -62,8 +62,10 @@ fn base_on(
         )?;
     }
     if let Some(applied) = latest_applied_on(tx, owner, run)? {
+        // After an applied projection the Run document is at Bot Run format 5
+        // or, once it holds an M6 field, 6: whichever its owner observed.
         require(
-            u8::from(base.source_schema) == 5
+            matches!(u8::from(base.source_schema), 5 | 6)
                 && base.workspace == applied.identity.workspace
                 && base.document == applied.identity.document
                 && base.subject_digest == applied.identity.subject_digest
@@ -93,14 +95,15 @@ fn base_on(
         }
     } else {
         // The first projection names the format the Bot Run was created at:
-        // Bot5 for this build's Bot Runs, Manual or Routine (BotRun5), or the
+        // Bot6 or Bot5 for a Bot Run of this build or the previous one, Manual
+        // or Routine, or the
         // previous default's Bot3 (Manual) / Bot4 (Routine). Only a Bot Run
         // reaches here: a non-Bot Run has no admission and was refused above.
         let routine = admitted.submission.provenance.routine.is_some();
         require(
             base.predecessor.projection.is_none()
                 && match u8::from(base.source_schema) {
-                    5 => true,
+                    5 | 6 => true,
                     4 => routine,
                     3 => !routine,
                     _ => false,
@@ -194,12 +197,39 @@ pub(super) fn insert_on(
             )?;
         }
     }
+    // The retained consumer of the wait, whichever table owns its resume.
     let mut resume = None;
     let decision = match wait.reason {
+        BotWaitReason::Child {} => {
+            let child =
+                super::super::rows::child::wait(tx, run, wait_id)?.ok_or(BotLedgerError::Stale)?;
+            let child_resume = super::super::rows::child::resume(tx, &child)?;
+            if target.fence() != &wait.origin {
+                require(child_consumer_matches(tx, run, wait_id, target.fence())?)?;
+            }
+            if let RunProjectionTargetV1::Control {
+                disposition,
+                wait_phase,
+                reason,
+                ..
+            } = target
+            {
+                require(
+                    disposition.is_none() && *wait_phase == wait.phase && *reason == wait.reason,
+                )?;
+            }
+            resume = child_resume
+                .as_ref()
+                .and_then(|resume| resume.consumer_identity());
+            None
+        }
         BotWaitReason::Decision { decision } => {
             let record =
                 super::super::rows::read(tx, owner, run, decision)?.ok_or(BotLedgerError::Stale)?;
-            resume = record.resume.clone();
+            resume = record
+                .resume
+                .as_ref()
+                .map(DecisionResume::consumer_identity);
             if target.fence() != &wait.origin {
                 require(
                     record
@@ -263,7 +293,7 @@ pub(super) fn insert_on(
         // Reservation and unknown creation have no consumer turn to fabricate.
         // Their control retains the exact origin fence while the independently
         // recorded resume identifies the current physical cleanup subject.
-        let (attempt, generation, session, key) = resume.consumer_identity();
+        let (attempt, generation, session, key) = resume;
         require(
             latest.attempt == attempt
                 && latest.generation == generation
@@ -335,7 +365,7 @@ pub(super) fn insert_on(
         sequence,
         workspace: base.workspace,
         document: base.document,
-        source_schema: if expected.projection.is_some() {
+        source_schema: if expected.projection.is_some() && u8::from(base.source_schema) != 6 {
             DecisionSourceSchema::try_from(5).map_err(|_| BotLedgerError::Invalid)?
         } else {
             base.source_schema

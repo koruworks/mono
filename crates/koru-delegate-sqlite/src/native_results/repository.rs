@@ -517,7 +517,7 @@ impl NativeResultLedger for RunsDb {
                     if !evidence_matches(&record,evidence) {return Err(BotLedgerError::Conflict);}
                     if let Some(old)=&record.verified {return if old==evidence {Ok(record)}else{Err(BotLedgerError::Conflict)};}
                     if record.stage==NativeResultStage::Refused {return Err(BotLedgerError::Conflict);}
-                    tx.execute("UPDATE native_result_intents SET stage='verified',lease_state='settled',verified_version=?3,verified_title=?4,confirmed_at_ms=?5,updated_at_ms=?6 WHERE run_id=?1 AND operation_id=?2",params![request.key.run.to_storage(),request.key.operation_id.to_string(),evidence.version,evidence.title,evidence.confirmed_at_ms,now]).map_err(sql)?;
+                    tx.execute("UPDATE native_result_intents SET stage='verified',lease_state='settled',verified_version=?3,verified_title=?4,confirmed_at_ms=?5,updated_at_ms=?6,verified_version_id=?7 WHERE run_id=?1 AND operation_id=?2",params![request.key.run.to_storage(),request.key.operation_id.to_string(),evidence.version,evidence.title,evidence.confirmed_at_ms,now,evidence.version_id.map(|id|id.to_storage())]).map_err(sql)?;
                 }
             }
             required(tx,&request.key)

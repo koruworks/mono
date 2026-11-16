@@ -31,6 +31,10 @@ pub enum WriteOp {
     RecordDecisionProjection,
     PrepareDecisionProjection,
     AcknowledgeDecisionProjection,
+    /// One ask: the child admissions, the parent's wait and its requests (M6).
+    RequestChild,
+    /// A step of a child wait or a transition of a request's clock (M6).
+    ChildWait,
     AllocateMemoryEdit,
     ResolveMemoryEditBase,
     PrepareMemoryEdit,
@@ -88,7 +92,9 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 58] = [
+        Self::RequestChild,
+        Self::ChildWait,
         Self::ResolvePrivateDispatcher,
         Self::PreparePrivateEffect,
         Self::AdvancePrivateEffect,

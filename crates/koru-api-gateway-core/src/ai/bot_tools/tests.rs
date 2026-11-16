@@ -211,6 +211,7 @@ fn bot_stop_checks_exact_task_before_shared_cancel() {
 fn bot_results_include_only_confirmed_current_workspace_references() {
     let workspace = WorkspaceId::new();
     let saved = koru_delegate_core::NativeResultReference {
+        version_id: None,
         operation_id: Uuid::new_v4(),
         workspace,
         document: DocumentId::new(),

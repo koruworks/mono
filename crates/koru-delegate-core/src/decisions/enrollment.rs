@@ -11,6 +11,8 @@ use crate::{
 #[serde(rename_all = "snake_case")]
 pub enum BotWaitCleanupCause {
     DecisionWaitCleanup,
+    /// M6: the origin of a child wait was stopped so its host slot is free.
+    ChildWaitCleanup,
 }
 
 /// Immutable digest-free request, frozen with post-transition revisions before
@@ -77,6 +79,8 @@ impl BotWaitCleanupIntentV1 {
 }
 impl DecisionValidate for BotWaitCleanupIntentV1 {
     fn validate(&self) -> Result<(), DecisionError> {
+        // A child wait freezes its own intent type under its own domain.
+        require(self.cause == BotWaitCleanupCause::DecisionWaitCleanup)?;
         self.origin().validate()
     }
 }

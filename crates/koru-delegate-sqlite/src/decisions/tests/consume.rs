@@ -435,6 +435,7 @@ fn decision_durable_save_settles_once_replays_under_a_new_transition_and_has_no_
         request_fingerprint: request.request_fingerprint,
         observation: NativeResultObservation::Durable {
             evidence: koru_delegate_core::NativeResultReference {
+                version_id: None,
                 operation_id: request.key.operation_id,
                 workspace: request.destination,
                 document: request.target.unwrap(),
@@ -543,6 +544,7 @@ fn decision_other_effects_pending_spares_only_the_decisions_own_durable_save() {
         request_fingerprint: request.request_fingerprint,
         observation: NativeResultObservation::Durable {
             evidence: koru_delegate_core::NativeResultReference {
+                version_id: None,
                 operation_id: request.key.operation_id,
                 workspace: request.destination,
                 document: request.target.unwrap(),

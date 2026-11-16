@@ -41,6 +41,7 @@ fn private_submission_closes_nested_intent_and_input_without_changing_ordinary_t
     request.grants = BTreeSet::from([workspace]);
     let submission = BotSubmission {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner: BotOwner {
                 user_scope: UserScopeId::new(),

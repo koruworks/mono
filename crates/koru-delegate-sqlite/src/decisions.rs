@@ -11,8 +11,10 @@ mod authority;
 mod current;
 mod drain;
 mod resume_runs;
+pub(crate) use current::acknowledged_turn_on;
 pub(crate) use current::fresh_native_input_on;
 pub(crate) use current::{acknowledged_continuation_on, fresh_activity_on, retained_consumer_on};
+pub(crate) use publication::commit_child_control_on;
 mod effect;
 pub(crate) use effect::validate_native_on;
 mod observation;
@@ -142,6 +144,92 @@ fn next(value: DecisionRevision) -> Result<DecisionRevision, BotLedgerError> {
         .checked_add(1)
         .and_then(|n| DecisionRevision::new(n).ok())
         .ok_or(BotLedgerError::Stale)
+}
+
+// M6: the narrow surface the child-request owner (`crate::children`) builds
+// on. Each is the existing owner's own check or decoder, never a second one.
+pub(crate) fn owner_on(
+    conn: &Connection,
+    owner: BotOwner,
+    run: RunId,
+) -> Result<(), BotLedgerError> {
+    authority::owner(conn, owner, run)
+}
+pub(crate) fn origin_attempt_on(
+    conn: &Connection,
+    fence: &DecisionFence,
+) -> Result<crate::AttemptRow, BotLedgerError> {
+    authority::attempt(conn, fence)
+}
+pub(crate) fn child_wait_on(
+    conn: &Connection,
+    run: RunId,
+    wait: BotWaitId,
+) -> Result<Option<crate::ChildWaitRecord>, BotLedgerError> {
+    rows::child::wait(conn, run, wait)
+}
+pub(crate) fn open_child_wait_on(
+    conn: &Connection,
+    run: RunId,
+) -> Result<Option<crate::ChildWaitRecord>, BotLedgerError> {
+    rows::child::open_wait(conn, run)
+}
+pub(crate) fn child_resume_on(
+    conn: &Connection,
+    wait: &crate::ChildWaitRecord,
+) -> Result<Option<koru_delegate_core::children::ChildResume>, BotLedgerError> {
+    rows::child::resume(conn, wait)
+}
+pub(crate) fn child_consumer_on(
+    conn: &Connection,
+    run: RunId,
+    attempt: &crate::AttemptRow,
+) -> Result<
+    Option<(
+        crate::ChildWaitRecord,
+        koru_delegate_core::children::ChildResume,
+    )>,
+    BotLedgerError,
+> {
+    rows::child::consumer(conn, run, attempt)
+}
+pub(crate) fn correlate_child_release_on(
+    conn: &Connection,
+    wait: &crate::ChildWaitRecord,
+) -> Result<(), BotLedgerError> {
+    rows::child::correlate_release(conn, wait)
+}
+/// The open-wait cap, counted exactly as a decision's preparation counts it.
+pub(crate) fn wait_cap_on(tx: &Connection, owner: BotOwner) -> Result<(), BotLedgerError> {
+    write::cap(tx, owner)
+}
+/// What kind of wait a Run has open. A Run has at most one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OpenWaitKind {
+    Decision,
+    Child,
+    Cleanup,
+}
+pub(crate) fn open_wait_reason_on(
+    conn: &Connection,
+    run: RunId,
+) -> Result<Option<OpenWaitKind>, BotLedgerError> {
+    let reason: Option<String> = conn
+        .query_row(
+            "SELECT CASE WHEN reason IN ('decision','capacity','native_expired','overlapping_prompt','child') THEN reason END
+             FROM bot_wait_runtime INDEXED BY bot_wait_runtime_open_run WHERE run_id=?1 AND phase<>'settled'",
+            [run.to_storage()],
+            |r| r.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(sql)?
+        .map(|reason| reason.ok_or_else(|| corrupt("bot_wait_runtime", "reason")))
+        .transpose()?;
+    Ok(reason.map(|reason| match reason.as_str() {
+        "decision" => OpenWaitKind::Decision,
+        "child" => OpenWaitKind::Child,
+        _ => OpenWaitKind::Cleanup,
+    }))
 }
 
 impl RunsDb {

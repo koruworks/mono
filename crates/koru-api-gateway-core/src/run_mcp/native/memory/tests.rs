@@ -131,6 +131,7 @@ fn fixture() -> (Port, RunAuthorityRecord, BotProvenance, CapturedBotPolicy) {
         revoked_at_ms: None,
     };
     let provenance = BotProvenance {
+        parent: None,
         routine: None,
         owner: BotOwner {
             user_scope: koru_store_core::UserScopeId::new(),

@@ -373,6 +373,7 @@ fn decision_expiry_never_touches_a_consumed_or_settled_decision() {
                 request_fingerprint: request.request_fingerprint,
                 observation: NativeResultObservation::Durable {
                     evidence: NativeResultReference {
+                        version_id: None,
                         operation_id: request.key.operation_id,
                         workspace: request.destination,
                         document: request.target.unwrap(),

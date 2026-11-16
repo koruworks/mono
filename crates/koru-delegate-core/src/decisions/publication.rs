@@ -44,7 +44,9 @@ pub struct DecisionSourceSchema(u8);
 impl TryFrom<u8> for DecisionSourceSchema {
     type Error = DecisionError;
     fn try_from(v: u8) -> Result<Self, Self::Error> {
-        require(matches!(v, 3 | 4 | 5))?;
+        // 6 is the Bot Run format that can hold a parent, a pinned result
+        // and a waiting marker (M6).
+        require(matches!(v, 3..=6))?;
         Ok(Self(v))
     }
 }

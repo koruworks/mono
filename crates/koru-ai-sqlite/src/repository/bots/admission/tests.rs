@@ -219,6 +219,7 @@ fn intent(bot: &Bot) -> BotSubmissionIntent {
         version: 1,
         submission: d::BotSubmission {
             provenance: d::BotProvenance {
+                parent: None,
                 routine: None,
                 owner: d::BotOwner {
                     user_scope: bot.user_scope,

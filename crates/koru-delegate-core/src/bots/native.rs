@@ -33,14 +33,28 @@ pub enum RunToolAuthority {
         decision: crate::decisions::DecisionId,
         phase: crate::decisions::DecisionPhase,
     },
+    /// M6: the same Bot Run from its ask until its successor's input is
+    /// acknowledged. Callers allow reads and the exact ask retry, and refuse
+    /// every other mutation. `phase` is the wait's phase as the delegate last
+    /// read it; there is no decision.
+    BotChildWait {
+        provenance: crate::BotProvenance,
+        policy: CapturedBotPolicy,
+        wait: crate::decisions::BotWaitId,
+        phase: crate::decisions::BotWaitPhase,
+        open_requests: u8,
+    },
 }
 impl RunToolAuthority {
-    /// The Bot subject of either Bot classification; `None` for Ordinary.
+    /// The Bot subject of every Bot classification; `None` for Ordinary.
     pub fn bot_subject(&self) -> Option<(&crate::BotProvenance, &CapturedBotPolicy)> {
         match self {
             Self::Ordinary {} => None,
             Self::Bot { provenance, policy }
             | Self::BotDecisionWait {
+                provenance, policy, ..
+            }
+            | Self::BotChildWait {
                 provenance, policy, ..
             } => Some((provenance, policy)),
         }

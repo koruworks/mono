@@ -148,6 +148,7 @@ impl Fixture {
             device: DeviceId::new(),
         };
         let provenance = BotProvenance {
+            parent: None,
             routine: None,
             owner,
             bot: BotId::mint(),
@@ -232,6 +233,7 @@ impl Fixture {
                 NativeResultStage::Registered | NativeResultStage::Verified
             ) {
                 Some(NativeResultReference {
+                    version_id: None,
                     operation_id: key.operation_id,
                     workspace,
                     document: match &allocation.resolution {

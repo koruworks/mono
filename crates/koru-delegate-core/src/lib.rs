@@ -35,6 +35,7 @@ mod attempt;
 #[doc(hidden)]
 pub mod bot_wire;
 mod bots;
+pub mod children;
 mod connections;
 mod context;
 pub mod decisions;
@@ -73,7 +74,7 @@ pub use bots::{
     BotBootScan, BotBootState, BotDeliveryReceipt, BotExecutionFence, BotHello, BotInputRefusal,
     BotOwner, BotPolicyBarrier, BotPolicyBarrierKey, BotPolicyBarrierReceipt,
     BotPolicyBarrierState, BotProvenance, BotRunKey, BotSubmission, BotSubmissionKey,
-    BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy,
+    BotUnsettledAdmission, BotUnsettledWork, BotWorkingFolder, CapturedBotPolicy, ChildParent,
     ConfirmNativeResult, NativeDrainReason, NativeEffectBinding, NativeEffectDrainReceipt,
     NativeEffectKind, NativeEffectTimestamp, NativePendingEffect, NativePendingEffects,
     NativePolicyRequestId, NativeRecoveryCursor, NativeResultDisposition, NativeResultIntentView,
@@ -98,9 +99,9 @@ pub use facts::{RunFact, UsageReport};
 pub use failure::RunFailureReason;
 pub use header::{DelegatedRun, Rating, ResultReference, RunHeader, RunRating};
 pub use ids::{
-    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, ConnectionId,
-    ConnectionItemId, DelegateBootId, HandoffId, IdParseError, ModelRef, PrivateDispatcherId,
-    RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
+    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, ChildRequestId,
+    ConnectionId, ConnectionItemId, DelegateBootId, HandoffId, IdParseError, ModelRef,
+    PrivateDispatcherId, RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
 };
 pub use name::RunName;
 pub use pin::ContextState;

@@ -50,6 +50,23 @@ pub struct BotProvenance {
     /// never authorizes a Routine claim or changes its current access policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub routine: Option<RoutineProvenance>,
+    /// The Bot Run that asked for this one (M6). **Omitted from the
+    /// serialized form whenever it is absent**, so a submission or a header
+    /// without a parent keeps exactly its earlier bytes and every digest
+    /// computed over them. It is provenance: it grants nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ChildParent>,
+}
+/// Who asked for a child Run (M6). Identities only; never authority.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct ChildParent {
+    pub run: RunId,
+    pub bot: BotId,
+    /// The asking Bot's conversation. An existing AI identity, as `chat_id`.
+    pub chat_id: Uuid,
+    pub child_request: crate::ChildRequestId,
 }
 impl BotProvenance {
     pub fn valid(&self) -> bool {
@@ -67,6 +84,17 @@ impl BotProvenance {
                     && self.continued_from.is_none()
                     && v4(self.bot.as_uuid())
                     && v4(self.submission.as_uuid())
+            })
+            && self.parent.is_none_or(|parent| {
+                // A child is ordinary interactive work of its recipient: never
+                // a Routine occurrence, never a continuation, never of itself.
+                self.routine.is_none()
+                    && self.continued_from.is_none()
+                    && parent.bot != self.bot
+                    && v4(parent.chat_id)
+                    && v4(parent.run.as_uuid())
+                    && v4(parent.bot.as_uuid())
+                    && v4(parent.child_request.as_uuid())
             })
     }
 }
@@ -136,6 +164,10 @@ impl BotSubmission {
             && self.request.grants.len() == 1
             && self.request.grants.contains(&self.workspace)
             && self.provenance.continued_from != Some(self.request.run)
+            && self
+                .provenance
+                .parent
+                .is_none_or(|parent| parent.run != self.request.run)
     }
 }
 
@@ -283,6 +315,13 @@ pub struct NativeResultReference {
     pub title: String,
     pub confirmed_at_ms: i64,
     pub kind: NativeResultKind,
+    /// The immutable Store version this save produced (M6). **Omitted from
+    /// the serialized form whenever it is absent**, so a reference written
+    /// before it existed keeps exactly its bytes. Absent means the result can
+    /// never be handed over as a pinned page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "schema", schemars(with = "Option<String>"))]
+    pub version_id: Option<crate::DocumentVersionId>,
 }
 impl std::fmt::Debug for NativeResultReference {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

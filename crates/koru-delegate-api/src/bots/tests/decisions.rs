@@ -386,6 +386,7 @@ fn ipc16_run_authority_decision_wait_roundtrips_strictly_and_old_or_unknown_valu
     use koru_delegate_core::decisions::DecisionPhase;
     let f = fence(owner());
     let provenance = koru_delegate_core::BotProvenance {
+        parent: None,
         routine: None,
         owner: f.owner,
         bot: f.bot,

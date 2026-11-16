@@ -171,6 +171,7 @@ pub(super) fn preparation() -> BotRoutinePreparation {
         submission_version: 2,
         submission: BotSubmission {
             provenance: BotProvenance {
+                parent: None,
                 owner: c.owner,
                 bot: c.bot,
                 submission: ids.submission,

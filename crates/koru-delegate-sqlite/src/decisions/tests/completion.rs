@@ -1094,3 +1094,25 @@ fn decision_consumed_companion_corruption_refuses_reads_replay_and_settlement() 
         );
     }
 }
+
+/// Cohort `m6_sweeps_inert`: a child wait is never begun through the
+/// cleanup-only entry, and the refusal writes nothing.
+#[test]
+fn m6_sweeps_inert_cleanup_only_entry_refuses_a_child_wait() {
+    let mut h = Harness::new();
+    let f = h.origin();
+    let observed = sequence(7);
+    let base = fallback_base(&h, observed);
+    assert_eq!(
+        h.db.begin_bot_wait_cleanup(
+            &f,
+            BotWaitReason::Child {},
+            observed,
+            DecisionTransitionId::mint(),
+            &base
+        ),
+        Err(BotLedgerError::Invalid)
+    );
+    assert_eq!(h.count("bot_wait_runtime"), 0);
+    assert_eq!(h.count("bot_decision_publications"), 0);
+}

@@ -49,6 +49,9 @@ pub enum Attention {
     /// An orchestrator turn ended having registered no artifact: finished
     /// and needing attention, never a delivered result (D29).
     FinishedNeedingAttention,
+    /// A Bot Run asked other Bots and waits for their requests to settle
+    /// (M6). Set when the wait opens; cleared when the Run is resumed.
+    WaitingForBot,
 }
 
 /// The attention markers on a `Running` run. Sorted and duplicate-free.
@@ -330,6 +333,8 @@ pub enum RunEvent {
     /// Resolved or expired — both clear the marker.
     ApprovalResolved,
     WaitingForInput,
+    /// A Bot Run opened a wait on other Bots (M6). Bot Runs only.
+    WaitingForBot,
     ChildSessionDetected,
     ChildSessionTerminated,
     /// A person asked for control (§7.4).
@@ -358,6 +363,7 @@ impl RunEvent {
             Self::ApprovalRequired => "approval_required",
             Self::ApprovalResolved => "approval_resolved",
             Self::WaitingForInput => "waiting_for_input",
+            Self::WaitingForBot => "waiting_for_bot",
             Self::ChildSessionDetected => "child_session_detected",
             Self::ChildSessionTerminated => "child_session_terminated",
             Self::HandoverRequested => "handover_requested",
@@ -466,7 +472,7 @@ fn transition_with_context(
         (S::Interrupted { .. }, E::Resume) => Ok(S::Starting),
         (S::Created | S::Starting | S::Interrupted { .. }, _) => refuse(),
 
-        (S::Running { attention, control }, event) => running(attention, *control, event)
+        (S::Running { attention, control }, event) => running(attention, *control, event, bot)
             .ok_or_else(|| IllegalTransition {
                 from: from.clone(),
                 event: *event,
@@ -475,7 +481,12 @@ fn transition_with_context(
 }
 
 /// The `Running` rows of the table. `None` is a refusal.
-fn running(attention: &AttentionSet, control: ControlState, event: &RunEvent) -> Option<RunStatus> {
+fn running(
+    attention: &AttentionSet,
+    control: ControlState,
+    event: &RunEvent,
+    bot: bool,
+) -> Option<RunStatus> {
     use ControlState as C;
     use RunEvent as E;
     use TurnOriginator::{Human, Orchestrator};
@@ -579,6 +590,15 @@ fn running(attention: &AttentionSet, control: ControlState, event: &RunEvent) ->
         E::ApprovalResolved => approval_open
             .then(|| running(attention.without(Attention::ApprovalRequired), control))?,
         E::WaitingForInput => running(attention.with(Attention::WaitingForInput), control),
+        // M6: only the Bot owner marks a Run as waiting for other Bots.
+        E::WaitingForBot => bot
+            .then(|| running(attention.with(Attention::WaitingForBot), control))
+            .flatten(),
+        // A running Run is resumed only out of that wait: the successor's
+        // acknowledged input clears the marker. Every other Resume is refused.
+        E::Resume => (bot && attention.contains(Attention::WaitingForBot))
+            .then(|| running(attention.without(Attention::WaitingForBot), control))
+            .flatten(),
         E::ChildSessionDetected => {
             running(attention.with(Attention::ChildSessionDetected), control)
         }
@@ -620,6 +640,6 @@ fn running(attention: &AttentionSet, control: ControlState, event: &RunEvent) ->
             _ => None,
         },
 
-        E::Start | E::ProviderStarted | E::StartFailed { .. } | E::Resume => None,
+        E::Start | E::ProviderStarted | E::StartFailed { .. } => None,
     }
 }

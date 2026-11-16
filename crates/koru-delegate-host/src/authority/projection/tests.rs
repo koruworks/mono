@@ -93,6 +93,7 @@ fn bot() -> RunToolAuthority {
     let workspace = WorkspaceId::from_uuid(uuid::Uuid::new_v4());
     RunToolAuthority::Bot {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner: BotOwner {
                 user_scope: serde_json::from_value(serde_json::json!(uuid::Uuid::new_v4()))

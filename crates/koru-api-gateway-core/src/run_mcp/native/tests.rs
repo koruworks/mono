@@ -49,6 +49,7 @@ fn port(record: &RunAuthorityRecord, reply: BotReply) -> Option<Arc<dyn BotDeleg
 fn bot(record: &RunAuthorityRecord) -> RunToolAuthority {
     RunToolAuthority::Bot {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner: BotOwner {
                 user_scope: UserScopeId::new(),

@@ -996,6 +996,7 @@ fn decision_successor_delivers_on_the_ordinary_path_after_an_early_settlement() 
         request_fingerprint: request.request_fingerprint,
         observation: NativeResultObservation::Durable {
             evidence: NativeResultReference {
+                version_id: None,
                 operation_id: request.key.operation_id,
                 workspace: request.destination,
                 document: request.target.unwrap(),

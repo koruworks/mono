@@ -458,6 +458,7 @@ fn saved_from(chain: DecisionChain, answer_before: Option<i64>) -> Saved {
             request_fingerprint: request.request_fingerprint,
             observation: NativeResultObservation::Durable {
                 evidence: NativeResultReference {
+                    version_id: None,
                     operation_id: binding.operation_id,
                     workspace: binding.workspace,
                     document: binding.target,

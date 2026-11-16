@@ -183,6 +183,8 @@ pub enum StepKind {
         discovered: bool,
     },
     ControlReturned,
+    /// A Bot Run asked other Bots and waits for them (M6). No fields.
+    WaitingForBot,
     ArtifactRegistered,
     Completed,
     Failed {
@@ -395,6 +397,7 @@ fn entry_is_content_free(entry: &TimelineEntry) {
         | StepKind::AttachmentRejected
         | StepKind::ChildSessionDetected
         | StepKind::ControlReturned
+        | StepKind::WaitingForBot
         | StepKind::ArtifactRegistered
         | StepKind::Completed => {}
         StepKind::TurnStarted { originator } => check(originator),

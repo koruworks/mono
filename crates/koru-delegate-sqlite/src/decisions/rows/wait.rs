@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
-const FIELDS: &[(&str, &str, usize, bool)] = &[
+pub(super) const FIELDS: &[(&str, &str, usize, bool)] = &[
     ("wait_id", "text", 36, false),
     ("run_id", "text", 36, false),
     ("decision_id", "text", 36, true),
@@ -108,8 +108,16 @@ fn decode(row: &Row<'_>) -> Result<DecisionWaitRecord, BotLedgerError> {
         ("capacity", None) => BotWaitReason::Capacity {},
         ("native_expired", None) => BotWaitReason::NativeExpired {},
         ("overlapping_prompt", None) => BotWaitReason::OverlappingPrompt {},
+        ("child", None) => BotWaitReason::Child {},
         _ => return Err(corrupt(c.table, "reason")),
     };
+    // The enrollment columns are decoded by reason. A child wait holds the
+    // child shapes, which its own decoder validates; the generic record keeps
+    // no decision-typed enrollment for it.
+    let child = reason == BotWaitReason::Child {};
+    if child {
+        super::child::decode(row)?;
+    }
     let record = DecisionWaitRecord {
         wait: c.id("wait_id")?,
         origin,
@@ -117,8 +125,16 @@ fn decode(row: &Row<'_>) -> Result<DecisionWaitRecord, BotLedgerError> {
         phase: c.id("phase")?,
         revision: c.revision("revision")?,
         observed_sequence: c.get("observed_sequence")?,
-        enrollment_request: c.optional_json("ai_enrollment_request_json")?,
-        enrollment: c.optional_json("ai_cleanup_receipt_json")?,
+        enrollment_request: if child {
+            None
+        } else {
+            c.optional_json("ai_enrollment_request_json")?
+        },
+        enrollment: if child {
+            None
+        } else {
+            c.optional_json("ai_cleanup_receipt_json")?
+        },
         release: c.optional_json("release_evidence_json")?,
         cleanup: c.optional_json("cleanup_evidence_json")?,
         created_at_ms: c.get("created_at_ms")?,
@@ -229,49 +245,75 @@ pub(in crate::decisions) fn correlate_release(
     conn: &Connection,
     wait: &DecisionWaitRecord,
 ) -> Result<(), BotLedgerError> {
+    correlate_release_parts(
+        conn,
+        &wait.origin,
+        wait.wait,
+        wait.release.as_ref(),
+        wait.enrollment_request
+            .as_ref()
+            .map(|request| request.key.receipt_digest),
+        wait.enrollment.is_some(),
+        BotWaitCleanupCause::DecisionWaitCleanup,
+    )
+}
+
+/// The one release correlation, for a decision wait and for a child wait:
+/// `digest` is the frozen enrollment intent's, `enrolled` whether the AI
+/// owner's receipt is retained, `expected_cause` the reason's own cause.
+pub(super) fn correlate_release_parts(
+    conn: &Connection,
+    origin: &DecisionFence,
+    id: BotWaitId,
+    release: Option<&OriginWaitStop>,
+    digest: Option<DecisionDigest>,
+    enrolled: bool,
+    expected_cause: BotWaitCleanupCause,
+) -> Result<(), BotLedgerError> {
     let bad = || corrupt("bot_wait_runtime", "release_evidence");
-    let original = authority::attempt(conn, &wait.origin)?;
-    if let Some(release) = &wait.release {
+    let original = authority::attempt(conn, origin)?;
+    if let Some(release) = release {
         let OriginWaitStop::Confirmed {
             origin_fence,
             wait_id,
             intent_digest,
             enrollment_digest,
+            cause,
             creation_retirement,
             native_drain,
-            ..
         } = release
         else {
             return Err(bad());
         };
-        let request = wait.enrollment_request.as_ref().ok_or_else(bad)?;
+        let digest = digest.ok_or_else(bad)?;
         let target = DecisionCleanupTarget::Origin {
-            fence: wait.origin,
+            fence: *origin,
             creation_key: original.provider_session.ok_or_else(bad)?.idempotency,
         };
         valid(native_drain).map_err(|_| bad())?;
-        if *origin_fence != wait.origin
-            || *wait_id != wait.wait
-            || *intent_digest != request.key.receipt_digest
-            || *enrollment_digest != request.key.receipt_digest
-            || wait.enrollment.is_none()
+        if origin_fence != origin
+            || *wait_id != id
+            || *intent_digest != digest
+            || *enrollment_digest != digest
+            || *cause != expected_cause
+            || !enrolled
             || !original.retired
             || !original.phase.is_terminal()
-            || original.provider_session.and_then(|p| p.session) != Some(wait.origin.session)
+            || original.provider_session.and_then(|p| p.session) != Some(origin.session)
             || original.host_instance != Some(creation_retirement.host)
             || !creation_retirement.matches_target(&target)
-            || native_drain.run != wait.origin.run
-            || native_drain.attempt != wait.origin.attempt
-            || native_drain.generation != wait.origin.generation
+            || native_drain.run != origin.run
+            || native_drain.attempt != origin.attempt
+            || native_drain.generation != origin.generation
             || native_drain
                 .effects
                 .as_slice()
                 .iter()
-                .any(|e| e.binding.user_scope != wait.origin.owner.user_scope)
+                .any(|e| e.binding.user_scope != origin.owner.user_scope)
         {
             return Err(bad());
         }
-        super::super::drain::correlate(conn, wait.origin.owner, wait.origin.bot, native_drain)?;
+        super::super::drain::correlate(conn, origin.owner, origin.bot, native_drain)?;
     }
     Ok(())
 }

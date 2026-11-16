@@ -126,6 +126,7 @@ pub fn bot_submission(n: u8) -> BotSubmission {
     };
     BotSubmission {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner: BotOwner {
                 user_scope: serde_json::from_value(serde_json::json!(fixture_uuid(0xf0)))

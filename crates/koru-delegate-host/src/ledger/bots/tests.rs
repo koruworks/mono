@@ -11,6 +11,7 @@ fn submission() -> BotSubmission {
     };
     BotSubmission {
         provenance: BotProvenance {
+            parent: None,
             routine: None,
             owner,
             bot: BotId::mint(),
@@ -505,5 +506,46 @@ fn actual_shared_ledger_retains_route_across_clones_without_run_or_session() {
             .routine_route(route.schedule)
             .unwrap(),
         Some(route)
+    );
+}
+
+/// Cohort `m6_sweeps_inert`: this owner forwards no child-request method yet,
+/// so each one answers the trait's refusing default and nothing is written,
+/// whatever the ledger underneath can do.
+#[test]
+fn m6_sweeps_inert_shared_owner_refuses_every_child_request_method() {
+    use koru_delegate_core::decisions::BotWaitId;
+    let mut shared = SharedLedger::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap());
+    let s = submission();
+    shared.bots().unwrap().admit_bot(&s).unwrap();
+    let (owner, bot, run) = (s.provenance.owner, s.provenance.bot, s.request.run);
+    let mut guard = shared.bots().unwrap();
+    let ledger: &mut dyn BotLedger = &mut *guard;
+    let fenced = BotLedgerError::Fenced;
+    assert_eq!(
+        ledger.read_child_requests(owner, run, 0),
+        Err(fenced.clone())
+    );
+    assert_eq!(ledger.child_request_of(owner, run, 0), Err(fenced.clone()));
+    assert_eq!(ledger.child_wait_execution(owner, run), Err(fenced.clone()));
+    assert_eq!(
+        ledger.read_bot_child_wait(owner, bot, run, BotWaitId::mint()),
+        Err(fenced.clone())
+    );
+    assert_eq!(
+        ledger.settle_child_requests(owner, DelegateBootId::mint(), &[]),
+        Err(fenced.clone())
+    );
+    assert_eq!(
+        ledger.fold_child_clocks(owner.device, DelegateBootId::mint(), 0, 0),
+        Err(fenced.clone())
+    );
+    assert_eq!(
+        ledger.child_resume_runs(owner.device, None, 16),
+        Err(fenced.clone())
+    );
+    assert_eq!(
+        ledger.child_acknowledged_continuation(owner, run),
+        Err(fenced)
     );
 }

@@ -219,7 +219,24 @@ fn decode(row: &Row<'_>) -> Result<NativeIntentRecord, BotLedgerError> {
 
     let verified = version
         .map(|version| {
+            // M6: the Store version this save produced, when it was retained.
+            // A frozen fixture of a schema before 12 has no such column;
+            // every database this build opens does.
+            let version_id = row
+                .as_ref()
+                .column_index("verified_version_id")
+                .ok()
+                .map(|_| cell::<Option<String>>(row, "verified_version_id"))
+                .transpose()?
+                .flatten()
+                .map(|stored| {
+                    koru_delegate_core::DocumentVersionId::parse(&stored)
+                        .filter(|id| id.to_storage() == stored)
+                        .ok_or_else(|| corrupt("verified_version_id"))
+                })
+                .transpose()?;
             Ok::<_, BotLedgerError>(NativeResultReference {
+                version_id,
                 operation_id: key.operation_id,
                 workspace: destination,
                 document: target,

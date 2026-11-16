@@ -80,6 +80,9 @@ pub enum DecisionControlAction {
         expected_wait_revision: DecisionRevision,
     },
     DecisionWaiting {},
+    /// M6: the Run asked other Bots. Marks it waiting and writes one step.
+    /// The existing `Resume` clears the marker; there is no settled action.
+    ChildWaiting {},
     DecisionResolved {
         outcome: crate::ApprovalOutcome,
     },
@@ -105,6 +108,7 @@ impl DecisionControlAction {
         match self {
             Self::Preserve {} | Self::CleanupRequested { .. } => (None, None),
             Self::DecisionWaiting {} => (Some(E::ApprovalRequired), Some(S::ApprovalRequired)),
+            Self::ChildWaiting {} => (Some(E::WaitingForBot), Some(S::WaitingForBot)),
             Self::DecisionResolved { outcome } => (
                 Some(E::ApprovalResolved),
                 Some(S::ApprovalResolved { outcome }),
@@ -323,7 +327,8 @@ impl RunProjectionTargetV1 {
                     None,
                     BotWaitReason::Capacity {}
                     | BotWaitReason::NativeExpired {}
-                    | BotWaitReason::OverlappingPrompt {},
+                    | BotWaitReason::OverlappingPrompt {}
+                    | BotWaitReason::Child {},
                 ) => {}
                 _ => return Err(DecisionError::Invalid),
             }
@@ -407,6 +412,19 @@ impl DecisionValidate for RunProjectionTargetV1 {
                 ..
             } => {
                 action.validate_effects(before, effects)?;
+                // The waiting marker belongs to a child wait and to nothing
+                // else; a child wait never carries a decision's actions.
+                require(match (action, reason) {
+                    (DecisionControlAction::ChildWaiting {}, reason) => {
+                        *reason == BotWaitReason::Child {} && disposition.is_none()
+                    }
+                    (
+                        DecisionControlAction::DecisionWaiting {}
+                        | DecisionControlAction::DecisionResolved { .. },
+                        BotWaitReason::Child {},
+                    ) => false,
+                    _ => true,
+                })?;
                 if let DecisionControlAction::CleanupRequested { cause, .. } = action {
                     let authorization = match cause {
                         DecisionClosureReason::Canceled
@@ -454,7 +472,8 @@ impl DecisionValidate for RunProjectionTargetV1 {
                             None,
                             BotWaitReason::Capacity {}
                             | BotWaitReason::NativeExpired {}
-                            | BotWaitReason::OverlappingPrompt {},
+                            | BotWaitReason::OverlappingPrompt {}
+                            | BotWaitReason::Child {},
                         ) => {}
                         _ => return Err(DecisionError::Invalid),
                     }

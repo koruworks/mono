@@ -10,7 +10,41 @@ pub(crate) fn retained_consumer_on(
     run: RunId,
     attempt: &crate::AttemptRow,
 ) -> Result<bool, BotLedgerError> {
-    Ok(consumer_record(conn, run, attempt)?.is_some())
+    Ok(consumer_record(conn, run, attempt)?.is_some()
+        || rows::child::consumer(conn, run, attempt)?.is_some())
+}
+
+/// Whether `turn` is an acknowledged input turn of exactly this attempt: the
+/// immutable first send, or the continuation of a recorded successor (of a
+/// decision, once that decision is settled, or of a child wait).
+pub(crate) fn acknowledged_turn_on(
+    conn: &Connection,
+    admitted: &crate::BotAdmissionRecord,
+    attempt: &crate::AttemptRow,
+    turn: AgentTurnId,
+) -> Result<bool, BotLedgerError> {
+    if admitted.initial_send.as_ref().is_some_and(|send| {
+        send.attempt == attempt.attempt
+            && send.generation == attempt.generation
+            && send.turn == Some(turn)
+    }) {
+        return Ok(true);
+    }
+    let Some(session) = attempt.provider_session.and_then(|key| key.session) else {
+        return Ok(false);
+    };
+    let p = &admitted.submission.provenance;
+    let run = admitted.submission.request.run;
+    Ok(rows::accepted_input(
+        conn,
+        p.owner,
+        p.bot,
+        run,
+        attempt.attempt,
+        attempt.generation,
+        session,
+        turn,
+    )? || rows::child::accepted_input(conn, run, attempt, session, turn)?)
 }
 
 /// Delivery history may name the exact recorded successor only once its
@@ -23,7 +57,10 @@ pub(crate) fn acknowledged_continuation_on(
     attempt: &crate::AttemptRow,
 ) -> Result<bool, BotLedgerError> {
     let Some(record) = consumer_record(conn, run, attempt)? else {
-        return Ok(false);
+        // M6: the recorded successor of a child wait, once its continuation
+        // input was acknowledged, is the Run's delivering attempt.
+        return Ok(rows::child::consumer(conn, run, attempt)?
+            .is_some_and(|(_, resume)| resume.accepted_turn().is_some()));
     };
     let resume = record.resume.as_ref().ok_or(BotLedgerError::Fenced)?;
     Ok(matches!(
@@ -122,6 +159,13 @@ pub(crate) fn fresh_activity_on(
     let Some(wait) = observation::execution(conn, owner, run)? else {
         return Ok(());
     };
+    // M6: a child wait has no decision, deadline or policy proof of its own.
+    // Its one reserved successor is the only attempt that may be active.
+    if wait.wait.reason == (BotWaitReason::Child {}) {
+        let child = rows::child::wait(conn, run, wait.wait.wait)?
+            .ok_or_else(|| corrupt("bot_wait_runtime", "reason"))?;
+        return crate::children::fresh_activity_on(conn, &child, attempt, generation);
+    }
     let expected = wait
         .expected
         .decision
@@ -174,14 +218,16 @@ pub(crate) fn fresh_native_input_on(
         .provider_session
         .and_then(|p| p.session)
         .ok_or(BotLedgerError::Fenced)?;
-    require(rows::accepted_input(
-        conn,
-        p.owner,
-        p.bot,
-        key.run,
-        key.attempt,
-        key.generation,
-        session,
-        key.turn,
-    )?)
+    require(
+        rows::accepted_input(
+            conn,
+            p.owner,
+            p.bot,
+            key.run,
+            key.attempt,
+            key.generation,
+            session,
+            key.turn,
+        )? || rows::child::accepted_input(conn, key.run, attempt, session, key.turn)?,
+    )
 }
