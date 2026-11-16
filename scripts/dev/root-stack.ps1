@@ -202,6 +202,7 @@ try {
     $Root = [System.IO.Path]::GetFullPath($Root)
     $agent = Join-Path $bin "koru-agent.exe"
     $app = Join-Path $bin "koru.exe"
+    $reader = Join-Path $bin "koru-read-worker.exe"
 
     # **One ask, because there is one process to ask.** The API Gateway and the
     # session host are roles of koru-agent.exe now, supervised children ended by
@@ -214,18 +215,19 @@ try {
     }
 
     if ($Action -eq "Open") {
-        if (-not (Test-Path -LiteralPath $agent)) {
-            throw "Koru Agent is not built; run koru.bat root `"$Root`" first"
+        if (-not (Test-Path -LiteralPath $agent) -or -not (Test-Path -LiteralPath $app)) {
+            throw "Koru is not built; run koru.bat root `"$Root`" first"
         }
         $status = Get-AgentStatus $agent $Root
-        if ($status -notmatch '(?m)^running, version ') {
-            throw "No Koru Agent is running for $Root; run koru.bat root `"$Root`" first"
+        if ($status -match '(?m)^running, version ') {
+            & $agent --root $Root open
+            if ($LASTEXITCODE -ne 0) {
+                throw "Koru Agent could not open the workspace window (exit $LASTEXITCODE)"
+            }
+            exit 0
         }
-        & $agent --root $Root open
-        if ($LASTEXITCODE -ne 0) {
-            throw "Koru Agent could not open the workspace window (exit $LASTEXITCODE)"
-        }
-        exit 0
+        # A rebuild must stop every root sharing this executable. Reopen a
+        # stopped root with the built binaries, without stopping its peers.
     }
 
     if ($Action -eq "Stop") {
@@ -275,22 +277,36 @@ try {
     }
     Use-SharedDevelopmentDictionaries $repo
     Write-Host "[Koru] isolated root: $Root"
-    # A window keeps the Gateway endpoint it discovered at launch. Leaving one
-    # alive while restarting Agent can make the newly spawned Koru hand its
-    # activation to that stale window; the new child then exits, Agent sees no
-    # owned window, and its supervised Gateway shuts down. Stop this worktree's
-    # debug Koru image before the services so the replacement window must
-    # discover the replacement Gateway. Other worktrees and installed builds
-    # have different executable paths and remain untouched.
-    & (Join-Path $PSScriptRoot "stop-exact-exe.ps1") -ExecutablePath @($app, $bridge)
-    Stop-RootServices
-    Start-Sleep -Seconds 1
+    if ($Action -eq "Start") {
+        # A window keeps the Gateway endpoint it discovered at launch. Leaving one
+        # alive while restarting Agent can make the newly spawned Koru hand its
+        # activation to that stale window; the new child then exits, Agent sees no
+        # owned window, and its supervised Gateway shuts down. Stop this worktree's
+        # debug Koru image before the services so the replacement window must
+        # discover the replacement Gateway. Other worktrees and installed builds
+        # have different executable paths and remain untouched.
+        & (Join-Path $PSScriptRoot "stop-exact-exe.ps1") -ExecutablePath @($app, $bridge)
+        Stop-RootServices
+        # Every root in this checkout shares these images. Stopping only $Root
+        # leaves other Agents, their Gateway/session roles and readers holding
+        # Windows executable locks. The exact-path helper waits for all of them
+        # to exit; installed Koru and other worktrees are outside its target set.
+        Write-Host "[Koru] stopping shared debug binaries across this checkout's roots before rebuilding"
+        & (Join-Path $PSScriptRoot "stop-exact-exe.ps1") -ExecutablePath @($app, $agent, $reader, $bridge)
 
-    # Agent hosts Gateway and session host. Runtime chats also launch the
-    # sibling MCP bridge, so it must match this build even without --mcp.
-    & cargo build --target-dir (Split-Path -Parent $bin) -p koru-agent -p koru -p koru-mcp
-    if ($LASTEXITCODE -ne 0) {
-        throw "the root stack did not build (close any Koru window using this debug binary and retry)"
+        # Agent hosts the gateway and session roles, but the Store's reader is a
+        # separate executable. Build it here too: a plain test build can have
+        # replaced it with one that cannot recognize pictures or scanned pages.
+        # Runtime chats also launch the sibling MCP bridge, so it must match
+        # this build even without --mcp.
+        # koru.bat has verified and extracted the shared ONNX Runtime archive.
+        if (-not $env:ORT_LIB_PATH) {
+            $env:ORT_LIB_PATH = Join-Path $repo "third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib"
+        }
+        & cargo build --target-dir (Split-Path -Parent $bin) -p koru-agent -p koru -p koru-mcp -p koru-read-worker --features koru-read-worker/recognition
+        if ($LASTEXITCODE -ne 0) {
+            throw "the root stack did not build (close any Koru window using this debug binary and retry)"
+        }
     }
 
     if ($RegisterMcp) {

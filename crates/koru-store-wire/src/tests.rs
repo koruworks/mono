@@ -426,3 +426,100 @@ fn a_documents_coverage_carries_counts_only() {
     assert_eq!(bare.synced, None);
     assert_eq!(bare.files, None);
 }
+
+// ------------------------------------------------------------------ search
+
+/// A search answer exactly as a store built before reading sends it: no
+/// `page` on any hit, no `reading` on the page.
+const SEARCH_ANSWER_BEFORE_READING: &str = r#"{
+  "page": {
+    "hits": [{
+      "workspace": "ws", "workspace_name": "Acme", "document": "doc",
+      "node": "node", "document_kind": "file", "mime": "application/pdf",
+      "kind": "file", "field": "title", "title": "Manual.pdf",
+      "breadcrumb": "Acme", "breadcrumb_spans": [], "snippet": "Manual.pdf",
+      "spans": [{ "start": 0, "end": 6 }], "lifecycle": "live",
+      "trashed_at": null, "trashed_by": null, "score": 12.5,
+      "observed_modified_at_ms": null, "workspace_last_used_at_ms": null
+    }],
+    "next_offset": null,
+    "updating_workspaces": [],
+    "request_seq": 4,
+    "corrected_query": null
+  }
+}"#;
+
+/// **An old search answer still parses.** The page on a hit and the reading
+/// counts on a page are additive: a newer client reading an older store gets
+/// `None` for both, which a surface draws as no prefix and no line.
+#[test]
+fn a_search_answer_from_before_reading_still_parses() {
+    let answer: search::SearchResponse =
+        serde_json::from_str(SEARCH_ANSWER_BEFORE_READING).unwrap();
+    assert_eq!(answer.page.hits.len(), 1);
+    assert_eq!(answer.page.hits[0].page, None);
+    assert_eq!(answer.page.reading, None);
+    assert_eq!(answer.page.request_seq, 4);
+}
+
+/// **And a store with nothing to say about reading sends the old bytes.** Both
+/// new fields are left out when absent, so an answer with no reading in it is
+/// the answer an older client already parses, key for key.
+#[test]
+fn an_answer_with_no_reading_in_it_is_the_old_shape() {
+    let answer: search::SearchResponse =
+        serde_json::from_str(SEARCH_ANSWER_BEFORE_READING).unwrap();
+    let sent = serde_json::to_value(&answer).unwrap();
+    let before: serde_json::Value = serde_json::from_str(SEARCH_ANSWER_BEFORE_READING).unwrap();
+    assert_eq!(sent, before);
+}
+
+/// The new names are the contract (TECHNICAL §10): `field::READ` is `read`,
+/// a hit carries `page`, and a page carries `reading` with its five counts.
+#[test]
+fn the_reading_fields_are_named_as_the_design_says() {
+    assert_eq!(search::field::READ, "read");
+
+    let mut answer: search::SearchResponse =
+        serde_json::from_str(SEARCH_ANSWER_BEFORE_READING).unwrap();
+    answer.page.hits[0].field = search::field::READ.into();
+    answer.page.hits[0].page = Some(3);
+    answer.page.reading = Some(search::ReadingCounts {
+        unread: 1_240,
+        total: 8_300,
+        needs_reader: 900,
+        not_here: 12,
+        offer: true,
+    });
+    let sent = serde_json::to_value(&answer).unwrap();
+    assert_eq!(sent["page"]["hits"][0]["page"], 3);
+    assert_eq!(sent["page"]["hits"][0]["field"], "read");
+    assert_eq!(
+        keys(&sent["page"]["reading"]),
+        ["needs_reader", "not_here", "offer", "total", "unread"]
+    );
+    let back: search::SearchResponse = serde_json::from_value(sent.clone()).unwrap();
+    assert_eq!(back, answer);
+
+    // An older client, which knows neither field, reads the newer answer: it
+    // is the old shape plus two keys it ignores.
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct OlderPage {
+        hits: Vec<OlderHit>,
+        next_offset: Option<usize>,
+        updating_workspaces: Vec<String>,
+        request_seq: u64,
+        corrected_query: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    #[allow(dead_code)]
+    struct OlderHit {
+        workspace: String,
+        field: String,
+        snippet: String,
+        score: f64,
+    }
+    let older: OlderPage = serde_json::from_value(sent["page"].clone()).unwrap();
+    assert_eq!(older.hits[0].field, "read");
+}

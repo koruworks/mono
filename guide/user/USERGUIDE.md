@@ -202,9 +202,10 @@ signed in as and whether it syncs. A signed-in Profile carries a **Cloud sync**
 switch; switch it on and that Profile's workspaces sync through Koru Cloud:
 another device of yours receives them even when this one is closed. The row
 says what is happening underneath — turning on, connecting, or syncing via Koru
-Cloud — in the same words as the Profile's own page, which has the same switch
-under *Sign-in and sync*. The switch is only live for a Profile of the account
-you are signed in to and only while that account has Cloud access; otherwise it
+Cloud. The Profile's own *Sign-in and sync* section offers **Sync off | P2P |
+Cloud** for the Profile and each Workspace. Cloud is only live for a Profile of
+the account you are signed in to and only while that account has Cloud access;
+otherwise it
 is shown dimmed with the reason. A Profile that belongs to your account but
 is not linked to the Google Account you are signed in with reads *Not linked
 to this sign-in*: after you unlink a Google Account from a Profile, that is
@@ -217,7 +218,13 @@ is not signed in says *Not
 signed in* and offers **Sign in…**, which opens that Profile's page at its
 *Sign-in and sync*.
 
-**A Profile you create or choose while signed in starts with Cloud sync on.**
+**Linked devices default to P2P; connected Profiles default to Cloud.**
+Linking your devices enables P2P for existing content still using the default
+setting as well as new content. A Profile or Workspace you explicitly set to
+Sync off remains off. Cloud mode also allows P2P transfers with linked devices,
+including files. These choices apply to this device; no files are removed.
+
+**A Profile connected to your Cloud account starts with Cloud sync on.**
 Sign in on a new computer and create your first Profile, choose one your
 account already has, or create another Profile for the account you are signed
 in to, and it syncs through Koru Cloud without the switch being touched and
@@ -225,9 +232,8 @@ without the question below. A Workspace you had switched off on another
 device stays off. It starts once the
 account's subscription is current; if you subscribe afterwards, it starts the
 next time the Koru Cloud page checks the subscription. Switch it off and it
-stays off. A Profile that was already on this computer before you connected it
-to an account is not switched on for you, because it may hold work you have
-not decided to send anywhere. This is on the desktop; a Profile created on a
+stays off. Existing connected Profiles also default to Cloud unless you have
+explicitly selected Sync off or P2P. This is on the desktop; a Profile created on a
 phone still waits for its switch.
 
 **The switch is all there is to it.** Switching Cloud sync on for a Profile
@@ -239,9 +245,13 @@ another device stays off until you switch it on. This switch is on the
 **desktop**; each device decides for itself, so switching this laptop on
 changes nothing on your phone.
 
-**Switching Cloud sync off** stops transfers on this device immediately —
-nothing waits for another device to notice. Nothing already on this device is
-removed, and your other devices keep their own setting.
+**Sync off** stops both peer and Cloud transfers on this device. **P2P** allows
+linked-device transfers without Cloud. Turning off the Koru Cloud page's switch
+selects P2P. A Workspace cannot select a mode above its Profile: choose Cloud
+for the Profile first to allow a Workspace to use it. Workspaces following the
+Profile keep following when its mode changes; direct Workspace choices remain
+exceptions unless the Profile is lowered below them. Nothing already on this
+device is removed, and your other devices keep their own setting.
 
 **How far a Profile has got.** A Profile whose Cloud sync is on has **Show
 sync progress** under its row on the Koru Cloud page. Open it and the row shows
@@ -956,6 +966,177 @@ through to `Ctrl+Alt+Space`, then `Ctrl+Shift+O`. **Whichever
 it ended up with is written beside *Search* in the agent's right-click menu** —
 that is the place to look, because a released Koru has no console to print it
 to. `Ctrl+P` always works while Koru is focused.
+
+### Words inside pictures, PDFs and text files
+
+The **Files** heading's **…** menu always offers **OCR Settings**, with **On**
+or **Off** once this computer's status is available. It opens Settings at
+**Recognize text and images in PDFs**, where you can turn recognition on or off.
+Opening this link does not change the setting or start a download.
+
+Any picture or PDF you put in Koru can be found by the words inside it, not
+only by its name — a photographed receipt called `IMG_2041.jpg`, a scanned
+contract, a screenshot pasted into a page. You do nothing to make a file
+findable: add it the way you always do, and search the way you always do.
+
+**Everything is read on this computer.** Nothing a file contains is sent
+anywhere to be read, and reading never needs a network. The words then travel
+with the workspace, to the devices it already goes to, so another computer
+finds the file too without reading it again — even before it has downloaded
+the file itself.
+
+**Some things are read straight away, with nothing to download**: a PDF that
+contains real text (most PDFs made by a program rather than a scanner), and a
+`.txt`, `.md`, `.csv` or `.html` file. They are usually findable a moment
+after they are added. An `.html` file is read without its markup.
+
+Some PDFs draw letters as shapes instead of storing text. Those pages need
+OCR too, even though they look like an ordinary typed document.
+
+**Pictures and scanned pages need a one-time download** of the part of Koru
+that reads them — about 26 MB, asked once per computer, and never downloaded
+without asking. Koru offers it where you are when it first matters:
+
+- **In search**, when the workspaces you are searching hold pictures or
+  scanned PDFs that have not been read. One quiet line sits below the results
+  — *"12 pictures and scanned PDFs can be found by the words in them.
+  One-time download, 26 MB."* — or, when the search found nothing, directly
+  below *No results*, saying they have not been read yet. It carries **Turn
+  on** and **Not now**. The number counts only the workspaces being searched.
+  The size is the real size of the download. `Tab` from the results reaches
+  the two buttons; `Enter` or `Space` presses one, and `Esc` leaves the line
+  without clearing your search.
+- **When an import finishes** and brought pictures or PDFs, its summary gains
+  the same line, with the same two buttons.
+
+Adding or pasting a single picture never interrupts you with a question.
+
+**Turn on** shows the download's progress, with **Stop**; if it stops or
+fails, **Try again** carries on from where it was. When it finishes, Koru reads
+the pictures and scanned pages already in your workspaces, smallest first, and
+then everything you add; a file you add now is read before an older backlog.
+Reading runs in a separate, low-priority program, so it stays out of the way
+of your typing.
+
+**Not now** is an answer Koru keeps: the line leaves search on this computer.
+It comes back once, after the next import that brings pictures or PDFs —
+adding or pasting files never brings it back. Until then a search for a word
+that is only in a scan simply finds nothing. You can turn reading on yourself
+at any time in **Settings → Editor → Recognize text and images in PDFs**, without
+waiting to be asked. If this computer is offline when the line would appear,
+it says that it *needs a one-time download* and that Koru will offer it when
+you are online.
+
+**What a result looks like.** A picture inside a document is a result for that
+document, as typed text would be. Its excerpt starts with a small muted picture
+mark, so words that were read are never mistaken for words somebody typed; the
+picture's name follows the mark only if you gave it one. A screen reader says
+*words read from a picture*. Picking the result opens the document, scrolls
+the picture into view, selects it and flashes its frame for about a second. A
+file is a result of its own, with its icon and name; a PDF of more than one
+page starts its excerpt with the page, *Page 3 · …*. Picking it switches
+Explore to **Files** with the file selected, as picking a file by its name
+does; open it and go to that page. Words read from a picture or a file rank
+below a matching title, heading or sentence somebody wrote.
+
+All the words of a search must be on the same page of a PDF, or in the same
+picture: `termination notice` does not find a PDF that says *termination* on
+page 2 and *notice* on page 39.
+
+**While a lot is being read** — after a large import, say — search finds what
+has been read already, and below the results it says how much is left:
+*"Still reading 1,240 of 8,300 pictures and PDFs."* A search that finds
+nothing in the meantime says that instead of *No results*, and adds *Results
+appear as they are read.* A scanned PDF becomes findable a few dozen pages at a
+time. Files whose contents are not on this computer — added on another device
+and not downloaded here — are not fetched only to be read; search and Settings
+say how many there are.
+
+**Long files.** The first 200 pages of a scanned PDF are read, and a PDF with
+real text up to 2,000 pages, so one very long scan never holds up everything
+else. A file that stopped at that limit offers **Read all pages** in its
+right-click menu under **Files**: the rest of that file is read, behind anything
+newly added, and the other devices find the later pages too.
+
+The Files menu offers **Re-scan** to recognize a picture or PDF again. A file
+that stopped at the page limit also offers **Read all pages** to continue the
+existing reading. **Read again** remains available for pictures in documents
+and failed items in Settings; it repeats automatic extraction.
+
+To investigate missing words, right-click one file in **Files** and choose
+**View extracted text**. It opens a tab named **ocr:filename**. Select and copy
+text in the tab, or choose **Refresh** to load the latest reading. Beside Edit
+and Refresh, **Save reading to file…** exports the generated reading and its
+per-page diagnostics to an `.ocr.txt` file. These options are available to
+everyone; no debug setting is required.
+
+In the text tab, choose **Edit**, fix the text, and **Save**. Corrections persist,
+sync with the workspace, and replace generated text in search. They apply to
+references to the same file bytes in that workspace. Re-scanning preserves them;
+**Reset to OCR** returns search to the latest generated text. Original files are
+unchanged. **Cancel** discards an unsaved draft. The tab keeps a draft open if a
+save fails and asks you to save or cancel before closing.
+
+If devices save different corrections while offline, both versions are retained.
+Use **Next saved version** to review them, then edit and save the version you want
+to keep. A stale save is refused; **Refresh** loads the current versions while
+keeping your draft. Saving after that resolves those versions with your draft.
+
+**Re-scan** renders and recognizes every PDF page, bypassing its embedded text
+layer and replacing the generated reading. Saved corrections survive. It is
+offered for supported pictures and PDFs when their
+bytes and an enabled reader are available here, with no request already waiting.
+The request survives restarting Koru. PDFs are processed in small windows,
+yielding to newly imported files between windows; memory and time limits still
+apply. Originals are unchanged. Decorative graphics can also trigger automatic
+OCR so that small screenshots and outlined letters beside typed text are read.
+Failed or timed-out pages are reported as failures, rather than empty pages.
+
+To repeat reading across the workspace, open the **Files** heading’s **…**
+menu and choose **Re-scan OCR for all files**. It queues every eligible file
+in that workspace, regardless of selection, and reports how many were queued,
+skipped or could not be queued. Reading continues in the background. Trashed
+files are excluded; identical files share one reading. Items already waiting,
+not available on this computer, or not offering **Read again** are skipped.
+This repeats automatic text extraction and OCR detection, using the same
+background windows as **Read again**. It does not force OCR. Re-scan is offered
+when OCR is available and on; **OCR Settings** remains visible in either state.
+
+**What is read, and what is not.** Pictures in PNG, JPEG, GIF, WebP, BMP and
+TIFF, inside documents or under **Files**; PDFs; and `.txt`, `.md`, `.csv` and
+`.html` files. The reader reads Latin-script languages, Chinese and Japanese.
+**Arabic and other scripts are not read yet**, and iPhone photos saved as HEIC
+are not read; those are found by their name. Handwriting is not promised:
+whatever is read of it is findable. A photograph with no words in it is simply
+read as having none — that is not an error. A password-protected or damaged
+file is found by its name only, and listed under *Could not be read*. Words
+that were misread show in the excerpt as they were read; they cannot be
+corrected by hand.
+
+**Settings → Editor → Recognize text and images in PDFs** is where reading lives on
+this computer. Before the download it reads *Not downloaded · 26 MB*, with
+**Turn on**. If that action is unavailable, the status explains why: download
+information is still pending, could not be retrieved or verified, the computer
+is offline, or this build has no supported reader. For unavailable download
+information, reopen Settings later to try again. Once it is on, it says how many
+items were read and how many
+could not be, and which languages and kinds of file are read. Below it are two
+lists:
+
+- **Could not be read**: each item with its reason, **Show** to go to where it
+  lives, and **Read again** where trying once more could help.
+- **Partly read**: files that stopped at the page limit, with how far each
+  got and **Read all pages**. A file leaves the list when it is finished.
+
+**Turn off** stops reading pictures and scanned pages and keeps the download:
+what was already read stays findable, PDFs with real text and text files are
+still read, and pictures added meanwhile wait. Nothing offers to turn it back
+on; **Turn on** in the same place does, with nothing to download again.
+**Remove** takes the download off this computer; what has already been read
+stays findable then too. On a computer where reading pictures is not
+available the row says so plainly, and why.
+
+Deleting a file permanently removes its words from search, on every device.
 
 The magnifying-glass status icon at the bottom right reports local indexing
 state; it uses the accent colour while work is queued, running, or needs
@@ -5242,8 +5423,9 @@ Type `/attach` (or use the `+` menu's Attachment row) to pick one or several
 files. Each becomes an attachment pill on the page and a row under Explore's
 **Files** mode. You can also type `@` and search for a file already in the
 workspace — or restrict the search with `file:` (files only) or `doc:` (pages
-only). Clicking an attachment pill opens it in the app the operating system
-associates with that type. Right-click it for **Open in app**, **Reveal in
+only). Clicking an image attachment pill opens Koru's image viewer; other
+files open in the app the operating system associates with that type.
+Right-click it for **Open in app**, **Reveal in
 File Explorer** (switches Explore to Files and scrolls to the row), **Save
 as…**, or **Remove** (deletes the pill from the page; the file stays in
 Files). If a file is in the Trash, the pill shows the same trashed treatment
@@ -5255,12 +5437,15 @@ The two icon buttons at the top of Explore switch between **Documents** and
 pills in their pages. File rows use the file's MIME type (and its extension for older
 entries) to distinguish PDFs, Office documents, Markdown, media, archives and
 source files at a glance. Files are listed newest first. Clicking selects a
-file; it does not open or save it. **Double-click** opens it in the app the
-operating system associates with that type — a shared web link opens in the
-browser. `Ctrl+click` toggles individual files, `Shift+click` selects a range,
-and a drag moves the whole selection just as it does in Documents. Right-click a
-selection and choose **Open in app** to use the operating system's associated
-application, **Rename…** (`F2`) to change the name, or **Save as…** to write
+file; it does not open or save it. **Double-click** opens an image in Koru's
+image viewer. Other files open in the app the operating system associates
+with that type — a shared web link opens in the browser.
+`Ctrl+click` toggles individual files, `Shift+click` selects a range,
+and a drag moves the whole selection just as it does in Documents. Following a
+file from search or **Show in Files** selects it normally: clicking another
+file replaces that selection, and `Ctrl+click` can clear it. Right-click a
+selection and choose **Open in app** to open it, **Rename…** (`F2`) to change
+the name, or **Save as…** to write
 another copy. With several files selected, **Open in
 app** opens every selected file and **Save as…** asks for one destination
 folder, then writes every selected file into it. With one file selected,
@@ -5268,6 +5453,19 @@ folder, then writes every selected file into it. With one file selected,
 and the import icon in the Files heading accept one or several arbitrary files
 through the same batch path as drag-and-drop. File bytes are copied into the
 workspace, so moving or deleting the original does not break the attachment.
+Opening an image search result opens the viewer directly, switches to Files,
+and selects that image. The viewer offers zoom, pan, fit, **Save as** and
+**Open in external app**. Escape closes it and leaves the file selected.
+GIFs use the shared viewer's still preview. Opening several selected files
+together continues to use their system applications.
+On Windows, you can also copy files in Explorer and paste them into Koru.
+Koru asks **Import the following files?** before importing anything. In an
+open document, choose **Attach to document** to add attachment links at the
+start of the document, or **Import as files only** to add them to Files.
+In Welcome, choose **Import**. **Cancel** or Escape leaves everything unchanged.
+The question previews up to three names and counts any additional files;
+your answer applies to the whole copied selection. Chat and terminal paste
+keep their own behavior.
 If the workspace already has a live file with the same BLAKE3 content hash,
 Koru keeps the existing row and reports that the file is already known instead
 of adding a duplicate. In a page, type `/attach` to pick a file and insert an

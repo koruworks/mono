@@ -1965,6 +1965,22 @@ pub trait Editing {
         if !self.reveal(id) {
             return false;
         }
+        // **A picture's result lands on the picture** (OCR EXPERIENCE §3):
+        // `reveal` has already selected it — an image is selected, never
+        // edited — and the words that matched were read from its pixels, so
+        // there is no text to find and light. The cue is its frame instead,
+        // flashed for the same deadline a matched sentence is lit for; the
+        // draw path outlines an image row whose node the flash names.
+        if self.body().row(id).is_some_and(|row| row.image.is_some()) {
+            let i = self.body().focus;
+            self.center_row_in_view(i);
+            self.view_mut().search_flash = Some(SearchFlash {
+                node: id,
+                range: 0..0,
+                until: Instant::now() + SEARCH_FLASH_DURATION,
+            });
+            return true;
+        }
         if match_text.is_empty() {
             let range = self
                 .body()
@@ -14994,6 +15010,40 @@ mod tests {
         assert_eq!(flash.node, id);
         assert_eq!(flash.range, 0.."Deep target".len());
         assert_eq!(ws.read(id).unwrap().content.as_text(), Some("Deep target"));
+    }
+
+    /// **A picture's result lands on the picture** (OCR Plan 2.5): selected,
+    /// not given a caret, and flashed on the sentence's own deadline — whatever
+    /// words matched, since they were read from its pixels and are not text
+    /// in the row.
+    #[test]
+    fn a_picture_result_selects_the_picture_and_flashes_its_frame() {
+        let (_ws, mut e) = editor_over_image();
+        let picture = e
+            .body
+            .rows
+            .iter()
+            .find(|row| row.image.is_some())
+            .map(|row| row.id)
+            .expect("an image row");
+        e.body.focus = 0;
+        let before = Instant::now();
+
+        assert!(e.reveal_search_match(picture, "pump"));
+
+        assert_eq!(
+            e.body.rows[e.body.focus].id, picture,
+            "the picture is selected"
+        );
+        assert!(e.view.active);
+        let flash = e.view.search_flash.as_ref().expect("the frame flashes");
+        assert_eq!(flash.node, picture);
+        assert_eq!(flash.range, 0..0, "no text range: the frame is the cue");
+        assert!(flash.until >= before + SEARCH_FLASH_DURATION);
+        // It ends on the same single deadline a sentence's flash ends on.
+        let deadline = e.search_flash_deadline().expect("deadline");
+        assert!(e.maintain_search_flash(deadline));
+        assert!(e.view.search_flash.is_none());
     }
 
     fn right(ws: &mut WorkspaceDoc, e: &mut Editor) {

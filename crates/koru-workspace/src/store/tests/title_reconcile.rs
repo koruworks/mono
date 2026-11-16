@@ -41,7 +41,10 @@ fn rename_before_creation_echo(deliver_on_first_tick: bool) {
         .add_document(
             explore::store_document(id),
             "Made next door",
-            "document",
+            // The page token the app registers. This fixture said "document",
+            // a token no build writes, which `explore::listed` showed only
+            // while it listed every kind it did not know.
+            koru_core::explore::KIND_DOCUMENT,
             None,
         )
         .unwrap();

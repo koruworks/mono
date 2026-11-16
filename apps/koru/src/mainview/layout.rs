@@ -971,11 +971,12 @@ impl MainView {
                 .iter_mut()
                 .enumerate()
                 .find_map(|(index, tab)| {
-                    if let TabView::Socials(view) = &mut tab.view {
-                        view.request_close().then_some((path.clone(), index))
-                    } else {
-                        None
-                    }
+                    let refused = match &mut tab.view {
+                        TabView::Socials(view) => view.request_close(),
+                        TabView::Ocr(view) => view.request_close(),
+                        _ => false,
+                    };
+                    refused.then_some((path.clone(), index))
                 })
         });
         if let Some((path, index)) = blocked {
@@ -994,14 +995,15 @@ impl MainView {
             .iter_mut()
             .enumerate()
             .find_map(|(index, tab)| {
-                if targets(index)
-                    && !tab.is_pinned()
-                    && let TabView::Socials(view) = &mut tab.view
-                {
-                    view.request_close().then_some(index)
-                } else {
-                    None
+                if !targets(index) || tab.is_pinned() {
+                    return None;
                 }
+                let refused = match &mut tab.view {
+                    TabView::Socials(view) => view.request_close(),
+                    TabView::Ocr(view) => view.request_close(),
+                    _ => false,
+                };
+                refused.then_some(index)
             });
         if let Some(index) = blocked {
             self.select(index);

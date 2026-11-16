@@ -474,6 +474,132 @@ fn a_cold_workspace_costs_nothing_until_its_sweep_lands() {
     assert!(first > 0, "it converged with no edit anywhere");
 }
 
+// ------------------------------------- documents carrying a changed reading
+
+/// **What turning changed readings into documents costs, and the plan it
+/// uses**, on a projection of the size `task_kind_sql`'s note names: about
+/// 170,000 nodes, a quarter of the tasks pictures or files with a blob each.
+///
+/// `Projections::documents_carrying` is the search index's targeted re-index
+/// when a reading lands (OCR TECHNICAL §7 "The index"). `nodes.blob` has no
+/// index, so the plan has to start from the workspace; the unit test
+/// `documents_carrying_starts_from_the_workspace_and_never_scans_nodes` pins
+/// that shape on the real statement, and this prints it on a full corpus,
+/// times it, and then times the same question with the partial index on
+/// `nodes(blob)` that would make it proportional to the matches instead — so
+/// whoever decides whether that index is worth a schema change has both
+/// numbers. The index is created on this test's own database only.
+#[test]
+#[ignore = "a baseline run: cargo test --release -p koru-projection --test perf -- --ignored"]
+fn documents_carrying_a_changed_reading_at_170k_nodes() {
+    println!("\n documents_carrying @ ~170,000 nodes");
+    let name = koru_sqlite::MemoryName::fresh("documents-carrying");
+    let mut p = Projections::in_named_memory(&name).expect("an in-memory read model");
+    let corpus = TaskCorpus {
+        seed: SEED,
+        workspaces: 3,
+        cold_workspaces: 0,
+        documents: 300,
+        tasks: 20_000,
+        other_rows: 150_000,
+    }
+    .plan();
+    corpus.write_into(&mut p, 1).expect("write the corpus");
+    let side = koru_sqlite::open_memory(&name).expect("a second connection");
+    let count = |sql: &str| -> i64 { side.query_row(sql, [], |r| r.get(0)).expect("count") };
+    println!(
+        "  nodes={} with a blob={} documents={}",
+        count("SELECT COUNT(*) FROM nodes"),
+        count("SELECT COUNT(*) FROM nodes WHERE blob IS NOT NULL"),
+        count("SELECT COUNT(*) FROM documents"),
+    );
+
+    let workspace = corpus.warm().next().expect("a workspace");
+    let hashes_of = |n: usize| -> Vec<String> {
+        corpus
+            .tasks()
+            .filter(|t| t.workspace == workspace.id && matches!(t.kind, "image" | "file"))
+            .take(n)
+            .map(|t| format!("blob-{}", t.node))
+            .collect()
+    };
+
+    // The statement as `documents_carrying_sql` writes it, for one hash.
+    let shipped = "SELECT DISTINCT n.document_id
+                     FROM documents d
+                     JOIN nodes n ON n.document_id = d.document_id
+                    WHERE d.workspace_id = ?1
+                      AND +n.blob IN (?2)
+                      AND n.in_trash = 0";
+    // The statement for `n` hashes, and its plan with `n` placeholders bound.
+    let widen =
+        |sql: &str, n: usize| sql.replace("IN (?2)", &format!("IN ({})", vec!["?"; n].join(", ")));
+    let plan = |sql: &str, n: usize| -> String {
+        let parameters =
+            std::iter::once(workspace.id.to_storage()).chain((0..n).map(|i| format!("blob-{i}")));
+        side.prepare(&format!("EXPLAIN QUERY PLAN {}", widen(sql, n)))
+            .expect("explain")
+            .query_map(rusqlite::params_from_iter(parameters), |r| {
+                r.get::<_, String>(3)
+            })
+            .expect("plan")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("plan rows")
+            .join(" | ")
+    };
+
+    for n in [1usize, 50, 500] {
+        let shipped_plan = plan(shipped, n);
+        println!("  plan, {n} hash(es): {shipped_plan}");
+        assert!(
+            !shipped_plan.contains("SCAN n"),
+            "the shipped statement scans nodes: {shipped_plan}"
+        );
+        let hashes = hashes_of(n);
+        let (bench, documents) = Bench::of(|| {
+            p.documents_carrying(workspace.id, &hashes)
+                .expect("documents")
+                .len()
+        });
+        report(
+            &format!("documents_carrying, {n} hash(es)"),
+            &bench,
+            documents,
+        );
+    }
+
+    // **What an index would buy**, measured rather than argued. Partial, so it
+    // holds only the nodes that have a blob. No `ANALYZE`: the shipped
+    // databases carry no statistics, and neither does this comparison.
+    side.execute_batch("CREATE INDEX nodes_blob ON nodes(blob) WHERE blob IS NOT NULL;")
+        .expect("the candidate index");
+    let indexed = "SELECT DISTINCT n.document_id
+                     FROM nodes n
+                     JOIN documents d ON d.document_id = n.document_id
+                    WHERE d.workspace_id = ?1
+                      AND n.blob IN (?2)
+                      AND n.in_trash = 0";
+    for n in [1usize, 50, 500] {
+        println!(
+            "  with nodes_blob, plan, {n} hash(es): {}",
+            plan(indexed, n)
+        );
+        let hashes = hashes_of(n);
+        let sql = widen(indexed, hashes.len());
+        let (bench, documents) = Bench::of(|| {
+            let mut statement = side.prepare_cached(&sql).expect("prepare");
+            let parameters = std::iter::once(workspace.id.to_storage()).chain(hashes.clone());
+            statement
+                .query_map(rusqlite::params_from_iter(parameters), |r| {
+                    r.get::<_, String>(0)
+                })
+                .expect("query")
+                .count()
+        });
+        report(&format!("with nodes_blob, {n} hash(es)"), &bench, documents);
+    }
+}
+
 // ------------------------------------------------- (b) the projection walk
 
 /// **The walk is what one edit costs**, and it is linear in the document.

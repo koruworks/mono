@@ -9,6 +9,8 @@ use crate::account::cloud_sync::{
     CLOUD_SYNC_UNAVAILABLE, CloudSyncPort, DeviceCloudSync, STATE_VERSION,
 };
 use koru_account_core::WorkspaceId;
+use koru_account_core::workspace_authorization::Region;
+use koru_account_core::workspace_lifecycle::WorkspaceActivationChallenge;
 use koru_account_wire::{
     BeginWorkspaceCloudActivationRequestV1, CloudWorkspaceCandidateKindV1,
     CloudWorkspaceCandidateV1, CloudWorkspacePageV1, CompleteWorkspaceCloudActivationRequestV1,
@@ -31,6 +33,7 @@ struct FakePort {
     /// Whether this host starts a created Profile's Cloud sync on — the
     /// desktop does, and a host that cannot open its Store does not.
     starts_on: AtomicBool,
+    connected_starts_on: AtomicBool,
     /// The Store cannot be reached, so it cannot be opened to Cloud.
     closed: AtomicBool,
     /// Every Profile the Store was opened to Cloud for, in order.
@@ -71,6 +74,9 @@ impl CloudSyncPort for FakePort {
     fn starts_created_profiles_on(&self) -> bool {
         self.starts_on.load(Ordering::Acquire)
     }
+    fn starts_connected_profiles_on(&self) -> bool {
+        self.connected_starts_on.load(Ordering::Acquire)
+    }
     fn open_to_cloud(&self, profile: ProfileId) -> Result<(), ServiceError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(ServiceError::retryable("store_unavailable"));
@@ -101,6 +107,13 @@ struct HostedAccount {
     /// Workspaces must survive.
     unauthorized: BTreeSet<WorkspaceId>,
     challenges: Mutex<BTreeMap<uuid::Uuid, WorkspaceId>>,
+    /// The account the session belongs to; the fixture fills it in.
+    account: Option<KoruIdentityId>,
+    /// A service that is not honest: given the transcript an honest one
+    /// would send, the bytes this one sends to be signed instead.
+    forge: Option<Forge>,
+    /// The bytes each challenge asked the device to sign.
+    asked_to_sign: Mutex<BTreeMap<uuid::Uuid, Vec<u8>>>,
     paths: Mutex<Vec<String>>,
     minted: AtomicUsize,
     /// Whether the account has Koru Cloud.
@@ -108,7 +121,25 @@ struct HostedAccount {
     complimentary: AtomicBool,
 }
 
+type Forge = Box<dyn Fn(WorkspaceActivationChallenge) -> Vec<u8> + Send + Sync>;
+
+/// When every challenge this account issues expires, on its own clock.
+const CHALLENGE_EXPIRES_AT_MILLIS: i64 = 9_000_000;
+
 impl HostedAccount {
+    fn begins(&self) -> usize {
+        self.calls()
+            .iter()
+            .filter(|path| path.ends_with("/cloud/activation"))
+            .count()
+    }
+    /// The only way a device signature leaves the device.
+    fn completions(&self) -> usize {
+        self.calls()
+            .iter()
+            .filter(|path| path.ends_with("/cloud/activation/complete"))
+            .count()
+    }
     fn calls(&self) -> Vec<String> {
         self.paths.lock().unwrap().clone()
     }
@@ -293,18 +324,61 @@ impl Transport for HostedAccount {
                 .lock()
                 .unwrap()
                 .insert(challenge_id, workspace);
+            // What the hosted service writes: every field of the request
+            // and of the session it arrived on, in the transcript's layout.
+            let honest = WorkspaceActivationChallenge {
+                version: 1,
+                challenge_id,
+                operation_id: body.operation_id,
+                workspace_id: workspace,
+                region: Region::Us,
+                owner_profile_id: body.owner_profile_id,
+                owner_account_id: self.account.expect("the fixture names the account"),
+                device_id: signed_descriptor().device_id,
+                session_id: restored().session_id.parse().unwrap(),
+                issuer: "https://us.api.example.test".into(),
+                registered_device_signing_public_key: DeviceSigningKey::from_secret_bytes([42; 32])
+                    .public_key(),
+                expected_authorization_version: body.expected_authorization_version,
+                expected_profile_lifecycle_revision: 0,
+                nonce: [8; 32],
+                issued_at_millis: CHALLENGE_EXPIRES_AT_MILLIS - 300_000,
+                expires_at_millis: CHALLENGE_EXPIRES_AT_MILLIS,
+                consumed_at_millis: None,
+            };
+            let signing_bytes = match &self.forge {
+                Some(forge) => forge(honest),
+                None => honest.signing_bytes(),
+            };
+            self.asked_to_sign
+                .lock()
+                .unwrap()
+                .insert(challenge_id, signing_bytes.clone());
             return Self::json(&WorkspaceCloudActivationChallengeV1 {
                 version: Version1,
                 challenge_id,
                 workspace_id: workspace,
-                signing_bytes: workspace.as_uuid().as_bytes().to_vec(),
-                expires_at_millis: 9_000_000,
+                signing_bytes,
+                expires_at_millis: CHALLENGE_EXPIRES_AT_MILLIS,
             });
         }
         if path.ends_with("/cloud/activation/complete") {
             let body: CompleteWorkspaceCloudActivationRequestV1 =
                 serde_json::from_slice(&request.body).unwrap();
-            assert_eq!(body.signature.len(), 64, "the device signature is ed25519");
+            let signature: [u8; 64] = body
+                .signature
+                .as_slice()
+                .try_into()
+                .expect("the device signature is ed25519");
+            assert!(
+                DeviceSigningKey::from_secret_bytes([42; 32])
+                    .public_key()
+                    .verify_message(
+                        &self.asked_to_sign.lock().unwrap()[&body.challenge_id],
+                        koru_device::SignatureBytes::from_bytes(signature),
+                    ),
+                "the signature is the device's, over the challenge it was sent"
+            );
             let workspace = self.challenges.lock().unwrap()[&body.challenge_id];
             let mut rows = self.rows.lock().unwrap();
             let previous = rows.get(&workspace).copied();
@@ -362,9 +436,10 @@ fn restored() -> SessionCredential {
     .unwrap()
 }
 
-fn fixture(hosted: HostedAccount, workspaces: Vec<(ProfileId, WorkspaceId)>) -> Fixture {
+fn fixture(mut hosted: HostedAccount, workspaces: Vec<(ProfileId, WorkspaceId)>) -> Fixture {
     let profile = hosted.profile.expect("the fixture account owns a Profile");
     let account = KoruIdentityId::mint();
+    hosted.account = Some(account);
     let hosted = Arc::new(hosted);
     let port = FakePort::with(workspaces);
     let inventory = koru_store_wire::ProfileLifecycleInventory {
@@ -387,6 +462,7 @@ fn fixture(hosted: HostedAccount, workspaces: Vec<(ProfileId, WorkspaceId)>) -> 
         account,
         auth_identity: "30000000-0000-4000-8000-000000000001".parse().unwrap(),
     });
+    service.durable_session_id = Some(restored().session_id.clone());
     Fixture {
         service,
         hosted,
@@ -850,6 +926,43 @@ fn a_new_account_profile() -> HostedAccount {
     }
 }
 
+#[test]
+fn sync_modes_connected_existing_profile_starts_cloud_without_creation_flag() {
+    let hosted = a_new_account_profile();
+    let profile = hosted.profile.unwrap();
+    hosted.subscribed.store(true, Ordering::Release);
+    let mut fixture = fixture(hosted, workspaces(profile, 1));
+    fixture.port.starts_on.store(true, Ordering::Release);
+    fixture
+        .port
+        .connected_starts_on
+        .store(true, Ordering::Release);
+    let first = fixture.inspect().unwrap();
+    assert!(first[0].enabled);
+    assert_eq!(fixture.port.opened(), vec![profile]);
+    let mutations = fixture.hosted.lifecycle_calls();
+    fixture.inspect().unwrap();
+    assert_eq!(fixture.hosted.lifecycle_calls(), mutations);
+}
+
+#[test]
+fn sync_modes_connected_cloud_default_waits_for_store_admission() {
+    let hosted = a_new_account_profile();
+    let profile = hosted.profile.unwrap();
+    hosted.subscribed.store(true, Ordering::Release);
+    let mut fixture = fixture(hosted, workspaces(profile, 1));
+    fixture.port.starts_on.store(true, Ordering::Release);
+    fixture
+        .port
+        .connected_starts_on
+        .store(true, Ordering::Release);
+    fixture.port.closed.store(true, Ordering::Release);
+    fixture.inspect().unwrap();
+    assert!(fixture.port.opened().is_empty());
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+    assert!(!remembered(&fixture).enabled);
+}
+
 fn remembered(fixture: &Fixture) -> crate::account::cloud_sync::ProfileCloudSync {
     fixture
         .port
@@ -1176,4 +1289,258 @@ fn a_profile_already_on_is_opened_by_the_next_pass() {
         0,
         "it is already on: nothing to decide"
     );
+}
+
+// ----- the device reads an activation before it signs it ------------------
+
+/// Turn Cloud sync on against a service that sends `forge`'s bytes to sign,
+/// and return the code recorded for the one Workspace.
+fn refused(forge: Forge) -> (Fixture, Option<String>) {
+    let profile = ProfileId::new();
+    let local = workspaces(profile, 1);
+    let mut fixture = fixture(
+        HostedAccount {
+            profile: Some(profile),
+            forge: Some(forge),
+            ..Default::default()
+        },
+        local.clone(),
+    );
+    let rows = fixture.set(true).unwrap();
+    assert_eq!(rows[0].synced_workspaces, 0);
+    let saved = fixture.port.saved();
+    let code = saved.accounts.values().next().unwrap().profiles[&profile].workspaces[&local[0].1]
+        .error
+        .clone();
+    (fixture, code)
+}
+
+#[test]
+fn an_activation_that_is_not_the_one_asked_for_is_never_signed() {
+    let forgeries: Vec<(&str, Forge)> = vec![
+        (
+            "another workspace",
+            Box::new(|mut c| {
+                c.workspace_id = WorkspaceId::from_uuid(uuid::Uuid::from_u128(0xbad));
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another operation",
+            Box::new(|mut c| {
+                c.operation_id = uuid::Uuid::from_u128(0xbad);
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another challenge",
+            Box::new(|mut c| {
+                c.challenge_id = uuid::Uuid::from_u128(0xbad);
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another profile",
+            Box::new(|mut c| {
+                c.owner_profile_id = ProfileId::new();
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another version",
+            Box::new(|mut c| {
+                c.expected_authorization_version += 1;
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another device",
+            Box::new(|mut c| {
+                c.device_id = DeviceId::from_uuid(uuid::Uuid::from_u128(0xbad));
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another device's key",
+            Box::new(|mut c| {
+                c.registered_device_signing_public_key =
+                    DeviceSigningKey::from_secret_bytes([9; 32]).public_key();
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another account",
+            Box::new(|mut c| {
+                c.owner_account_id = KoruIdentityId::mint();
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "another session",
+            Box::new(|mut c| {
+                c.session_id = "20000000-0000-4000-8000-000000000009".parse().unwrap();
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "no issuer",
+            Box::new(|mut c| {
+                c.issuer.clear();
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "an expiry the envelope does not state",
+            Box::new(|mut c| {
+                c.expires_at_millis += 1;
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "issued when it expires",
+            Box::new(|mut c| {
+                c.issued_at_millis = c.expires_at_millis;
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "a lifetime of days",
+            Box::new(|mut c| {
+                c.issued_at_millis = c.expires_at_millis - 3 * 24 * 60 * 60 * 1000;
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "a lifetime that overflows",
+            Box::new(|mut c| {
+                c.issued_at_millis = i64::MIN;
+                c.signing_bytes()
+            }),
+        ),
+        (
+            "one trailing byte",
+            Box::new(|c| {
+                let mut bytes = c.signing_bytes();
+                bytes.push(0);
+                bytes
+            }),
+        ),
+        (
+            "one byte short",
+            Box::new(|c| {
+                let mut bytes = c.signing_bytes();
+                bytes.pop();
+                bytes
+            }),
+        ),
+        ("nothing", Box::new(|_| Vec::new())),
+        (
+            "bytes with no layout at all",
+            Box::new(|c| c.workspace_id.as_uuid().as_bytes().to_vec()),
+        ),
+    ];
+    for (what, forge) in forgeries {
+        let (fixture, code) = refused(forge);
+        assert_eq!(
+            code.as_deref(),
+            Some("workspace_activation_unverified"),
+            "{what}"
+        );
+        assert_eq!(fixture.hosted.begins(), 1, "{what}");
+        assert_eq!(fixture.hosted.completions(), 0, "{what}: a signature left");
+        assert!(fixture.hosted.rows.lock().unwrap().is_empty(), "{what}");
+    }
+}
+
+/// Every other message a device key signs starts with its own domain. A
+/// service that sends one of those — whatever follows the domain — gets no
+/// signature, because none of them is an activation transcript.
+#[test]
+fn a_message_of_another_signed_format_is_never_signed() {
+    const ACTIVATION: &[u8] = b"koru/cloud/workspace-activation/v1\0";
+    const OTHER_DOMAINS: &[&[u8]] = &[
+        b"koru/account/device-ownership/v1\0",
+        b"koru/cloud/lease-operation/v1\0",
+        b"koru/cloud-sync/client-finish/v1\0",
+        b"koru:pairing-transcript:v1\0",
+        b"koru:enrollment-transcript:v1\0",
+        b"koru:wek-grant-signature:v1\0",
+        b"koru:profile-grant:v1\0",
+        b"koru:profile-lifecycle:v1\0",
+        b"koru:trust-relationship:v1\0",
+        b"koru:all-data-grant:v1\0",
+        b"koru:device-name:v1\0",
+        b"koru:device-build:v1\0",
+        b"koru:revocation:v1\0",
+        b"koru:endpoint-binding:v1\0",
+        b"koru:endpoint-binding-record:v1\0",
+    ];
+    for domain in OTHER_DOMAINS {
+        // The other format's domain in front of an otherwise honest body, so
+        // the only thing wrong with the bytes is what they claim to be.
+        let (fixture, code) = refused(Box::new(move |c| {
+            let honest = c.signing_bytes();
+            [*domain, &honest[ACTIVATION.len()..]].concat()
+        }));
+        let name = String::from_utf8_lossy(domain);
+        assert_eq!(
+            code.as_deref(),
+            Some("workspace_activation_unverified"),
+            "{name}"
+        );
+        assert_eq!(fixture.hosted.completions(), 0, "{name}: a signature left");
+    }
+}
+
+/// The first begin is refused as stale, so the challenge that is answered
+/// belongs to the second one. It must repeat *that* operation: a service
+/// answering the retry with a forgery gets no signature either.
+#[test]
+fn the_retry_after_a_version_mismatch_is_read_before_it_is_signed() {
+    let profile = ProfileId::new();
+    let local = workspaces(profile, 1);
+    let stale = |forge: Option<Forge>| {
+        let fixture = fixture(
+            HostedAccount {
+                profile: Some(profile),
+                forge,
+                ..Default::default()
+            },
+            local.clone(),
+        );
+        // Off elsewhere at a version this device has never seen, while it
+        // remembers having read the row when there was none.
+        fixture.hosted.enabled_elsewhere(local[0].1);
+        fixture.hosted.disabled_elsewhere(local[0].1);
+        let account = fixture.service.durable_owner.unwrap().account;
+        let mut state = DeviceCloudSync::default();
+        state
+            .accounts
+            .entry(account.to_string())
+            .or_default()
+            .profiles
+            .entry(profile)
+            .or_default()
+            .workspaces
+            .entry(local[0].1)
+            .or_default()
+            .observed = true;
+        fixture.port.store(&state).unwrap();
+        fixture
+    };
+
+    let mut honest = stale(None);
+    let rows = honest.set(true).unwrap();
+    assert_eq!(rows[0].synced_workspaces, 1);
+    assert_eq!(honest.hosted.begins(), 2, "the first begin was stale");
+    assert_eq!(honest.hosted.completions(), 1);
+
+    let mut forged = stale(Some(Box::new(|mut c| {
+        c.operation_id = uuid::Uuid::from_u128(0xbad);
+        c.signing_bytes()
+    })));
+    let rows = forged.set(true).unwrap();
+    assert_eq!(rows[0].synced_workspaces, 0);
+    assert_eq!(forged.hosted.begins(), 2);
+    assert_eq!(forged.hosted.completions(), 0);
 }

@@ -327,3 +327,129 @@ fn duplicate_file_message_and_action_fit_on_one_line() {
         "action is before close"
     );
 }
+
+// ------------------------------------------------- a line under the message
+
+const LINE: &str = "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer. One-time download, 24 MB.";
+
+fn summary(now: Instant) -> Toast {
+    Toast::new("Import succeeded.".into(), Some("View Notebook"), now)
+        .with_line(LINE.into(), vec!["Turn on", "Not now"])
+}
+
+/// **The line sits under the message, inside the chip**, its answers after
+/// its sentence and before nothing else; the message's own action is where it
+/// was; each answer is pressable exactly where it is drawn, and a press on it
+/// is the line's, not the action's.
+#[test]
+fn a_line_sits_under_the_message_and_its_answers_hit_test() {
+    let mut e = engine();
+    let t = summary(Instant::now());
+    let r = t.rect(&mut e, OVER, 600.0);
+    let action = t.action_rect(&mut e, OVER, 600.0).expect("View Notebook");
+    let answers = t.line_rects(&mut e, OVER, 600.0);
+    assert_eq!(answers.len(), 2);
+    assert_eq!(r.w, MAX_W, "a toast with a line takes the room it may");
+    assert!(r.h > H_MIN, "two paragraphs are taller than one line");
+    for answer in &answers {
+        assert!(
+            answer.y > action.y + action.h,
+            "under the message: {answer:?}"
+        );
+        assert!(
+            answer.x >= r.x && answer.x + answer.w <= r.x + r.w,
+            "{answer:?} in {r:?}"
+        );
+        assert!(answer.y + answer.h <= r.y + r.h, "{answer:?} in {r:?}");
+    }
+    assert!(
+        answers[1].x > answers[0].x + answers[0].w,
+        "Not now after Turn on"
+    );
+    for (index, answer) in answers.iter().enumerate() {
+        let (x, y) = answer.centre();
+        assert_eq!(t.line_action_at(&mut e, OVER, 600.0, x, y), Some(index));
+        let mut pressed = summary(Instant::now());
+        assert_eq!(
+            pressed.mouse_down(&mut e, OVER, 600.0, x, y),
+            Outcome::Miss,
+            "the action and the close box are not under it"
+        );
+    }
+    let (x, y) = action.centre();
+    assert_eq!(t.line_action_at(&mut e, OVER, 600.0, x, y), None);
+}
+
+/// **The keyboard on the line holds the chip**, as the pointer does, and an
+/// index past the answers is no focus at all.
+#[test]
+fn the_keyboard_on_the_line_holds_the_chip() {
+    let t0 = Instant::now();
+    let mut t = summary(t0);
+    t.set_line_focus(Some(1));
+    assert_eq!(t.line_focus(), Some(1));
+    assert_eq!(
+        t.alpha(t0 + HOLD + FADE * 2),
+        Some(1.0),
+        "held while answered"
+    );
+    assert!(!t.animating(t0 + HOLD + FADE / 2));
+    t.set_line_focus(Some(2));
+    assert_eq!(t.line_focus(), None, "there is no third answer");
+    assert_eq!(t.alpha(t0 + HOLD + FADE), None, "and without it, it goes");
+
+    // Held past its hold, then left: a full hold again, not a vanishing.
+    let long_ago = Instant::now() - HOLD * 3;
+    let mut held = summary(long_ago);
+    held.set_line_focus(Some(0));
+    held.set_line_focus(None);
+    assert_eq!(held.alpha(Instant::now()), Some(1.0));
+}
+
+/// The answer given, the line goes and the summary stays; a line with no
+/// answers is a sentence alone; a progress toast carries none.
+#[test]
+fn a_line_can_be_taken_away_or_have_nothing_to_press() {
+    let mut e = engine();
+    let mut t = summary(Instant::now());
+    t.set_line_focus(Some(0));
+    t.clear_line();
+    assert!(t.line_actions().is_empty());
+    assert_eq!(t.line_sentence(), None);
+    assert_eq!(t.line_focus(), None);
+    assert_eq!(t.action(), Some("View Notebook"));
+    assert_eq!(t.rect(&mut e, OVER, 600.0).h, H_MIN, "back to one line");
+
+    let quiet = Toast::new(
+        "Import succeeded.".into(),
+        Some("View Notebook"),
+        Instant::now(),
+    )
+    .with_line(LINE.into(), Vec::new());
+    assert!(quiet.line_rects(&mut e, OVER, 600.0).is_empty());
+    assert!(
+        quiet.rect(&mut e, OVER, 600.0).h > H_MIN,
+        "the sentence is drawn"
+    );
+
+    let progress = Toast::new("Downloading".into(), Some("Stop"), Instant::now())
+        .with_progress(ProgressMode::Indeterminate)
+        .with_line(LINE.into(), vec!["Turn on"]);
+    assert!(progress.line_actions().is_empty());
+}
+
+/// Hovering an answer is a change worth a redraw, and the pointer says it
+/// can press.
+#[test]
+fn hovering_an_answer_is_a_change_and_a_press_cursor() {
+    let mut e = engine();
+    let mut t = summary(Instant::now());
+    let answer = t.line_rects(&mut e, OVER, 600.0)[0];
+    let (x, y) = answer.centre();
+    assert!(t.mouse_move(&mut e, OVER, 600.0, x, y));
+    assert_eq!(t.cursor(), crate::cursor::PRESS);
+    assert!(
+        !t.mouse_move(&mut e, OVER, 600.0, x, y),
+        "no change, no redraw"
+    );
+}

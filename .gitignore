@@ -74,6 +74,11 @@ third-party/a2ui/v1_0/
 # cover without seeing why it was there.
 dist/voice-models/
 voice-models-work/
+# The text-recognition model's conversion, from `koru-release read-model`: a
+# Python environment of several hundred megabytes, PaddlePaddle's weights and
+# the converted files, all rebuilt from pins. Covered by `dist` for the same
+# reason, and named for the same reason.
+dist/read-model/
 
 # The agent skills, installed from koruworks/skills by scripts/setup/setup-skills.sh
 # (the skills CLI) and never committed: the skills in .agents/skills/ for

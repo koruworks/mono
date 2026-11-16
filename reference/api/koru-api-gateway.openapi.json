@@ -5887,6 +5887,20 @@
             "nullable": true,
             "type": "string"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**How far reading the pictures and files in this query's workspaces\nhas got, and whether to offer the reader** — the Store page's\n[`koru_store_wire::search::SearchPage::reading`], carried through the\ngateway unchanged (OCR Plan 2.4). `None` from a Store that predates\nreading or counts nothing, which a surface reads as \"say nothing\".\nAdditive: absent on the wire when `None`, so an older client parses a\nnewer answer and a newer client an older one."
+          },
           "request_seq": {
             "format": "uint64",
             "minimum": 0,
@@ -10946,6 +10960,47 @@
         ],
         "type": "object"
       },
+      "ReadingCounts": {
+        "description": "**How far reading has got, for the workspaces a query is about.**\n\nScoped to the query's workspaces on purpose: a search in a workspace with\nfive pictures says five, however many thousands another workspace holds.\nCounts only — no name, no hash, no path.\n\nAn item is one readable blob referenced by a live entry: a file, or a\npicture in a page. `unread` counts those with no finished reading at the\ncurrent generation; `needs_reader` and `not_here` say why some of them are\nwaiting, and are each part of `unread`.",
+        "properties": {
+          "needs_reader": {
+            "description": "Of `unread`, those waiting for the reader to be installed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "not_here": {
+            "description": "Of `unread`, those whose bytes are not on this computer.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offer": {
+            "description": "Whether a surface should offer the reader now: something waits for it,\nit is not installed, and the person has not said *Not now* since the\nlast import that brought a picture or a scanned PDF. Every surface asks\nthis one place.",
+            "type": "boolean"
+          },
+          "total": {
+            "description": "Readable items in scope.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unread": {
+            "description": "Readable items with no finished reading.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread",
+          "total",
+          "needs_reader",
+          "not_here",
+          "offer"
+        ],
+        "type": "object"
+      },
       "ReasoningChoice": {
         "description": "A provider's reasoning setting — `ai.db`'s nine-token CHECK.",
         "enum": [
@@ -13892,6 +13947,18 @@
             "nullable": true,
             "type": "integer"
           },
+          "page": {
+            "description": "The page the words were found on, counting from 1, when the hit is a\n[`field::READ`] fragment of a file with more than one page.\n\n**Absent for everything else** — any other field, a picture, a one-page\nPDF, a plain-text file — and absent from an answer written before this\nfield existed, which is why it defaults rather than being required.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "picture_name": {
+            "description": "The name a person gave the picture the words were read from, when the\nhit is a [`field::READ`] fragment of a picture inside a document and\nsomebody named it (OCR EXPERIENCE §3: the picture mark, then its name\nonly when a person gave it one).\n\n**Absent for a picture nobody named**, for a file, for every other\nfield, and from an answer written before this field existed.",
+            "nullable": true,
+            "type": "string"
+          },
           "score": {
             "format": "double",
             "type": "number"
@@ -13964,6 +14031,20 @@
             "minimum": 0,
             "nullable": true,
             "type": "integer"
+          },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "How far reading the pictures and files **in this query's workspaces**\nhas got, and whether to offer the reader.\n\n`None` when the store says nothing about it: a store that predates\nreading, or one that does not count. A surface then shows no line —\nabsence is never read as \"everything is read\"."
           },
           "request_seq": {
             "format": "uint64",

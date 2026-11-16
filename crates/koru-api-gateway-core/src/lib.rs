@@ -1819,6 +1819,12 @@ async fn federated_search(
     let (store_result, ai_result) = tokio::join!(store_future, ai_future);
 
     let mut sources = Vec::with_capacity(2);
+    // The reading counts for the query's workspaces (OCR Plan 2.4), carried
+    // through as the Store answered them.
+    let reading = match &store_result {
+        SourceResult::Complete(response) => response.page.reading,
+        _ => None,
+    };
     let (mut store_hits, store_next, updating_workspaces, corrected_query, facets, recent_queries) =
         match store_result {
             SourceResult::Complete(response) => {
@@ -1928,6 +1934,7 @@ async fn federated_search(
             updating_workspaces,
             request_seq,
             corrected_query,
+            reading,
         },
         facets,
         recent_queries,

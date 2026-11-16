@@ -77,6 +77,26 @@ pub async fn search(
     Ok(Json(value))
 }
 
+/// What reading words out of files and pictures is doing.
+///
+/// Whatever the daemon last published, verbatim — what is queued and why,
+/// the job running now, what has been read and what failed by code, whether
+/// the reading worker is up and why not, how far the readings mirror is
+/// behind (OCR TECHNICAL §14). `null` on a build that runs no readings mirror.
+/// **Ids, counts and stages only**: no file name, no title, no word.
+pub async fn readings(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+) -> ApiResult<Json<serde_json::Value>> {
+    caller.require(Scope::ReadDocuments)?;
+    let value = state
+        .readings
+        .lock()
+        .map(|v| v.clone())
+        .unwrap_or(serde_json::Value::Null);
+    Ok(Json(value))
+}
+
 /// What the attribute query service is doing.
 ///
 /// Counters only — queries served, rows answered, query milliseconds. Never a

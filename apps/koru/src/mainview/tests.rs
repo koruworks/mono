@@ -11,6 +11,99 @@
 //! Nothing here touches disk. `Workspace::new` is in-memory; only
 //! `Session::open` reaches a directory, and only `App::new` calls it.
 use super::*;
+
+#[test]
+fn ocr_text_opens_reuses_and_closes_as_a_tab_without_a_modal() {
+    use koru_workspace_host::{View, reading_details};
+    let (mut view, _) = super::harness::container();
+    let file = koru_core::DocumentId::new();
+    let subject = MenuSubject::Files(vec![koru_core::NodeId::from_uuid(file.as_uuid())]);
+    assert!(view.run_menu_action(subject.clone(), MenuAction::ViewExtractedText));
+    let count = view.tabs().len();
+    assert!(matches!(view.tabs().active_tab().view, TabView::Ocr(_)));
+    assert!(view.file_preview.is_none());
+    assert!(View::show_file_reading(
+        &mut view,
+        file,
+        Ok(reading_details::format(
+            "sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+    assert_eq!(view.tabs().active_tab().label, "ocr:sample.pdf");
+    assert!(view.run_menu_action(subject, MenuAction::ViewExtractedText));
+    assert_eq!(view.tabs().len(), count);
+    let index = view.tabs().active();
+    assert!(view.close(index));
+    assert!(!View::show_file_reading(
+        &mut view,
+        file,
+        Ok(reading_details::format(
+            "sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+}
+
+#[test]
+fn ocr_text_host_routes_export_and_does_not_reopen_a_closed_tab() {
+    use koru_workspace_host::{View, reading_details};
+    let (mut view, _) = super::harness::container();
+    let file = koru_core::DocumentId::new();
+    let subject = MenuSubject::Files(vec![koru_core::NodeId::from_uuid(file.as_uuid())]);
+    while View::take_pane_request(&mut view).is_some() {}
+    assert!(view.run_menu_action(subject.clone(), MenuAction::ViewExtractedText));
+    assert_eq!(
+        View::take_pane_request(&mut view),
+        Some(PaneRequest::InspectFileReading(file))
+    );
+    let mut hosted = crate::manager_view::ManagerView::Container(view);
+    assert!(View::show_file_reading(
+        &mut hosted,
+        file,
+        Ok(reading_details::format(
+            "Sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+    let crate::manager_view::ManagerView::Container(mut view) = hosted else {
+        panic!("container")
+    };
+    assert!(view.file_preview.is_none());
+    let TabView::Ocr(ocr) = &mut view.tabs_mut().active_mut().view else {
+        panic!("OCR tab");
+    };
+    assert!(ocr.accessible_action("export", true));
+    assert_eq!(
+        View::take_pane_request(&mut view),
+        Some(PaneRequest::SaveReading(
+            koru_workspace_host::reading_file::ReadingTarget::File(file)
+        ))
+    );
+    let index = view.tabs().active();
+    assert!(view.close(index));
+    assert!(!View::show_file_reading(
+        &mut view,
+        file,
+        Ok(reading_details::format(
+            "Sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+    assert!(view.file_preview.is_none());
+    view.run_menu_action(subject, MenuAction::ForceOcr);
+    assert_eq!(
+        View::take_pane_request(&mut view),
+        Some(PaneRequest::ReadRequest(
+            koru_workspace_host::reading_file::ReadingTarget::File(file),
+            koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr,
+        ))
+    );
+}
 use crate::mainview::harness::*;
 use crate::mainview::panes::{PaneNode, PanePath, SplitAxis, TEAR_OFF_PX};
 use koru_core::node::Node;
@@ -218,20 +311,31 @@ fn import_completion_actions_name_and_route_the_imported_root() {
     assert_eq!(toast.action(), Some("View file"));
     assert!(matches!(payload, ToastPayload::ShowFile(id) if *id == file));
 
+    View::set_entries(
+        &mut v,
+        vec![koru_core::explore::ExploreEntry {
+            id: file,
+            parent: None,
+            ordinal: 0,
+            title: "Report.pdf".into(),
+            kind: koru_core::explore::KIND_FILE.into(),
+            mime: Some("application/pdf".into()),
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        None,
+    );
     v.reveal_imported_file(file);
     assert!(v.sidebar.is_open());
     assert_eq!(
         v.explore.navigator_mode(),
         crate::panes::explore::NavigatorMode::Files
     );
-    assert_eq!(
-        v.explore.selected(),
-        Some(koru_core::NodeId::from_uuid(file.as_uuid()))
-    );
     v.refresh_explore(&workspace.ws, true);
     assert_eq!(
-        v.explore.selected(),
-        Some(koru_core::NodeId::from_uuid(file.as_uuid())),
+        v.explore.selection_nodes(),
+        vec![koru_core::NodeId::from_uuid(file.as_uuid())],
         "refreshing the Files projection must not restore the active page over the selected file"
     );
 }
@@ -309,9 +413,18 @@ fn file_rows_offer_open_in_app_and_save_as() {
     let file = koru_core::NodeId::new();
     v.explore.show_files();
     assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    let mut expected = context_menu::file_items(1, None);
+    expected.extend([MenuAction::Divider, MenuAction::ViewExtractedText]);
+    assert_eq!(v.menu.as_ref().unwrap().items(), expected);
+    // Opening a file's menu asks the shell what its reading offers (OCR Plan
+    // 3.2); nothing was fetched to open it.
     assert_eq!(
-        v.menu.as_ref().unwrap().items(),
-        context_menu::file_items(1, None)
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadingOffers(
+            koru_workspace_host::reading_file::ReadingTarget::File(
+                koru_core::DocumentId::from_uuid(file.as_uuid())
+            )
+        ))
     );
 
     assert!(v.run_menu_action(MenuSubject::Files(vec![file]), MenuAction::OpenFileInApp,));
@@ -349,10 +462,19 @@ fn a_files_note_goes_through_the_shell_either_way() {
     );
 
     assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    let mut expected = context_menu::file_items(1, Some(true));
+    expected.extend([MenuAction::Divider, MenuAction::ViewExtractedText]);
     assert_eq!(
         v.menu.as_ref().unwrap().items(),
-        context_menu::file_items(1, Some(true)),
+        expected,
         "the entry says the file has a note, so the menu offers to open it"
+    );
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadingOffers(
+            koru_workspace_host::reading_file::ReadingTarget::File(file_doc)
+        )),
+        "the menu's reading offers are asked for, off this thread"
     );
 
     assert!(v.run_menu_action(MenuSubject::Files(vec![file]), MenuAction::OpenNote));
@@ -364,6 +486,90 @@ fn a_files_note_goes_through_the_shell_either_way() {
     assert_eq!(
         View::take_pane_request(&mut v),
         Some(PaneRequest::OpenFileNote(file_doc))
+    );
+}
+
+/// ***Read all pages* in a file's menu, from what the Store said** (OCR Plan
+/// 3.2): the first menu opens from nothing known and asks; the answer reopens
+/// it where it was with the entry added at its end and the pointer's row
+/// kept; choosing it sends the request and the next menu does not offer it
+/// again; a picture's answer is not the Files menu's.
+#[test]
+fn a_files_reading_offers_reach_its_menu_without_a_fetch_on_open() {
+    use koru_workspace_host::reading_file::ReadingTarget;
+    use koru_workspace_host::reading_requests::{ReadRequestKind, ReadingOffers};
+    let (mut v, _workspace) = on_document();
+    let file = koru_core::NodeId::new();
+    let file_doc = koru_core::DocumentId::from_uuid(file.as_uuid());
+    v.explore.show_files();
+
+    assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    let first = v.menu.as_ref().unwrap().items().to_vec();
+    assert!(
+        !first.contains(&MenuAction::ReadAllPages),
+        "nothing known yet"
+    );
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadingOffers(ReadingTarget::File(file_doc)))
+    );
+    v.menu.as_mut().unwrap().hover = Some(1);
+
+    // The answer: stopped at the page limit, can be finished here.
+    let capped = Some(ReadingOffers {
+        force_ocr: false,
+        read_all: true,
+        read_again: false,
+    });
+    assert!(View::set_reading_offers(
+        &mut v,
+        &ReadingTarget::File(file_doc),
+        capped
+    ));
+    let items = v.menu.as_ref().unwrap().items().to_vec();
+    assert_eq!(items[..first.len()], first[..], "nothing above moved");
+    assert_eq!(
+        items[first.len()..],
+        [MenuAction::Divider, MenuAction::ReadAllPages]
+    );
+    assert_eq!(v.menu.as_ref().unwrap().hover, Some(1), "the pointer's row");
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        None,
+        "one question per opening"
+    );
+    // The same answer again changes nothing.
+    assert!(!View::set_reading_offers(
+        &mut v,
+        &ReadingTarget::File(file_doc),
+        capped
+    ));
+    // A picture's answer is not this menu's.
+    assert!(!View::set_reading_offers(
+        &mut v,
+        &ReadingTarget::Picture {
+            hash: "b3:ab".into()
+        },
+        capped
+    ));
+
+    assert!(v.run_menu_action(MenuSubject::Files(vec![file]), MenuAction::ReadAllPages));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(PaneRequest::ReadRequest(
+            ReadingTarget::File(file_doc),
+            ReadRequestKind::ReadAll
+        ))
+    );
+    v.menu = None;
+    assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    assert!(
+        !v.menu
+            .as_ref()
+            .unwrap()
+            .items()
+            .contains(&MenuAction::ReadAllPages),
+        "asked once: not offered twice"
     );
 }
 
@@ -528,7 +734,7 @@ fn a_body_attachment_open_and_save_issue_pane_requests() {
 
 #[test]
 fn a_body_attachment_reveal_opens_files_mode_and_restore_issues_a_pane_request() {
-    let (mut v, _workspace) = on_document();
+    let (mut v, workspace) = on_document();
     let file = koru_core::DocumentId::new();
     let node = koru_core::NodeId::from_uuid(file.as_uuid());
     View::set_entries(
@@ -553,11 +759,12 @@ fn a_body_attachment_reveal_opens_files_mode_and_restore_issues_a_pane_request()
     leaf.view_mut().wants_file_action = Some((file, koru_editor::FileAction::Reveal));
     assert_eq!(View::take_wants_file_action(&mut v), None);
     assert_eq!(View::take_pane_request(&mut v), None);
+    v.refresh_explore(&workspace.ws, true);
     assert_eq!(
         v.explore.navigator_mode(),
         crate::panes::explore::NavigatorMode::Files
     );
-    assert_eq!(v.explore.selected(), Some(node));
+    assert_eq!(v.explore.selection_nodes(), vec![node]);
 
     let TabView::Leaf(leaf) = v.active_view() else {
         panic!("document leaf");
@@ -15801,4 +16008,30 @@ fn per_workspace_tabs_replace_the_strip_on_a_switch_and_shared_keeps_it() {
         "the incoming workspace had none of its own"
     );
     assert!(matches!(v.tabs().active_tab().view, TabView::Welcome(_)));
+}
+
+/// **Show on a *could not be read* item takes the search result's route**
+/// (OCR Plan 2.5): the document, resolved through the Store to wherever it
+/// lives — Explore → Files for a file, the page for a picture in one. A token
+/// that names nothing goes nowhere.
+#[test]
+fn showing_an_unreadable_item_navigates_to_its_document() {
+    let mut v = MainView::new();
+    let workspace = koru_store_core::ids::WorkspaceId::new();
+    let document = koru_store_core::ids::DocumentId::new();
+    let key = format!("{}/{}", workspace.to_storage(), document.to_storage());
+    v.perform_settings_request(koru_settings_ui::Request::ShowReaderItem(key));
+    assert_eq!(
+        v.take_pane_request(),
+        Some(PaneRequest::Navigate {
+            target: koru_workspace_host::NavigationTarget::Document {
+                document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                node: None,
+            },
+            match_text: None,
+            disposition: koru_workspace_host::SearchTargetDisposition::SourceWindow,
+        })
+    );
+    v.perform_settings_request(koru_settings_ui::Request::ShowReaderItem("nonsense".into()));
+    assert_eq!(v.take_pane_request(), None);
 }

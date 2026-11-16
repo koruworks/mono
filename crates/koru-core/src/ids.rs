@@ -270,6 +270,46 @@ pub fn genesis_peer(document: DocumentId) -> u64 {
     }
 }
 
+// ---------------------------------------------------- reading documents
+
+/// The namespace every `V1` reading-document id is derived in (OCR
+/// TECHNICAL §7, "Identity and registration").
+///
+/// **`V1` names the derivation, not a format**, as [`PAGE_DOCUMENT_NS_V1`]
+/// does: a different derivation is a new namespace and therefore new ids, and
+/// every reading document registered under this one keeps it.
+///
+/// `koru_store_core::ids`'s copy of this value is pinned equal by a test
+/// in each crate rather than shared, because the store cannot link this crate
+/// (ADR-80) — the same arrangement `KIND_RUN` has with its writer.
+pub const READING_DOCUMENT_NS_V1: Uuid = uuid::uuid!("05793a5c-5b98-4d2a-a3f2-4ac0b564ad87");
+
+/// The id of `parent`'s one **reading document**: the hidden child that holds
+/// the words read out of the file, or out of the pictures in the page
+/// (OCR TECHNICAL D9).
+///
+/// `UUIDv5(READING_DOCUMENT_NS_V1, parent's 16 uuid bytes)`. Derived rather
+/// than minted for the reason [`page_document_id`] is: every desktop that sees
+/// a file registers its reading document, so two devices routinely do it
+/// before they have met. A random id would leave one of the two orphaned with
+/// whatever was written into it; a derived one makes both write into the
+/// *same* document from the start, and the manifest's two tree nodes for it
+/// fold into one (`Manifest::reindex`, lowest `TreeID`).
+///
+/// Derived from another immutable id and nothing else — never a path, a
+/// folder, a machine or a name, which is what [ADR-39]'s rule is about. A move
+/// to another workspace keeps the parent's id, so the derived id is still
+/// right afterwards; a copy mints a new parent id, so the copy's reading
+/// document is a different one.
+///
+/// [ADR-39]: ../../../docs/decisions/ADR-026-050.md#adr-39-identity--identity-is-client-minted-document-scoped-and-cloud-ready
+pub fn reading_document_id(parent: DocumentId) -> DocumentId {
+    DocumentId::from_uuid(Uuid::new_v5(
+        &READING_DOCUMENT_NS_V1,
+        parent.as_uuid().as_bytes(),
+    ))
+}
+
 /// Which document holds a node.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum DocRef {
@@ -534,6 +574,27 @@ mod tests {
         let a = NodeId::new();
         let b = NodeId::new();
         assert_ne!(a, b);
+    }
+
+    /// **The derivation is a contract with the store.** `koru-store-core`
+    /// computes the same id on its side of the boundary
+    /// (`koru_store_core::ids::reading_document_id`) and pins the same vector, computed
+    /// independently of either crate (Python's `uuid.uuid5` over the parent's
+    /// sixteen bytes). One parent, one reading document, on every device.
+    #[test]
+    fn a_reading_document_id_is_derived_from_its_parent_alone() {
+        let parent = DocumentId::from_uuid(uuid::uuid!("6f1c2a3e-8b4d-4e5f-9a0b-1c2d3e4f5a6b"));
+        assert_eq!(
+            reading_document_id(parent).to_storage(),
+            "3f0c7cc1-3b13-556a-b11f-d1454d28c21e"
+        );
+        assert_eq!(reading_document_id(parent), reading_document_id(parent));
+        assert_ne!(
+            reading_document_id(parent),
+            reading_document_id(DocumentId::new()),
+            "another parent, another reading document"
+        );
+        assert_ne!(reading_document_id(parent), parent);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **What a person agreed to before Koru downloads a speech model or opens a
-//! microphone.** One machine-local file, versioned, written atomically, per OS
-//! user and device.
+//! **What a person agreed to before Koru downloads a model or opens a
+//! microphone.** One machine-local file per feature, versioned, written
+//! atomically, per OS user and device — see *One mechanism, one record per
+//! feature* below.
 //!
 //! ## Why this is a crate and not a field in `preferences.conf`
 //!
@@ -70,20 +71,168 @@
 //! unrepresentable. What the token buys is that a caller cannot *forget* — it
 //! has to say the word `consent` to compile — and that is the failure this
 //! guards against.
+//!
+//! ## One mechanism, one record per feature
+//!
+//! Voice is no longer the only thing Koru downloads a model for: the text
+//! reader that makes pictures and scanned PDFs searchable installs one through
+//! the same model store. **Its consent is its own file**, [`READ`]
+//! (`read-consent.conf`, format `koru-read-consent`), beside voice's
+//! [`VOICE`] (`voice-consent.conf`, format `koru-voice-consent`), and the
+//! machinery above — the atomic write, the total read, the versioned shape —
+//! is the same code for both, parameterised by a [`ConsentFile`].
+//!
+//! The reason it is two files and not two entries in one is
+//! [`Granted::covers`]: it compares only the licence and the size, which is
+//! the right question *within* a feature and the wrong one *across* features.
+//! In a shared file, somebody who agreed to an Apache-2.0 speech model would
+//! already "cover" an Apache-2.0 reader of the same size or smaller, and the
+//! reader would download without anybody being asked; revoking one would
+//! revoke both. So a [`Granted`] remembers which record it came from, and a
+//! store asks [`ConsentFile::covers`], which refuses a grant from another
+//! feature's record before it looks at the licence at all.
+//!
+//! Every record is declared here, and [`ConsentFile`] has no public
+//! constructor: two features cannot pick the same file name, because there is
+//! one list and a test reads it.
+//!
+//! The free functions ([`read`], [`grant`], [`grant_all`], [`revoke`],
+//! [`path_in`]) and [`Granted::recorded`] are voice's, exactly as they were
+//! before the reader existed, so voice's bytes on the disk and every caller of
+//! them are unchanged.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-/// The record's file name. **The directory is the host's**, for the reason
+/// Voice's record's file name. **The directory is the host's**, for the reason
 /// `search.conf`'s is
 /// ([ADR-111](../../../docs/decisions/ADR-101-125.md)): an agent under `--root`
 /// writes under the root, and a test names a temporary directory, so a crate
 /// that resolved its own path would make both of those special cases.
 pub const CONSENT_FILE: &str = "voice-consent.conf";
 
-/// What the file says it is, in its first field. Checked on every read, so a
-/// file of zeros or somebody else's JSON is refused rather than half believed.
+/// What voice's file says it is, in its first field. Checked on every read, so
+/// a file of zeros or somebody else's JSON — including another feature's
+/// consent record copied under this name — is refused rather than half
+/// believed.
 pub const FORMAT: &str = "koru-voice-consent";
+
+/// **Which consent record**: the file a feature's answer lives in, and the
+/// format tag that file's first field carries.
+///
+/// No public constructor, on purpose — see the module note. The two that exist
+/// are [`VOICE`] and [`READ`].
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ConsentFile {
+    name: &'static str,
+    format: &'static str,
+}
+
+/// Voice's record: what somebody agreed to before a speech model is downloaded
+/// or a microphone is opened. `voice-consent.conf`, `koru-voice-consent`.
+pub const VOICE: ConsentFile = ConsentFile {
+    name: CONSENT_FILE,
+    format: FORMAT,
+};
+
+/// The text reader's record: what somebody agreed to before the model that
+/// reads words out of pictures is downloaded. `read-consent.conf`,
+/// `koru-read-consent`. **Never shared with [`VOICE`]** — see the module note.
+pub const READ: ConsentFile = ConsentFile {
+    name: "read-consent.conf",
+    format: "koru-read-consent",
+};
+
+impl ConsentFile {
+    /// Every record Koru keeps, so a test can assert no two share a file name
+    /// or a format.
+    pub const ALL: [ConsentFile; 2] = [VOICE, READ];
+
+    /// The record's file name, inside a directory the host names.
+    pub fn name(self) -> &'static str {
+        self.name
+    }
+
+    /// What the file says it is, in its first field.
+    pub fn format(self) -> &'static str {
+        self.format
+    }
+
+    /// The record's path inside a directory the host named.
+    pub fn path_in(self, dir: &Path) -> PathBuf {
+        dir.join(self.name)
+    }
+
+    /// **Read this record. This cannot fail** — see [`read`].
+    pub fn read(self, path: &Path) -> Consent {
+        read_record(self, path)
+    }
+
+    /// Record that somebody agreed to one offer — see [`grant`].
+    pub fn grant(self, path: &Path, terms: Terms, granted_at: u64) -> std::io::Result<Granted> {
+        self.grant_all(path, vec![terms], granted_at)
+    }
+
+    /// Record several offers accepted together.
+    pub fn grant_all(
+        self,
+        path: &Path,
+        terms: Vec<Terms>,
+        granted_at: u64,
+    ) -> std::io::Result<Granted> {
+        let granted = self.recorded_all(terms, granted_at);
+        write_record(
+            path,
+            &Record {
+                format: self.format.to_owned(),
+                schema_version: SCHEMA_VERSION,
+                grants: granted.grants.clone(),
+            },
+        )?;
+        Ok(granted)
+    }
+
+    /// Take it back — see [`revoke`].
+    pub fn revoke(self, path: &Path) -> std::io::Result<()> {
+        write_record(
+            path,
+            &Record {
+                format: self.format.to_owned(),
+                schema_version: SCHEMA_VERSION,
+                grants: Vec::new(),
+            },
+        )
+    }
+
+    /// A grant for this record that has not reached the disk yet — what a
+    /// consent step holds between the button and the write.
+    pub fn recorded(self, terms: Terms, granted_at: u64) -> Granted {
+        self.recorded_all(vec![terms], granted_at)
+    }
+
+    /// Several offers accepted in one consent step, for this record.
+    pub fn recorded_all(self, terms: Vec<Terms>, granted_at: u64) -> Granted {
+        Granted {
+            record: self,
+            grants: terms
+                .into_iter()
+                .map(|terms| Grant { terms, granted_at })
+                .collect(),
+        }
+    }
+
+    /// **Does this grant open a door this record guards?**
+    ///
+    /// The grant must have come from *this* record — a speech model somebody
+    /// agreed to is not a reader they agreed to, whatever its licence — and
+    /// then [`Granted::covers`] must hold. A model store asks this rather than
+    /// `covers` alone, so the separation is a check at the one gate every
+    /// download passes rather than a convention about which file a caller
+    /// remembered to read.
+    pub fn covers(self, granted: &Granted, offer: &Terms) -> bool {
+        granted.record == self && granted.covers(offer)
+    }
+}
 
 /// The version of the record's shape. See the module note on migration.
 pub const SCHEMA_VERSION: u32 = 2;
@@ -138,24 +287,28 @@ pub fn megabytes(bytes: u64) -> u64 {
 /// is and is not worth.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Granted {
+    /// Which record this grant came from, or is about to be written to. See
+    /// [`ConsentFile::covers`].
+    record: ConsentFile,
     grants: Vec<Grant>,
 }
 
 impl Granted {
-    /// A grant that has not reached the disk yet — what the consent step holds
-    /// between the button and the write.
+    /// A voice grant that has not reached the disk yet — what the consent step
+    /// holds between the button and the write. [`ConsentFile::recorded`] is
+    /// the same for any record.
     pub fn recorded(terms: Terms, granted_at: u64) -> Granted {
-        Granted::recorded_all(vec![terms], granted_at)
+        VOICE.recorded(terms, granted_at)
     }
 
-    /// Several offers accepted in one consent step.
+    /// Several voice offers accepted in one consent step.
     pub fn recorded_all(terms: Vec<Terms>, granted_at: u64) -> Granted {
-        Granted {
-            grants: terms
-                .into_iter()
-                .map(|terms| Grant { terms, granted_at })
-                .collect(),
-        }
+        VOICE.recorded_all(terms, granted_at)
+    }
+
+    /// Which record this grant belongs to.
+    pub fn record(&self) -> ConsentFile {
+        self.record
     }
 
     /// What was agreed to.
@@ -298,11 +451,17 @@ struct Grant {
     granted_at: u64,
 }
 
-/// **Read the record. This cannot fail.**
+/// **Read voice's record. This cannot fail.**
 ///
 /// Every way of not being able to read consent is *not consented* — see the
 /// module note on why this is total rather than a `Result`.
 pub fn read(path: &Path) -> Consent {
+    VOICE.read(path)
+}
+
+/// The one reader, for whichever record. The format tag is the record's own,
+/// so another feature's file under this name is [`Reason::Malformed`].
+fn read_record(record: ConsentFile, path: &Path) -> Consent {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
@@ -316,13 +475,17 @@ pub fn read(path: &Path) -> Consent {
         // them arrive here and none of them is an answer somebody gave.
         Err(_) => return Consent::Absent(Reason::Malformed),
     };
-    if value.get("format").and_then(|value| value.as_str()) != Some(FORMAT) {
+    if value.get("format").and_then(|value| value.as_str()) != Some(record.format) {
         return Consent::Absent(Reason::Malformed);
     }
     match value.get("schema_version").and_then(|value| value.as_u64()) {
+        // Only voice ever wrote a version-1 record; reading one under another
+        // record's name still needs that record's own format tag above, so the
+        // arm is shared rather than special-cased.
         Some(1) => match serde_json::from_value::<RecordV1>(value) {
-            Ok(record) => match record.granted {
+            Ok(old) => match old.granted {
                 Some(grant) => Consent::Granted(Granted {
+                    record,
                     grants: vec![grant],
                 }),
                 None => Consent::Absent(Reason::Revoked),
@@ -331,9 +494,10 @@ pub fn read(path: &Path) -> Consent {
         },
         Some(version) if version == u64::from(SCHEMA_VERSION) => {
             match serde_json::from_value::<Record>(value) {
-                Ok(record) if record.grants.is_empty() => Consent::Absent(Reason::Revoked),
-                Ok(record) => Consent::Granted(Granted {
-                    grants: record.grants,
+                Ok(stored) if stored.grants.is_empty() => Consent::Absent(Reason::Revoked),
+                Ok(stored) => Consent::Granted(Granted {
+                    record,
+                    grants: stored.grants,
                 }),
                 Err(_) => Consent::Absent(Reason::Malformed),
             }
@@ -342,43 +506,28 @@ pub fn read(path: &Path) -> Consent {
     }
 }
 
-/// **Record that somebody agreed**, and answer the token.
+/// **Record that somebody agreed to voice's offer**, and answer the token.
 ///
 /// Atomic: a sibling temporary file, `sync_all`, then a rename over the
 /// record. The parent directory is created if it is not there, because the
 /// machine-local directory is made by whichever Koru process needs it first.
 pub fn grant(path: &Path, terms: Terms, granted_at: u64) -> std::io::Result<Granted> {
-    grant_all(path, vec![terms], granted_at)
+    VOICE.grant(path, terms, granted_at)
 }
 
-/// Record several offers accepted together.
+/// Record several voice offers accepted together.
 pub fn grant_all(path: &Path, terms: Vec<Terms>, granted_at: u64) -> std::io::Result<Granted> {
-    let granted = Granted::recorded_all(terms, granted_at);
-    write_record(
-        path,
-        &Record {
-            format: FORMAT.to_owned(),
-            schema_version: SCHEMA_VERSION,
-            grants: granted.grants.clone(),
-        },
-    )?;
-    Ok(granted)
+    VOICE.grant_all(path, terms, granted_at)
 }
 
-/// **Take it back.** Writes a recorded refusal rather than deleting the file,
-/// so *asked and said no* stays distinguishable from *never asked*.
+/// **Take voice's consent back.** Writes a recorded refusal rather than
+/// deleting the file, so *asked and said no* stays distinguishable from *never
+/// asked*.
 ///
 /// It deletes no model. The bytes on the disk are a separate fact and this
 /// crate does not know where they are.
 pub fn revoke(path: &Path) -> std::io::Result<()> {
-    write_record(
-        path,
-        &Record {
-            format: FORMAT.to_owned(),
-            schema_version: SCHEMA_VERSION,
-            grants: Vec::new(),
-        },
-    )
+    VOICE.revoke(path)
 }
 
 /// Seconds since the epoch, for a caller that wants the ordinary answer.
@@ -393,9 +542,9 @@ pub fn now_unix() -> u64 {
         .unwrap_or(0)
 }
 
-/// The record's path inside a directory the host named.
+/// Voice's record's path inside a directory the host named.
 pub fn path_in(dir: &Path) -> PathBuf {
-    dir.join(CONSENT_FILE)
+    VOICE.path_in(dir)
 }
 
 /// Write, flush, rename. The one place the atomicity lives.
@@ -427,5 +576,10 @@ fn write_record(path: &Path, record: &Record) -> std::io::Result<()> {
     }
 }
 
+/// One record per feature: the separation tests, beside the voice suite above
+/// rather than inside it, so that suite is byte-for-byte what it was before a
+/// second record existed.
+#[cfg(test)]
+mod record_tests;
 #[cfg(test)]
 mod tests;

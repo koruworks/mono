@@ -448,7 +448,7 @@ worktree_stack_running() {
   local bin="$1" name
   # The retired standalone images are still swept: an older build of this
   # worktree may have left one running, and it holds the same root.
-  for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-store-server; do
+  for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-read-worker koru-store-server; do
     image_running "$bin/$name" && return 0
   done
   return 1
@@ -476,7 +476,7 @@ run_all_stop() {
     sleep 0.1 || true
   done
   local name
-  for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-store-server; do
+  for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-read-worker koru-store-server; do
     stop_exact_image "$bin/$name"
   done
 }
@@ -488,6 +488,9 @@ run_all_verb() {
   # image, so building it builds them.
   local -a packages=(-p koru-agent -p koru)
   builds_voice_worker && packages+=(-p koru-voice-worker)
+  # The read worker is the Store's sibling (resolved beside koru-agent, whose
+  # gateway worker hosts the Store). Pure Rust, so every platform builds it.
+  packages+=(-p koru-read-worker)
   local mcp=0
   for arg in "$@"; do
     case "$arg" in
@@ -638,10 +641,10 @@ stop_all_verb() {
   "$bin/koru-agent" stop >/dev/null 2>&1 || true
   "$bin/koru-voice-worker" stop >/dev/null 2>&1 || true
   sleep 1
-  for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-store-server; do
+  for name in koru koru-ai-chat koru-agent koru-session-host koru-api-gateway koru-mcp koru-voice-worker koru-read-worker koru-store-server; do
     stop_exact_image "$bin/$name"
   done
-  echo "[Koru] this worktree's Agent and its gateway and sessions workers, MCP, voice worker, diagnostic Store host and Koru are stopped."
+  echo "[Koru] this worktree's Agent and its gateway and sessions workers, MCP, voice worker, read worker, diagnostic Store host and Koru are stopped."
 }
 
 # A stdio MCP server belongs to the client that starts it, so a detached launch

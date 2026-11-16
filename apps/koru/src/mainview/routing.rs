@@ -194,6 +194,7 @@ impl MainView {
                 TabView::Session(_) => "session",
                 TabView::Run(_) => "run",
                 TabView::Result(_) => "result",
+                TabView::Ocr(_) => "ocr",
                 TabView::Canvas(_) => "canvas",
                 TabView::Reminders(_) => "reminders",
                 TabView::MiniApp(_) => "mini-app",
@@ -216,7 +217,9 @@ impl MainView {
             Layer::Updates => self.updates_modal,
             Layer::UpdateNewer => self.update_newer_modal_open(),
             Layer::Confirm => {
-                self.confirm.is_some() || self.workspace_controller.borrow().is_confirming()
+                self.file_paste.is_some()
+                    || self.confirm.is_some()
+                    || self.workspace_controller.borrow().is_confirming()
             }
             Layer::NewDocument => self.new_document.is_some(),
             Layer::Snapshot => self.snapshot_prompt.is_some(),
@@ -312,7 +315,7 @@ impl MainView {
             // remark about how a run went rather than a dictation surface. A
             // result tab has no field at all: it reads a version.
             | TabView::Run(_)
-            | TabView::Result(_)
+            | TabView::Result(_) | TabView::Ocr(_)
             // The placeholder's one field is its name prompt, which is not a
             // dictation surface; the canvas surface decides for its cards.
             | TabView::Canvas(_) => EditableTarget::None,

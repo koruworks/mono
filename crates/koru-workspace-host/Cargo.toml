@@ -111,6 +111,10 @@ koru-i18n = { path = "../koru-i18n" }
 # saving accounted for rather than assumed.
 chrono = { workspace = true }
 koru-store-core = { path = "../koru-store-core" }
+# The reader's wire types alone (OCR Plan 3.3): an import reports how many
+# pictures and scanned PDFs it brought, and its summary carries the reader's
+# state to the window. Already in every build through `koru-api-client`.
+koru-store-wire = { path = "../koru-store-wire" }
 serde_json.workspace = true
 serde.workspace = true
 directories.workspace = true

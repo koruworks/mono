@@ -1253,8 +1253,16 @@ impl Workspace {
 
     /// Move a document among the workspace's entries.
     ///
-    /// `index` counts **entries**, not tree children — the manifest translates,
-    /// the same distinction `WorkspaceDoc::move_entry` makes for the projection.
+    /// `index` counts the **entries a person sees** under `parent` — the
+    /// ordinals [`entries`](Self::entries) hands out — not the manifest's tree
+    /// children. The two differ by every sibling the listing hides: a kind
+    /// `explore::listed` does not list (the system document beside the
+    /// top-level pages, a page's reading document among its sub-pages) and
+    /// anything in the trash. This translates past them, here, before the
+    /// manifest sees the index — the distinction `WorkspaceDoc::move_entry`
+    /// makes for nodes inside a document (`raw_index_for_entry`). Handing the
+    /// visible index straight to the tree landed a drop one place off, or did
+    /// nothing, once a hidden child sat among visible ones (OCR TECHNICAL §9).
     ///
     /// A cycle is refused by Loro and leaves the tree as it was, so there is no
     /// guard here; the manifest answers with its own error code.
@@ -1270,29 +1278,52 @@ impl Workspace {
                 "this workspace is not open on a store",
             )
         })?;
-        // **Past the end means the end, and the clamp is ours.**
+        // **Visible to raw, and past the end means the end.**
         //
-        // `WorkspaceDoc::move_entry` accepts an out-of-range index and lands the
-        // document last, because a drop below everything is an ordinary gesture.
-        // `Manifest::move_document` hands the index straight to `mov_to`, which
-        // refuses one past the length — so `usize::MAX` (what "drop at the end"
-        // is spelled as here) came back as
-        // *"The index(18446744073709551615) should be <= the length"*.
+        // The visible list is the part of `parent`'s children a person sees —
+        // live and of a listed kind — which is what `index` counts in. The
+        // visible entry at `index` names the raw position to land on: its
+        // manifest `ordinal`, which is its index among the tree's children
+        // (stray duplicate nodes included, which `entries` itself skips), read
+        // one lower when the moving document sits before it under the same
+        // parent, because `mov_to` reads the index after lifting it out. An
+        // index past the visible end lands after the last sibling, hidden ones
+        // included, because a drop below everything is an ordinary gesture.
         //
-        // Clamped here rather than by loosening the manifest: a store API that
-        // silently accepts any index cannot tell a deliberate append from an
-        // arithmetic mistake, and this crate already owns the forgiving version
-        // of this contract.
-        //
-        // The moving document is excluded from the count when it is already
-        // under `parent`, because `mov_to` reads the index after lifting it out.
-        let siblings = manifest
+        // `Manifest::move_document` hands its index straight to `mov_to`, which
+        // refuses one past the length — `usize::MAX`, "drop at the end", once
+        // came back as *"The index(18446744073709551615) should be <= the
+        // length"*. The translation can only produce a sibling's position or
+        // the end, so that clamp is now this, rather than a loosening of the
+        // manifest: a store API that silently accepts any index cannot tell a
+        // deliberate append from an arithmetic mistake.
+        let (live, _) = manifest.partitioned_entries();
+        let visible: std::collections::HashSet<koru_store_core::ids::DocumentId> = live
+            .into_iter()
+            .filter(|e| koru_core::explore::listed(&e.kind))
+            .map(|e| e.id)
+            .collect();
+        let siblings: Vec<_> = manifest
             .entries()
             .into_iter()
-            .filter(|e| {
-                e.parent.map(explore::koru_document) == parent && explore::koru_document(e.id) != id
-            })
-            .count();
+            .filter(|e| e.parent.map(explore::koru_document) == parent)
+            .collect();
+        let lifted = siblings
+            .iter()
+            .find(|e| explore::koru_document(e.id) == id)
+            .map(|e| e.ordinal);
+        let after_lift = |ordinal: u32| {
+            ordinal as usize - usize::from(lifted.is_some_and(|moving| moving < ordinal))
+        };
+        let others = siblings
+            .iter()
+            .filter(|e| explore::koru_document(e.id) != id);
+        let raw_index = others
+            .clone()
+            .filter(|e| visible.contains(&e.id))
+            .nth(index)
+            .map(|at| after_lift(at.ordinal))
+            .unwrap_or_else(|| others.map(|e| after_lift(e.ordinal) + 1).max().unwrap_or(0));
         // **A drop naming a document the manifest does not hold is stale, not
         // broken.** Explore draws from a *cached* list the shell pushed; between
         // that push and the drop, the document may have been moved or binned in
@@ -1317,7 +1348,7 @@ impl Workspace {
         if target == Some(moving) {
             return Ok(false);
         }
-        manifest.move_document(moving, target, index.min(siblings))?;
+        manifest.move_document(moving, target, raw_index)?;
         // Push it now rather than on the next poll: a drag that snapped back for
         // a moment would read as the drop having failed.
         if let Some(session) = &mut self.manifest_session {
@@ -1928,16 +1959,18 @@ impl Workspace {
                 // Hiding an entry leaves a hole in its siblings' ordinals, so
                 // the survivors are renumbered — `ordinal` promises "position
                 // among the entries sharing this parent", and that has to
-                // mean the entries a caller can see.
-                let unfiltered = live.len();
+                // mean the entries a caller can see. **Always**, not only when
+                // a hidden kind was dropped here: a trashed sibling leaves the
+                // same hole (the manifest's ordinal counts it), and
+                // `move_entry` reads the index it is handed in exactly these
+                // visible coordinates — an Undo that handed back a manifest
+                // ordinal would land past where the document was.
                 let mut live: Vec<_> = live
                     .into_iter()
                     .map(explore_entry)
                     .filter(|e| koru_core::explore::listed(&e.kind))
                     .collect();
-                if live.len() != unfiltered {
-                    renumber_ordinals(&mut live);
-                }
+                renumber_ordinals(&mut live);
                 let trashed: Vec<_> = trashed
                     .into_iter()
                     .map(explore_entry)

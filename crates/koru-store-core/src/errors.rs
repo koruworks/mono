@@ -139,6 +139,23 @@ pub enum Code {
     /// from "the engine refused" without reading the message: the first
     /// disables a button and the second explains one.
     BlobTransferUnavailable,
+    /// **This computer cannot use the reader that finds words in pictures**
+    /// (OCR Plan 2.4): a stable build with no model-signing key, a worker
+    /// built without recognition, no worker at all. Its own code so a surface
+    /// says plainly *not set up here* instead of offering a download that
+    /// cannot be used; `GET /v1/readings/reader` names which.
+    ReaderUnavailable,
+    /// **The reader's terms changed under the person.** An install carried
+    /// the terms a surface showed, and the catalog now offers something else
+    /// (another size or licence). Nothing was recorded or downloaded; read
+    /// the offer again and ask again.
+    ReaderTermsChanged,
+    /// **The item is known here and its bytes are not on this device** (OCR
+    /// Plan 3.2): a file added elsewhere and not yet fetched. Reading it in
+    /// full, or again, happens where the bytes are — a computer never fetches
+    /// a file only to read it (EXPERIENCE §3). Its own code because the advice
+    /// is *download it first*, which no other code gives.
+    BlobNotHere,
     ProjectionUnavailable,
     CorruptState,
     BlobChecksumMismatch,
@@ -197,6 +214,9 @@ impl Code {
             Self::StoreUnreachable => "store_unreachable",
             Self::SearchUnavailable => "search_unavailable",
             Self::BlobTransferUnavailable => "blob_transfer_unavailable",
+            Self::ReaderUnavailable => "reader_unavailable",
+            Self::ReaderTermsChanged => "reader_terms_changed",
+            Self::BlobNotHere => "blob_not_here",
             Self::ProjectionUnavailable => "projection_unavailable",
             Self::CorruptState => "corrupt_state",
             Self::BlobChecksumMismatch => "blob_checksum_mismatch",
@@ -255,6 +275,9 @@ impl Code {
         Self::StoreUnreachable,
         Self::SearchUnavailable,
         Self::BlobTransferUnavailable,
+        Self::ReaderUnavailable,
+        Self::ReaderTermsChanged,
+        Self::BlobNotHere,
         Self::ProjectionUnavailable,
         Self::CorruptState,
         Self::BlobChecksumMismatch,
@@ -308,6 +331,8 @@ impl Code {
             | Self::TransportModeCeiling
             | Self::TransportModeChildren
             | Self::ReadOnly
+            | Self::ReaderTermsChanged
+            | Self::BlobNotHere
             | Self::SchemaTooNew => Class::Conflict,
 
             Self::StorageFailed
@@ -318,6 +343,7 @@ impl Code {
             | Self::NoLinkedDevices
             | Self::SearchUnavailable
             | Self::BlobTransferUnavailable
+            | Self::ReaderUnavailable
             | Self::ProjectionUnavailable => Class::Unavailable,
 
             Self::ProfilePrivateUnavailable | Self::ReminderIndexUpdating => Class::Unavailable,

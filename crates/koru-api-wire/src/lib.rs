@@ -358,6 +358,15 @@ pub struct FederatedSearchPage {
     pub updating_workspaces: Vec<String>,
     pub request_seq: u64,
     pub corrected_query: Option<String>,
+    /// **How far reading the pictures and files in this query's workspaces
+    /// has got, and whether to offer the reader** — the Store page's
+    /// [`koru_store_wire::search::SearchPage::reading`], carried through the
+    /// gateway unchanged (OCR Plan 2.4). `None` from a Store that predates
+    /// reading or counts nothing, which a surface reads as "say nothing".
+    /// Additive: absent on the wire when `None`, so an older client parses a
+    /// newer answer and a newer client an older one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<koru_store_wire::search::ReadingCounts>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -467,3 +476,6 @@ pub const STREAM_CHANNELS: &[StreamChannel] = &[
         messages: MODEL_PULL_MESSAGES,
     },
 ];
+
+#[cfg(test)]
+mod tests;

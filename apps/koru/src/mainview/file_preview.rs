@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! A sent chat file opened over its Koru window. Preparation and saving run on
-//! workers. Plain text uses Koru's renderer on every desktop platform.
+//! Chat files and extracted readings opened over their Koru window. Preparation
+//! and saving run on workers; text uses Koru's renderer on every desktop platform.
 
 use std::io::Read;
 use std::path::PathBuf;
@@ -37,7 +37,10 @@ struct Prepared {
 }
 
 pub(super) struct FilePreview {
-    request: AttachmentOpenRequest,
+    request: Option<AttachmentOpenRequest>,
+    name: String,
+    text: Option<std::sync::Arc<String>>,
+    horizontal: f32,
     prepared: Receiver<Result<Prepared, String>>,
     path: Option<PathBuf>,
     lines: Option<Vec<String>>,
@@ -65,7 +68,10 @@ impl FilePreview {
             }
         }
         Self {
-            request,
+            name: request.name.clone(),
+            request: Some(request),
+            text: None,
+            horizontal: 0.0,
             prepared,
             path: None,
             lines: None,
@@ -79,7 +85,7 @@ impl FilePreview {
     }
 
     pub(super) fn maintenance_deadline(&self) -> Option<Instant> {
-        (self.path.is_none() && self.error.is_none()
+        (self.path.is_none() && self.text.is_none() && self.error.is_none()
             || self.saving.is_some()
             || self.opening.is_some())
         .then(|| Instant::now() + Duration::from_millis(50))
@@ -138,11 +144,11 @@ impl FilePreview {
         );
         let panel = panel_rect(viewport);
         let _inspection = koru_draw::inspect::scope(
-            "ChatFilePreview",
+            "FilePreview",
             "component",
             root,
             scene::rect(panel.x, panel.y, panel.w, panel.h),
-            |record| record.property("file", &self.request.name, "attachment name"),
+            |record| record.property("file", &self.name, "file name"),
         );
         scene::floating_panel(
             canvas,
@@ -153,7 +159,7 @@ impl FilePreview {
             panel.h,
             &scene::Panel::popover(12.0),
         );
-        let title = engine.elided(&self.request.name, role::row(), (panel.w - 320.0).max(1.0));
+        let title = engine.elided(&self.name, role::row(), (panel.w - 320.0).max(1.0));
         let title = engine.simple_layout(&title, role::row());
         scene::draw_layout_first_line(
             canvas,
@@ -163,7 +169,7 @@ impl FilePreview {
             panel.y + (HEADER_H - title.height()) * 0.5,
             Some(p.text),
         );
-        if self.path.is_some() {
+        if self.path.is_some() || self.text.is_some() {
             let save = save_rect(viewport);
             ActionButton::new("Save as…", ActionStyle::Secondary, None).draw(
                 canvas,
@@ -172,9 +178,23 @@ impl FilePreview {
                 save,
                 save.contains(pointer.0, pointer.1),
             );
-            if self.request.preview == AttachmentPreview::Unsupported {
+            if self
+                .request
+                .as_ref()
+                .is_some_and(|r| r.preview == AttachmentPreview::Unsupported)
+                || self.text.is_some()
+            {
                 let open = open_rect(viewport);
-                ActionButton::new("Open externally", ActionStyle::Secondary, None).draw(
+                ActionButton::new(
+                    if self.text.is_some() {
+                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReadingCopyText)
+                    } else {
+                        "Open externally"
+                    },
+                    ActionStyle::Secondary,
+                    None,
+                )
+                .draw(
                     canvas,
                     root,
                     engine,
@@ -210,13 +230,19 @@ impl FilePreview {
                 .take(visible_lines(viewport))
                 .enumerate()
             {
-                let line = engine.elided(line, role::row(), (body.w - 28.0).max(1.0));
-                let layout = engine.simple_layout(&line, role::row());
+                let clipped;
+                let line = if self.text.is_some() {
+                    line.as_str()
+                } else {
+                    clipped = engine.elided(line, role::row(), (body.w - 28.0).max(1.0));
+                    &clipped
+                };
+                let layout = engine.simple_layout(line, role::row());
                 scene::draw_layout_first_line(
                     canvas,
                     root,
                     &layout,
-                    body.x + 14.0,
+                    body.x + 14.0 - self.horizontal,
                     body.y + 10.0 + index as f32 * LINE_H,
                     Some(p.text),
                 );
@@ -278,7 +304,23 @@ impl FilePreview {
         }
         if save_rect(viewport).contains(x, y) {
             self.save_as();
-        } else if self.request.preview == AttachmentPreview::Unsupported
+        } else if self.text.is_some() && open_rect(viewport).contains(x, y) {
+            let result = koru_clipboard::system().set_text(self.text.as_deref().unwrap());
+            self.status = Some(
+                koru_i18n::t(
+                    crate::format::lang(),
+                    if result.is_ok() {
+                        koru_i18n::Key::InspectorCopied
+                    } else {
+                        koru_i18n::Key::ReadingCopyFailed
+                    },
+                )
+                .into(),
+            );
+        } else if self
+            .request
+            .as_ref()
+            .is_some_and(|r| r.preview == AttachmentPreview::Unsupported)
             && open_rect(viewport).contains(x, y)
         {
             self.open_externally();
@@ -287,6 +329,11 @@ impl FilePreview {
     }
 
     pub(super) fn scroll_by(&mut self, delta: MouseScrollDelta, viewport: (f32, f32)) {
+        let x = match delta {
+            MouseScrollDelta::LineDelta(x, _) => x * 24.0,
+            MouseScrollDelta::PixelDelta(p) => p.x as f32,
+        };
+        self.horizontal = (self.horizontal - x).max(0.0);
         let amount = match delta {
             MouseScrollDelta::LineDelta(_, y) => -(y * 3.0) as i32,
             MouseScrollDelta::PixelDelta(position) => -(position.y / f64::from(LINE_H)) as i32,
@@ -295,6 +342,11 @@ impl FilePreview {
     }
 
     pub(super) fn key(&mut self, key: &Key, viewport: (f32, f32)) {
+        match key {
+            Key::Named(NamedKey::ArrowRight) => self.horizontal += 48.0,
+            Key::Named(NamedKey::ArrowLeft) => self.horizontal = (self.horizontal - 48.0).max(0.0),
+            _ => {}
+        }
         let page = visible_lines(viewport) as i32;
         let amount = match key {
             Key::Named(NamedKey::ArrowDown) => 1,
@@ -316,12 +368,19 @@ impl FilePreview {
     }
 
     fn save_as(&mut self) {
-        let Some(source) = self.path.clone() else {
+        if self.path.is_none() && self.text.is_none() {
             return;
+        }
+        let source = self.path.clone();
+        let text = self.text.clone();
+        let name = if text.is_some() {
+            format!("{}.ocr.txt", self.name)
+        } else {
+            self.name.clone()
         };
         let chosen = koru_workspace_host::dialogs::pick_save_file(
-            "Save chat attachment",
-            &self.request.name,
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::MenuSaveAs),
+            &name,
             &[],
             None,
             None,
@@ -333,9 +392,12 @@ impl FilePreview {
         if let Err(error) = std::thread::Builder::new()
             .name("koru-ai-save-as".into())
             .spawn(move || {
-                let result = std::fs::copy(&source, &destination)
-                    .map(|_| ())
-                    .map_err(|error| error.to_string());
+                let result = if let Some(text) = text {
+                    std::fs::write(&destination, text.as_bytes())
+                } else {
+                    std::fs::copy(source.unwrap(), &destination).map(|_| ())
+                }
+                .map_err(|error| error.to_string());
                 let _ = sender.send(result);
             })
         {

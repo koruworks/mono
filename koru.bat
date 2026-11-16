@@ -428,6 +428,7 @@ REM that quietly used a different Cloud from `run` is how somebody tests against
 REM the wrong API for an afternoon. root-stack.ps1 prints which file it read.
 :do_root
 call :ensure_fonts || exit /b 1
+call :ensure_voice_runtime || exit /b 1
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -LauncherCommand root
 exit /b %ERRORLEVEL%
 
@@ -882,7 +883,7 @@ echo   root       build and start Agent + API Gateway + Koru on one isolated roo
 echo              root [path] [--mcp] also builds the sibling MCP bridge;
 echo              --mcp registers it with agent CLIs as koru_^<branch^>
 echo              its interactive Agent registers real global shortcuts
-echo   root-open  open another window through an already-running isolated Agent
+echo   root-open  open an isolated root using built binaries, without rebuilding
 echo   root-stop  stop that root's Agent and services (close windows first)
 echo   build-root-signed  build/register a signed rooted Windows notification test
 echo   run-root-signed    launch the latest signed rooted Windows notification test
@@ -931,7 +932,7 @@ echo To open at a size: koru.bat --window-size 1024x768
 echo.
 echo "dist-local" builds exactly what a published release carries - koru.exe,
 echo koru-agent.exe, koru-com-notification.exe, koru-mcp.exe,
-echo koru-voice-worker.exe, koru-updater.exe and all thirty
+echo koru-voice-worker.exe, koru-read-worker.exe, koru-updater.exe and all thirty
 echo fonts - and
 echo stops. It takes a channel and an optional version. Internal is local-only:
 echo   stable ^| beta ^| nightly ^| internal
@@ -1054,6 +1055,11 @@ exit /b %ERRORLEVEL%
 
 :ensure_voice_runtime
 if not defined SHERPA_ONNX_ARCHIVE_DIR set "SHERPA_ONNX_ARCHIVE_DIR=%CD%\third-party\sherpa-onnx\1.13.6"
+rem The read worker's recognition links the ONNX Runtime static library the
+rem fetch below extracts from the same verified archive (koru-read-paddle's
+rem artifacts module). Only a build with koru-read-worker's `recognition`
+rem feature reads it; every other build ignores it.
+if not defined ORT_LIB_PATH set "ORT_LIB_PATH=%CD%\third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib"
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\setup\fetch-voice-runtime.ps1"
 if errorlevel 1 exit /b 1
 where cmake >nul 2>&1 || (

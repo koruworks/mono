@@ -65,6 +65,28 @@ koru-events-server = { path = "../koru-events-server" }
 koru-events = { path = "../../crates/koru-events" }
 # The wire vocabulary the search port speaks.
 koru-store-wire = { path = "../../crates/koru-store-wire" }
+# Reading words out of files (OCR TECHNICAL D4, D11): the reading document's
+# shape and the only code that writes it, and the worker's messages. Loro and
+# serde only — no PDF library, no image decoder, no runtime; the worker that
+# parses files is a separate program this daemon supervises.
+koru-read = { path = "../../crates/koru-read" }
+# The reader's installer (OCR Plan 2.4, TECHNICAL D16): the model store the
+# daemon installs the text-recognition model through — catalog, trust policy,
+# resumable download, disk store and leases — and the per-feature consent
+# record (`read-consent.conf`) a download is gated on. In-tree crates; neither
+# links an inference runtime.
+koru-models = { path = "../../crates/koru-models" }
+koru-voice-consent = { path = "../../crates/koru-voice-consent" }
+# The supervised-child mechanism the read worker runs under (D15): a sibling
+# program, its kill-on-close Job Object with a memory ceiling, readiness and a
+# restart budget. Mechanism only; which program, and why, is `readings`'.
+koru-agent-worker = { path = "../../crates/koru-agent-worker" }
+# For one name: `READ_EXE`, the read worker's file name beside this executable,
+# spelled once for the package, the updater and the Store. The heavier half of
+# this crate was dropped from here once (see `koru-channel` above); it comes
+# back for the shipped-executable table, which is where the name must live.
+# The phone already links it through `koru-mobile-native`.
+koru-update = { path = "../../crates/koru-update" }
 # Explicit client used by the unshipped standalone integration adapter and its
 # black-box suites. Shipping products use `koru-api-client`.
 koru-store-client = { path = "../../crates/koru-store-client" }
@@ -102,6 +124,9 @@ rfd = "0.15"
 windows-sys = { workspace = true, features = [
     "Win32_Foundation",
     "Win32_System_Console",
+    # `GetSystemPowerStatus`: a reading backlog pauses under battery saver
+    # (readings/power.rs, OCR Plan 3.1).
+    "Win32_System_Power",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
@@ -157,3 +182,9 @@ koru-delegate-core = { path = "../../crates/koru-delegate-core" }
 # The hosted creation candidate's id is a SHA-256 of its key (TECHNICAL §5.6);
 # the driver's test derives one exactly so, to show the Store accepts it.
 sha2.workspace = true
+# `examples/reader_bulk_run.rs` (OCR Plan 3.4) imports a generated archive
+# through the real Evernote importer, driven as the shell's import worker
+# drives it, and finds each attachment by the MD5 the archive names it by.
+koru-import = { path = "../../crates/koru-import" }
+koru-import-evernote = { path = "../../crates/koru-import-evernote" }
+md5.workspace = true

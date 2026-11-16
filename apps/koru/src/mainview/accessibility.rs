@@ -404,6 +404,11 @@ impl MainView {
         if let Some(occurrence) = self.manage_focus(&cx) {
             return Some(occurrence);
         }
+        if let TabView::Ocr(page) = &self.tabs().active_tab().view
+            && let Some(part) = page.focused_control()
+        {
+            return Some(cx.instance("ocr", self.tabs().active_tab().id, ControlPart::new(part)));
+        }
         // Nothing else in the shell claims the keyboard, so it is the active
         // tab's region — which is where a character would go.
         Some(cx.surface(SHELL, parts::CONTENT))
@@ -463,6 +468,12 @@ impl MainView {
             }
             Some(ChromeStop::Apps(index)) => {
                 rev.byte(4).u64(index as u64);
+            }
+            // The toast's line (OCR Plan 3.3). The toast publishes no node of
+            // its own yet, so native focus stays where it was; the byte keeps
+            // the fingerprint honest about where the keyboard is.
+            Some(ChromeStop::Toast(index)) => {
+                rev.byte(5).u64(index as u64);
             }
         }
         rev.u64(self.profile_wait.revision);
@@ -539,6 +550,9 @@ impl MainView {
         // with the chrome.
         self.revise_canvas(rev);
         self.revise_manage(rev);
+        if let TabView::Ocr(page) = &self.tabs().active_tab().view {
+            page.revise(rev);
+        }
         // What the Store has confirmed about the document in front of the
         // person, and whether anything about saving has become news.
         self.persistence_revision(rev);
@@ -627,6 +641,14 @@ impl MainView {
         // rows — scoped by parts no other surface uses.
         if self.manage_action(target, action, data) {
             return true;
+        }
+        let tab = self.tabs().active_tab();
+        let cx = self.shell(target.view);
+        if target == cx.instance("ocr", tab.id, target.part)
+            && matches!(action, Action::Click | Action::Focus)
+            && let TabView::Ocr(page) = self.active_view()
+        {
+            return page.accessible_action(target.part.name(), action == Action::Click);
         }
         self.explore_action(ws, target, action)
     }
@@ -923,6 +945,7 @@ impl MainView {
                 if let Some(page) = self
                     .tasks_semantics(cx)
                     .or_else(|| self.manage_semantics(cx))
+                    .or_else(|| self.ocr_semantics(cx))
                 {
                     node = node.with_children(vec![page]);
                 } else if let Some(canvas) = self.canvas_semantics(cx) {
@@ -931,6 +954,33 @@ impl MainView {
             }
         }
         node
+    }
+
+    fn ocr_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
+        let tab = self.tabs().active_tab();
+        let TabView::Ocr(page) = &tab.view else {
+            return None;
+        };
+        let area = self.content();
+        let children = page
+            .controls()
+            .into_iter()
+            .map(|(part, label, rect)| {
+                SemanticNode::new(
+                    cx.instance("ocr", tab.id, ControlPart::new(part)),
+                    Role::Button,
+                )
+                .with_label(t(cx.lang, label))
+                .with_bounds(Rect::new(area.x + rect.x, area.y + rect.y, rect.w, rect.h))
+                .with_actions([Action::Click, Action::Focus])
+            })
+            .collect();
+        Some(
+            SemanticNode::new(cx.instance("ocr", tab.id, ControlPart::ROOT), Role::Group)
+                .with_label(tab.label.clone())
+                .with_bounds(area)
+                .with_children(children),
+        )
     }
 }
 

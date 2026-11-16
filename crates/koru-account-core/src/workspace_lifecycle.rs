@@ -92,9 +92,17 @@ pub struct WorkspaceActivationChallenge {
     pub consumed_at_millis: Option<i64>,
 }
 
+/// The domain every activation transcript starts with. No other format a
+/// device key signs starts with these bytes.
+const ACTIVATION_DOMAIN: &[u8] = b"koru/cloud/workspace-activation/v1\0";
+
+/// The longest issuer a transcript may name. An issuer is an origin; this is
+/// a bound on what a device will read, not a description of one.
+pub const MAX_ACTIVATION_ISSUER_BYTES: usize = 512;
+
 impl WorkspaceActivationChallenge {
     pub fn signing_bytes(&self) -> Vec<u8> {
-        let mut bytes = b"koru/cloud/workspace-activation/v1\0".to_vec();
+        let mut bytes = ACTIVATION_DOMAIN.to_vec();
         bytes.extend_from_slice(self.challenge_id.as_bytes());
         bytes.extend_from_slice(self.operation_id.as_bytes());
         bytes.extend_from_slice(self.workspace_id.as_uuid().as_bytes());
@@ -127,6 +135,100 @@ impl WorkspaceActivationChallenge {
 fn field(target: &mut Vec<u8>, value: &[u8]) {
     target.extend_from_slice(&(value.len() as u64).to_be_bytes());
     target.extend_from_slice(value);
+}
+
+/// What an activation transcript says, read back out of its bytes.
+///
+/// **A device signs a transcript only after reading it.** The bytes arrive
+/// from the account service, and a signature over bytes nobody read means
+/// whatever the sender wanted it to mean. [`Self::parse`] accepts exactly the
+/// layout [`WorkspaceActivationChallenge::signing_bytes`] writes and nothing
+/// else, so the caller can compare each field with what it asked for before
+/// the key is used.
+///
+/// The account and the session are plain UUIDs here: the transcript carries
+/// their sixteen bytes, and this side only ever compares them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkspaceActivationTranscript {
+    pub challenge_id: Uuid,
+    pub operation_id: Uuid,
+    pub workspace_id: WorkspaceId,
+    pub region: Region,
+    pub issuer: String,
+    pub owner_profile_id: ProfileId,
+    pub owner_account_id: Uuid,
+    pub device_id: DeviceId,
+    pub session_id: Uuid,
+    pub registered_device_signing_public_key: DevicePublicKey,
+    pub expected_authorization_version: u64,
+    pub expected_profile_lifecycle_revision: u64,
+    pub issued_at_millis: i64,
+    pub expires_at_millis: i64,
+    pub nonce: [u8; 32],
+}
+
+impl WorkspaceActivationTranscript {
+    /// `None` for anything but one whole transcript: another domain, a short
+    /// or long body, an unknown region, an issuer that is not text or is
+    /// longer than [`MAX_ACTIVATION_ISSUER_BYTES`], or a single trailing byte.
+    ///
+    /// The layout has no slack, so bytes that parse are the only bytes that
+    /// encode what they parse to.
+    pub fn parse(bytes: &[u8]) -> Option<Self> {
+        let mut fields = Fields(bytes.strip_prefix(ACTIVATION_DOMAIN)?);
+        let challenge_id = fields.uuid()?;
+        let operation_id = fields.uuid()?;
+        let workspace_id = WorkspaceId::from_uuid(fields.uuid()?);
+        let region = match fields.array::<1>()? {
+            [1] => Region::Us,
+            [2] => Region::Eu,
+            _ => return None,
+        };
+        let issuer_len = usize::try_from(u64::from_be_bytes(fields.array()?)).ok()?;
+        if issuer_len > MAX_ACTIVATION_ISSUER_BYTES {
+            return None;
+        }
+        let issuer = std::str::from_utf8(fields.take(issuer_len)?)
+            .ok()?
+            .to_owned();
+        let transcript = Self {
+            challenge_id,
+            operation_id,
+            workspace_id,
+            region,
+            issuer,
+            owner_profile_id: ProfileId::from_uuid(fields.uuid()?),
+            owner_account_id: fields.uuid()?,
+            device_id: DeviceId::from_uuid(fields.uuid()?),
+            session_id: fields.uuid()?,
+            registered_device_signing_public_key: DevicePublicKey::from_bytes(fields.array()?),
+            expected_authorization_version: u64::from_be_bytes(fields.array()?),
+            expected_profile_lifecycle_revision: u64::from_be_bytes(fields.array()?),
+            issued_at_millis: i64::from_be_bytes(fields.array()?),
+            expires_at_millis: i64::from_be_bytes(fields.array()?),
+            nonce: fields.array()?,
+        };
+        fields.0.is_empty().then_some(transcript)
+    }
+}
+
+/// The unread rest of a transcript.
+struct Fields<'a>(&'a [u8]);
+
+impl<'a> Fields<'a> {
+    fn take(&mut self, len: usize) -> Option<&'a [u8]> {
+        let (head, rest) = self.0.split_at_checked(len)?;
+        self.0 = rest;
+        Some(head)
+    }
+
+    fn array<const N: usize>(&mut self) -> Option<[u8; N]> {
+        self.take(N)?.try_into().ok()
+    }
+
+    fn uuid(&mut self) -> Option<Uuid> {
+        self.array().map(Uuid::from_bytes)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -299,6 +401,105 @@ pub trait WorkspaceCloudLifecycleRepository: Send + Sync {
 mod tests {
     use super::*;
     use koru_device::DeviceSigningKey;
+
+    fn challenge(key: &DeviceSigningKey) -> WorkspaceActivationChallenge {
+        WorkspaceActivationChallenge {
+            version: 1,
+            challenge_id: Uuid::from_u128(1),
+            operation_id: Uuid::from_u128(2),
+            workspace_id: WorkspaceId::from_uuid(Uuid::from_u128(3)),
+            region: Region::Eu,
+            owner_profile_id: ProfileId::from_uuid(Uuid::from_u128(4)),
+            owner_account_id: "55555555-5555-4555-8555-555555555555".parse().unwrap(),
+            device_id: DeviceId::from_uuid(Uuid::from_u128(6)),
+            session_id: "77777777-7777-4777-8777-777777777777".parse().unwrap(),
+            issuer: "https://eu.api.koru.do".into(),
+            registered_device_signing_public_key: key.public_key(),
+            expected_authorization_version: 11,
+            expected_profile_lifecycle_revision: 12,
+            nonce: [8; 32],
+            issued_at_millis: 10,
+            expires_at_millis: 300_010,
+            consumed_at_millis: None,
+        }
+    }
+
+    #[test]
+    fn a_transcript_reads_back_every_field_it_was_written_with() {
+        let key = DeviceSigningKey::from_secret_bytes([7; 32]);
+        let challenge = challenge(&key);
+        let read = WorkspaceActivationTranscript::parse(&challenge.signing_bytes()).unwrap();
+        assert_eq!(
+            read,
+            WorkspaceActivationTranscript {
+                challenge_id: challenge.challenge_id,
+                operation_id: challenge.operation_id,
+                workspace_id: challenge.workspace_id,
+                region: challenge.region,
+                issuer: challenge.issuer.clone(),
+                owner_profile_id: challenge.owner_profile_id,
+                owner_account_id: challenge.owner_account_id.as_uuid(),
+                device_id: challenge.device_id,
+                session_id: challenge.session_id.as_uuid(),
+                registered_device_signing_public_key: key.public_key(),
+                expected_authorization_version: 11,
+                expected_profile_lifecycle_revision: 12,
+                issued_at_millis: 10,
+                expires_at_millis: 300_010,
+                nonce: [8; 32],
+            }
+        );
+    }
+
+    #[test]
+    fn only_one_whole_transcript_parses() {
+        let key = DeviceSigningKey::from_secret_bytes([7; 32]);
+        let honest = challenge(&key).signing_bytes();
+        let parses = |bytes: &[u8]| WorkspaceActivationTranscript::parse(bytes).is_some();
+        assert!(parses(&honest));
+
+        assert!(!parses(&[]));
+        assert!(!parses(ACTIVATION_DOMAIN));
+        // Every shorter prefix, and one byte more.
+        for len in 0..honest.len() {
+            assert!(!parses(&honest[..len]), "a {len}-byte prefix parsed");
+        }
+        let mut trailing = honest.clone();
+        trailing.push(0);
+        assert!(!parses(&trailing));
+
+        // The domain is the whole domain, terminator included.
+        let mut other_domain = honest.clone();
+        other_domain[5] ^= 1;
+        assert!(!parses(&other_domain));
+        let mut unterminated = honest.clone();
+        unterminated[ACTIVATION_DOMAIN.len() - 1] = b'/';
+        assert!(!parses(&unterminated));
+
+        // A region this build does not know is not read as one it does.
+        let region = ACTIVATION_DOMAIN.len() + 48;
+        assert_eq!(honest[region], 2);
+        for unknown in [0, 3, 255] {
+            let mut bytes = honest.clone();
+            bytes[region] = unknown;
+            assert!(!parses(&bytes));
+        }
+
+        // An issuer length that runs past the end, or past the bound, or
+        // names bytes that are not text.
+        let length = region + 1;
+        let mut overlong = honest.clone();
+        overlong[length..length + 8].copy_from_slice(&u64::MAX.to_be_bytes());
+        assert!(!parses(&overlong));
+        let mut wide = challenge(&key);
+        wide.issuer = "h".repeat(MAX_ACTIVATION_ISSUER_BYTES + 1);
+        assert!(!parses(&wide.signing_bytes()));
+        wide.issuer = "h".repeat(MAX_ACTIVATION_ISSUER_BYTES);
+        assert!(parses(&wide.signing_bytes()));
+        let mut not_text = honest.clone();
+        not_text[length + 8] = 0xff;
+        assert!(!parses(&not_text));
+    }
 
     #[test]
     fn activation_transcript_is_exact_and_signature_bound() {

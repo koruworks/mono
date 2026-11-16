@@ -304,7 +304,7 @@ impl ProfilesController {
 
     /// One Profile's status line, in today's account and Cloud vocabulary:
     /// how its connection and its Cloud sync stand, each a clause after a
-    /// middle dot, after *Local only* for a Profile on no account.
+    /// middle dot. Account binding does not imply a device-local sync mode.
     ///
     /// **No account id** (the user, 2026-11-10: "users don't care about
     /// that"). An account Profile used to open with *Account 02e1519b*, the
@@ -316,12 +316,20 @@ impl ProfilesController {
         let lang = crate::format::lang();
         let mut clauses = Vec::new();
         match LocalProfileAttribution::from_binding(profile.account.as_deref().unwrap_or("")) {
-            LocalProfileAttribution::Unbound => clauses
-                .push(koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherLocalOnly).to_owned()),
+            LocalProfileAttribution::Unbound => {}
             LocalProfileAttribution::Account(_) => {}
             LocalProfileAttribution::Invalid => {
                 clauses.push(koru_i18n::t(lang, koru_i18n::Key::AccountSwitcherUnknown).to_owned())
             }
+        }
+        if self.selected == Some(profile.id)
+            && let Some(settings) = self.sync_settings()
+        {
+            clauses.push(match settings.mode.as_str() {
+                "p2p" => "P2P".to_owned(),
+                "cloud" => "Cloud".to_owned(),
+                _ => koru_i18n::t(lang, koru_i18n::Key::SyncModeOff).to_owned(),
+            });
         }
         clauses.extend(
             self.profile_connection_status(profile.id)

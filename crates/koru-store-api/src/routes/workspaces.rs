@@ -1471,6 +1471,8 @@ pub async fn set_profile_transport_mode(
             blobs.enabled(workspace);
         }
     }
+    state.notify_catalog_change();
+    state.notify_replication();
     let profile = choice.profile.state();
     Ok(Json(ProfileTransportModeOutcome {
         mode: profile.mode.as_storage().to_owned(),
@@ -1939,5 +1941,10 @@ mod cloud_waiting_tests;
 mod creation_tests;
 #[cfg(test)]
 mod transport_mode_tests;
+
+mod transport_settings;
+pub use transport_settings::{
+    get_profile_transport_mode, initialize_profile_transport_mode, set_workspace_transport_mode,
+};
 #[cfg(test)]
 mod version_tests;

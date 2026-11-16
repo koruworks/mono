@@ -184,6 +184,89 @@ fn a_task_in_a_hidden_task_list_document_is_still_searchable() {
     assert_eq!(matches(&indexer, "Tasks"), 1, "and the document it is in");
 }
 
+/// **A reading document yields no search result** (OCR TECHNICAL D14, §7:
+/// "its title is shown nowhere … the plan picks the value and proves it
+/// produces no row in any listing and no search result"). The projector never
+/// walks one, so it has no node fragments. But the listing is indexed on its
+/// own — every listed document gets a title fragment, which is how a document
+/// nobody has opened is still findable — so the title is what decides it.
+/// `Store::ensure_reading` registers it with an empty title, and an empty
+/// title makes no fragment. The second listing row shows the value is
+/// load-bearing: an unprojected document *with* a title is found by it.
+///
+/// The kind is a literal for the reason
+/// `a_task_in_a_hidden_task_list_document_is_still_searchable` gives.
+#[test]
+fn an_untitled_reading_document_is_never_a_result() {
+    let fixture = Fixture::new("the quarterly plan");
+    let reading = DocumentId::new();
+    let titled = DocumentId::new();
+    let mut projections = fixture.projections;
+    projections
+        .set_listing(
+            fixture.workspace,
+            "Acme",
+            &[
+                listed(fixture.document, "Roadmap"),
+                ListedDocument {
+                    parent: Some(fixture.document),
+                    kind: "koru-reading".to_owned(),
+                    ..listed(reading, "")
+                },
+                ListedDocument {
+                    kind: "koru-reading".to_owned(),
+                    ..listed(titled, "Scanned")
+                },
+            ],
+            2,
+        )
+        .unwrap();
+    let mut indexer = Indexer::new(
+        SearchIndex::in_memory().unwrap(),
+        projections,
+        Queue::default(),
+    );
+    indexer.queue().push_listing(fixture.workspace);
+    settle(&mut indexer, 0);
+    settle(&mut indexer, 60_000);
+
+    assert_eq!(matches(&indexer, "quarterly"), 1, "the page is indexed");
+    assert_eq!(
+        matches(&indexer, "Scanned"),
+        1,
+        "a title on an unprojected listing row is found by it"
+    );
+    let hits = indexer
+        .index()
+        .query(
+            &crate::model::SearchQuery {
+                text: "Acme".into(),
+                ..Default::default()
+            },
+            &[],
+        )
+        .unwrap()
+        .hits;
+    assert!(
+        hits.iter()
+            .all(|hit| hit.document.as_deref() != Some(reading.to_storage().as_str())),
+        "the untitled reading document is in no result"
+    );
+    assert_eq!(
+        indexer
+            .index()
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM fragments WHERE document_id = ?1",
+                [reading.to_storage()],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        0,
+        "and has no fragment for any query to find"
+    );
+}
+
 /// The public `behind` counter is set on the reconcile that discovers missed
 /// work, before the bounded repair consumes it. A fast restart may repair the
 /// queue before an HTTP observer can sample that transient value, so pin the
@@ -1110,4 +1193,572 @@ fn a_listing_that_arrives_late_still_indexes_the_document() {
 
     assert_eq!(matches(&indexer, "quarterly"), 1, "it is searchable now");
     assert_eq!(indexer.queue.lock().stats.unlisted, 0);
+}
+
+// --------------------------------------------------------------- readings
+
+const MANUAL: &str = "b3:0001";
+const PHOTO: &str = "b3:0002";
+
+/// A readings source this test controls: `None` is *cannot answer now*, and a
+/// hash missing from `Some` has no reading. It counts how often it was asked.
+#[derive(Clone, Default)]
+struct FakeReadings(Arc<Mutex<(Option<Vec<ReadingText>>, usize)>>);
+
+impl FakeReadings {
+    fn answering(readings: Vec<ReadingText>) -> Self {
+        let this = Self::default();
+        this.set(Some(readings));
+        this
+    }
+
+    fn set(&self, readings: Option<Vec<ReadingText>>) {
+        self.0.lock().unwrap().0 = readings;
+    }
+
+    fn asked(&self) -> usize {
+        self.0.lock().unwrap().1
+    }
+}
+
+impl Readings for FakeReadings {
+    fn readings(&self, _workspace: WorkspaceId, hashes: &[String]) -> Option<Vec<ReadingText>> {
+        let mut inner = self.0.lock().unwrap();
+        inner.1 += 1;
+        inner.0.as_ref().map(|all| {
+            all.iter()
+                .filter(|r| hashes.contains(&r.hash))
+                .cloned()
+                .collect()
+        })
+    }
+}
+
+fn reading(hash: &str, page_count: u32, pages: &[(u32, &str)]) -> ReadingText {
+    ReadingText {
+        hash: hash.to_owned(),
+        page_count,
+        pages: pages.iter().map(|(p, t)| (*p, (*t).to_owned())).collect(),
+    }
+}
+
+/// The forty-page manual of the plan's verification, its words spread so that
+/// two of them meet on one page and two never do.
+fn the_manual() -> ReadingText {
+    reading(
+        MANUAL,
+        40,
+        &[
+            (1, "contents and safety notices"),
+            (2, "unpack the gearbox"),
+            (3, "torque the flange bolts evenly"),
+            (7, "replace the gasket"),
+        ],
+    )
+}
+
+/// A node holding a blob: the root of a file document, or a picture in a page.
+fn blob_node(id: &str, kind: &str, name: &str, hash: &str) -> ProjectedNode {
+    ProjectedNode {
+        id: id.to_owned(),
+        kind: kind.to_owned(),
+        text: String::new(),
+        name: Some(name.to_owned()),
+        blob: Some(hash.to_owned()),
+        mime: Some("application/octet-stream".to_owned()),
+        ..a_node("")
+    }
+}
+
+/// A workspace holding a file (the manual), a page with a picture in it, and a
+/// page with neither.
+struct Library {
+    workspace: WorkspaceId,
+    file: DocumentId,
+    page: DocumentId,
+    plain: DocumentId,
+    readings: FakeReadings,
+    indexer: Indexer,
+}
+
+impl Library {
+    fn new(readings: FakeReadings) -> Self {
+        Self::with_listing(readings, |entries| entries)
+    }
+
+    fn with_listing(
+        readings: FakeReadings,
+        listing: impl FnOnce(Vec<ListedDocument>) -> Vec<ListedDocument>,
+    ) -> Self {
+        let workspace = WorkspaceId::new();
+        let (file, page, plain) = (DocumentId::new(), DocumentId::new(), DocumentId::new());
+        let mut projections = Projections::in_memory().unwrap();
+        projections
+            .set_listing(
+                workspace,
+                "Acme",
+                &listing(vec![
+                    ListedDocument {
+                        kind: "file".to_owned(),
+                        mime: Some("application/pdf".to_owned()),
+                        ..listed(file, "manual.pdf")
+                    },
+                    listed(page, "Site visit"),
+                    listed(plain, "Notes"),
+                ]),
+                1,
+            )
+            .unwrap();
+        for (document, nodes) in [
+            (file, vec![blob_node("root", "file", "manual.pdf", MANUAL)]),
+            (
+                page,
+                vec![
+                    a_node("we photographed the board"),
+                    blob_node("img", "image", "board.jpg", PHOTO),
+                ],
+            ),
+            (plain, vec![a_node("nothing read here")]),
+        ] {
+            projections
+                .replace(
+                    &DocumentProjection {
+                        workspace,
+                        document,
+                        source_revision: b"r1".to_vec(),
+                        nodes,
+                    },
+                    1,
+                    None,
+                )
+                .unwrap();
+        }
+        let indexer = Indexer::new(
+            SearchIndex::in_memory().unwrap(),
+            projections,
+            Queue::default(),
+        )
+        .with_readings(Box::new(readings.clone()));
+        Self {
+            workspace,
+            file,
+            page,
+            plain,
+            readings,
+            indexer,
+        }
+    }
+
+    fn hits(&self, text: &str) -> Vec<crate::model::SearchHit> {
+        self.hits_in(text, crate::model::LifecycleFilter::Live)
+    }
+
+    fn hits_in(
+        &self,
+        text: &str,
+        lifecycle: crate::model::LifecycleFilter,
+    ) -> Vec<crate::model::SearchHit> {
+        self.indexer
+            .index()
+            .query(
+                &crate::model::SearchQuery {
+                    text: text.into(),
+                    lifecycle,
+                    ..Default::default()
+                },
+                &[],
+            )
+            .unwrap()
+            .hits
+    }
+
+    /// Whether the file is still found by what it was found by before
+    /// readings: its listed title and its node's name.
+    fn file_found_by_name(&self) -> bool {
+        let fields: Vec<String> = self
+            .hits("manual")
+            .into_iter()
+            .filter(|hit| hit.document.as_deref() == Some(self.file.to_storage().as_str()))
+            .map(|hit| hit.field)
+            .collect();
+        fields.iter().any(|f| f == crate::model::field::TITLE)
+            && fields.iter().any(|f| f == crate::model::field::BODY)
+            && !fields.iter().any(|f| f == crate::model::field::READ)
+    }
+
+    /// Hits on words read out of something, as `(document, page)`.
+    fn read_hits(&self, text: &str) -> Vec<(String, Option<u32>)> {
+        self.hits(text)
+            .into_iter()
+            .filter(|hit| hit.field == crate::model::field::READ)
+            .map(|hit| (hit.document.unwrap(), hit.page))
+            .collect()
+    }
+}
+
+/// **The plan's first verification.** A word on page 3 finds the file, and the
+/// hit says page 3.
+#[test]
+fn a_word_on_page_three_finds_the_file_with_page_three() {
+    let mut library = Library::new(FakeReadings::answering(vec![the_manual()]));
+    settle(&mut library.indexer, 0);
+
+    let hits = library.hits("torque");
+    assert_eq!(hits.len(), 1, "{hits:?}");
+    let hit = &hits[0];
+    assert_eq!(
+        hit.document.as_deref(),
+        Some(library.file.to_storage().as_str())
+    );
+    assert_eq!(hit.field, crate::model::field::READ);
+    assert_eq!(hit.page, Some(3));
+    assert_eq!(hit.node.as_deref(), Some("root"));
+    assert_eq!(hit.title, "manual.pdf", "the row names the file");
+    assert!(
+        hit.snippet.contains("torque"),
+        "the snippet is that page's words: {:?}",
+        hit.snippet
+    );
+    assert!(!hit.spans.is_empty(), "and the matched word is highlighted");
+}
+
+/// **Every term co-occurs in one fragment, and a fragment is a page.** Two
+/// words on one page find it; two words on different pages find nothing —
+/// with no query logic of its own.
+#[test]
+fn two_words_match_on_one_page_and_never_across_two() {
+    let mut library = Library::new(FakeReadings::answering(vec![the_manual()]));
+    settle(&mut library.indexer, 0);
+
+    assert_eq!(
+        library.read_hits("flange bolts"),
+        [(library.file.to_storage(), Some(3))]
+    );
+    assert!(
+        library.read_hits("torque gasket").is_empty(),
+        "page 3 and page 7 were assembled into one answer"
+    );
+    assert!(library.hits("torque gasket").is_empty());
+}
+
+/// A picture, a one-page PDF and a plain-text file have no page a person would
+/// be told about.
+#[test]
+fn a_one_page_reading_carries_no_page() {
+    let mut library = Library::new(FakeReadings::answering(vec![
+        reading(MANUAL, 1, &[(1, "a single page of warranty terms")]),
+        reading(PHOTO, 1, &[(1, "whiteboard sketch of the pump")]),
+    ]));
+    settle(&mut library.indexer, 0);
+
+    assert_eq!(
+        library.read_hits("warranty"),
+        [(library.file.to_storage(), None)]
+    );
+    assert_eq!(
+        library.read_hits("whiteboard"),
+        [(library.page.to_storage(), None)],
+        "a picture in a page is found in that page"
+    );
+}
+
+/// A file in the workspace's Trash keeps its words, and they answer the Trash
+/// filter only — the bin is a place somebody searches and restores from.
+#[test]
+fn a_trashed_files_words_answer_only_the_trash_filter() {
+    let mut library = Library::with_listing(
+        FakeReadings::answering(vec![the_manual()]),
+        |mut entries| {
+            entries[0].trashed_at = Some(42);
+            entries
+        },
+    );
+    settle(&mut library.indexer, 0);
+
+    assert!(
+        library.hits("torque").is_empty(),
+        "a binned file in a live answer"
+    );
+    let binned = library.hits_in("torque", crate::model::LifecycleFilter::Trash);
+    assert_eq!(binned.len(), 1);
+    assert_eq!(binned[0].page, Some(3));
+    assert_eq!(binned[0].lifecycle, crate::model::Lifecycle::Trashed);
+}
+
+/// **`None` is *not now*.** Names and titles are indexed as they always were,
+/// and no words are — not an empty reading, and not an error.
+#[test]
+fn a_source_that_cannot_answer_indexes_names_and_titles_and_no_words() {
+    let readings = FakeReadings::default();
+    let mut library = Library::new(readings.clone());
+    settle(&mut library.indexer, 0);
+
+    assert!(library.read_hits("torque").is_empty());
+    assert!(library.file_found_by_name(), "the file's title and name");
+    assert_eq!(
+        library.hits("board").len(),
+        2,
+        "the picture's name, and the line beside it"
+    );
+    assert!(
+        readings.asked() >= 2,
+        "it was asked, for the file and the page"
+    );
+    assert_eq!(
+        library.indexer.queue().stats().failed,
+        0,
+        "not being able to answer is not a failure"
+    );
+}
+
+/// **And it is asked again.** A document indexed while the source could not
+/// answer is not left without words for good: the reconcile asks once per
+/// workspace whether the source can answer yet, and re-indexes what waited.
+#[test]
+fn words_that_could_not_be_had_are_indexed_once_the_source_answers() {
+    let readings = FakeReadings::default();
+    let mut library = Library::new(readings.clone());
+    settle(&mut library.indexer, 0);
+    assert!(library.read_hits("torque").is_empty());
+
+    readings.set(Some(vec![the_manual()]));
+    settle(&mut library.indexer, RECONCILE_MILLIS * 2);
+
+    assert_eq!(
+        library.read_hits("torque"),
+        [(library.file.to_storage(), Some(3))]
+    );
+    // And once it has answered, an idle index stops asking.
+    let asked = readings.asked();
+    settle(&mut library.indexer, RECONCILE_MILLIS * 4);
+    assert_eq!(
+        readings.asked(),
+        asked,
+        "it went on probing a source that answers"
+    );
+}
+
+/// **A reading that disappears takes its words with it** on the next index of
+/// the document — a hash missing from a `Some` answer has no reading.
+#[test]
+fn a_reading_that_disappears_from_the_source_leaves_the_index() {
+    let readings = FakeReadings::answering(vec![the_manual()]);
+    let mut library = Library::new(readings.clone());
+    settle(&mut library.indexer, 0);
+    assert_eq!(library.read_hits("torque").len(), 1);
+
+    readings.set(Some(Vec::new()));
+    library
+        .indexer
+        .queue()
+        .enqueue_document(library.workspace, library.file);
+    settle(&mut library.indexer, 100);
+
+    assert!(library.read_hits("torque").is_empty());
+    assert!(
+        library.file_found_by_name(),
+        "the file is still found by its name"
+    );
+}
+
+/// **The daemon's two doors.** A reading lands for the manual: its parent is
+/// named, and the hash reaches every other document carrying it — here a page
+/// the same PDF was dropped into — and nothing else.
+#[test]
+fn a_changed_reading_re_indexes_exactly_the_documents_carrying_it() {
+    let readings = FakeReadings::answering(Vec::new());
+    let mut library = Library::new(readings.clone());
+    settle(&mut library.indexer, 0);
+
+    // The same PDF also sits in the page, beside the picture.
+    let projection = DocumentProjection {
+        workspace: library.workspace,
+        document: library.page,
+        source_revision: b"r2".to_vec(),
+        nodes: vec![
+            a_node("we photographed the board"),
+            blob_node("img", "image", "board.jpg", PHOTO),
+            blob_node("pdf", "file", "manual.pdf", MANUAL),
+        ],
+    };
+    library
+        .indexer
+        .projections
+        .replace(&projection, 2, None)
+        .unwrap();
+    settle(&mut library.indexer, RECONCILE_MILLIS * 2);
+    let indexed = library.indexer.queue().stats().indexed;
+    assert!(
+        library.read_hits("torque").is_empty(),
+        "nothing has been read yet"
+    );
+
+    // The reading lands. Nothing about either document changed.
+    readings.set(Some(vec![the_manual()]));
+    let queue = library.indexer.queue();
+    queue.enqueue_document(library.workspace, library.file);
+    queue.enqueue_hashes(library.workspace, [MANUAL]);
+    assert_eq!(
+        queue.pending_workspaces(),
+        vec![library.workspace],
+        "a workspace with readings to apply is updating"
+    );
+    settle(&mut library.indexer, RECONCILE_MILLIS * 2 + 100);
+
+    let mut found = library.read_hits("torque");
+    found.sort();
+    let mut expected = vec![
+        (library.file.to_storage(), Some(3)),
+        (library.page.to_storage(), Some(3)),
+    ];
+    expected.sort();
+    assert_eq!(found, expected);
+    assert_eq!(
+        library.indexer.queue().stats().indexed,
+        indexed + 2,
+        "the file and the page, once each, and not the page with no picture"
+    );
+    let _ = library.plain;
+}
+
+/// **The edit path asks too.** A picture pasted into a page, whose bytes were
+/// already read elsewhere, is findable by those words the moment the page is
+/// indexed — no reading changed, so nothing else would say so.
+#[test]
+fn a_picture_pasted_into_a_page_is_findable_by_words_read_elsewhere() {
+    let readings = FakeReadings::answering(vec![reading(
+        PHOTO,
+        1,
+        &[(1, "whiteboard sketch of the pump")],
+    )]);
+    let mut library = Library::new(readings);
+    settle(&mut library.indexer, 0);
+    assert_eq!(
+        library.read_hits("pump").len(),
+        1,
+        "the page that already has it"
+    );
+
+    let projection = DocumentProjection {
+        workspace: library.workspace,
+        document: library.plain,
+        source_revision: b"r2".to_vec(),
+        nodes: vec![
+            a_node("nothing read here"),
+            blob_node("pasted", "image", "copy.jpg", PHOTO),
+        ],
+    };
+    library
+        .indexer
+        .projections
+        .replace(&projection, 2, None)
+        .unwrap();
+    Feed::new(library.indexer.queue()).projected(&projection);
+    settle(&mut library.indexer, 100);
+
+    let mut found: Vec<String> = library
+        .read_hits("pump")
+        .into_iter()
+        .map(|(document, _)| document)
+        .collect();
+    found.sort();
+    let mut expected = vec![library.page.to_storage(), library.plain.to_storage()];
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
+/// **A picture's result carries the name somebody gave the picture**, and a
+/// picture nobody named, a file and every typed field carry none (OCR
+/// EXPERIENCE §3: the mark alone for an unnamed picture). Naming lives on the
+/// picture's own fragment, so the reading's rows never hold it.
+#[test]
+fn a_picture_hit_carries_its_name_only_when_somebody_gave_it_one() {
+    let readings = FakeReadings::answering(vec![
+        reading(PHOTO, 1, &[(1, "whiteboard sketch of the pump")]),
+        the_manual(),
+    ]);
+    let mut library = Library::new(readings);
+    settle(&mut library.indexer, 0);
+    let named = library
+        .hits("pump")
+        .into_iter()
+        .find(|hit| hit.field == crate::model::field::READ)
+        .expect("the picture's words are found");
+    assert_eq!(named.kind, "image");
+    assert_eq!(named.picture_name.as_deref(), Some("board.jpg"));
+
+    let file = library
+        .hits("gasket")
+        .into_iter()
+        .find(|hit| hit.field == crate::model::field::READ)
+        .expect("the file's words are found");
+    assert_eq!(file.picture_name, None, "a file is no picture");
+    assert!(
+        library
+            .hits("photographed")
+            .iter()
+            .all(|hit| hit.picture_name.is_none()),
+        "typed words name no picture"
+    );
+
+    // The same picture, pasted unnamed into another page.
+    let mut unnamed = blob_node("pasted", "image", "", PHOTO);
+    unnamed.name = None;
+    let projection = DocumentProjection {
+        workspace: library.workspace,
+        document: library.plain,
+        source_revision: b"r2".to_vec(),
+        nodes: vec![a_node("nothing read here"), unnamed],
+    };
+    library
+        .indexer
+        .projections
+        .replace(&projection, 2, None)
+        .unwrap();
+    Feed::new(library.indexer.queue()).projected(&projection);
+    settle(&mut library.indexer, 100);
+    let plain = library.plain.to_storage();
+    let unnamed_hit = library
+        .hits("pump")
+        .into_iter()
+        .find(|hit| hit.document.as_deref() == Some(plain.as_str()))
+        .expect("the unnamed picture is found too");
+    assert_eq!(unnamed_hit.picture_name, None);
+}
+
+/// **Read text ranks with tables and properties**, below every kind of typed
+/// text: the line somebody wrote comes before the words read out of a picture.
+#[test]
+fn what_somebody_wrote_outranks_what_was_read() {
+    let mut library = Library::new(FakeReadings::answering(vec![reading(
+        PHOTO,
+        1,
+        &[(1, "the board shows the schedule")],
+    )]));
+    settle(&mut library.indexer, 0);
+
+    let hits = library.hits("board");
+    let fields: Vec<&str> = hits.iter().map(|hit| hit.field.as_str()).collect();
+    let body = fields.iter().position(|f| *f == crate::model::field::BODY);
+    let read = fields.iter().position(|f| *f == crate::model::field::READ);
+    assert!(
+        body.is_some() && read.is_some() && body < read,
+        "the typed line did not rank above the read one: {fields:?}"
+    );
+    let score = |field: &str| hits.iter().find(|h| h.field == field).unwrap().score;
+    assert!(score(crate::model::field::BODY) > score(crate::model::field::READ));
+}
+
+/// With no source wired a picture and a file are found by their names, exactly
+/// as before readings existed, and nobody is asked anything.
+#[test]
+fn with_no_readings_source_nothing_is_read_and_nothing_waits() {
+    let mut library = Library::new(FakeReadings::default());
+    library.indexer.readings = None;
+    settle(&mut library.indexer, 0);
+
+    assert!(library.read_hits("torque").is_empty());
+    assert!(library.file_found_by_name());
+    assert!(library.indexer.unread.is_empty());
+    assert_eq!(library.readings.asked(), 0);
 }

@@ -83,6 +83,7 @@ pub mod state;
 
 mod agents;
 mod global;
+mod reader;
 mod terminal;
 
 #[cfg(test)]
@@ -93,6 +94,10 @@ mod tests;
 pub use action::{FontRole, Request};
 pub use links::SettingsLinks;
 pub use page::{PageGroup, PageId};
+pub use reader::{
+    READER_ITEMS_SHOWN, ReaderBlocked, ReaderDownloadEnd, ReaderDownloadStage, ReaderItemRow,
+    ReaderPartlyRow, ReaderRow, ReaderStatus,
+};
 pub use state::{
     AgentAttention, AgentDefaults, AgentProviderRow, AgentProviderStatus, AgentUpdate, AiSlot,
     Availability, DictionaryRow, NeededVersion, Notice, RendererRow, VoiceFacts,
@@ -321,6 +326,8 @@ pub struct SettingsSurface {
     spelling_note: Option<String>,
     /// The row offering a missing dictionary's download, when one is missing.
     dictionary: Option<DictionaryRow>,
+    /// The *Recognize text and images in PDFs* card (OCR Plan 2.5), host-fed.
+    reader: Option<ReaderRow>,
     /// The personal dictionary's size, as the host last read it.
     personal_words: Option<usize>,
     /// *Apply to all* was pressed while this tab was open.
@@ -407,6 +414,7 @@ impl SettingsSurface {
             spelling_languages: Vec::new(),
             spelling_note: None,
             dictionary: None,
+            reader: None,
             personal_words: None,
             layout_applied: false,
             sample_document: false,
@@ -521,6 +529,17 @@ impl SettingsSurface {
     /// The missing-dictionary row, or `None` when the files are here.
     pub fn set_dictionary(&mut self, row: Option<DictionaryRow>) {
         self.dictionary = row;
+    }
+
+    /// The *Recognize text and images in PDFs* card, as the host last read it, or
+    /// `None` for a host that says nothing about the reader. Answers whether
+    /// it changed, so a host repaints only then.
+    pub fn set_reader(&mut self, row: Option<ReaderRow>) -> bool {
+        if self.reader == row {
+            return false;
+        }
+        self.reader = row;
+        true
     }
 
     /// How many words the personal dictionary holds; `None` until the host
@@ -752,13 +771,22 @@ impl SettingsSurface {
     /// after choosing *set up your mic*. The card is found through a semantic
     /// layout anchor, so localized copy cannot change where the link lands.
     pub fn scroll_to_voice(&mut self) -> bool {
+        self.scroll_to_editor_anchor(page::Anchor::Voice)
+    }
+
+    /// The Files menu's setup link, positioned by the card's semantic anchor.
+    pub fn scroll_to_reader(&mut self) -> bool {
+        self.scroll_to_editor_anchor(page::Anchor::Reader)
+    }
+
+    fn scroll_to_editor_anchor(&mut self, anchor: page::Anchor) -> bool {
         let paged = self.show_page(PageId::Editor);
         self.relayout();
         let Some(y) = self
             .laid
             .anchors
             .iter()
-            .find(|(anchor, _)| *anchor == page::Anchor::Voice)
+            .find(|(candidate, _)| *candidate == anchor)
             .map(|(_, y)| *y)
         else {
             return paged;
@@ -948,6 +976,7 @@ impl SettingsSurface {
             spelling_languages,
             spelling_note,
             dictionary,
+            reader,
             personal_words,
             layout_applied,
             sample_document,
@@ -992,6 +1021,7 @@ impl SettingsSurface {
             spelling_languages,
             spelling_note: spelling_note.as_deref(),
             dictionary: dictionary.as_ref(),
+            reader: reader.as_ref(),
             personal_words: *personal_words,
             layout_applied: *layout_applied,
             telemetry: *telemetry,
@@ -2261,6 +2291,13 @@ impl SettingsSurface {
             }
             Action::ClearPersonalDictionary => self.requests.push(Request::ClearPersonalDictionary),
             Action::DownloadDictionary => self.requests.push(Request::DownloadDictionary),
+            Action::ReaderTurnOn => self.requests.push(Request::TurnOnReader),
+            Action::ReaderStop => self.requests.push(Request::StopReaderInstall),
+            Action::ReaderTurnOff => self.requests.push(Request::TurnOffReader),
+            Action::ReaderRemove => self.requests.push(Request::RemoveReader),
+            Action::ShowReaderItem(key) => self.requests.push(Request::ShowReaderItem(key)),
+            Action::ReaderReadAgain(key) => self.requests.push(Request::ReadReaderItemAgain(key)),
+            Action::ReaderReadAll(key) => self.requests.push(Request::ReadAllReaderPages(key)),
             Action::VoiceModels => self.requests.push(if self.voice.model_removes {
                 Request::RemoveVoiceModels
             } else {
@@ -2514,6 +2551,13 @@ fn clone_action(action: &Action) -> Action {
         Action::SpellcheckLanguage(v) => Action::SpellcheckLanguage(v.clone()),
         Action::ClearPersonalDictionary => Action::ClearPersonalDictionary,
         Action::DownloadDictionary => Action::DownloadDictionary,
+        Action::ReaderTurnOn => Action::ReaderTurnOn,
+        Action::ReaderStop => Action::ReaderStop,
+        Action::ReaderTurnOff => Action::ReaderTurnOff,
+        Action::ReaderRemove => Action::ReaderRemove,
+        Action::ShowReaderItem(key) => Action::ShowReaderItem(key.clone()),
+        Action::ReaderReadAgain(key) => Action::ReaderReadAgain(key.clone()),
+        Action::ReaderReadAll(key) => Action::ReaderReadAll(key.clone()),
         Action::VoiceModels => Action::VoiceModels,
         Action::RevokeVoiceConsent => Action::RevokeVoiceConsent,
         Action::Renderer(v) => Action::Renderer(v.clone()),

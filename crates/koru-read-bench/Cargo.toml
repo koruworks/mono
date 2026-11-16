@@ -1,0 +1,41 @@
+[package]
+rust-version.workspace = true
+name = "koru-read-bench"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The reading benchmark: pages per second, peak memory and character error rate of the read worker's own job pipeline, over a corpus given by path. It downloads nothing and carries no corpus."
+
+# **A binary with a library beside it**, as `koru-voice-bench` is: the metrics
+# are the part that has to be tested, and a `main.rs` is the part that cannot.
+[[bin]]
+name = "koru-read-bench"
+path = "src/main.rs"
+
+# **Recognition is off, and turning it on is what a recognition run does**,
+# exactly as the worker's own feature: it links ONNX Runtime from
+# `ORT_LIB_PATH`, which `scripts/setup/fetch-voice-runtime.*` places. Off, the
+# bench still runs end to end and measures the text layer, which is a number
+# worth having on its own.
+[features]
+default = []
+recognition = ["koru-read-worker/recognition"]
+
+[dependencies]
+koru-read = { path = "../koru-read" }
+# The worker's job pipeline itself — `job::run`, the same decode, render,
+# acceptance and recognition code the shipped worker runs, minus its socket —
+# so the numbers are the product's and not a second implementation's.
+koru-read-worker = { path = "../../apps/koru-read" }
+koru-read-paddle = { path = "../koru-read-paddle" }
+serde_json = { workspace = true }
+
+# Peak memory is the OS's own peak counter, read once at the end: private
+# committed bytes on Windows (`PeakPagefileUsage`, what Plan 0.1 measured and
+# what a Job Object memory limit counts), the peak resident set elsewhere.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_System_ProcessStatus"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

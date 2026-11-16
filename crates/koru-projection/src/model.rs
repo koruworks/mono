@@ -79,12 +79,37 @@ pub const PROJECTION_SCHEMA_VERSION: i64 = 8;
 /// know (a listing refresh that failed) is projected like any other: it
 /// adopts, is writable, and projects to no rows and no error —
 /// `walk::tests::a_run_document_projects_to_no_rows_and_no_error`.
-pub const NOT_PROJECTED: [&str; 4] = [
+///
+/// **A reading document** (OCR TECHNICAL D14) is the fifth: a `readings` map
+/// of words per page, no node tree, written by the reader rather than by a
+/// person. Because a commit to one is dropped here before any consumer hears
+/// of it, nothing that wants to know a reading changed may learn it from this
+/// crate; the Store daemon carries that change itself (TECHNICAL §7).
+pub const NOT_PROJECTED: [&str; 5] = [
     koru_core::explore::KIND_RUN,
     koru_core::explore::KIND_SCHEDULE,
     koru_core::explore::KIND_SOCIAL_POST,
     koru_core::explore::KIND_SOCIAL_CHANNEL,
+    koru_core::explore::KIND_READING,
 ];
+
+/// Manifest kinds whose history the Store never captures: no version is
+/// recorded for one when its checkpoint is taken
+/// (`koru_store_core::Store::with_unversioned_kinds`).
+///
+/// **The host decides, because the store cannot.** `koru-store-core` treats
+/// documents as opaque and links nothing that names a kind, so the daemon
+/// hands it this set when it opens the Store. Automatic history is already
+/// kept off these by [`NOT_PROJECTED`] — the projector never hands one to
+/// `record_activity` — and this closes the other door, the checkpoint's own
+/// history row.
+///
+/// Only the reading document (OCR TECHNICAL D14): a person never writes into
+/// one, so a version of it is a version nobody can want, and a large archive
+/// re-read would otherwise fill `document_versions` with snapshots of words.
+/// Whether a run and a schedule belong here too is the same question for
+/// kinds that are not that feature's, and it is noted there, not changed.
+pub const UNVERSIONED: [&str; 1] = [koru_core::explore::KIND_READING];
 
 /// Whether a document of this manifest kind is walked at all.
 pub fn projected(kind: &str) -> bool {

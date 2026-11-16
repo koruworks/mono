@@ -86,6 +86,11 @@ pub fn licence_text(file: &str) -> Result<Cow<'static, str>, String> {
         "OpenMDW-1.1.txt" => Ok(include_str!("../../licences/OpenMDW-1.1.txt")),
         "CC-BY-4.0.txt" => Ok(include_str!("../../licences/CC-BY-4.0.txt")),
         "MIT-openai-whisper.txt" => Ok(include_str!("../../licences/MIT-openai-whisper.txt")),
+        // The plain Apache-2.0 text, the same file `THIRD-PARTY-NOTICES.txt`
+        // takes it from. Apache-2.0 carries no holder placeholder, so unlike
+        // MIT one copy serves every model published under it — today the
+        // reader's (`read_model::table`).
+        "spdx/Apache-2.0.txt" => Ok(include_str!("../../licences/spdx/Apache-2.0.txt")),
         other => Err(format!(
             "no licence text is compiled in for {other}; add it under \
              crates/koru-release/licences/ and name it in repack::licence_text"
@@ -211,6 +216,39 @@ pub fn repack(
         .flush()
         .map_err(|error| error.to_string())?;
 
+    let (size, digest) = hash_file(destination)?;
+    Ok(Packaged {
+        path: destination.to_path_buf(),
+        size,
+        digest,
+    })
+}
+
+/// **A zip of exactly these entries, in this order, and its digest.**
+///
+/// The same per-entry rules as [`repack`] — fixed timestamps, fixed modes, the
+/// install-time path check, no duplicate and the entry cap — for an archive
+/// whose files are already in hand rather than inside a tar. The reader's
+/// model (`read_model::archive`) is built through this, so both model
+/// archives are deterministic for one reason rather than two.
+pub(crate) fn zip_entries(
+    destination: &Path,
+    entries: &[(&str, &[u8])],
+) -> Result<Packaged, String> {
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    let output = File::create(destination).map_err(|error| error.to_string())?;
+    let mut writer = zip::ZipWriter::new(BufWriter::new(output));
+    let mut written: Vec<String> = Vec::new();
+    for (name, bytes) in entries {
+        add(&mut writer, &mut written, name, bytes)?;
+    }
+    writer
+        .finish()
+        .map_err(|error| error.to_string())?
+        .flush()
+        .map_err(|error| error.to_string())?;
     let (size, digest) = hash_file(destination)?;
     Ok(Packaged {
         path: destination.to_path_buf(),

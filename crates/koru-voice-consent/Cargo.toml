@@ -5,7 +5,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
-description = "What a person agreed to before Koru downloads a speech model or opens a microphone: one machine-local file, versioned, written atomically, per OS user and device. It knows no catalog, no model cache, no audio and no UI, and it does not decide where it lives."
+description = "What a person agreed to before Koru downloads a model or opens a microphone: one machine-local file per feature (voice-consent.conf, read-consent.conf), versioned, written atomically, per OS user and device. It knows no catalog, no model cache, no audio and no UI, and it does not decide where it lives."
 
 # **Two dependencies, and the absences are the charter.**
 #

@@ -64,6 +64,12 @@ pub mod field {
     pub const LEVEL_NAME: &str = "level-name";
     /// The workspace itself, so its name is matchable.
     pub const WORKSPACE: &str = "workspace";
+    /// Words read out of a picture's or a file's bytes — a PDF's text layer,
+    /// a plain-text file, or the reader. A surface draws the picture mark and
+    /// the *Page N ·* prefix from this token and
+    /// [`SearchHit::page`](super::SearchHit::page), never from a translated
+    /// label.
+    pub const READ: &str = "read";
 
     /// `heading-1` … `heading-6`.
     pub fn heading(level: u8) -> String {
@@ -158,6 +164,23 @@ pub struct SearchHit {
     pub observed_modified_at_ms: Option<i64>,
     /// Most recent navigation into this workspace on this machine.
     pub workspace_last_used_at_ms: Option<i64>,
+    /// The page the words were found on, counting from 1, when the hit is a
+    /// [`field::READ`] fragment of a file with more than one page.
+    ///
+    /// **Absent for everything else** — any other field, a picture, a one-page
+    /// PDF, a plain-text file — and absent from an answer written before this
+    /// field existed, which is why it defaults rather than being required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    /// The name a person gave the picture the words were read from, when the
+    /// hit is a [`field::READ`] fragment of a picture inside a document and
+    /// somebody named it (OCR EXPERIENCE §3: the picture mark, then its name
+    /// only when a person gave it one).
+    ///
+    /// **Absent for a picture nobody named**, for a file, for every other
+    /// field, and from an answer written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -354,6 +377,41 @@ pub struct SearchPage {
     /// A corrected spelling inferred from the highest-ranked result. Absent
     /// when the authored query itself supplied the evidence.
     pub corrected_query: Option<String>,
+    /// How far reading the pictures and files **in this query's workspaces**
+    /// has got, and whether to offer the reader.
+    ///
+    /// `None` when the store says nothing about it: a store that predates
+    /// reading, or one that does not count. A surface then shows no line —
+    /// absence is never read as "everything is read".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<ReadingCounts>,
+}
+
+/// **How far reading has got, for the workspaces a query is about.**
+///
+/// Scoped to the query's workspaces on purpose: a search in a workspace with
+/// five pictures says five, however many thousands another workspace holds.
+/// Counts only — no name, no hash, no path.
+///
+/// An item is one readable blob referenced by a live entry: a file, or a
+/// picture in a page. `unread` counts those with no finished reading at the
+/// current generation; `needs_reader` and `not_here` say why some of them are
+/// waiting, and are each part of `unread`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReadingCounts {
+    /// Readable items with no finished reading.
+    pub unread: u64,
+    /// Readable items in scope.
+    pub total: u64,
+    /// Of `unread`, those waiting for the reader to be installed.
+    pub needs_reader: u64,
+    /// Of `unread`, those whose bytes are not on this computer.
+    pub not_here: u64,
+    /// Whether a surface should offer the reader now: something waits for it,
+    /// it is not installed, and the person has not said *Not now* since the
+    /// last import that brought a picture or a scanned PDF. Every surface asks
+    /// this one place.
+    pub offer: bool,
 }
 
 // ------------------------------------------------------------------ the route

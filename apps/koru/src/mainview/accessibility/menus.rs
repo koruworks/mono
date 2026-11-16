@@ -68,6 +68,24 @@ impl MainView {
             return menu;
         }
         if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
+            && let Some(offer) = &self.file_paste
+        {
+            return SemanticNode::new(cx.surface(SHELL, blocker_part(blockers)), Role::Dialog)
+                .with_label(format!(
+                    "{} {} {}",
+                    offer.dialog.title(),
+                    offer.dialog.body(),
+                    offer.dialog.labels().join(". ")
+                ))
+                .with_bounds(koru_draw::geometry::Rect::new(
+                    0.0,
+                    0.0,
+                    cx.viewport.0,
+                    cx.viewport.1,
+                ))
+                .modal();
+        }
+        if blockers == Blockers::Modal(koru_workspace_host::routing::ModalKind::Confirm)
             && let Some(dialog) = self.workspace_controller.borrow().dialog()
         {
             return SemanticNode::new(cx.surface(SHELL, blocker_part(blockers)), Role::Dialog)

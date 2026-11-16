@@ -278,6 +278,21 @@ jobs:
       - name: Fetch the sherpa-onnx archive
         shell: pwsh
         run: ./scripts/setup/fetch-voice-runtime.ps1
+      # **Recognition still compiles.** Reading words out of pictures and
+      # scanned pages is the read worker's `recognition` feature (the
+      # adapter's `runtime`, the bench's `recognition`), off in every ordinary
+      # build and test because linking it needs the pinned ONNX Runtime static
+      # library — so `cargo test --workspace` never compiles it, and nothing
+      # else here would notice it breaking. A check needs no library (ort-sys
+      # defers it to the link); ORT_LIB_PATH names the one the step above
+      # extracted, as koru.bat and run-all.ps1 do, so a later `cargo build`
+      # here would link the same file. Windows x64 only: macOS links it from
+      # its own pinned archive on the mac branch, and on Linux or Windows on
+      # ARM the feature compiles to nothing (TECHNICAL §12).
+      - name: cargo check (recognition)
+        env:
+          ORT_LIB_PATH: ${{ github.workspace }}\third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib
+        run: cargo check -p koru-read-worker -p koru-read-paddle -p koru-read-bench --features koru-read-worker/recognition,koru-read-paddle/runtime,koru-read-bench/recognition --all-targets --locked
       # The bundled fonts are fetched, not committed; the tests and the
       # packaging checks read them. Pinned by scripts/setup/fonts.manifest.
       # actions/cache v6.1.0

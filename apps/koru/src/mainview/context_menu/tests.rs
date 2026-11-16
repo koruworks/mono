@@ -931,6 +931,72 @@ fn a_file_menu_offers_the_note_row_the_file_has_earned() {
     assert_eq!(file_items(1, Some(true))[5].label(), "Move to trash");
 }
 
+/// ***Read all pages* and *Read again* in the Files menu** (OCR Plan 3.2,
+/// EXPERIENCE §4): shown for one file exactly where the Store's answer offers
+/// each, as the menu's last group, after its own rule; never for a
+/// multi-selection; never before an answer is known. Every row above them is
+/// the menu without them, so a menu corrected in place moves nothing the
+/// pointer is on.
+#[test]
+fn files_ocr_menu_offers_rescan_without_the_automatic_retry() {
+    use koru_workspace_host::reading_requests::ReadingOffers;
+    let offered = |read_all, force_ocr| {
+        Some(ReadingOffers {
+            force_ocr,
+            read_all,
+            read_again: true,
+        })
+    };
+    let base = explore_file_items(1, Some(false), None);
+    assert!(base.contains(&MenuAction::ViewExtractedText));
+    assert!(!base.contains(&MenuAction::ReadAllPages));
+    assert!(!base.contains(&MenuAction::ReadAgain));
+    assert_eq!(
+        explore_file_items(1, Some(false), offered(false, false)),
+        base,
+        "automatic retry alone does not add a Files menu action"
+    );
+
+    let capped = explore_file_items(1, Some(false), offered(true, false));
+    assert_eq!(capped[..base.len()], base[..], "nothing above moves");
+    assert_eq!(
+        capped[base.len()..],
+        [MenuAction::Divider, MenuAction::ReadAllPages]
+    );
+    let read = explore_file_items(1, Some(false), offered(false, true));
+    assert_eq!(
+        read[base.len()..],
+        [MenuAction::Divider, MenuAction::ForceOcr]
+    );
+    assert!(!read.contains(&MenuAction::ReadAgain));
+    let both = explore_file_items(1, Some(true), offered(true, true));
+    assert_eq!(
+        both[both.len() - 3..],
+        [
+            MenuAction::Divider,
+            MenuAction::ReadAllPages,
+            MenuAction::ForceOcr
+        ]
+    );
+
+    // A multi-selection: neither, whatever is known.
+    let many = explore_file_items(3, None, offered(true, true));
+    assert!(!many.contains(&MenuAction::ReadAllPages));
+    assert!(!many.contains(&MenuAction::ReadAgain));
+    assert!(!many.contains(&MenuAction::ForceOcr));
+
+    // Their words are the shared ones, in the language drawn.
+    let lang = crate::format::lang();
+    assert_eq!(
+        MenuAction::ReadAllPages.label(),
+        koru_i18n::t(lang, koru_i18n::Key::ReadingReadAllPages)
+    );
+    assert_eq!(
+        MenuAction::ForceOcr.label(),
+        koru_i18n::t(lang, koru_i18n::Key::ReadingForceOcr)
+    );
+}
+
 #[test]
 fn export_opens_a_format_submenu() {
     assert_eq!(submenu(MenuAction::ExportAs), Some(export_items()));

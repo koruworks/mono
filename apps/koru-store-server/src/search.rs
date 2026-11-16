@@ -43,6 +43,17 @@ pub struct Prepared {
     derived: crate::derived::Derived,
 }
 
+impl Prepared {
+    /// A clone of the indexer's queue, for the readings mirror: a reading
+    /// lives in a document the projector never walks, so the mirror is what
+    /// tells the index its parent and its changed hashes need re-indexing
+    /// (`Queue::enqueue_document`, `Queue::enqueue_hashes`; OCR TECHNICAL §7).
+    /// Cheap and safe from any thread.
+    pub fn queue(&self) -> Queue {
+        self.queue.clone()
+    }
+}
+
 /// Open `search.db` and build the consumer the projector needs.
 ///
 /// **Not fatal.** An index that will not open is a store whose search is stale,
@@ -85,7 +96,7 @@ pub fn prepare(derived: &crate::derived::Derived) -> Option<(Box<dyn Consumer>, 
 /// A newtype rather than an impl on `Search` itself, because the trait belongs
 /// to the HTTP crate and `Search` belongs to `koru-search` — neither should
 /// have to name the other, and this file is where they already meet.
-struct Port(Arc<Search>);
+struct Port(Arc<Search>, Option<Arc<crate::readings::ReaderHub>>);
 
 impl koru_store_api::routes::search::SearchService for Port {
     fn search(
@@ -96,7 +107,18 @@ impl koru_store_api::routes::search::SearchService for Port {
         let Some(query) = scoped_query(scope, &request.query) else {
             return Ok(empty_response(request));
         };
-        let page = self.0.query(&query).map_err(failed)?;
+        let mut page = self.0.query(&query).map_err(failed)?;
+        // **How far reading has got in this query's workspaces, and whether
+        // to offer the reader** (OCR Plan 2.4) — a read of the counts the
+        // coordinator last published, never a recompute and never the Store
+        // lock. Scoped as the query is: the workspaces it names, or every
+        // workspace when it names none, less the ones it excludes.
+        if let Some(hub) = self.1.as_ref() {
+            page.reading = hub.reading_counts(
+                (!query.workspaces.is_empty()).then_some(query.workspaces.as_slice()),
+                &query.excluded_workspaces,
+            );
+        }
         Ok(SearchResponse {
             page,
             facets: request
@@ -187,6 +209,7 @@ fn empty_response(request: &SearchRequest) -> SearchResponse {
             updating_workspaces: Vec::new(),
             request_seq: request.query.request_seq,
             corrected_query: None,
+            reading: None,
         },
         facets: request.include_facets.then(SearchFacets::default),
         recent_queries: None,
@@ -214,6 +237,8 @@ pub fn spawn(
     prepared: Prepared,
     state: Arc<AppState>,
     sweeps: Sweeps,
+    readings: Option<Box<dyn koru_search::Readings>>,
+    reader_hub: Option<Arc<crate::readings::ReaderHub>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 ) -> Option<std::thread::JoinHandle<()>> {
     let Prepared {
@@ -229,12 +254,18 @@ pub fn spawn(
     if let Some(tags) = crate::tagnames::tag_source(&derived, &state) {
         indexer = indexer.with_tag_names(tags);
     }
+    // **The words read out of files**, beside the tag names and for the same
+    // reason: text the indexer fetches from outside the node. Absent — a
+    // mirror that would not open — a file is found by its name, as before.
+    if let Some(readings) = readings {
+        indexer = indexer.with_readings(readings);
+    }
     // **One `Search`, shared.** It owns the mutex over its own connection, so
     // the indexer's tick and every query can hold it at once — and, more to the
     // point, a query waiting for a cold workspace's sweep is not holding it
     // while it waits.
     let search = Arc::new(Search::new(reader, queue, sweeps));
-    state.set_search_service(Arc::new(Port(Arc::clone(&search))));
+    state.set_search_service(Arc::new(Port(Arc::clone(&search), reader_hub)));
 
     let published = state.search.clone();
     let handle = std::thread::Builder::new()

@@ -221,6 +221,22 @@ pub struct BuiltInDocument {
     /// only hands the drawing over — drained by `View::take_wants_copy_diagram`
     /// on the next maintenance pass, the way *Save as…* is.
     wants_copy_diagram: Option<std::sync::Arc<koru_draw::diagram::PreparedDiagram>>,
+    /// *Save reading to file…* asked on a picture (`KORU_READ_DEBUG` only):
+    /// its blob address, drained by `View::take_wants_save_reading`. The shell
+    /// fetches the reading, asks where it goes and writes it.
+    wants_save_reading: Option<String>,
+    /// What the Store last said may be asked of each picture's reading, by
+    /// blob address (OCR Plan 3.2, `koru_workspace_host::reading_requests`):
+    /// a picture's menu opens from this and never fetches. Pushed by the shell
+    /// through `View::set_reading_offers`.
+    reading_offers:
+        std::collections::HashMap<String, koru_workspace_host::reading_requests::ReadingOffers>,
+    /// A picture's menu opened: its blob address, for the shell to ask the
+    /// Store afresh. Drained by `View::take_wants_reading_offers`.
+    wants_reading_offers: Option<String>,
+    /// *Read again* chosen on a picture: its blob address. Drained by
+    /// `View::take_wants_read_again`; the shell sends the request.
+    wants_read_again: Option<String>,
     /// The page menu's *Global settings* was chosen: the host opens its
     /// Settings tab. Drained by `View::take_wants_global_settings`.
     wants_global_settings: bool,
@@ -445,6 +461,10 @@ impl BuiltInDocument {
                     viewer_node: None,
                     viewer_lift: None,
                     wants_copy_diagram: None,
+                    wants_save_reading: None,
+                    reading_offers: std::collections::HashMap::new(),
+                    wants_reading_offers: None,
+                    wants_read_again: None,
                     wants_global_settings: false,
                     dictation: None,
                     native_ime_owner: next_native_ime_owner(),
@@ -527,6 +547,10 @@ impl BuiltInDocument {
             viewer_node: None,
             viewer_lift: None,
             wants_copy_diagram: None,
+            wants_save_reading: None,
+            reading_offers: std::collections::HashMap::new(),
+            wants_reading_offers: None,
+            wants_read_again: None,
             wants_global_settings: false,
             dictation: None,
             native_ime_owner: next_native_ime_owner(),
@@ -578,6 +602,10 @@ impl BuiltInDocument {
             viewer_node: None,
             viewer_lift: None,
             wants_copy_diagram: None,
+            wants_save_reading: None,
+            reading_offers: std::collections::HashMap::new(),
+            wants_reading_offers: None,
+            wants_read_again: None,
             wants_global_settings: false,
             dictation: None,
             native_ime_owner: next_native_ime_owner(),
@@ -789,6 +817,66 @@ impl BuiltInDocument {
             node: focused.id,
             drawn,
         })
+    }
+
+    /// The focused row's own menu group: a diagram's, or a picture's (the
+    /// `KORU_READ_DEBUG` *Save reading to file…*, and *Read again* where the
+    /// Store last said it is offered). What every build and map of the
+    /// context menu is given.
+    fn focused_block_context(&self) -> Option<context_menu::BlockContext> {
+        if let Some(diagram) = self.focused_diagram_context() {
+            return Some(context_menu::BlockContext::Diagram(diagram));
+        }
+        self.focused_picture_hash()
+            .map(|hash| context_menu::BlockContext::Picture {
+                read_again: koru_workspace_host::reading_requests::entries(
+                    self.reading_offers.get(&hash).copied(),
+                    true,
+                )
+                .contains(&koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain),
+            })
+    }
+
+    /// **The Store's answer for one picture's reading** (OCR Plan 3.2): kept
+    /// for the picture's next menu, and poured into a menu open on it now —
+    /// *Read again* is the last row of the last group, so no row above it
+    /// moves; the panel may grow, never shrink, under the pointer, as with
+    /// spelling suggestions. Returns whether anything drawn changed.
+    pub fn set_reading_offers(
+        &mut self,
+        hash: &str,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        let before = self.reading_offers.get(hash).copied();
+        match offers {
+            Some(offers) => {
+                self.reading_offers.insert(hash.to_owned(), offers);
+            }
+            None => {
+                self.reading_offers.remove(hash);
+            }
+        }
+        if before == offers
+            || !matches!(self.menu, Some(OpenMenu::Context(_)))
+            || self.focused_picture_hash().as_deref() != Some(hash)
+        {
+            return false;
+        }
+        let rows = self.menu_shape();
+        let width = menu::measure_width(&mut self.editor.view.engine, &rows);
+        if let Some(OpenMenu::Context(menu)) = self.menu.as_mut() {
+            menu.width = menu.width.max(width);
+        }
+        true
+    }
+
+    /// The focused row's picture, by its blob address — what *Save reading
+    /// to file…* names, as *Copy* on an image does.
+    fn focused_picture_hash(&self) -> Option<String> {
+        self.editor
+            .body
+            .focused()
+            .and_then(|row| row.image.as_ref().map(|image| image.hash.0.clone()))
     }
 
     // ------------------------------------------------------------- diagrams
@@ -2239,7 +2327,7 @@ impl BuiltInDocument {
                 self.focused_task_context(),
                 self.context_reminder_node.is_some(),
                 self.focused_table_context(),
-                self.focused_diagram_context(),
+                self.focused_block_context(),
                 self.context_pill_kind(),
                 self.context_spell().as_ref(),
                 koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
@@ -2368,7 +2456,7 @@ impl BuiltInDocument {
                 self.focused_task_context(),
                 self.context_reminder_node.is_some(),
                 self.focused_table_context(),
-                self.focused_diagram_context(),
+                self.focused_block_context(),
                 self.context_pill_kind(),
                 self.context_spell().as_ref(),
                 koru_i18n::Lang::for_system(koru_window::system_locale::system_locale().as_deref()),
@@ -2532,7 +2620,7 @@ impl BuiltInDocument {
                     i,
                     pill_kind,
                     self.context_spell().as_ref(),
-                    self.focused_diagram_context(),
+                    self.focused_block_context(),
                 );
                 koru_workspace_host::attach_debug!(
                     "document choose_menu i={i} pill_kind={pill_kind:?} choice={choice:?} on_file={:?}",
@@ -2880,6 +2968,28 @@ impl BuiltInDocument {
                         }
                         None
                     }
+                    // The view only names the picture's bytes; the fetch,
+                    // the dialog and the write are the shell's. Drained by
+                    // `View::take_wants_save_reading`.
+                    Some(context_menu::Choice::SaveReading) => {
+                        self.wants_save_reading = self.focused_picture_hash();
+                        None
+                    }
+                    // *Read again* (OCR Plan 3.2): the view names the bytes,
+                    // the shell sends the request. Not offered again until
+                    // the Store says so.
+                    Some(context_menu::Choice::ReadAgain) => {
+                        if let Some(hash) = self.focused_picture_hash() {
+                            if let Some(offers) = self.reading_offers.get_mut(&hash) {
+                                *offers = koru_workspace_host::reading_requests::after_request(
+                                    *offers,
+                                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain,
+                                );
+                            }
+                            self.wants_read_again = Some(hash);
+                        }
+                        None
+                    }
                     None => None,
                 };
                 if let Some(action) = action {
@@ -3037,7 +3147,7 @@ impl BuiltInDocument {
                 view.focused_task_context(),
                 view.context_reminder_node.is_some(),
                 view.focused_table_context(),
-                view.focused_diagram_context(),
+                view.focused_block_context(),
                 view.context_pill_kind(),
                 spell,
                 lang,
@@ -3264,7 +3374,7 @@ impl BuiltInDocument {
             self.focused_task_context(),
             self.context_reminder_node.is_some(),
             self.focused_table_context(),
-            self.focused_diagram_context(),
+            self.focused_block_context(),
             pill,
             spell.as_ref(),
             lang,
@@ -3287,7 +3397,20 @@ impl BuiltInDocument {
         );
         open.step(&rows, 1);
         self.menu = Some(OpenMenu::Context(open));
+        // A picture's menu opened from what is known; ask the Store afresh,
+        // off this thread (OCR Plan 3.2). The answer corrects it in place.
+        self.wants_reading_offers = self.focused_picture_hash();
         true
+    }
+
+    /// The picture whose menu just opened, for the shell to ask about.
+    pub fn take_wants_reading_offers(&mut self) -> Option<String> {
+        self.wants_reading_offers.take()
+    }
+
+    /// The picture *Read again* was chosen on.
+    pub fn take_wants_read_again(&mut self) -> Option<String> {
+        self.wants_read_again.take()
     }
 
     pub fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {

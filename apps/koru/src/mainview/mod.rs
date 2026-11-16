@@ -80,7 +80,10 @@ pub(crate) mod dictation;
 mod document_appearance;
 pub(crate) mod draw;
 mod error_dialog;
+mod file_images;
+mod file_paste;
 mod file_preview;
+mod files_reader;
 mod font_picker;
 mod help_menu;
 mod history;
@@ -105,6 +108,7 @@ mod place_chooser;
 mod profile_probe;
 mod profile_wait;
 mod rail_overflow;
+mod reader_offer;
 mod recording;
 mod reminder_creation;
 mod reminder_management;
@@ -258,6 +262,8 @@ use tab::{Tab, TabView};
 /// (`MainView::lifted_viewer`).
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) enum LiftedViewer {
+    /// A workspace image, in window coordinates.
+    FileImage,
     /// The focused document's diagram viewer; its pane's rect.
     Document(Rect),
     /// A picture in the Koru AI column's chat, laid out in window
@@ -575,6 +581,25 @@ pub(crate) enum ToastPayload {
         node: NodeId,
         target: crate::panes::explore::rail::RailTarget,
     },
+    /// **An import's summary that also offers to read the pictures and
+    /// scanned PDFs it brought** (OCR Plan 3.3): its action goes where `go`
+    /// does, its line's answers are `line` in the order drawn, and `terms`
+    /// are what **Turn on** agrees to — the terms the line showed the size
+    /// of.
+    ImportReading {
+        go: Box<ToastPayload>,
+        line: Vec<koru_search_ui::LineAction>,
+        terms: Option<koru_store_wire::reader::ReaderTerms>,
+    },
+    /// A download of the reader that Turn on started from that line. Its
+    /// action is **Stop**; like the voice download's, closing it hides the
+    /// progress and never changes the download.
+    ReaderDownload,
+    /// That download ended without installing: **Try again** (which resumes,
+    /// with these terms) and **Not now**.
+    ReaderEnded {
+        terms: Option<koru_store_wire::reader::ReaderTerms>,
+    },
     /// Message only — no action button.
     None,
 }
@@ -889,6 +914,10 @@ pub struct MainView {
     /// A question that has to be answered before something is destroyed, and
     /// what it is about — the dialog itself carries only strings.
     confirm: Option<(koru_ui::Confirm, ConfirmSubject)>,
+    file_paste: Option<file_paste::Offer>,
+    files_reader: files_reader::FilesReader,
+    file_images: file_images::FileImages,
+    pending_file_paste_draft: Option<(u64, Vec<std::path::PathBuf>)>,
     /// The transient chip at the foot of the content, and what its action means.
     /// The toast, and what its action button does (if anything).
     ///
@@ -991,6 +1020,17 @@ pub struct MainView {
     /// What the workspace holds, pushed by the shell. `None` before the first
     /// push; empty is a real answer meaning a workspace with no documents.
     entries: Option<Vec<koru_core::explore::ExploreEntry>>,
+    /// What the Store last said may be asked of each file's reading (*Read all
+    /// pages*, *Read again*; OCR Plan 3.2), pushed by the shell through
+    /// `View::set_reading_offers`. A file's menu opens from this and never
+    /// fetches; opening it asks the shell for a fresh answer.
+    reading_offers: std::collections::HashMap<
+        koru_core::DocumentId,
+        koru_workspace_host::reading_requests::ReadingOffers,
+    >,
+    /// Where the open single-file menu was opened, so a fresh answer can
+    /// correct it in place: its file, the anchor and whether from the `…`.
+    file_menu_opened: Option<(NodeId, (f32, f32), bool)>,
     /// Why this window is not reaching the store, pushed by the shell.
     ///
     /// `None` — the overwhelmingly common case — is what the chip's absence
@@ -1940,6 +1980,10 @@ impl MainView {
             pending_empty_trash: None,
             trashed_here: std::collections::HashSet::new(),
             confirm: None,
+            file_paste: None,
+            files_reader: files_reader::FilesReader::default(),
+            file_images: file_images::FileImages::default(),
+            pending_file_paste_draft: None,
             toast: None,
             agent_mcp: agent_mcp::Install::default(),
             move_undo: None,
@@ -1970,6 +2014,8 @@ impl MainView {
             )),
             preferences: Settings::default(),
             entries: None,
+            reading_offers: std::collections::HashMap::new(),
+            file_menu_opened: None,
             store_trouble: None,
             trashed_documents: None,
             branch_pill_w: 0.0,
@@ -3796,6 +3842,7 @@ impl MainView {
         tab.set_name(&name);
         tab.draft = None;
         tab.invalidate_size();
+        self.finish_draft_file_paste();
         self.mark_tab_widths_stale();
         self.explore_stale = true;
         self.ensure_tab_visible(self.tabs().active());
@@ -4444,6 +4491,8 @@ impl MainView {
                         | MenuAction::ClearRecents
                         | MenuAction::ImportAs
                         | MenuAction::ImportFiles
+                        | MenuAction::OcrSettings(_)
+                        | MenuAction::RescanAllFiles
                 ),
             },
             // No tab is special any more, so this is just counting. Closing the
@@ -4652,6 +4701,11 @@ impl MainView {
                     || matches!(action, MenuAction::Rename if files.len() == 1)
                     || (matches!(action, MenuAction::AddNote | MenuAction::OpenNote)
                         && files.len() == 1)
+                    || matches!(action, MenuAction::ViewExtractedText if files.len() == 1)
+                    || matches!(
+                        action,
+                        MenuAction::ReadAllPages | MenuAction::ReadAgain | MenuAction::ForceOcr if files.len() == 1
+                    )
                     || matches!(action, MenuAction::MoveToTrash if files.len() == 1)
                     || matches!(
                         action,
@@ -4869,6 +4923,10 @@ impl MainView {
                 MenuAction::ImportFiles => self.ask_pane(PaneRequest::ImportFiles(
                     koru_workspace_host::ImportSourceSelection::Picker,
                 )),
+                MenuAction::OcrSettings(_) => self.open_reader_settings(),
+                MenuAction::RescanAllFiles => self.current_workspace().is_some_and(|workspace| {
+                    self.ask_pane(PaneRequest::RescanWorkspaceFiles(workspace))
+                }),
                 MenuAction::ImportAs => false,
                 _ => false,
             },
@@ -5158,6 +5216,46 @@ impl MainView {
                         self.ask_pane(PaneRequest::SaveFile(files[0]))
                     }
                     MenuAction::SaveFileAs => self.ask_pane(PaneRequest::SaveFiles(files)),
+                    MenuAction::ViewExtractedText if files.len() == 1 => {
+                        let workspace = self.current_workspace();
+                        let existing = self.tabs().iter().position(|tab| {
+                            matches!(&tab.view, TabView::Ocr(view) if view.file == files[0] && view.workspace == workspace)
+                        });
+                        if let Some(index) = existing {
+                            self.select(index);
+                        } else {
+                            let tab = Tab::ocr(files[0], workspace);
+                            self.tabs_mut().push(tab);
+                            self.slides_mut().clear();
+                            self.relayout();
+                            self.select(self.tabs().len() - 1);
+                        }
+                        self.ask_pane(PaneRequest::InspectFileReading(files[0]))
+                    }
+                    // *Read all pages*, *Read again* (OCR Plan 3.2): the shell
+                    // sends the request; the next menu does not offer it again
+                    // until the Store says so.
+                    MenuAction::ReadAllPages | MenuAction::ReadAgain | MenuAction::ForceOcr
+                        if files.len() == 1 =>
+                    {
+                        use koru_workspace_host::reading_requests::{
+                            ReadRequestKind, after_request,
+                        };
+                        let kind = if action == MenuAction::ReadAllPages {
+                            ReadRequestKind::ReadAll
+                        } else if action == MenuAction::ForceOcr {
+                            ReadRequestKind::ForceOcr
+                        } else {
+                            ReadRequestKind::ReadAgain
+                        };
+                        if let Some(offers) = self.reading_offers.get_mut(&files[0]) {
+                            *offers = after_request(*offers, kind);
+                        }
+                        self.ask_pane(PaneRequest::ReadRequest(
+                            koru_workspace_host::reading_file::ReadingTarget::File(files[0]),
+                            kind,
+                        ))
+                    }
                     _ => false,
                 }
             }
@@ -5621,6 +5719,7 @@ impl MainView {
         self.error.is_none()
             && self.import_dialog.is_none()
             && self.confirm.is_none()
+            && self.file_paste.is_none()
             && !self.workspace_controller.borrow().is_confirming()
             && self.new_document.is_none()
             && self.snapshot_prompt.is_none()
@@ -5728,6 +5827,17 @@ impl MainView {
         } else {
             None
         };
+        // *Read all pages* and *Read again* (OCR Plan 3.2): from the Store's
+        // last answer for the file, held here — nothing is fetched while the
+        // menu opens. The shell is asked afresh, off this thread, and a
+        // different answer corrects the menu in place (`set_reading_offers`).
+        let single_file = (files && count == 1).then(|| nodes[0]);
+        let offers = single_file.and_then(|node| {
+            self.reading_offers
+                .get(&koru_core::DocumentId::from_uuid(node.as_uuid()))
+                .copied()
+        });
+        self.file_menu_opened = single_file.map(|node| (node, at, from_button));
         let mut m = ContextMenu::aligned(
             &mut self.engine,
             if files {
@@ -5737,7 +5847,7 @@ impl MainView {
             },
             at,
             if files {
-                context_menu::file_items(count, note)
+                context_menu::explore_file_items(count, note, offers)
             } else {
                 context_menu::node_items(count)
             },
@@ -5746,6 +5856,66 @@ impl MainView {
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
         self.menu = Some(m);
+        if let Some(node) = single_file {
+            self.ask_pane(PaneRequest::ReadingOffers(
+                koru_workspace_host::reading_file::ReadingTarget::File(
+                    koru_core::DocumentId::from_uuid(node.as_uuid()),
+                ),
+            ));
+        }
+        true
+    }
+
+    /// **The Store's answer for one file's reading** (OCR Plan 3.2): kept for
+    /// the file's next menu, and — when a menu on that file is open and the
+    /// answer changes what it offers — the menu is opened again where it was,
+    /// with the corrected entries. They are the menu's last group, so every
+    /// row above them stays where the pointer left it. Returns whether
+    /// anything drawn changed.
+    fn take_file_reading_offers(
+        &mut self,
+        file: koru_core::DocumentId,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        let before = self.reading_offers.get(&file).copied();
+        match offers {
+            Some(offers) => {
+                self.reading_offers.insert(file, offers);
+            }
+            None => {
+                self.reading_offers.remove(&file);
+            }
+        }
+        let entries = |offers| koru_workspace_host::reading_requests::entries(offers, false);
+        if entries(before) == entries(offers) {
+            return false;
+        }
+        let Some((node, at, from_button)) = self.file_menu_opened else {
+            return false;
+        };
+        let open_on_it = node.as_uuid() == file.as_uuid()
+            && self.submenu.is_none()
+            && self
+                .menu
+                .as_ref()
+                .is_some_and(|m| m.subject == MenuSubject::Files(vec![node]));
+        if !open_on_it {
+            return false;
+        }
+        // A row the pointer is on survives only when no row was taken away.
+        let hover = self
+            .menu
+            .as_ref()
+            .and_then(|m| m.hover)
+            .filter(|_| entries(offers).len() >= entries(before).len());
+        self.open_node_menu(vec![node], at, from_button);
+        // The pointer's row is where it was: only rows below it can change.
+        if let Some(m) = self.menu.as_mut() {
+            m.hover = hover;
+        }
+        // Opening asked the shell again; one answer per opening is enough.
+        self.pane_requests
+            .retain(|request| !matches!(request, PaneRequest::ReadingOffers(_)));
         true
     }
 
@@ -7502,6 +7672,9 @@ impl MainView {
     /// Each is modal over the whole window, and every press, move, wheel and
     /// key goes to its owner in the owner's own coordinates.
     pub(super) fn lifted_viewer(&self) -> Option<LiftedViewer> {
+        if self.file_images.viewer.is_some() {
+            return Some(LiftedViewer::FileImage);
+        }
         if let Some(pane) = self.diagram_viewer_pane() {
             return Some(LiftedViewer::Document(pane));
         }
@@ -7523,6 +7696,11 @@ impl MainView {
         lang: koru_i18n::Lang,
     ) -> Option<koru_ui::media_viewer::ViewerSemantics> {
         match self.lifted_viewer()? {
+            LiftedViewer::FileImage => self
+                .file_images
+                .viewer
+                .as_ref()
+                .map(|viewer| viewer.semantics(lang)),
             LiftedViewer::AiPane => self.ai_chat.viewer_semantics(lang),
             LiftedViewer::Document(_) | LiftedViewer::AiTab(_) => {
                 match &self.panes.focused().active_tab().view {
@@ -7539,6 +7717,7 @@ impl MainView {
     pub(super) fn lifted_viewer_act(&mut self, action: koru_ui::media_viewer::Action) -> bool {
         match self.lifted_viewer() {
             None => false,
+            Some(LiftedViewer::FileImage) => self.file_image_input(|viewer| viewer.act(action)),
             Some(LiftedViewer::AiPane) => self.ai_chat.viewer_act(action),
             Some(_) => match self.tabs_mut().active_view() {
                 TabView::Leaf(leaf) => leaf.viewer_act(action),
@@ -7559,6 +7738,14 @@ impl MainView {
             ZoomIntent::ActualSize => ZoomKey::ActualSize,
         };
         Some(match (self.lifted_viewer()?, zoom) {
+            (LiftedViewer::FileImage, zoom) => {
+                let viewer = self.file_images.viewer.as_mut().unwrap();
+                match zoom {
+                    ViewerZoom::Key(intent) => viewer.zoom_key(key(intent)),
+                    ViewerZoom::Wheel(delta, x, y) => viewer.zoom_wheel(delta, x, y),
+                }
+                true
+            }
             (LiftedViewer::AiPane, ViewerZoom::Key(intent)) => {
                 self.ai_chat.viewer_zoom_key(key(intent))
             }
@@ -7600,6 +7787,9 @@ impl MainView {
     /// press itself must open at the window's size, not the pane's.
     pub(super) fn sync_viewer_lift(&mut self) {
         let size = self.viewport;
+        if let Some(viewer) = self.file_images.viewer.as_mut() {
+            viewer.set_viewport(size.0, size.1);
+        }
         // The Koru AI column's chat is laid out in the window's coordinates.
         self.ai_chat.set_viewer_lift(Some(koru_ai_ui::ViewerLift {
             origin: (0.0, 0.0),
@@ -7849,14 +8039,14 @@ impl MainView {
     /// The library background's context menu. It deliberately keeps the
     /// `Import…` parent row so the formats open as a flyout at the pointer.
     fn open_library_menu(&mut self, at: (f32, f32)) -> bool {
-        let mut menu = ContextMenu::new(
-            &mut self.engine,
-            MenuSubject::NewTab,
-            at,
-            vec![MenuAction::ImportAs],
-        );
+        let files = self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files;
+        let items = self.files_reader.menu_items(files);
+        let mut menu = ContextMenu::new(&mut self.engine, MenuSubject::NewTab, at, items);
         let enabled = self.enabled_items(&menu);
         menu.step(&enabled, 1);
+        if files {
+            self.files_reader.opened(menu.instance, at);
+        }
         self.menu = Some(menu);
         true
     }
@@ -8885,10 +9075,8 @@ impl MainView {
                     _ => None,
                 }
             } else if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files {
-                // Files become active without opening a tab. Deriving this value
-                // from the active document on every draw erased the file that
-                // global search or an import toast had just selected.
-                self.explore.selected()
+                // Files use the explicit selection, independent of the open tab.
+                None
             } else if self.tabs().active_tab().draft.is_some() {
                 self.tabs()
                     .active_tab()
@@ -9813,6 +10001,29 @@ impl MainView {
             Request::SetAgentOrder(keys) => {
                 self.set_agent_order(keys);
             }
+            // The Settings page carries these out itself, on its own thread
+            // to the Store (`settings_view::reader_link`); none reaches here
+            // from it, and nothing else raises them.
+            Request::TurnOnReader
+            | Request::StopReaderInstall
+            | Request::TurnOffReader
+            | Request::RemoveReader
+            | Request::ReadReaderItemAgain(_)
+            | Request::ReadAllReaderPages(_) => {}
+            // **The same navigation a search result takes** (OCR Plan 2.5):
+            // the document route, which the shell resolves through the Store
+            // to wherever the entry lives — Explore → Files with a file
+            // selected, or the page holding the picture.
+            Request::ShowReaderItem(key) => {
+                if let Some(target) = crate::settings_view::reader_item_target(&key) {
+                    self.ask_pane(PaneRequest::Navigate {
+                        target,
+                        match_text: None,
+                        // Owed to this window, as every gesture raised in it.
+                        disposition: koru_workspace_host::SearchTargetDisposition::SourceWindow,
+                    });
+                }
+            }
         }
     }
 
@@ -10119,6 +10330,9 @@ impl MainView {
         // coordinates.
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_down(x, y),
+            Some(LiftedViewer::FileImage) => {
+                return self.file_image_input(|viewer| viewer.mouse_down(x, y));
+            }
             Some(LiftedViewer::AiTab(pane)) => {
                 let mods = self.mods;
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
@@ -10179,6 +10393,13 @@ impl MainView {
             let out = dialog.mouse_down(&mut self.engine, self.viewport, x, y);
             self.settle_confirm_outcome(out);
             self.drain_trash_all(ws);
+            return true;
+        }
+        if let Some(offer) = self.file_paste.as_mut() {
+            let out = offer
+                .dialog
+                .mouse_down(&mut self.engine, self.viewport, x, y);
+            self.answer_file_paste(out);
             return true;
         }
         let has_optimistic = self.reminders.optimistic_creations().next().is_some();
@@ -10587,6 +10808,7 @@ impl MainView {
             TabView::Session(s) => View::mouse_down(s, doc, lx, ly, ctrl),
             TabView::Run(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Result(r) => View::mouse_down(r, doc, lx, ly, ctrl),
+            TabView::Ocr(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Canvas(c) => View::mouse_down(c, doc, lx, ly, ctrl),
             TabView::Leaf(l) => Leaf::mouse_down(l, doc, lx, ly, ctrl),
         };
@@ -10627,6 +10849,9 @@ impl MainView {
         // A chat's lifted picture viewer takes the release of its own press.
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_up(),
+            Some(LiftedViewer::FileImage) => {
+                return self.file_image_input(|viewer| viewer.mouse_up());
+            }
             Some(LiftedViewer::AiTab(_)) => {
                 let (view, doc) = self.tabs_mut().active_mut().doc(ws);
                 if let TabView::AiChat(chat) = view {
@@ -10650,7 +10875,10 @@ impl MainView {
         if self.import_dialog.is_some() {
             return true;
         }
-        if self.confirm.is_some() || self.workspace_controller.borrow().is_confirming() {
+        if self.file_paste.is_some()
+            || self.confirm.is_some()
+            || self.workspace_controller.borrow().is_confirming()
+        {
             return true;
         }
         if self.reminder_creation.is_open() {
@@ -10821,6 +11049,7 @@ impl MainView {
             TabView::Session(s) => View::mouse_up(s, doc),
             TabView::Run(r) => View::mouse_up(r, doc),
             TabView::Result(r) => View::mouse_up(r, doc),
+            TabView::Ocr(r) => View::mouse_up(r, doc),
             TabView::Canvas(c) => View::mouse_up(c, doc),
             TabView::Leaf(l) => Leaf::mouse_up(l, doc),
         };
@@ -11317,6 +11546,7 @@ impl View for MainView {
         if self.error.is_some()
             || self.import_dialog.is_some()
             || self.confirm.is_some()
+            || self.file_paste.is_some()
             || self.workspace_controller.borrow().is_confirming()
             || self.new_document.is_some()
             || self.snapshot_prompt.is_some()
@@ -11472,7 +11702,7 @@ impl View for MainView {
                     // Every verb a run has is a control on its own surface,
                     // with the sentence saying what it would do beside it, and
                     // a result tab reads a version it cannot change.
-                    TabView::Run(_) | TabView::Result(_) => false,
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => false,
                     // The canvas's own menu (Add card, Insert image…) is the
                     // surface's; the placeholder offers none.
                     TabView::Canvas(c) => View::context_menu(c, doc, lx, ly),
@@ -11575,6 +11805,10 @@ impl View for MainView {
                 self.tooltip.set_hover(None, Instant::now());
                 return self.ai_chat.mouse_move(x, y);
             }
+            Some(LiftedViewer::FileImage) => {
+                self.tooltip.set_hover(None, Instant::now());
+                return self.file_images.viewer.as_mut().unwrap().mouse_move(x, y);
+            }
             Some(LiftedViewer::AiTab(pane)) => {
                 self.tooltip.set_hover(None, Instant::now());
                 if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
@@ -11630,6 +11864,9 @@ impl View for MainView {
         }
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_double_click(x, y),
+            Some(LiftedViewer::FileImage) => {
+                return self.file_image_input(|viewer| viewer.double_click(x, y));
+            }
             Some(LiftedViewer::AiTab(pane)) => {
                 if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
                     return View::mouse_double_click(chat, ws, x - pane.x, y - pane.y);
@@ -11738,6 +11975,7 @@ impl View for MainView {
             TabView::Session(s) => View::mouse_double_click(s, doc, lx, ly),
             TabView::Run(r) => View::mouse_double_click(r, doc, lx, ly),
             TabView::Result(r) => View::mouse_double_click(r, doc, lx, ly),
+            TabView::Ocr(r) => View::mouse_double_click(r, doc, lx, ly),
             TabView::Canvas(c) => View::mouse_double_click(c, doc, lx, ly),
             TabView::Leaf(l) => Leaf::mouse_double_click(l, doc, lx, ly),
         };
@@ -11816,7 +12054,8 @@ impl View for MainView {
         if self.link_device.is_some() {
             return;
         }
-        if self.confirm.is_some()
+        if self.file_paste.is_some()
+            || self.confirm.is_some()
             || self.workspace_controller.borrow().is_confirming()
             || self.new_document.is_some()
             || self.snapshot_prompt.is_some()
@@ -11837,6 +12076,13 @@ impl View for MainView {
             if dialog.preview_contains(self.viewport, self.pointer.0, self.pointer.1) {
                 dialog.scroll_by(delta, self.viewport);
             }
+            return;
+        }
+        if let Some(viewer) = self.file_images.viewer.as_mut() {
+            viewer.pan_wheel(
+                delta,
+                koru_ui::media_viewer::WheelAxis::from_mods(self.mods),
+            );
             return;
         }
         // The wheel arrives without coordinates, so it goes wherever the pointer
@@ -11905,6 +12151,13 @@ impl View for MainView {
                 self.ai_chat.scroll_by(delta);
                 return;
             }
+            Some(LiftedViewer::FileImage) => {
+                self.file_images.viewer.as_mut().unwrap().pan_wheel(
+                    delta,
+                    koru_ui::media_viewer::WheelAxis::from_mods(self.mods),
+                );
+                return;
+            }
             Some(LiftedViewer::AiTab(_)) => {
                 if let TabView::AiChat(chat) = self.tabs_mut().active_view() {
                     View::scroll_by(chat, delta);
@@ -11940,6 +12193,7 @@ impl View for MainView {
             TabView::Session(s) => View::scroll_by(s, delta),
             TabView::Run(r) => View::scroll_by(r, delta),
             TabView::Result(r) => View::scroll_by(r, delta),
+            TabView::Ocr(r) => View::scroll_by(r, delta),
             TabView::Canvas(c) => c.wheel(delta, local.0, local.1),
             TabView::Leaf(l) => Leaf::scroll_by(l, delta),
         }
@@ -12010,6 +12264,9 @@ impl View for MainView {
         }
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.cursor_icon(),
+            Some(LiftedViewer::FileImage) => {
+                return self.file_images.viewer.as_ref().unwrap().cursor();
+            }
             Some(LiftedViewer::AiTab(_)) => {
                 if let TabView::AiChat(chat) = &self.panes.focused().active_tab().view {
                     return View::cursor_icon(chat);
@@ -12063,6 +12320,9 @@ impl View for MainView {
         }
         if let Some((dialog, _)) = &self.confirm {
             return dialog.cursor();
+        }
+        if let Some(offer) = &self.file_paste {
+            return offer.dialog.cursor();
         }
         if let Some(icon) = self.agent_cli_cursor() {
             return icon;
@@ -12215,6 +12475,7 @@ impl View for MainView {
                 TabView::Session(s) => View::cursor_icon(s),
                 TabView::Run(r) => View::cursor_icon(r),
                 TabView::Result(r) => View::cursor_icon(r),
+                TabView::Ocr(r) => View::cursor_icon(r),
                 TabView::Canvas(c) => View::cursor_icon(c),
                 TabView::Leaf(l) => View::cursor_icon(l),
             },
@@ -12472,6 +12733,7 @@ impl View for MainView {
                     TabView::Session(s) => View::invalidate(s),
                     TabView::Run(r) => View::invalidate(r),
                     TabView::Result(r) => View::invalidate(r),
+                    TabView::Ocr(r) => View::invalidate(r),
                     TabView::Canvas(c) => View::invalidate(c),
                     TabView::Leaf(l) => View::invalidate(l),
                 }
@@ -12825,6 +13087,11 @@ impl View for MainView {
         if let Some(request) = self.pane_requests.pop_front() {
             return Some(request);
         }
+        if let TabView::Ocr(view) = &mut self.tabs_mut().active_mut().view
+            && let Some(request) = View::take_pane_request(view)
+        {
+            return Some(request);
+        }
         if self.promoting.is_some() {
             return None;
         }
@@ -12855,6 +13122,7 @@ impl View for MainView {
     }
 
     fn create_document_failed(&mut self) {
+        self.pending_file_paste_draft = None;
         // The draft's promotion latch. `promote_draft` asks exactly once per
         // latch, so a failed create must hand the latch back or the draft
         // types forever and never becomes real — found live, against a store
@@ -12901,6 +13169,10 @@ impl View for MainView {
             return false;
         };
         if !matches!(self.flush_promoted_draft(ws, origin, document), Ok(true)) {
+            // The files pasted into this draft wait on its adoption
+            // (`finish_draft_file_paste` runs at the end of a successful one).
+            // A refused adoption has no document to attach them to.
+            self.pending_file_paste_draft = None;
             self.show_notice(
                 koru_i18n::t(
                     crate::format::lang(),
@@ -13328,8 +13600,21 @@ impl View for MainView {
         }
         self.explore.show_files();
         self.explore.reveal(file);
-        self.explore.set_selected(Some(file));
+        self.explore.select_only(file);
         self.retained_search = self.search.take();
+        if self.entries.as_ref().is_some_and(|entries| {
+            entries.iter().any(|entry| {
+                NodeId::from_uuid(entry.id.as_uuid()) == file
+                    && entry
+                        .mime
+                        .as_deref()
+                        .is_some_and(|mime| mime.starts_with("image/"))
+            })
+        }) {
+            self.ask_pane(PaneRequest::OpenFile(koru_core::DocumentId::from_uuid(
+                file.as_uuid(),
+            )));
+        }
         true
     }
 
@@ -13726,6 +14011,9 @@ impl View for MainView {
         let next = (profiles, current_profile, workspaces, current);
         let changed = self.pane_context.as_ref() != Some(&next);
         if changed {
+            if self.current_workspace() != current {
+                self.file_images = file_images::FileImages::default();
+            }
             if self
                 .pane_context
                 .as_ref()
@@ -14382,22 +14670,25 @@ impl View for MainView {
         message: String,
         target: koru_workspace_host::ImportNoticeTarget,
     ) -> bool {
-        let (action, payload) = match target {
-            koru_workspace_host::ImportNoticeTarget::Notebook(document) => {
-                ("View Notebook", ToastPayload::Open(document))
-            }
-            koru_workspace_host::ImportNoticeTarget::Document(document) => {
-                ("View file", ToastPayload::Open(document))
-            }
-            koru_workspace_host::ImportNoticeTarget::File(file) => {
-                ("View file", ToastPayload::ShowFile(file))
-            }
-        };
+        let (action, payload) = reader_offer::import_notice_action(target);
         self.toast = Some((
             koru_ui::Toast::new(message, Some(action), Instant::now()),
             payload,
         ));
         true
+    }
+
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: koru_workspace_host::ImportNoticeTarget,
+        reading: koru_workspace_host::reader_offer::ImportReading,
+    ) -> bool {
+        self.show_import_reading(message, target, reading)
+    }
+
+    fn reader_answered(&mut self, state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        self.reader_answered_toast(state)
     }
 
     fn show_import_preview(&mut self, preview: koru_workspace_host::ImportPreview) -> bool {
@@ -14930,9 +15221,80 @@ impl View for MainView {
         }
     }
 
+    fn begin_file_image_open(&mut self, file: koru_core::DocumentId) -> bool {
+        self.begin_file_image(file)
+    }
+
+    fn show_file_image(
+        &mut self,
+        file: koru_core::DocumentId,
+        name: String,
+        image: std::sync::Arc<koru_ui::media_viewer::ViewerImage>,
+    ) -> bool {
+        self.receive_file_image(file, name, image)
+    }
+
     fn take_wants_copy_image(&mut self) -> Option<String> {
         self.active_editing_leaf()
             .and_then(|leaf| View::take_wants_copy_image(leaf))
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_save_reading(leaf))
+    }
+
+    fn show_file_reading(
+        &mut self,
+        file: koru_core::DocumentId,
+        details: Result<koru_workspace_host::reading_details::ReadingDetails, String>,
+    ) -> bool {
+        let current = self.current_workspace();
+        for (_, group) in self.panes.iter_groups_mut() {
+            let found = group.tabs().iter().position(|tab| {
+                matches!(&tab.view,
+                TabView::Ocr(view) if view.file == file && view.workspace == current)
+            });
+            if let Some(index) = found {
+                let tab = group.tabs_mut().get_mut(index).expect("existing OCR tab");
+                if let Ok(details) = &details {
+                    tab.label = format!("ocr:{}", details.name);
+                }
+                if let TabView::Ocr(view) = &mut tab.view {
+                    view.receive(details);
+                }
+                group.widths_stale = true;
+                return true;
+            }
+        }
+        false
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_reading_offers(leaf))
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        self.active_editing_leaf()
+            .and_then(|leaf| View::take_wants_read_again(leaf))
+    }
+
+    /// A file's answer is this view's own (the Files menu); a picture's goes
+    /// to the document whose menu asked.
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match target {
+            koru_workspace_host::reading_file::ReadingTarget::File(file) => {
+                self.take_file_reading_offers(*file, offers)
+            }
+            koru_workspace_host::reading_file::ReadingTarget::Picture { .. } => self
+                .active_editing_leaf()
+                .is_some_and(|leaf| View::set_reading_offers(leaf, target, offers)),
+        }
     }
 
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
@@ -15378,9 +15740,16 @@ impl View for MainView {
 
     fn maintenance_deadline(&self) -> Option<Instant> {
         [
+            self.files_reader
+                .pending
+                .then(|| Instant::now() + Duration::from_millis(50)),
             self.file_preview
                 .as_ref()
                 .and_then(file_preview::FilePreview::maintenance_deadline),
+            self.file_images
+                .viewer
+                .as_ref()
+                .and_then(koru_ui::media_viewer::MediaViewer::maintenance_deadline),
             self.profile_wait_deadline(),
             self.support.as_ref().and_then(|s| s.maintenance_deadline()),
             self.tooltip.maintenance_deadline(),
@@ -15444,6 +15813,7 @@ impl View for MainView {
     }
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: Instant) -> bool {
+        let files_reader_changed = self.maintain_files_reader();
         self.refresh_help();
         if self.support.is_some() || self.fab.is_some() {
             // Serviced by the background pass, which runs in both loop paths.
@@ -15761,6 +16131,11 @@ impl View for MainView {
             .file_preview
             .as_mut()
             .is_some_and(file_preview::FilePreview::maintain);
+        let file_image_changed = self
+            .file_images
+            .viewer
+            .as_mut()
+            .is_some_and(|viewer| viewer.maintain(now));
         let agent_settings_opened = self.open_agent_settings_from_chat();
         self.reveal_paths_from_chat();
         // A star pressed in a chat's model picker: stored, roaming, and
@@ -15884,7 +16259,8 @@ impl View for MainView {
         // deadline; the ask leaves as a request for Agent.
         let manage_asked = matches!(self.tabs().active_tab().view, TabView::Manage(_))
             && self.drain_manage_requests();
-        view_changed
+        files_reader_changed
+            || view_changed
             || manage_asked
             || session_changed
             || runs_changed
@@ -15907,6 +16283,7 @@ impl View for MainView {
             || ai_document_opened
             || ai_attachment_opened
             || file_preview_changed
+            || file_image_changed
             || link_device_changed
             || tooltip_changed
             || meter_changed
@@ -16002,6 +16379,11 @@ impl MainView {
             // Modal, and it swallows everything: a dialog that let keystrokes
             // through would take dictation into the document behind it.
             Blockers::Modal(ModalKind::Confirm) => {
+                if let Some(offer) = self.file_paste.as_mut() {
+                    let out = offer.dialog.key(key);
+                    self.answer_file_paste(out);
+                    return true;
+                }
                 if self.workspace_confirmation_key(key) {
                     return true;
                 }
@@ -16113,6 +16495,9 @@ impl MainView {
             // A chat's picture viewer answers every key while it stands; a
             // document's is answered by the leaf in its own `key`.
             Blockers::Modal(ModalKind::MediaViewer) => match self.lifted_viewer() {
+                Some(LiftedViewer::FileImage) => {
+                    return self.file_image_input(|viewer| viewer.key(key, text, mods));
+                }
                 Some(LiftedViewer::AiPane) => return self.ai_chat.key(key, text, mods),
                 Some(LiftedViewer::AiTab(_)) => {
                     let (view, doc) = self.tabs_mut().active_mut().doc(ws);
@@ -16331,6 +16716,9 @@ impl MainView {
             let microphones = self.serve_chat_microphones();
             return self.save_pending_ai_credential() || changed || microphones;
         }
+        if self.offer_file_paste(key, text, mods) {
+            return true;
+        }
         // **Escape on a draft is "nothing happened".** Nothing was ever
         // written, so closing the tab is the whole of it — the trip Back
         // (Alt+Left, mouse back) would make if a draft had a history entry to
@@ -16373,6 +16761,7 @@ impl MainView {
             TabView::Session(s) => View::key(s, doc, key, text, mods),
             TabView::Run(r) => View::key(r, doc, key, text, mods),
             TabView::Result(r) => View::key(r, doc, key, text, mods),
+            TabView::Ocr(r) => View::key(r, doc, key, text, mods),
             TabView::Canvas(c) => View::key(c, doc, key, text, mods),
             TabView::Leaf(l) => Leaf::key(l, doc, key, text, mods),
         };
@@ -17539,7 +17928,7 @@ impl MainView {
         let node = koru_core::NodeId::from_uuid(file.as_uuid());
         self.explore.show_files();
         self.explore_stale |= self.explore.reveal(node);
-        self.explore.set_selected(Some(node));
+        self.explore.select_only(node);
         koru_workspace_host::attach_debug!(
             "reveal_file_in_explorer done file={} node={} mode={:?} selected={:?}",
             file.to_storage(),
@@ -18357,6 +18746,12 @@ impl MainView {
             dialog.mouse_move(&mut self.engine, self.viewport, x, y);
             return true;
         }
+        if let Some(offer) = self.file_paste.as_mut() {
+            offer
+                .dialog
+                .mouse_move(&mut self.engine, self.viewport, x, y);
+            return true;
+        }
         // Before content: the chip sits over the document, and without this the
         // leaf keeps an I-beam and its own hover under a surface you cannot type
         // in. Same reason the *In Trash* band claims the pointer below.
@@ -18839,6 +19234,7 @@ impl MainView {
             TabView::Session(s) => View::mouse_move(s, lx, ly),
             TabView::Run(r) => View::mouse_move(r, lx, ly),
             TabView::Result(r) => View::mouse_move(r, lx, ly),
+            TabView::Ocr(r) => View::mouse_move(r, lx, ly),
             TabView::Canvas(c) => View::mouse_move(c, lx, ly),
             TabView::Leaf(l) => Leaf::mouse_move(l, lx, ly),
         };

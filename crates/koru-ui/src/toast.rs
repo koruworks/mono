@@ -22,6 +22,15 @@
 //! ADR-26's actual rule.
 //!
 //! [`animating`]: Toast::animating
+//!
+//! ### A line under the message
+//!
+//! A toast may carry a second paragraph with answers of its own
+//! ([`Toast::with_line`]) — an import's summary that also offers to read the
+//! pictures it brought. It is still one chip: the line's answers are accent
+//! words like the action, reported by index, and the owner can put the
+//! keyboard on them ([`Toast::set_line_focus`]), which holds the chip the way
+//! the pointer does.
 
 use std::time::{Duration, Instant};
 
@@ -51,6 +60,8 @@ const GAP: f32 = 14.0;
 const CLOSE: f32 = 20.0;
 const PROGRESS_GAP: f32 = 8.0;
 const PROGRESS_H: f32 = 4.0;
+/// Between the message and a [line](Toast::with_line) under it.
+const LINE_GAP: f32 = 8.0;
 /// How far the chip floats above whatever is under it.
 pub const MARGIN: f32 = 20.0;
 /// How long it holds before it starts to go.
@@ -91,6 +102,15 @@ pub struct Toast {
     /// *and* a way back. Never on a progress toast.
     secondary: Option<&'static str>,
     progress: Option<ProgressBar>,
+    /// A second paragraph under the message with answers of its own — see
+    /// [`with_line`](Self::with_line). Never on a progress toast.
+    line: Option<Line>,
+    /// The line's action under the pointer, by index.
+    line_hover: Option<usize>,
+    /// The line's action the keyboard is on, by index. The owner decides
+    /// where the keyboard is and says so before drawing; while it is on the
+    /// line the chip holds, as it does under the pointer.
+    line_focus: Option<usize>,
     shown: Instant,
     hover: Option<Hit>,
     /// Whether the last [`mouse_move`] put the pointer on the chip.
@@ -98,6 +118,13 @@ pub struct Toast {
     /// [`cursor_icon`](Self::cursor) is read from `&self` and cannot re-measure
     /// the chip, so the container trusts this flag from the last move.
     over_chip: bool,
+}
+
+/// A paragraph after the message, with its own answers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Line {
+    sentence: String,
+    actions: Vec<&'static str>,
 }
 
 impl Toast {
@@ -109,10 +136,73 @@ impl Toast {
             action,
             secondary: None,
             progress: None,
+            line: None,
+            line_hover: None,
+            line_focus: None,
             shown: now,
             hover: None,
             over_chip: false,
         }
+    }
+
+    /// **A second paragraph with answers of its own**, under the message and
+    /// its action: an import's summary that also offers to read the pictures
+    /// it brought — *Import succeeded. View Notebook* and, under it, *412
+    /// pictures and scanned PDFs can be found by the words in them… Turn on ·
+    /// Not now* (OCR Plan 3.3).
+    ///
+    /// The answers follow the sentence the way the message's action follows
+    /// the message, in the same accent words, so the chip still reads as one
+    /// toast. Like the action, the toast knows only their labels; a press
+    /// reports an index ([`line_action_at`](Self::line_action_at)) and the
+    /// owner remembers what each means. A line with no answers is a sentence
+    /// alone. Ignored on a progress toast.
+    pub fn with_line(mut self, sentence: String, actions: Vec<&'static str>) -> Self {
+        self.line = Some(Line { sentence, actions });
+        self
+    }
+
+    /// Take the line away and keep the rest — the answer was given.
+    pub fn clear_line(&mut self) {
+        self.line = None;
+        self.line_hover = None;
+        self.line_focus = None;
+    }
+
+    /// The line's answers, in reading order; empty without a line.
+    pub fn line_actions(&self) -> &[&'static str] {
+        self.line
+            .as_ref()
+            .filter(|_| self.progress.is_none())
+            .map_or(&[], |line| line.actions.as_slice())
+    }
+
+    /// The line's sentence, when there is one.
+    pub fn line_sentence(&self) -> Option<&str> {
+        self.line
+            .as_ref()
+            .filter(|_| self.progress.is_none())
+            .map(|line| line.sentence.as_str())
+    }
+
+    /// Where the keyboard is on the line, as its owner said. An index past
+    /// the line's answers is no focus.
+    pub fn set_line_focus(&mut self, focus: Option<usize>) {
+        let was = self.line_focus;
+        self.line_focus = focus.filter(|index| *index < self.line_actions().len());
+        // Leaving after the original hold would have expired restarts a full
+        // hold, as leaving with the pointer does, so it does not vanish the
+        // instant the keyboard moves on.
+        if was.is_some() && self.line_focus.is_none() {
+            let now = Instant::now();
+            if now.saturating_duration_since(self.shown) >= HOLD {
+                self.shown = now;
+            }
+        }
+    }
+
+    pub fn line_focus(&self) -> Option<usize> {
+        self.line_focus
     }
 
     /// Offer a second action after the first: *Added to Next — View task ·
@@ -245,13 +335,22 @@ impl Toast {
         );
         // A progress toast keeps one width while the stage label changes; the
         // message wraps inside it rather than resizing the chip each update.
+        // A toast with a line is as wide as it may be: the line is a whole
+        // sentence or three, and wrapping it at the message's width would make
+        // a tall, narrow chip.
         let w = if self.progress.is_some() {
             PROGRESS_W.min(cap).max(0.0)
+        } else if self.line_sentence().is_some() {
+            cap.max(0.0)
         } else {
             (chrome + content_w).min(cap).max(0.0)
         };
         let flow_w = (w - chrome).max(40.0);
-        let (_, _, _, content_h) = self.flow(engine, flow_w);
+        let (_, _, _, message_h) = self.flow(engine, flow_w);
+        let content_h = message_h
+            + self
+                .line_flow(engine, flow_w)
+                .map_or(0.0, |(_, _, line_h)| LINE_GAP + line_h);
         let progress_row_h = self
             .progress
             .as_ref()
@@ -269,6 +368,85 @@ impl Toast {
             .unwrap_or(0.0);
         let h = (content_h + PAD_Y * 2.0 + progress_h).max(H_MIN);
         (w, h)
+    }
+
+    /// The line's sentence and its answers, laid out like the message and its
+    /// action: the answers follow the sentence's last line when they fit,
+    /// and start a line of their own when they do not. Rectangles are
+    /// relative to the line's own origin; the height is the block's.
+    fn line_flow(
+        &self,
+        engine: &mut TextEngine,
+        max_w: f32,
+    ) -> Option<(Layout<Brush>, Vec<Rect>, f32)> {
+        let sentence = self.line_sentence()?;
+        let layout = engine.simple_layout_wrapped(sentence, MESSAGE, max_w);
+        let labels: Vec<Layout<Brush>> = self
+            .line_actions()
+            .iter()
+            .map(|label| engine.simple_layout(label, ACTION))
+            .collect();
+        let text_h = layout.height().max(scene::first_line_height(&layout));
+        if labels.is_empty() {
+            return Some((layout, Vec::new(), text_h));
+        }
+        let all_w: f32 = labels.iter().map(Layout::width).sum::<f32>()
+            + GAP * (labels.len().saturating_sub(1)) as f32;
+        let last = layout.lines().last().map(|line| *line.metrics());
+        let (mut x, y) = match last {
+            Some(line) if line.advance + GAP + all_w <= max_w => {
+                (line.advance + GAP, line.block_min_coord)
+            }
+            _ => (0.0, layout.height()),
+        };
+        let mut rects = Vec::with_capacity(labels.len());
+        for label in &labels {
+            rects.push(Rect::new(x, y, label.width(), label.height()));
+            x += label.width() + GAP;
+        }
+        let height = text_h.max(y + labels[0].height());
+        Some((layout, rects, height))
+    }
+
+    /// Where the line starts inside the chip `r`, and the width it flows in:
+    /// under the message block, at the message's left edge.
+    fn line_origin(&self, engine: &mut TextEngine, r: Rect) -> (f32, f32, f32) {
+        let chrome = PAD_X * 2.0 + GAP + CLOSE;
+        let flow_w = (r.w - chrome).max(40.0);
+        let (_, _, _, message_h) = self.flow(engine, flow_w);
+        (r.x + PAD_X, r.y + PAD_Y + message_h + LINE_GAP, flow_w)
+    }
+
+    /// **Where each of the line's answers is**, in reading order, in the
+    /// coordinates the chip is drawn in. Drawing and pressing both ask this.
+    pub fn line_rects(&self, engine: &mut TextEngine, over: Rect, floor: f32) -> Vec<Rect> {
+        if self.line_actions().is_empty() {
+            return Vec::new();
+        }
+        let r = self.rect(engine, over, floor);
+        let (x, y, flow_w) = self.line_origin(engine, r);
+        self.line_flow(engine, flow_w)
+            .map(|(_, rects, _)| {
+                rects
+                    .into_iter()
+                    .map(|rect| Rect::new(x + rect.x, y + rect.y, rect.w, rect.h))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The line's answer under `(x, y)`, by index.
+    pub fn line_action_at(
+        &self,
+        engine: &mut TextEngine,
+        over: Rect,
+        floor: f32,
+        x: f32,
+        y: f32,
+    ) -> Option<usize> {
+        self.line_rects(engine, over, floor)
+            .iter()
+            .position(|rect| rect.contains(x, y))
     }
 
     /// Where the chip sits: centred on `over`, `MARGIN` up from `floor`.
@@ -436,10 +614,16 @@ impl Toast {
         y: f32,
     ) -> bool {
         let was_hover = self.hover;
+        let was_line_hover = self.line_hover;
         let was_over = self.over_chip;
         self.over_chip = self.rect(engine, over, floor).contains(x, y);
         self.hover = if self.over_chip {
             self.hit_at(engine, over, floor, x, y)
+        } else {
+            None
+        };
+        self.line_hover = if self.over_chip {
+            self.line_action_at(engine, over, floor, x, y)
         } else {
             None
         };
@@ -449,7 +633,7 @@ impl Toast {
                 self.shown = now;
             }
         }
-        was_hover != self.hover || was_over != self.over_chip
+        was_hover != self.hover || was_line_hover != self.line_hover || was_over != self.over_chip
     }
 
     pub fn contains(
@@ -468,9 +652,11 @@ impl Toast {
     /// matters here is that the chip claims the pointer at all, so the I-beam
     /// of the document underneath does not show through it.
     pub fn cursor(&self) -> CursorIcon {
-        match self.hover {
-            Some(Hit::Action | Hit::Secondary | Hit::Close) => crate::cursor::PRESS,
-            None => crate::cursor::IDLE,
+        match (self.hover, self.line_hover) {
+            (Some(Hit::Action | Hit::Secondary | Hit::Close), _) | (None, Some(_)) => {
+                crate::cursor::PRESS
+            }
+            (None, None) => crate::cursor::IDLE,
         }
     }
 
@@ -485,7 +671,9 @@ impl Toast {
         if self.progress.is_some() {
             return Some(1.0);
         }
-        if self.over_chip {
+        // The keyboard on the line holds the chip as the pointer does: a
+        // toast somebody is answering does not fade under their keys.
+        if self.over_chip || self.line_focus.is_some() {
             return Some(1.0);
         }
         let lived = now.saturating_duration_since(self.shown);
@@ -505,6 +693,7 @@ impl Toast {
             return progress.animating();
         }
         !self.over_chip
+            && self.line_focus.is_none()
             && now.saturating_duration_since(self.shown) >= HOLD
             && self.alpha(now).is_some()
     }
@@ -556,6 +745,46 @@ impl Toast {
             && let Some((bar, _)) = self.progress_row(engine, r)
         {
             progress.draw(scene, root, bar, now, alpha);
+        }
+
+        // The line: its sentence under the message, its answers after it in
+        // the action's own words and colours, the keyboard's one ringed.
+        let (line_x, line_y, line_w) = self.line_origin(engine, r);
+        if let Some((sentence, answers, _)) = self.line_flow(engine, line_w) {
+            scene::draw_layout(
+                scene,
+                root,
+                &sentence,
+                line_x,
+                line_y,
+                Some(p.bubble_fg.multiply_alpha(alpha)),
+            );
+            for (index, (label, rect)) in self.line_actions().iter().zip(answers).enumerate() {
+                let (x, y) = (line_x + rect.x, line_y + rect.y);
+                if self.line_focus == Some(index) {
+                    scene::stroke(
+                        scene,
+                        root,
+                        p.focus_ring.multiply_alpha(alpha),
+                        theme::BORDER_W * 2.0,
+                        &scene::rrect(x - 3.0, y - 2.0, rect.w + 6.0, rect.h + 4.0, 4.0),
+                    );
+                }
+                let layout = engine.simple_layout(label, ACTION);
+                let colour = if self.line_hover == Some(index) {
+                    p.on_accent
+                } else {
+                    p.accent
+                };
+                scene::draw_layout(
+                    scene,
+                    root,
+                    &layout,
+                    x,
+                    y,
+                    Some(colour.multiply_alpha(alpha)),
+                );
+            }
         }
 
         for (hit, t) in self.targets(engine, over, floor) {
