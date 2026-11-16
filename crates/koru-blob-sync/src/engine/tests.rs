@@ -2749,3 +2749,74 @@ async fn oversized_hold_survives_generic_wakes_but_increased_allowance_retries()
         1
     );
 }
+
+/// The Free journey: files upload, then one does not fit the plan. It stays
+/// on this device with its own reason, and its neighbors keep uploading.
+#[tokio::test]
+async fn a_file_that_does_not_fit_the_plan_stays_here_with_its_reason_while_others_upload() {
+    let h = Harness::new();
+    let (first, second) = (picture(30, 5), picture(31, 6));
+    let (first_hash, second_hash) = (hash_of(&first), hash_of(&second));
+    h.store.hold(h.workspace, &first, "image/png", None);
+    h.store.hold(h.workspace, &second, "image/png", None);
+    h.store.document(
+        h.workspace,
+        &[(&first_hash, "image/png"), (&second_hash, "image/png")],
+    );
+    h.engine
+        .observe_admission(admission_observation(h.workspace));
+    let pass = h.engine.reconcile(h.workspace, Trigger::Enabled).await;
+    assert_eq!(pass.uploaded, 2, "{pass:?}");
+
+    let large = picture(32, 150);
+    let large_hash = hash_of(&large);
+    h.store.hold(h.workspace, &large, "image/png", None);
+    h.store.document(h.workspace, &[(&large_hash, "image/png")]);
+    h.plane
+        .refuse_once("allocate", BlobCode::FileExceedsPlanAllowance);
+    let pass = h
+        .engine
+        .reconcile(h.workspace, Trigger::MappingChanged)
+        .await;
+    assert_eq!(pass.uploaded, 0, "{pass:?}");
+    assert_eq!(
+        pass.parked,
+        vec![(large_hash.clone(), "file_exceeds_plan_allowance")]
+    );
+    // Kept locally, and said so on the file itself and on its Workspace.
+    assert_eq!(h.store.object_bytes(&large_hash), Some(large.clone()));
+    let facts = h.engine.file(h.workspace, large_hash.clone()).await;
+    assert!(facts.local.is_some());
+    assert_eq!(facts.hold, Some("file_exceeds_plan_allowance"));
+    assert_eq!(
+        h.engine.status(h.workspace).pending_reason,
+        Some("file_exceeds_plan_allowance")
+    );
+    // A file that did upload does not inherit its neighbor's reason.
+    assert_eq!(h.engine.file(h.workspace, first_hash).await.hold, None);
+
+    let later = picture(33, 7);
+    let later_hash = hash_of(&later);
+    h.store.hold(h.workspace, &later, "image/png", None);
+    h.store.document(h.workspace, &[(&later_hash, "image/png")]);
+    let pass = h
+        .engine
+        .reconcile(h.workspace, Trigger::MappingChanged)
+        .await;
+    assert_eq!(pass.uploaded, 1, "{pass:?}");
+    assert_eq!(
+        pass.parked,
+        vec![(large_hash.clone(), "file_exceeds_plan_allowance")]
+    );
+    assert_eq!(h.engine.file(h.workspace, later_hash).await.hold, None);
+    assert_eq!(
+        h.engine.file(h.workspace, large_hash.clone()).await.hold,
+        Some("file_exceeds_plan_allowance")
+    );
+    // The Workspace still says why something of its own is waiting.
+    assert_eq!(
+        h.engine.status(h.workspace).pending_reason,
+        Some("file_exceeds_plan_allowance")
+    );
+    assert_eq!(h.store.object_bytes(&large_hash), Some(large));
+}

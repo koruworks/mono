@@ -990,3 +990,37 @@ fn quota_holds_explain_local_retention_without_stopping_other_files() {
         }
     }
 }
+
+/// The Free journey on the desktop: the file that did not fit is still on
+/// this device, and its note says why and what would change it.
+#[test]
+fn a_file_refused_for_space_says_it_stays_here_and_what_to_do() {
+    let oversized = with_selected_file(Some(file_report(
+        true,
+        Some("missing"),
+        Some("file_exceeds_plan_allowance"),
+    )));
+    assert_eq!(
+        value(&oversized, "Where").as_deref(),
+        Some("On this device only"),
+    );
+    assert_eq!(
+        oversized.note.as_deref(),
+        Some(
+            "This file stays on this device because it exceeds the Cloud allowance. \
+             Files above Koru Free’s 1 GB need Plus. Other files can still sync."
+        ),
+    );
+    let full = with_selected_file(Some(file_report(
+        true,
+        Some("missing"),
+        Some("account_over_quota"),
+    )));
+    assert_eq!(
+        full.note.as_deref(),
+        Some(
+            "There is not enough Cloud space for this upload. Free some space or \
+             increase your allowance. Smaller files may still sync."
+        ),
+    );
+}
