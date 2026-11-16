@@ -469,12 +469,20 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../crates/koru-search-ui/src/modal.rs"),
     ),
     (
+        "crates/koru-search-ui/src/offer.rs",
+        include_str!("../../../../../../../crates/koru-search-ui/src/offer.rs"),
+    ),
+    (
         "crates/koru-search-ui/src/reader.rs",
         include_str!("../../../../../../../crates/koru-search-ui/src/reader.rs"),
     ),
     (
         "crates/koru-search-ui/src/result_layout.rs",
         include_str!("../../../../../../../crates/koru-search-ui/src/result_layout.rs"),
+    ),
+    (
+        "crates/koru-search-ui/src/row_text.rs",
+        include_str!("../../../../../../../crates/koru-search-ui/src/row_text.rs"),
     ),
     (
         "crates/koru-search-ui/src/scope.rs",
@@ -515,6 +523,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "crates/koru-settings-ui/src/page.rs",
         include_str!("../../../../../../../crates/koru-settings-ui/src/page.rs"),
+    ),
+    (
+        "crates/koru-settings-ui/src/reader.rs",
+        include_str!("../../../../../../../crates/koru-settings-ui/src/reader.rs"),
     ),
     (
         "crates/koru-settings-ui/src/state.rs",
@@ -1434,6 +1446,22 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../crates/koru-workspace-host/src/profile_wait.rs"),
     ),
     (
+        "crates/koru-workspace-host/src/reader_offer.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/reader_offer.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/reading_details.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/reading_details.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/reading_file.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/reading_file.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/reading_requests.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/reading_requests.rs"),
+    ),
+    (
         "crates/koru-workspace-host/src/reveal.rs",
         include_str!("../../../../../../../crates/koru-workspace-host/src/reveal.rs"),
     ),
@@ -1740,6 +1768,7 @@ pub(super) const CRATES: &[Crate] = &[
                 ),
             ),
             ("modal", Module::Records(&["C-SEARCH-MODAL"])),
+            ("offer", Module::Records(&["C-SEARCH-SURFACE"])),
             (
                 "reader",
                 Module::Excluded(
@@ -1747,6 +1776,12 @@ pub(super) const CRATES: &[Crate] = &[
                 ),
             ),
             ("result_layout", Module::Records(&["C-SEARCH-SURFACE"])),
+            (
+                "row_text",
+                Module::Excluded(
+                    "private helper: the words a result row adds of its own (the page a file's words came from, the picture mark and name, the context line, the spoken row); every item is pub(crate) and the surface draws them",
+                ),
+            ),
             ("scope", Module::Records(&["C-SEARCH-SURFACE"])),
             (
                 "state",
@@ -1784,6 +1819,7 @@ pub(super) const CRATES: &[Crate] = &[
             ("state", Module::Records(&["C-SETTINGS-SURFACE"])),
             ("agents", Module::Records(&["C-SETTINGS-SURFACE"])),
             ("global", Module::Records(&["C-SETTINGS-SURFACE"])),
+            ("reader", Module::Records(&["C-SETTINGS-SURFACE"])),
             ("terminal", Module::Records(&["C-SETTINGS-SURFACE"])),
             (
                 "dependency",
@@ -2248,6 +2284,30 @@ pub(super) const CRATES: &[Crate] = &[
                 "profile_wait",
                 Module::Excluded(
                     "orchestration: a window's availability wait and its reading, which the host's pane presents",
+                ),
+            ),
+            (
+                "reader_offer",
+                Module::Excluded(
+                    "io: what an import reports to the reader (how many pictures and scanned PDFs it brought) and the reader's answer the import summary uses; draws nothing",
+                ),
+            ),
+            (
+                "reading_details",
+                Module::Excluded(
+                    "data: formats a file's reading as the text the app's extracted-text tab shows, on the fetching worker; draws nothing",
+                ),
+            ),
+            (
+                "reading_file",
+                Module::Excluded(
+                    "io: the name and text of the .ocr.txt export of a reading, offered for debugging; draws nothing",
+                ),
+            ),
+            (
+                "reading_requests",
+                Module::Excluded(
+                    "data: which of Read all pages and Read again a right-click menu offers, from the Store's answer, and their words; the menus are the app's",
                 ),
             ),
             (

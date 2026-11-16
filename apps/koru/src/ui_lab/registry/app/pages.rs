@@ -29,6 +29,7 @@ const SUPPORT_FAB: &str = "apps/koru/src/support/fab.rs";
 const SUPPORT_SESSION: &str = "apps/koru/src/support/session.rs";
 const SUPPORT_VIEW: &str = "apps/koru/src/support/view.rs";
 const TASKBAR: &str = "apps/koru/src/taskbar.rs";
+const OCR_VIEW: &str = "apps/koru/src/ocr_view.rs";
 const TAB_HOSTS: &str = "apps/koru/src/ai_chat_view.rs";
 const TRASH_VIEW: &str = "apps/koru/src/trash/view.rs";
 const WELCOME: &str = "apps/koru/src/welcome/mod.rs";
@@ -562,6 +563,21 @@ pub(super) const RECORDS: &[Entry] = &[
             support("koru::session_tab::SessionView"),
             painter("koru::session_tab::draw_label"),
         ],
+    ),
+    // Construction: fetches the file's reading on a worker thread and holds a
+    // private editor over it; only an explicit Save writes to the Store
+    record(
+        "C-OCR-TAB",
+        "OcrView",
+        Key::UiLabOcrTabName,
+        Key::UiLabOcrTabPurpose,
+        Family::Compositions,
+        Kind::AppLocal,
+        None,
+        &[],
+        source(KORU, "koru::ocr_view", OCR_VIEW),
+        DESKTOP_NOT_ON_PHONES,
+        &[painter("koru::ocr_view::OcrView")],
     ),
     // Construction: Windows only: writes the shell's Jump List through
     // COM; elsewhere every call is a stand-in

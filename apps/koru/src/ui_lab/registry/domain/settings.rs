@@ -12,6 +12,7 @@ const OWNER: &str = "koru-settings-ui";
 const ACTION: &str = "crates/koru-settings-ui/src/action.rs";
 const LIB: &str = "crates/koru-settings-ui/src/lib.rs";
 const PAGE: &str = "crates/koru-settings-ui/src/page.rs";
+const READER: &str = "crates/koru-settings-ui/src/reader.rs";
 const STATE: &str = "crates/koru-settings-ui/src/state.rs";
 
 /// Every record of this crate, in the order the navigator lists them.
@@ -151,7 +152,81 @@ pub(super) const RECORDS: &[Entry] = &[
                         literal("SetAgentPermission"),
                         literal("SetDefaultAgent"),
                         literal("SetAgentOrder"),
+                        literal("TurnOnReader"),
+                        literal("StopReaderInstall"),
+                        literal("TurnOffReader"),
+                        literal("RemoveReader"),
+                        literal("ShowReaderItem"),
+                        literal("ReadReaderItemAgain"),
+                        literal("ReadAllReaderPages"),
                     ],
+                )],
+            ),
+            // The reader's card on the Editor page (reconciled against main,
+            // 17 November 2026): the host-fed row and its closed states.
+            support("koru_settings_ui::ReaderRow"),
+            support("koru_settings_ui::ReaderItemRow"),
+            support("koru_settings_ui::ReaderPartlyRow"),
+            support_with(
+                "koru_settings_ui::ReaderStatus",
+                &[values(
+                    Key::UiLabControlState,
+                    "koru_settings_ui::ReaderStatus",
+                    READER,
+                    Declared::Enum,
+                    &[
+                        literal("Unavailable"),
+                        literal("NotDownloaded"),
+                        literal("Downloading"),
+                        literal("On"),
+                        literal("Off"),
+                    ],
+                )],
+            ),
+            support_with(
+                "koru_settings_ui::ReaderBlocked",
+                &[values(
+                    Key::UiLabControlKind,
+                    "koru_settings_ui::ReaderBlocked",
+                    READER,
+                    Declared::Enum,
+                    &[
+                        literal("DownloadInformationUnavailable"),
+                        literal("DownloadInformationInvalid"),
+                        literal("NoTrustRoot"),
+                        literal("NoWorker"),
+                        literal("WorkerMissing"),
+                        literal("NotBuilt"),
+                        literal("NoModel"),
+                        literal("WillNotLoad"),
+                    ],
+                )],
+            ),
+            support_with(
+                "koru_settings_ui::ReaderDownloadStage",
+                &[values(
+                    Key::UiLabControlState,
+                    "koru_settings_ui::ReaderDownloadStage",
+                    READER,
+                    Declared::Enum,
+                    &[
+                        literal("Preparing"),
+                        literal("Downloading"),
+                        literal("Checking"),
+                        literal("Finishing"),
+                        literal("Stopping"),
+                        literal("Removing"),
+                    ],
+                )],
+            ),
+            support_with(
+                "koru_settings_ui::ReaderDownloadEnd",
+                &[values(
+                    Key::UiLabControlState,
+                    "koru_settings_ui::ReaderDownloadEnd",
+                    READER,
+                    Declared::Enum,
+                    &[literal("Failed"), literal("Stopped")],
                 )],
             ),
             support_with(

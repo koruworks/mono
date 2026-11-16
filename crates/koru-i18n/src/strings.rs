@@ -4351,13 +4351,15 @@ pub enum Key {
     ImportNoticeViewFile,
     ImportContentFailedTitle,
     ImportContentFailedBody,
+    UiLabOcrTabName,
+    UiLabOcrTabPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3313] = [
+    pub const ALL: [Key; 3315] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7671,6 +7673,8 @@ impl Key {
         Key::ImportNoticeViewFile,
         Key::ImportContentFailedTitle,
         Key::ImportContentFailedBody,
+        Key::UiLabOcrTabName,
+        Key::UiLabOcrTabPurpose,
     ];
 }
 
@@ -20162,4 +20166,6 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::ImportNoticeViewFile, en: "View file", es: "Ver archivo", pt_br: "Ver arquivo", de: "Datei anzeigen", fr: "Voir le fichier", ar: "عرض الملف", zh_hans: "查看文件", ja: "ファイルを表示" },
     Row { key: Key::ImportContentFailedTitle, en: "The content could not be imported", es: "No se pudo importar el contenido", pt_br: "Não foi possível importar o conteúdo", de: "Der Inhalt konnte nicht importiert werden", fr: "Le contenu n’a pas pu être importé", ar: "تعذّر استيراد المحتوى", zh_hans: "无法导入内容", ja: "内容をインポートできませんでした" },
     Row { key: Key::ImportContentFailedBody, en: "No empty documents were left behind.", es: "No quedaron documentos vacíos.", pt_br: "Nenhum documento vazio foi deixado para trás.", de: "Es wurden keine leeren Dokumente zurückgelassen.", fr: "Aucun document vide n’a été laissé.", ar: "لم تُترك أي مستندات فارغة.", zh_hans: "没有留下空文档。", ja: "空のドキュメントは残っていません。" },
+    Row { key: Key::UiLabOcrTabName, en: "Extracted text tab", es: "Pestaña de texto extraído", pt_br: "Aba de texto extraído", de: "Tab für erkannten Text", fr: "Onglet du texte extrait", ar: "تبويب النص المستخرج", zh_hans: "提取文字标签页", ja: "抽出テキストのタブ" },
+    Row { key: Key::UiLabOcrTabPurpose, en: "The text Koru read from a picture or scanned file, in a tab where it can be corrected, saved, reset to the reading, refreshed and exported.", es: "El texto que Koru leyó de una imagen o un archivo escaneado, en una pestaña donde se puede corregir, guardar, restablecer a la lectura, actualizar y exportar.", pt_br: "O texto que o Koru leu de uma imagem ou de um arquivo digitalizado, numa aba onde pode ser corrigido, salvo, restaurado para a leitura, atualizado e exportado.", de: "Der Text, den Koru aus einem Bild oder einer gescannten Datei gelesen hat, in einem Tab, in dem er korrigiert, gespeichert, auf das Leseergebnis zurückgesetzt, aktualisiert und exportiert werden kann.", fr: "Le texte que Koru a lu dans une image ou un fichier numérisé, dans un onglet où il peut être corrigé, enregistré, rétabli à la lecture, actualisé et exporté.", ar: "النص الذي قرأه Koru من صورة أو ملف ممسوح ضوئيًا، في تبويب يمكن فيه تصحيحه وحفظه وإعادته إلى القراءة وتحديثه وتصديره.", zh_hans: "Koru 从图片或扫描文件中读出的文字，显示在一个标签页中，可在其中更正、保存、恢复为识别结果、刷新和导出。", ja: "Koru が画像やスキャンしたファイルから読み取ったテキストをタブに表示し、修正、保存、読み取り結果へのリセット、更新、書き出しができます。" },
 ];

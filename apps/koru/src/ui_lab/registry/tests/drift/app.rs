@@ -266,8 +266,20 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/mainview/error_dialog.rs"),
     ),
     (
+        "apps/koru/src/mainview/file_images.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/file_images.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/file_paste.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/file_paste.rs"),
+    ),
+    (
         "apps/koru/src/mainview/file_preview.rs",
         include_str!("../../../../../../../apps/koru/src/mainview/file_preview.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/files_reader.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/files_reader.rs"),
     ),
     (
         "apps/koru/src/mainview/font_picker.rs",
@@ -368,6 +380,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/mainview/rail_overflow.rs",
         include_str!("../../../../../../../apps/koru/src/mainview/rail_overflow.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/reader_offer.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/reader_offer.rs"),
     ),
     (
         "apps/koru/src/mainview/recording.rs",
@@ -614,6 +630,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/manage/sign_in.rs"),
     ),
     (
+        "apps/koru/src/manage/sync_modes.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/sync_modes.rs"),
+    ),
+    (
         "apps/koru/src/manage/workspaces.rs",
         include_str!("../../../../../../../apps/koru/src/manage/workspaces.rs"),
     ),
@@ -624,6 +644,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/mini_app.rs",
         include_str!("../../../../../../../apps/koru/src/mini_app.rs"),
+    ),
+    (
+        "apps/koru/src/ocr_view.rs",
+        include_str!("../../../../../../../apps/koru/src/ocr_view.rs"),
     ),
     (
         "apps/koru/src/mini_app/artifact.rs",
@@ -1619,6 +1643,7 @@ pub(super) const ROOTS: &[Root] = &[
                 Module::Records(&["H-MANAGER-VIEW", "C-POPOUT-CLOSE-DIALOG"]),
             ),
             ("mini_app", Module::Records(&["C-MINI-APP"])),
+            ("ocr_view", Module::Records(&["C-OCR-TAB"])),
             ("panes", Module::Records(&["C-EXPLORE"])),
             (
                 "reminder_settings",
@@ -1974,7 +1999,25 @@ pub(super) const ROOTS: &[Root] = &[
                 ]),
             ),
             ("error_dialog", Module::Records(&["C-ERROR-DIALOG"])),
+            (
+                "file_images",
+                Module::Excluded(
+                    "orchestration: holds the shared KoruMediaViewer open over a workspace picture and carries out its actions; the viewer is C-MEDIA-VIEWER's and draws itself",
+                ),
+            ),
+            (
+                "file_paste",
+                Module::Excluded(
+                    "orchestration: asks where pasted files go through the shared koru_ui::Choice dialog and hands the answer to the import; builds the dialog's words, paints nothing",
+                ),
+            ),
             ("file_preview", Module::Records(&["C-CHAT-FILE-PREVIEW"])),
+            (
+                "files_reader",
+                Module::Excluded(
+                    "io: reads the reader's state off the UI thread once per Files-menu opening, for C-APP-MENUS's entries",
+                ),
+            ),
             ("font_picker", Module::Records(&["C-FONT-PICKER"])),
             (
                 "help_menu",
@@ -2044,6 +2087,12 @@ pub(super) const ROOTS: &[Root] = &[
             ),
             ("profile_wait", Module::Records(&["C-PROFILE-WAIT"])),
             ("rail_overflow", Module::Records(&["C-APP-MENUS"])),
+            (
+                "reader_offer",
+                Module::Excluded(
+                    "orchestration: puts the reader's offer line on the import summary's toast and carries out Turn on and Not now; the toast is the shared KoruToast and the line's words are koru-search-ui's",
+                ),
+            ),
             ("recording", Module::Records(&["C-RECORDING-SETUP"])),
             ("reminder_creation", Module::Records(&["C-REMINDER-EDITOR"])),
             (
@@ -2174,6 +2223,7 @@ pub(super) const ROOTS: &[Root] = &[
             ),
             ("recovery", Module::Records(&["C-MANAGE"])),
             ("sign_in", Module::Records(&["C-MANAGE"])),
+            ("sync_modes", Module::Records(&["C-MANAGE"])),
             ("workspaces", Module::Records(&["C-MANAGE-WORKSPACES"])),
         ],
     },
@@ -2267,7 +2317,15 @@ pub(super) const ROOTS: &[Root] = &[
         owner: "koru",
         file: "apps/koru/src/settings_view.rs",
         own: &["H-APP-TAB-HOSTS"],
-        modules: &[("reminders", Module::Records(&["C-REMINDER-SETTINGS"]))],
+        modules: &[
+            (
+                "reader_link",
+                Module::Excluded(
+                    "io: the Settings page's one thread to the Store about the reader, and the pure mapping from its answer to koru-settings-ui's ReaderRow; draws nothing",
+                ),
+            ),
+            ("reminders", Module::Records(&["C-REMINDER-SETTINGS"])),
+        ],
     },
     Root {
         owner: "koru",
@@ -2399,6 +2457,12 @@ pub(super) const ROOTS: &[Root] = &[
             (
                 "projection",
                 Module::Excluded("io: the projection layer beside the store"),
+            ),
+            (
+                "readings",
+                Module::Excluded(
+                    "io: the Store's side of reading pictures and scanned files: the reader's install, supervision, requests, corrections and mirror; no window",
+                ),
             ),
             (
                 "replication",

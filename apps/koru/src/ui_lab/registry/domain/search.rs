@@ -12,6 +12,7 @@ const OWNER: &str = "koru-search-ui";
 const ENTITY_SEARCH: &str = "crates/koru-search-ui/src/entity_search.rs";
 const LIB: &str = "crates/koru-search-ui/src/lib.rs";
 const MODAL: &str = "crates/koru-search-ui/src/modal.rs";
+const OFFER: &str = "crates/koru-search-ui/src/offer.rs";
 
 /// Every record of this crate, in the order the navigator lists them.
 pub(super) const RECORDS: &[Entry] = &[
@@ -59,10 +60,30 @@ pub(super) const RECORDS: &[Entry] = &[
         Family::Compositions,
         Kind::DomainComposition,
         None,
-        &[],
+        &["Reading offer"],
         source(OWNER, "koru_search_ui", LIB),
         DESKTOP_NOT_ON_PHONES,
         &[
+            // The one line about pictures and scans (reconciled against
+            // main, 17 November 2026): what it says and the answers under it.
+            support("koru_search_ui::LineView"),
+            support_with(
+                "koru_search_ui::LineAction",
+                &[values(
+                    Key::UiLabControlKind,
+                    "koru_search_ui::LineAction",
+                    OFFER,
+                    Declared::Enum,
+                    &[
+                        literal("TurnOn"),
+                        literal("NotNow"),
+                        literal("Stop"),
+                        literal("TryAgain"),
+                    ],
+                )],
+            ),
+            support("koru_search_ui::import_summary"),
+            support("koru_search_ui::install_line"),
             painter_with(
                 "koru_search_ui::SearchSurface",
                 &[values(

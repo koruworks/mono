@@ -216,16 +216,16 @@ batch's counts.
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
 | domain crates | 21 |
-| domain crate source files | 365 |
-| domain crate lib.rs modules | 251 |
-| domain crate lib.rs public modules | 121 |
-| domain crate modules excluded | 73 |
+| domain crate source files | 372 |
+| domain crate lib.rs modules | 258 |
+| domain crate lib.rs public modules | 125 |
+| domain crate modules excluded | 78 |
 | app crates baselined | 5 |
-| app source files | 342 |
+| app source files | 348 |
 | app files baselined | 23 |
-| app modules classified | 265 |
-| app modules excluded | 135 |
-| records: app crates | 63 |
+| app modules classified | 273 |
+| app modules excluded | 141 |
+| records: app crates | 64 |
 | native files: Android | 24 |
 | native files: iOS | 10 |
 | native files: macOS | 1 |
@@ -233,38 +233,38 @@ batch's counts.
 | native views | 30 |
 | native entry points baselined | 30 |
 | records: native platforms | 35 |
-| records | 332 |
+| records | 333 |
 | records: foundations | 61 |
 | records: controls | 88 |
-| records: application compositions | 183 |
+| records: application compositions | 184 |
 | records: domain crates | 114 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
 | kind: support | 72 |
 | kind: domain composition | 57 |
-| kind: app-local | 58 |
+| kind: app-local | 59 |
 | kind: native adapter | 35 |
 | token values listed | 174 |
-| symbols | 2378 |
+| symbols | 2390 |
 | symbols with typed recipes | 10 |
-| inspector identities | 60 |
-| inspector identity registration sites | 63 |
+| inspector identities | 61 |
+| inspector identity registration sites | 64 |
 | disposition: story exists | 9 |
-| disposition: no story yet | 203 |
+| disposition: no story yet | 204 |
 | disposition: nonvisual | 62 |
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
 | symbol story: available | 9 |
-| symbol story: no story yet | 443 |
-| symbol story: nonvisual | 1664 |
+| symbol story: no story yet | 444 |
+| symbol story: nonvisual | 1675 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2326 |
+| A2UI: not supported | 2338 |
 <!-- counts:end -->
 
 Platform cells, by platform and availability: each record says one thing
@@ -273,11 +273,11 @@ about each platform.
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 9 | 277 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
-| macOS | 0 | 1 | 285 | 0 | 1 | 3 | 34 | 8 | 0 |
-| Linux | 0 | 0 | 285 | 0 | 0 | 7 | 36 | 3 | 1 |
-| Android | 0 | 18 | 0 | 73 | 13 | 195 | 28 | 3 | 2 |
-| iOS | 0 | 14 | 0 | 55 | 13 | 210 | 33 | 6 | 1 |
+| Windows | 9 | 278 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| macOS | 0 | 1 | 286 | 0 | 1 | 3 | 34 | 8 | 0 |
+| Linux | 0 | 0 | 286 | 0 | 0 | 7 | 36 | 3 | 1 |
+| Android | 0 | 18 | 0 | 73 | 13 | 196 | 28 | 3 | 2 |
+| iOS | 0 | 14 | 0 | 55 | 13 | 211 | 33 | 6 | 1 |
 <!-- cells:end -->
 
 ## Batch 1 — shared APIs and tokens
@@ -2321,6 +2321,89 @@ compositions' helper takes the platforms as every other helper does.
 | `H-INSTALLED-FONTS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
 | `H-EMOJI` | native partial | native partial | the leading-emoji split the profile and workspace tiles draw (`leadingEmoji`) |
 <!-- phones:end -->
+
+## Reconciled against main — 17 November 2026
+
+`origin/main` was merged into the branch (`7237d6c3`, 32 commits). It brought
+the reader: reading pictures and scanned files so search finds the words in
+them, with its Store side, its Settings card, its line in search, its
+right-click entries and a tab for the text it read. Five drift checks failed
+on the merge, as they are meant to, and each new thing was read and
+classified by hand as every earlier one was.
+
+**New record: 1.** `C-OCR-TAB` (`apps/koru/src/ocr_view.rs`, `OcrView`): the
+tab that shows the text read from a picture or scanned file, with Edit, Save,
+Cancel, Reset to OCR, Refresh, Save reading to file and Next saved version in
+a toolbar over the app's own document view. App-local, a composition, no
+story yet. Its toolbar's buttons are the shared `ActionButton` behind an
+element leaf of its own; it registers the containers "OCR tab" and "OCR
+document" and no component identity.
+
+**Records extended: 4.**
+
+- `C-SEARCH-SURFACE` gained the identity **Reading offer** (the one line
+  about pictures and scans, `koru-search-ui/src/lib.rs`) and the symbols
+  `LineView`, `LineAction` (TurnOn, NotNow, Stop, TryAgain), `import_summary`
+  and `install_line`, all from the new private module `offer`.
+- `C-SETTINGS-SURFACE` gained the reader's card: `ReaderRow`,
+  `ReaderItemRow`, `ReaderPartlyRow` and the closed states `ReaderStatus`,
+  `ReaderBlocked`, `ReaderDownloadStage` and `ReaderDownloadEnd`, from the
+  new private module `reader`; and `Request` gained its seven reader
+  members (TurnOnReader … ReadAllReaderPages).
+- `C-CHAT-FILE-PREVIEW`'s identity is now **FilePreview**: the painter was
+  renamed when the same preview began to show extracted readings as well as
+  chat files. The record's catalog ID and its translated name still say
+  "chat file preview"; see the defects list.
+- `H-MAIN-VIEW`'s `LiftedViewer` gained `FileImage`, the workspace picture
+  the shared media viewer is lifted over.
+
+**Modules classified: 15.**
+
+| Module | Disposition |
+| --- | --- |
+| `koru::ocr_view` | record `C-OCR-TAB` |
+| `koru::mainview::file_images` | excluded, orchestration: holds the shared `KoruMediaViewer` over a workspace picture |
+| `koru::mainview::file_paste` | excluded, orchestration: asks where pasted files go through the shared `koru_ui::Choice` |
+| `koru::mainview::files_reader` | excluded, io: the reader's state for the Files menu |
+| `koru::mainview::reader_offer` | excluded, orchestration: the offer line on the import summary's shared toast |
+| `koru::manage::sync_modes` | `C-MANAGE`: sync choices composed from the shared `CardRow` and action buttons |
+| `koru::settings_view::reader_link` | excluded, io: the Settings page's thread to the Store about the reader |
+| `koru_store_server::readings` | excluded, io: the Store's side of reading |
+| `koru_search_ui::offer` | `C-SEARCH-SURFACE` |
+| `koru_search_ui::row_text` | excluded, private helper: the words a result row adds of its own |
+| `koru_settings_ui::reader` | `C-SETTINGS-SURFACE` |
+| `koru_workspace_host::reader_offer` | excluded, io |
+| `koru_workspace_host::reading_details` | excluded, data |
+| `koru_workspace_host::reading_file` | excluded, io |
+| `koru_workspace_host::reading_requests` | excluded, data |
+
+**Not records, and why.** The new crates `koru-read`, `koru-read-paddle`,
+`koru-read-bench` and `koru-models` and the app `koru-read` recognize text
+and manage model downloads; none of them draws anything or links a drawing
+crate, so they are outside the inventory's scope as the store and transport
+crates are. `koru-ui`'s `Toast` gained a second line with answers of its own
+(`with_line`, `line_rects`, `set_line_focus` and their neighbours); they are
+methods of the `Toast` the record `C-TOAST` already names. The submodules
+`app/file_paste.rs`, `app/image_file.rs` and `app/reading_rescan.rs` of the
+workspace host's `app` are plumbing inside the one module the inventory
+reads at declaration level.
+
+**Reading depth.** The new modules were read at their module documentation,
+their public and crate-visible declarations and their inspector scopes.
+`ocr_view.rs` was read through its element tree and draw path;
+`koru-search-ui/src/offer.rs` and `koru-settings-ui/src/reader.rs` through
+their public types. The changes main made inside files already baselined
+(`koru-editor`'s draw, the document app's context menu, Manage's profile
+pages) were checked only as far as the drift checks reach: their module
+lists, identities, recorded symbols and option sets are unchanged or are
+listed above.
+
+**Added to the defects list by this reconciliation:**
+
+- `C-CHAT-FILE-PREVIEW` is named for chats in its ID and in all eight
+  languages, and the painter it records now also shows extracted readings.
+- The OCR tab draws its toolbar buttons through a private element leaf
+  round `ActionButton::draw_focused` rather than a shared button element.
 
 ## Keeping the inventory true
 
