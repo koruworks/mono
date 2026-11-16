@@ -1149,6 +1149,330 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "crates/koru-window/src/window_geometry.rs",
         include_str!("../../../../../../../crates/koru-window/src/window_geometry.rs"),
     ),
+    (
+        "crates/koru-workspace-host/src/accessibility.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/accessibility.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/accessibility/dump.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/accessibility/dump.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/accessibility/identity.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/accessibility/identity.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/accessibility/lifecycle.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/accessibility/lifecycle.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/accessibility/projection.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/accessibility/projection.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/account_ui.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/account_ui.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/account_ui/switcher.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/account_ui/switcher.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/child_document.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/child_document.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/delegate_folder.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/delegate_folder.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/inspector_window.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/inspector_window.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/key_release.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/key_release.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/modifiers.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/modifiers.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/native_input.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/native_input.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/profile_creation.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/profile_creation.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/profile_delivery.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/profile_delivery.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/profile_removal.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/profile_removal.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/profile_switch.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/profile_switch.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/profile_wait.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/profile_wait.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/profile_wait/host.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/app/profile_wait/host.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/recording.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/recording.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/trash.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/trash.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/app/zoom.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/app/zoom.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/attachdebug.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/attachdebug.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/binding_markers.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/binding_markers.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/cli.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/cli.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/clipboard_html.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/clipboard_html.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/clipboard_markdown.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/clipboard_markdown.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/clipboard_rtf.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/clipboard_rtf.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/diagram.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/diagram.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/dialogs.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/dialogs.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/environment.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/environment.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/events_host.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/events_host.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/export.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/export.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/formats.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/formats.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/image_import.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/image_import.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/images.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/images.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/detached.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/detached.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/details.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/details.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/hierarchy.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/hierarchy.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/history.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/history.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/placement.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/placement.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/scrolling.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/scrolling.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/inspector/spacing.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/inspector/spacing.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/lib.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/macos_urls.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/macos_urls.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/menubar.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/menubar.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/menus.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/menus.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/native_surface.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/native_surface.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/onboarding.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/onboarding.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/onboarding/accessibility.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/onboarding/accessibility.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/onboarding/browser_signin.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/onboarding/browser_signin.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/onboarding/email.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/onboarding/email.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/onboarding/profile_selection.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/onboarding/profile_selection.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/onboarding/recovery.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/onboarding/recovery.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/preferences.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/preferences.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/profile_activation.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/profile_activation.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/profile_lifecycle_decision.rs",
+        include_str!(
+            "../../../../../../../crates/koru-workspace-host/src/profile_lifecycle_decision.rs"
+        ),
+    ),
+    (
+        "crates/koru-workspace-host/src/profile_names.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/profile_names.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/profile_runtime.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/profile_runtime.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/profile_wait.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/profile_wait.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/reveal.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/reveal.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/routing.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/routing.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/runpill.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/runpill.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/schedulepill.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/schedulepill.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/searchdebug.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/searchdebug.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/settings.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/settings.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/spelling.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/spelling.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/spelling/download.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/spelling/download.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/startup.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/startup.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/tasks.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/tasks.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/telemetry_consent.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/telemetry_consent.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/url_file.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/url_file.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/voice_devices.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/voice_devices.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/voice_install.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/voice_install.rs"),
+    ),
+    (
+        "crates/koru-workspace-host/src/voice_prefs.rs",
+        include_str!("../../../../../../../crates/koru-workspace-host/src/voice_prefs.rs"),
+    ),
 ];
 
 /// One domain crate's root: its records declared in `lib.rs` itself, and
@@ -1758,6 +2082,208 @@ pub(super) const CRATES: &[Crate] = &[
                 "window_geometry",
                 Module::Excluded(
                     "io: machine-local paths and the shared window-geometry row store (read, merge, write); the Lab must never read or write it",
+                ),
+            ),
+        ],
+    },
+    Crate {
+        owner: "koru-workspace-host",
+        lib: "crates/koru-workspace-host/src/lib.rs",
+        root: &["H-VIEW-HOST"],
+        modules: &[
+            (
+                "accessibility",
+                Module::Records(&["H-WORKSPACE-ACCESSIBILITY"]),
+            ),
+            (
+                "account_ui",
+                Module::Records(&["C-ACCOUNT-SWITCHER", "H-ACCOUNT-STATE"]),
+            ),
+            // The 21,000-line event loop is orchestration; what it offers a
+            // caller is the host contract the record names.
+            ("app", Module::Records(&["H-VIEW-HOST"])),
+            (
+                "binding_markers",
+                Module::Excluded(
+                    "io: one file per Profile recording a pending Profile-to-account binding across a restart",
+                ),
+            ),
+            ("onboarding", Module::Records(&["C-ONBOARDING"])),
+            (
+                "cli",
+                Module::Excluded(
+                    "orchestration: the strict command-line parser and its FLAGS table; the Lab enters through its typed command and draws nothing of it",
+                ),
+            ),
+            (
+                "clipboard_html",
+                Module::Excluded("io: reads CF_HTML off the platform clipboard into rich blocks"),
+            ),
+            (
+                "clipboard_markdown",
+                Module::Excluded(
+                    "data: CommonMark clipboard text into rich blocks (re-exported as parse_markdown); draws nothing",
+                ),
+            ),
+            (
+                "clipboard_rtf",
+                Module::Excluded("io: reads RTF off the platform clipboard into rich blocks"),
+            ),
+            (
+                "diagram",
+                Module::Excluded(
+                    "io: lays diagrams out on a worker and keeps the session cache of results the editor asks for",
+                ),
+            ),
+            ("dialogs", Module::Records(&["C-FILE-DIALOGS"])),
+            (
+                "environment",
+                Module::Excluded("io: the machine and window facts collected once per run"),
+            ),
+            (
+                "events_host",
+                Module::Excluded(
+                    "io: the fire-and-forget event emission thread and its process-global sender",
+                ),
+            ),
+            (
+                "export",
+                Module::Excluded("io: writes a Store workspace bundle to a file"),
+            ),
+            (
+                "formats",
+                Module::Excluded(
+                    "data: the importer and exporter registry the menus and workers are built from",
+                ),
+            ),
+            (
+                "image_import",
+                Module::Excluded(
+                    "io: reads, decodes and stores an attached image off the event loop",
+                ),
+            ),
+            (
+                "images",
+                Module::Excluded("io: loads image blobs off the event loop on a worker pool"),
+            ),
+            // Private: the F12 inspector panel, a private part of the host.
+            ("inspector", Module::Records(&["H-VIEW-HOST"])),
+            (
+                "attachdebug",
+                Module::Excluded("io: KORU_ATTACH_DEBUG attachment diagnostics to stderr"),
+            ),
+            (
+                "macos_urls",
+                Module::Excluded(
+                    "io: LaunchServices URL delivery added to winit's macOS delegate; compiled only on macOS",
+                ),
+            ),
+            ("menubar", Module::Records(&["C-SYSTEM-MENUS"])),
+            ("menus", Module::Records(&["C-SYSTEM-MENUS"])),
+            ("native_surface", Module::Records(&["H-NATIVE-SURFACE"])),
+            (
+                "preferences",
+                Module::Excluded(
+                    "io: this window's side of the settings authority (startup wait, per-field patches)",
+                ),
+            ),
+            (
+                "profile_activation",
+                Module::Excluded(
+                    "io: machine-local routing of a search target to an already-open Profile",
+                ),
+            ),
+            (
+                "profile_lifecycle_decision",
+                Module::Excluded(
+                    "orchestration: the blocking decision for a Profile whose hosted lifecycle is deleted",
+                ),
+            ),
+            (
+                "profile_names",
+                Module::Excluded(
+                    "data: the device-local book of Profile names, so a remote deletion can be named",
+                ),
+            ),
+            (
+                "profile_runtime",
+                Module::Excluded(
+                    "orchestration: the Profile and workspace content state the shell projects",
+                ),
+            ),
+            (
+                "profile_wait",
+                Module::Excluded(
+                    "orchestration: a window's availability wait and its reading, which the host's pane presents",
+                ),
+            ),
+            (
+                "reveal",
+                Module::Excluded("io: shows a path in the OS file manager"),
+            ),
+            ("routing", Module::Records(&["H-KEYBOARD-ROUTING"])),
+            (
+                "runpill",
+                Module::Excluded(
+                    "data: the one write that leaves a delegation's pill in the document it came from",
+                ),
+            ),
+            (
+                "schedulepill",
+                Module::Excluded(
+                    "data: the inline reference a recurring delegation leaves in a document",
+                ),
+            ),
+            (
+                "searchdebug",
+                Module::Excluded("io: KORU_SEARCH_DEBUG routing diagnostics"),
+            ),
+            (
+                "settings",
+                Module::Excluded(
+                    "data: the session the app reopens to (geometry, columns, tabs) and its read of the preference fields; MIN_WINDOW_SIZE is the one constant the Lab shares",
+                ),
+            ),
+            (
+                "spelling",
+                Module::Excluded("io: the spell-check worker and its dictionary download"),
+            ),
+            (
+                "url_file",
+                Module::Excluded("data: shared links stored as workspace files"),
+            ),
+            (
+                "startup",
+                Module::Excluded(
+                    "orchestration: choosing a Profile and opening it cleanly before any window; the Lab is dispatched before it",
+                ),
+            ),
+            (
+                "tasks",
+                Module::Excluded(
+                    "orchestration: scheduling and attribution around the canonical task commands",
+                ),
+            ),
+            (
+                "telemetry_consent",
+                Module::Excluded(
+                    "io: this device's telemetry answer, read and written off the loop",
+                ),
+            ),
+            (
+                "voice_devices",
+                Module::Excluded("io: the machine's microphones, read when a Settings tab asks"),
+            ),
+            (
+                "voice_install",
+                Module::Excluded(
+                    "io: the dictation consent offer's words, its record and the model download it authorises",
+                ),
+            ),
+            (
+                "voice_prefs",
+                Module::Excluded(
+                    "data: the dictation preferences held as process globals over Settings",
                 ),
             ),
         ],

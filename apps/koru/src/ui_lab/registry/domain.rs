@@ -30,6 +30,7 @@ mod socials;
 mod voice;
 mod webview;
 mod window;
+mod workspace_host;
 
 pub(super) const AGENTS: &[Entry] = agents::RECORDS;
 pub(super) const AI: &[Entry] = ai::RECORDS;
@@ -49,6 +50,7 @@ pub(super) const SOCIALS: &[Entry] = socials::RECORDS;
 pub(super) const VOICE: &[Entry] = voice::RECORDS;
 pub(super) const WEBVIEW: &[Entry] = webview::RECORDS;
 pub(super) const WINDOW: &[Entry] = window::RECORDS;
+pub(super) const WORKSPACE_HOST: &[Entry] = workspace_host::RECORDS;
 
 const fn source(owner: &'static str, module: &'static str, file: &'static str) -> Source {
     Source {

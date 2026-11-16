@@ -1374,8 +1374,69 @@ fn only_the_catalogs_symbols_claim_a2ui_support() {
             "koru_search_ui::EntitySearchUpdate",
             "koru_ui::button::ActionButton",
             "koru_ui::button::ActionButton::draw_focused_elided",
+            "koru_workspace_host::accessibility::ControlPart",
+            "koru_workspace_host::accessibility::ObjectKey",
+            "koru_workspace_host::accessibility::Occurrence",
+            "koru_workspace_host::accessibility::Revision",
+            "koru_workspace_host::accessibility::SemanticNode",
+            "koru_workspace_host::accessibility::ViewSlot",
+            "koru_workspace_host::accessibility::WindowSlot",
         ]
     );
+}
+
+/// The A2UI hosts publish the controls a declaration draws through the
+/// workspace host's semantic identity: the composition host names five of
+/// its types, the mini-app chrome that hosts the fixed catalog seven. Each
+/// symbol a record marks host-only for that reason is imported there, as
+/// the host's source spells it.
+#[test]
+fn the_a2ui_hosts_publish_their_controls_through_the_workspace_accessibility() {
+    let claimed: Vec<&str> = catalog()
+        .filter(|e| e.source.owner == "koru-workspace-host")
+        .flat_map(symbols)
+        .filter(|(_, a2ui, _)| *a2ui == A2ui::HostOnly)
+        .map(|(symbol, _, _)| symbol)
+        .collect();
+    let item = |symbol: &'static str| symbol.rsplit("::").next().unwrap();
+    let composition = [
+        "ControlPart",
+        "Occurrence",
+        "SemanticNode",
+        "ViewSlot",
+        "WindowSlot",
+    ];
+    let chrome = [
+        "ControlPart",
+        "ObjectKey",
+        "Occurrence",
+        "Revision",
+        "SemanticNode",
+        "ViewSlot",
+        "WindowSlot",
+    ];
+    let mut items: Vec<&str> = claimed.iter().copied().map(item).collect();
+    items.sort_unstable();
+    assert_eq!(items, chrome, "the host-only workspace accessibility types");
+    let imports = |host: &str| -> String {
+        let start = host
+            .find("use koru_workspace_host::accessibility::{")
+            .expect("the host imports the workspace accessibility types");
+        let rest = &host[start..];
+        rest[..rest.find("};").expect("the import closes")].to_owned()
+    };
+    for (host, names) in [
+        (imports(COMPOSITION_HOST), &composition[..]),
+        (imports(MINI_APP_CHROME), &chrome[..]),
+    ] {
+        for name in names {
+            assert!(
+                host.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .any(|word| word == *name),
+                "an A2UI host no longer imports {name}: {host}"
+            );
+        }
+    }
 }
 
 /// The fixed catalog's `DocumentSearch` is the mini-app chrome's own field
@@ -1389,8 +1450,11 @@ fn the_fixed_catalogs_document_search_reads_through_the_entity_search() {
         FIXED_CATALOG.contains("(\"search\", \"DocumentSearch\")"),
         "the fixed catalog no longer names its search component"
     );
+    // The workspace host's semantic identity types are host-only for the
+    // controls the hosts publish, held by the test above.
     let host_only: Vec<&str> = domain::CRATES
         .iter()
+        .filter(|krate| krate.owner != "koru-workspace-host")
         .flat_map(|krate| catalog().filter(move |e| e.source.owner == krate.owner))
         .flat_map(symbols)
         .filter(|(_, a2ui, _)| *a2ui == A2ui::HostOnly)
@@ -1459,7 +1523,7 @@ fn every_domain_module_is_classified() {
     owners.dedup();
     assert_eq!(
         owners.len(),
-        19,
+        20,
         "the thirteen domain UI crates and batch 2b's editor, document and host crates"
     );
 }

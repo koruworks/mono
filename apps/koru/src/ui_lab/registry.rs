@@ -609,6 +609,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     domain::VOICE,
     domain::WEBVIEW,
     domain::WINDOW,
+    domain::WORKSPACE_HOST,
 ];
 
 /// Every record, flattened.

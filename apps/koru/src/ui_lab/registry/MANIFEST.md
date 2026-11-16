@@ -103,40 +103,40 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 19 |
-| domain crate source files | 283 |
-| domain crate lib.rs modules | 204 |
-| domain crate lib.rs public modules | 90 |
-| domain crate modules excluded | 40 |
-| records | 224 |
+| domain crates | 20 |
+| domain crate source files | 360 |
+| domain crate lib.rs modules | 247 |
+| domain crate lib.rs public modules | 121 |
+| domain crate modules excluded | 73 |
+| records | 233 |
 | records: foundations | 59 |
 | records: controls | 66 |
-| records: application compositions | 99 |
-| records: domain crates | 104 |
+| records: application compositions | 108 |
+| records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 59 |
-| kind: domain composition | 55 |
+| kind: support | 66 |
+| kind: domain composition | 57 |
 | token values listed | 174 |
-| symbols | 1706 |
+| symbols | 1855 |
 | symbols with typed recipes | 2 |
-| inspector identities | 45 |
-| inspector identity registration sites | 48 |
+| inspector identities | 54 |
+| inspector identity registration sites | 57 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 153 |
-| disposition: nonvisual | 55 |
+| disposition: no story yet | 155 |
+| disposition: nonvisual | 60 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 15 |
+| disposition: boundary | 17 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 329 |
-| symbol story: nonvisual | 1236 |
-| symbol story: boundary | 140 |
+| symbol story: no story yet | 333 |
+| symbol story: nonvisual | 1372 |
+| symbol story: boundary | 149 |
 | A2UI: component | 6 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
-| A2UI: host only | 9 |
-| A2UI: not supported | 1681 |
+| A2UI: host only | 16 |
+| A2UI: not supported | 1823 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -545,6 +545,21 @@ reached only through the bounded searches below.
 | `koru-app-shell` | 15 | 1 | 14 | 0 | 14 | 0 | 8 | 138 | — |
 | `koru-webview` | 5 | 3 | 2 | 0 | 4 | 0 | 1 | 20 | — |
 | `koru-window` | 32 | 1 | 31 | 0 | 31 | 10 | 7 | 76 | — |
+| `koru-workspace-host` | 77 | 0 | 77 | 0 | 43 | 33 | 9 | 149 | `CodeBoxes`, `PasswordField`, `EmailAddressField`, `EmailPasswordField`, `NameField`, `ProfileIcon`, `ProfileNameField`, `WorkspaceIcon`, `WorkspaceNameField` |
+| **7 crates** | **204** | **14** | **190** | **0** | **132** | **44** | **67** | **1,043** | **13** |
+
+Dispositions, by crate: `koru-editor` 18 no story yet, 11 nonvisual, 4
+boundary; `koru-markdown-view` 1 and 1 boundary; `koru-session-view` 3, 2
+nonvisual, 2 boundary; `koru-app-shell` 3 and 5 nonvisual;
+`koru-workspace-host` 2, 5 nonvisual, 2 boundary; `koru-window` 5
+nonvisual, 2 boundary; `koru-webview` 1 boundary — 27 no story yet, 28
+nonvisual, 12 boundary. No record has a story or a recipe. Kinds: 29
+`DomainComposition`, 4 `Widget`, 34 `Support`. A2UI: 7 symbols host-only
+(`H-WORKSPACE-ACCESSIBILITY`), the other 1,036 not supported. Modules,
+records and identity sites are separate numbers: 132 `lib.rs` modules hold
+67 records; 14 component-identity registration sites name 13 identities
+(`KoruEntityPicker` is registered from two painters, and one conditional
+site in onboarding names two).
 
 ### Records
 
@@ -660,6 +675,31 @@ IDs marked * are minted here in batch 1's style.
   workspace app's own loop is `koru-workspace-host`'s, below.
   `dispatch/parity.rs` is `#[cfg(test)]` (`dispatch.rs` 1205) and is left
   out of the sources like every test file.
+- `koru-workspace-host` (no file read in full; all 77 by declarations, with
+  the module documentation of every top-level module, `lib.rs` 1–420 (the
+  paste vocabulary, `ImeTarget` and the head of `View`), `accessibility.rs`
+  1–120, `onboarding.rs`'s `OnboardingView` fields, its `impl` and its
+  identity sites, `account_ui/switcher.rs`, `menus.rs`'s platform split and
+  `native_surface.rs`'s contract read; `app.rs`, 21,795 lines, only
+  searched): nine records. Its reusable surfaces: `C-ONBOARDING`* (the
+  first-run window — welcome, email and code, Profile, workspace and
+  recovery — claiming the nine identities its private parts register) and
+  `C-ACCOUNT-SWITCHER`*, with `H-ACCOUNT-STATE`* (the account projection
+  both onboarding and the Manage tab draw from). Its contracts:
+  `H-VIEW-HOST`* — `View`, `Host`, `run`/`run_with_args` and the paste and
+  pane vocabulary; the 21,000-line event loop is orchestration and is
+  recorded as this contract, not as a component — `H-WORKSPACE-ACCESSIBILITY`*
+  (semantic identity and projection; the platform half is
+  `H-WINDOW-ACCESSIBILITY`), `H-NATIVE-SURFACE`* and `H-KEYBOARD-ROUTING`*.
+  Two OS-owned boundaries: `C-SYSTEM-MENUS`* (the Mac's menu bar and the
+  native popup menus, through `muda`) and `C-FILE-DIALOGS`* (`rfd`). 33 of
+  its 43 `lib.rs` modules draw nothing and are excluded with a reason in
+  `tests/drift/domain.rs`: IO and workers, data books and parsers, and the
+  startup, Profile and task orchestration. These records live in
+  `domain/workspace_host.rs`, which is on `RECORD_FILES`: the isolation
+  scan reads it with its literals emptied, so it may spell
+  `koru_workspace_host::run` as data while still naming nothing it could
+  call.
 
 ### Platforms
 
@@ -687,6 +727,29 @@ from the source or the page named:
   records, are `NotAudited`: no page says what the frame or the mobile
   equivalents are, and a desktop window frame's absence on a phone is not
   written down anywhere.
+- `C-SYSTEM-MENUS` is `NativeOwned` on Windows and macOS (`muda` is linked
+  only there, `Cargo.toml` 279 and 289) and `Unavailable` on Linux, where
+  `Popup::show` and `MenuBar::install` are stand-ins (`menus.rs` 156,
+  `menubar.rs` 325–341). `C-FILE-DIALOGS` is `NativeOwned` on all three
+  desktop platforms: `rfd` is an unconditional dependency
+  (`Cargo.toml` 138) whose dialog is the system's or the desktop portal's;
+  that it builds and behaves on Linux is not verified by anything here.
+
+### A2UI
+
+No record in this batch is a catalog component. The app-local
+`DocumentHost` (batch 3) embeds `C-DOCUMENT-EDITOR` through the app's
+`Leaf`, so a declaration names the host, never an editor symbol. The A2UI
+hosts do name one thing here: the composition host
+(`apps/koru/src/mini_app/composition.rs`) and the mini-app chrome that
+hosts the fixed catalog (`mini_app/chrome.rs`) publish the controls they
+draw through `koru_workspace_host::accessibility` — `ControlPart`,
+`Occurrence`, `SemanticNode`, `ViewSlot` and `WindowSlot` in both,
+`ObjectKey` and `Revision` in the chrome. Those seven are `HostOnly` on
+`H-WORKSPACE-ACCESSIBILITY`, and the new drift test
+`the_a2ui_hosts_publish_their_controls_through_the_workspace_accessibility`
+holds each to the host's `use` list; the fixed-catalog search test leaves
+them to it.
 
 ### Private parts
 
@@ -700,6 +763,20 @@ them:
   (`draw.rs` `draw_body_tone_strip`).
 - `C-DOCUMENT-EDITOR`: the empty-document and title placeholders and the
   status bar halves the frame draws from `draw::Frame`.
+- `C-ONBOARDING`: the email journey's code boxes and password field
+  (`onboarding/email.rs`, identities `CodeBoxes`, `PasswordField`), the
+  email address and password fields, the name, Profile name, Profile icon,
+  workspace name and workspace icon controls (`onboarding.rs`, identities
+  as listed), the Profile chooser (`onboarding/profile_selection.rs`), the
+  recovery screen (`onboarding/recovery.rs`) and the browser sign-in wait
+  (`onboarding/browser_signin.rs`) — all private modules, drawn by
+  `OnboardingView::draw`.
+- `H-VIEW-HOST`: **the F12 inspector panel** (`inspector.rs` and its
+  `hierarchy`, `details`, `spacing`, `history`, `placement`, `scrolling` and
+  `detached` children, all private) and the inspector's own native window
+  (`app/inspector_window.rs`, `NativeInspector`), which the app's loop
+  opens and draws; the first-run window's container scope (`app.rs` 4357,
+  kind `container`). The panel opens no scope of its own.
 - `C-TERMINAL-VIEW`: the shaped row cache and its box-drawing and
   replacement-glyph painting (`row.rs`), the cursor block/beam/underline and
   the selection fill (`render.rs`), text extraction for a selection
@@ -750,6 +827,20 @@ them:
   document, profile, workspace or store (its `Cargo.toml` is the fence).
   `koru_window::run`/`run_windows` take over the thread's event loop until
   the last window closes; the accessibility bridge needs a live window.
+- **Pure, with the host doing the work** — `OnboardingView::default`
+  (its own `TextEngine`, text inputs and emoji and color panel; every
+  sign-in, account, Profile and workspace step leaves as an `Action` the
+  host performs); `AccountSwitcher::default` (state over the host's
+  `AccountState`); the account projection; the semantic identity values;
+  the routing enums.
+- **Starts the whole app** — `koru_workspace_host::run`/`run_with_args`
+  read settings, find a Profile, connect to the Agent and the Store and
+  open windows. The Lab is dispatched before it and its isolation scan
+  refuses the path outside a record's literal.
+- **OS-owned, on the main thread** — `menus::Popup::new` builds a native
+  menu and panics off the main thread (`menus.rs` 208); `MenuBar::install`
+  seats the Mac's menu bar; the `dialogs::pick_*` functions block on a
+  native modal dialog.
 - **Starts an engine process** — `WebSurface::open` needs a live parent
   window handle, blocks the UI thread while WebView2 builds its environment
   (260–560 ms measured, `guide/contributing/deps/WRY.md`), and keeps
@@ -794,9 +885,17 @@ them:
   inspector scope; `ZoomLabel` duplicates the app's own
   `mainview/zoomlabel.rs`, and the shell's caption painters have no
   production caller (above).
+- `koru-workspace-host`: `account_ui::switcher::AccountSwitcher` has no
+  caller outside its own tests (the Manage tab's "account switcher" is
+  its own intent); `C-ACCOUNT-SWITCHER` is recorded from its source with
+  that noted. Its rows, title and the first-run screens are drawn by local
+  painters over `scene` rather than through `koru-ui` controls in places
+  (`account_ui/switcher.rs` 109–180).
 - **Docs and source disagree** — `koru-window`'s `lib.rs` says
   `koru-workspace-host`'s `app.rs` is "5,300 lines" and its own `app.rs`
   says "11,450 lines"; the file is 21,795 lines at `d4ad8af0`.
+  `onboarding/accessibility.rs` calls `onboarding.rs` "3,400 lines"; it is
+  5,120.
 
 ### Reconnaissance
 
@@ -811,15 +910,91 @@ Candidate owners from the reconnaissance, counts at `3bd19e56`:
 | `koru-workspace-host` | 31 | 77 | 7 | 7 |
 | `koru-webview` | 0 | 5 | 0 | 0 |
 
-Known records owed: `EmojiList`/`Emoji` (`C-CHOICE`, `koru-editor`
-`components/emoji_picker.rs`, the emoji body of `C-EMOJI-COLOR-PANEL`); the
-rich-text boundary of `koru-markdown-view`'s `MarkdownView` (the artifact
-tab's document, the AI chat's reply bodies, the run views' result); the
-session views `C-SESSION-SURFACE` hosts (`TerminalView`,
-`ManagedSessionView`, `PendingInputView`); the editor seams the AI composer
-uses (`Embedded`, `Policy`). `koru-workspace-host` is the one crate whose
-paths the isolation scan's `koru_workspace_host` rule meets; its records go
-in a record file, where only literals are exempt.
+`koru-window` (32 non-test files, 0 identities) was in scope but not in the
+reconnaissance table. The reconnaissance counted 4 editor identity sites
+and 7 in the workspace host with the two-line reading; the one-line and
+conditional spellings add `EmojiCategoryBar` and `EmailAddressField`.
+
+The records batch 2a said were owed, reconciled: `EmojiList`/`Emoji` is
+`C-EMOJI-LIST`; the Markdown boundary is `C-MARKDOWN-DOCUMENT` (the result
+tab and the run views; not the AI chat's replies, above); the session
+views are `C-TERMINAL-VIEW`, `C-MANAGED-SESSION-VIEW` and
+`C-PENDING-INPUT-VIEW`; the composer seams are `H-EDITOR-EMBEDDED` and
+`H-EDITOR-POLICY`; the workspace host's records are in a record file.
+
+### Bounded searches
+
+Run from the repository root, over `crates/<crate>/src` for the seven
+crates. Candidates for a person to read, never definitions:
+
+```sh
+# Non-test files (the SOURCES lists), and test-only modules a name hides.
+find crates/<crate>/src -name '*.rs' | grep -vE '(^|/)tests?\.rs$|_tests\.rs$|/tests/'
+grep -rn -A1 '#\[cfg(test)\]' crates/<crate>/src | grep -E '\bmod [a-z_]+;'
+# Module baselines.
+grep -nE '^(pub )?mod |^#\[cfg' crates/<crate>/src/lib.rs
+# Public items before each file's test module, and impl methods.
+awk '/^#\[cfg\(test\)\]/{exit} {print FILENAME": "NR": "$0}' FILE | grep -E 'pub (const )?(struct|enum|fn|const|static|trait|type|use|mod)'
+# Every identity spelling: the two-line one, one line, and a conditional.
+grep -rn -B2 '^\s*"component",' crates/<crate>/src
+grep -rnE 'scope(_at|_hoisted)?\(\s*"[A-Za-z]+",\s*"component"' crates apps --include=*.rs
+# Who links each crate, and who calls a surface outside its crate.
+grep -rln '^<crate> =' --include=Cargo.toml apps crates
+grep -rn '<crate_ident>::' apps crates --include=*.rs | grep -v 'crates/<crate>/'
+# Threads, processes, files and environment reads at construction.
+grep -rnE 'thread::|spawn\(|std::fs|koru_env|Command::new' crates/<crate>/src
+# User-facing literals in painters and label tables.
+grep -rnE '"[A-Z][a-z]+[ a-z]*"' crates/<crate>/src
+# Platform splits behind an availability cell.
+grep -n 'cfg' crates/<crate>/src/FILE crates/<crate>/Cargo.toml
+# The A2UI hosts' use of these crates.
+grep -n 'koru_editor\|koru_workspace_host\|koru_window\|koru_markdown' apps/koru/src/mini_app/*.rs
+```
+
+### Exclusions
+
+Every module of the seven roots is in its baseline in
+`tests/drift/domain.rs`, with a reason for each excluded one; in summary:
+
+| Crate | Excluded modules | Why |
+| --- | --- | --- |
+| `koru-editor` | `browser` | IO: hands a URL to the system browser as a child process |
+| `koru-window` | `activation`, `console`, `dock`, `open_bytes`, `open_uri`, `system_locale`, `system_version` | IO: asks the OS to activate, attach, set an icon, open or report |
+| `koru-window` | `desktop_preferences`, `search_geometry` | Data: a read of `desktop-v1.json`; the global-search row's schema |
+| `koru-window` | `window_geometry` | IO: machine-local paths and the window-geometry row store, which the Lab must never touch |
+| `koru-workspace-host` | `binding_markers`, `clipboard_html`, `clipboard_rtf`, `diagram`, `environment`, `events_host`, `export`, `image_import`, `images`, `attachdebug`, `macos_urls`, `preferences`, `profile_activation`, `reveal`, `searchdebug`, `spelling`, `telemetry_consent`, `voice_devices`, `voice_install` | IO: files, the clipboard, workers, telemetry, diagnostics, downloads and OS hand-offs |
+| `koru-workspace-host` | `clipboard_markdown`, `formats`, `profile_names`, `runpill`, `schedulepill`, `settings`, `url_file`, `voice_prefs` | Data: parsers, registries, books and the session file a surface reads |
+| `koru-workspace-host` | `cli`, `profile_lifecycle_decision`, `profile_runtime`, `profile_wait`, `startup`, `tasks` | Orchestration: the command line, Profile lifecycle and startup, task scheduling |
+
+Symbols left out of a record on purpose: re-exports of another crate's
+items, recorded at their owner — the editor's listed under its record
+above; `koru_app_shell::chrome::{banner_geometry, caption_geometry,
+region_geometry, tab_geometry, icon_geometry}` (`koru-shell-chrome`),
+`koru_app_shell::{WindowKey, ZOOM_MIN, ZOOM_MAX, ZOOM_STEP}` and
+`panel::{SIDEBAR_MIN_W, SIDEBAR_MAX_W}` (`koru-window`, `koru-draw`);
+`koru_workspace_host::inputdebug` and `accessibility::{Live, LogicalRect}`
+(`koru-ui`, `accesskit`, `koru-draw`). Root re-exports of a crate's own
+excluded modules go with the module: `koru_workspace_host::parse_markdown`
+(`clipboard_markdown`), and `koru_window`'s `window_geometry`, `open_uri`,
+`open_bytes`, `activation`, `dock`, `desktop_preferences` and
+`search_geometry` items.
+
+### Drift checks added
+
+- The seven crates' 204 non-test files are in `tests/drift/domain.rs`'s
+  `SOURCES` and their roots in `CRATES`, so every check batch 2a lists
+  covers them; `every_domain_module_is_classified` now counts 20 crates,
+  and the counts table's "domain crate" rows are those 20.
+- `registered_identities` reads the one-line `scope("Name", "component", …)`
+  and the `if`-chosen name as well as the two-line form; no source compiled
+  in before this batch used either, so batch 1's and 2a's identity counts
+  did not move. A conditional site counts once per name it can register.
+- `the_a2ui_hosts_publish_their_controls_through_the_workspace_accessibility`
+  holds the seven host-only accessibility types to the hosts' imports.
+- What the checks still cannot see: a public item added inside a module
+  already classified, a painter that registers no identity, a trait's
+  methods (the declaration scan reads `pub fn` only, so `View`'s and
+  `Surface`'s methods are not listed as symbols), and anything in `apps/`.
 
 ## Batch 3 — app-local controls and compositions (not started)
 
@@ -844,6 +1019,28 @@ KoruLane painter over `H-LANE-LAYOUT` (WF01, `mainview/draw.rs`), the workspace 
 migration (popout CloseDialog buttons, page-menu and Explore ellipses, the
 error badge), and the window and workspace host adapters.
 
+From batch 2b:
+
+- The window and workspace host adapters are recorded at their crates
+  (`H-WINDOW-RUNNERS`, `H-VIEW-HOST`, `H-SHELL-HOST`/`H-SHELL-SURFACE`);
+  what is owed in the app is its *implementations* of them — `MainView`'s
+  `View`, the app's `Host`, the `cfg(test)` `shell_conformance.rs` adapter
+  — and the app's own drawings over them.
+- `DocumentHost` and the `Leaf` behind it embed `C-DOCUMENT-EDITOR`; the
+  mini-app chrome and the composition host use `H-WORKSPACE-ACCESSIBILITY`'s
+  seven host-only types (already held by a drift test) and
+  `H-ENTITY-SEARCH`'s.
+- The app draws its own zoom flash (`mainview/zoomlabel.rs`) beside
+  `C-SHELL-ZOOM-LABEL`; the support FAB (`support/fab.rs`) opens a
+  `C-SYSTEM-MENUS` popup and hosts `C-WEB-SURFACE` (`support/`); the tasks
+  view, Explore rail and `koru-document` draw `C-ROW-ATTRIBUTE-CHIPS`,
+  `C-ROW-GUTTER` and the editor's pickers (`tasks_view/pickers.rs`).
+- `apps/koru/src/leaf.rs` drains `H-EDITOR-REMINDERS`' requests; the
+  reminder editor the app draws over them is app-local.
+- `apps/koru/src/leaf.rs` is the `Editing` implementation (`impl Editing
+  for Leaf`) the app's documents use; `koru-document` embeds an `Editor`,
+  as the editor's crate documentation says.
+
 ## Batch 4 — native platform adapters (not started)
 
 | Owner | Count |
@@ -858,6 +1055,15 @@ Known records owed: iOS `KoruPrimaryButton`, `KoruEmptyState` and `KoruRow`
 theme. Their availability goes in the record of the shared component they
 stand in for where one exists (`C-BUTTON` already says `NativePartial` on
 iOS), and in a `NativeAdapter` record of their own otherwise.
+
+From batch 2b: every Android and iOS cell of these seven crates' records is
+`NotAudited`. The ones a native audit can settle first: `C-WEB-SURFACE`
+(does a mobile app host its own web view?), `C-WINDOW-FRAME` and
+`C-SYSTEM-MENUS` (likely `NotApplicable` or `NativeOwned`, but no page
+says so), `C-IME-COMPOSITION` (PLATFORMS.md says the P1 adapter is not
+implemented on mobile and equivalence is not audited),
+`C-FILE-DIALOGS` (the platform pickers), and the editor and session
+views' mobile equivalents.
 
 ## Notes for later batches
 
