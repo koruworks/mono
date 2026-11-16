@@ -31,6 +31,7 @@ fn input(rows: &[SubscriptionSnapshot], grant: Option<i64>, now: i64) -> CloudPl
         billing_mode: BillingMode::Billed,
         subscription,
         complimentary_until_millis: Ok(grant),
+        free_place: Ok(None),
         purchase,
     }
 }
@@ -164,5 +165,98 @@ fn unavailable_local_unbilled_and_free_are_distinct() {
             effective_bytes: FREE_BYTES
         }
     );
-    assert!(matches!(free.mcp_entitlement(), Ok(CloudEntitlement::None)));
+    assert!(free.mcp_entitlement().unwrap().is_active_at(i64::MAX));
+}
+
+fn free_allowance() -> CloudAllowance {
+    CloudAllowance::Finite {
+        base_bytes: FREE_BYTES,
+        effective_bytes: FREE_BYTES,
+    }
+}
+
+#[test]
+fn an_active_place_is_free_with_one_gigabyte_and_cloud_mcp() {
+    let mut input = input(&[], None, 100);
+    input.free_place = Ok(Some(FreePlace::Active));
+    let policy = CloudPlanPolicy::evaluate(&input, 100);
+    assert_eq!(policy.tier, CloudTier::Free);
+    assert_eq!(policy.allowance, free_allowance());
+    assert_eq!(FREE_BYTES, 1_000_000_000);
+    assert_eq!(policy.access, CloudAccessState::ReadWrite);
+    assert_eq!(policy.reason, CloudAccessReason::FreeActive);
+    assert_eq!(policy.mcp_allowed, Some(true));
+    // Free has no end of its own, so there is nothing to revalidate at.
+    assert_eq!(policy.valid_until_millis, None);
+    assert!(matches!(
+        policy.mcp_entitlement(),
+        Ok(CloudEntitlement::Active { until_millis: None })
+    ));
+}
+
+#[test]
+fn only_an_active_place_grants_free() {
+    for place in [
+        None,
+        Some(FreePlace::Offered),
+        Some(FreePlace::RemovalPending),
+        Some(FreePlace::Released),
+    ] {
+        let mut input = input(&[], None, 100);
+        input.free_place = Ok(place);
+        let policy = CloudPlanPolicy::evaluate(&input, 100);
+        assert_eq!(policy.tier, CloudTier::Local, "{place:?}");
+        assert_eq!(policy.access, CloudAccessState::None);
+        assert_eq!(policy.mcp_allowed, Some(false));
+        assert!(matches!(
+            policy.mcp_entitlement(),
+            Ok(CloudEntitlement::None)
+        ));
+    }
+    let mut unknown = input(&[], None, 100);
+    unknown.free_place = Err(PolicyUnavailable);
+    assert_eq!(
+        CloudPlanPolicy::evaluate(&unknown, 100).tier,
+        CloudTier::Unknown
+    );
+}
+
+#[test]
+fn plus_overrides_a_place_and_a_lapse_returns_to_it() {
+    for place in [FreePlace::Active, FreePlace::HeldPlus] {
+        let mut input = input(&[row(SubscriptionStatus::Active, true, "month")], None, 100);
+        input.free_place = Ok(Some(place));
+        let plus = CloudPlanPolicy::evaluate(&input, 100);
+        assert_eq!(plus.tier, CloudTier::Plus);
+        assert_eq!(
+            plus.allowance,
+            CloudAllowance::Finite {
+                base_bytes: PLUS_BYTES,
+                effective_bytes: PLUS_BYTES
+            }
+        );
+        assert_eq!(plus.valid_until_millis, Some(200));
+    }
+    // The period ended. An active place is Free again at once; a place still
+    // marked held is neither Free nor Local until its return is committed.
+    let mut input = input(&[row(SubscriptionStatus::Active, true, "month")], None, 100);
+    input.free_place = Ok(Some(FreePlace::Active));
+    let lapsed = CloudPlanPolicy::evaluate(&input, 200);
+    assert_eq!(lapsed.tier, CloudTier::Free);
+    assert_eq!(lapsed.allowance, free_allowance());
+    input.free_place = Ok(Some(FreePlace::HeldPlus));
+    let held = CloudPlanPolicy::evaluate(&input, 200);
+    assert_eq!(held.tier, CloudTier::Unknown);
+    assert_eq!(held.access, CloudAccessState::Unavailable);
+    assert!(held.mcp_entitlement().is_err());
+}
+
+#[test]
+fn an_unbilled_deployment_ignores_places() {
+    let mut input = input(&[], None, 100);
+    input.billing_mode = BillingMode::Unbilled;
+    input.free_place = Ok(Some(FreePlace::Active));
+    let policy = CloudPlanPolicy::evaluate(&input, 100);
+    assert_eq!(policy.tier, CloudTier::Unbilled);
+    assert_eq!(policy.allowance, CloudAllowance::Unbounded);
 }

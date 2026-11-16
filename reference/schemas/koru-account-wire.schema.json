@@ -10240,9 +10240,6 @@
                       "const": "finite"
                     }
                   }
-                },
-                "mcp_allowed": {
-                  "const": false
                 }
               }
             }

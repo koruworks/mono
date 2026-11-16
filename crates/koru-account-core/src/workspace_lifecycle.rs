@@ -204,6 +204,9 @@ pub enum WorkspaceLifecycleError {
     VersionMismatch,
     IncarnationMismatch,
     Deleting,
+    /// First enable only: the account has neither Plus nor a Free place and
+    /// no ordinary place is open. Nothing was written and nothing was queued.
+    FreeCapacityFull,
     Unavailable,
     Corrupt,
 }
@@ -219,6 +222,7 @@ impl WorkspaceLifecycleError {
             Self::VersionMismatch => "workspace_version_mismatch",
             Self::IncarnationMismatch => "cloud_incarnation_stale",
             Self::Deleting => "cloud_deleting",
+            Self::FreeCapacityFull => "cloud_free_capacity_full",
             Self::Unavailable => "authorization_unavailable",
             Self::Corrupt => "authorization_corrupt",
         }
@@ -335,6 +339,10 @@ mod tests {
         assert_eq!(
             WorkspaceLifecycleError::OperationReplay.code(),
             "workspace_operation_replay"
+        );
+        assert_eq!(
+            WorkspaceLifecycleError::FreeCapacityFull.code(),
+            "cloud_free_capacity_full"
         );
     }
 }
