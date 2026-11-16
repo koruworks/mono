@@ -430,7 +430,13 @@ fn choosing_a_segment_restyles_the_button() {
     english(|| {
         let (mut lab, mut engine) = drawn(SIZE);
         assert_eq!(story(&lab).style(), ButtonRole::Secondary);
-        let segments = lab.laid.as_ref().unwrap().segments.clone().unwrap();
+        let segments = lab
+            .laid
+            .as_ref()
+            .unwrap()
+            .segments_of(Control::Style)
+            .cloned()
+            .unwrap();
         assert_eq!(segments.segments.len(), registry::DIALOG_STYLES.len());
         // The segments are drawn inside the control that is pressed for them.
         let choice = lab.rect(style()).unwrap();
@@ -438,8 +444,8 @@ fn choosing_a_segment_restyles_the_button() {
 
         for (slot, expected) in registry::DIALOG_STYLES.into_iter().enumerate().rev() {
             let (x, y) = segments.segments[slot].centre();
-            assert!(lab.pointer_moved(x, y) || lab.style_hover == Some(slot));
-            assert_eq!(lab.style_hover, Some(slot));
+            assert!(lab.pointer_moved(x, y) || lab.style_hover == Some((Control::Style, slot)));
+            assert_eq!(lab.style_hover, Some((Control::Style, slot)));
             lab.click(&mut engine, x, y, false);
             draw(&mut lab, &mut engine, SIZE);
             assert_eq!(story(&lab).style(), expected);
@@ -466,8 +472,7 @@ fn reset_restores_the_label_the_style_and_the_click_result() {
             .laid
             .as_ref()
             .unwrap()
-            .segments
-            .as_ref()
+            .segments_of(Control::Style)
             .unwrap()
             .segments[2]
             .centre();

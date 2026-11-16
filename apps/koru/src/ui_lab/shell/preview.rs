@@ -24,7 +24,14 @@
 //!
 //! **A property's control is chosen by what kind of input it is**, never by
 //! which story it belongs to: free text is a field, a choice among a few is
-//! the shared segmented control, a choice among many is the shared dropdown.
+//! the shared segmented control, a choice among many is the shared dropdown,
+//! and a yes or a no is the shared switch. A story may have several of each.
+//!
+//! **A widget story's component is one slot and its parts.** The slot is
+//! sized by the story's [`Widget`](crate::ui_lab::stories::Widget), which
+//! also says where the production component's own geometry puts each part;
+//! a press, a key or a screen reader's request on a part all end in
+//! [`Lab::press_part`].
 
 use koru_draw::el::Axis;
 use koru_draw::theme::Space;
@@ -69,35 +76,66 @@ impl Lab {
             .find(|control| control_key(*control) == key)
     }
 
-    /// The choice the story shows as segments, with its options: the one
-    /// with few enough to stand side by side.
-    pub(super) fn segmented(&self) -> Option<(Control, Vec<StoryOption>)> {
-        let story = self.story.as_ref()?;
-        story.controls().iter().find_map(|control| {
-            let options = story.options(*control);
-            (control.input() == Input::Choice && options.len() <= SEGMENTS_MAX)
-                .then_some((*control, options))
-        })
+    /// The choices the story shows as segments, each with its options:
+    /// those with few enough to stand side by side.
+    pub(super) fn segmented_controls(&self) -> Vec<(Control, Vec<StoryOption>)> {
+        let Some(story) = self.story.as_ref() else {
+            return Vec::new();
+        };
+        story
+            .controls()
+            .iter()
+            .filter(|control| control.input() == Input::Choice)
+            .map(|control| (*control, story.options(*control)))
+            .filter(|(_, options)| options.len() <= SEGMENTS_MAX)
+            .collect()
     }
 
-    /// The segments' labels, in the registration's order.
-    pub(super) fn segment_labels(&self) -> Vec<String> {
-        self.segmented().map_or(Vec::new(), |(_, options)| {
-            options
-                .iter()
-                .map(|option| option_text(&option.label))
-                .collect()
-        })
+    /// The choice `key` is the segmented control of.
+    pub(super) fn segmented_of(&self, key: Key) -> Option<Control> {
+        let control = self.control_of(key)?;
+        let story = self.story.as_ref()?;
+        (control.input() == Input::Choice && story.options(control).len() <= SEGMENTS_MAX)
+            .then_some(control)
+    }
+
+    /// The yes-or-no input `key` is the switch of.
+    pub(super) fn toggle_of(&self, key: Key) -> Option<Control> {
+        self.control_of(key)
+            .filter(|control| control.input() == Input::Toggle)
     }
 
     /// Whether `key` is a choice of the story's that opens a list.
     pub(super) fn is_story_dropdown(&self, key: Key) -> bool {
-        self.control_of(key).is_some_and(|control| {
-            control.input() == Input::Choice
-                && self
-                    .segmented()
-                    .is_none_or(|(segmented, _)| segmented != control)
-        })
+        self.control_of(key)
+            .is_some_and(|control| control.input() == Input::Choice)
+            && self.segmented_of(key).is_none()
+    }
+
+    /// Press the part at `part` of the component under test: the keyboard
+    /// goes to it, and it does what the story says a press on it does, or
+    /// opens the list the story hangs from it. A part that is switched off
+    /// or only read does nothing.
+    pub(super) fn press_part(&mut self, engine: &mut TextEngine, part: usize) -> bool {
+        let pressable = self
+            .laid
+            .as_ref()
+            .and_then(|laid| laid.parts.get(part))
+            .is_some_and(Part::pressable);
+        let Some(story) = self
+            .story
+            .as_mut()
+            .and_then(Story::as_widget_mut)
+            .filter(|_| pressable)
+        else {
+            return false;
+        };
+        let moved = story.set_cursor(part);
+        let widget = story.widget();
+        if widget.list(story, part).is_some() {
+            return self.open_menu(engine, SUBJECT) || moved;
+        }
+        widget.press(story, part) || moved
     }
 
     /// What using the component has done, or what it is, as the line under
@@ -131,6 +169,7 @@ impl Lab {
                 layout.padding().name(),
             )),
             Story::Tokens(_) => None,
+            Story::Widget(story) => story.widget().result(story),
         }
     }
 
@@ -212,6 +251,24 @@ impl Lab {
                     false,
                 )
             }
+            Story::Widget(story) => {
+                let (width, height) = story.widget().size(story, engine, inside);
+                (
+                    el::leaf("Component under test", Slot { width, height })
+                        .semantic()
+                        .id(SUBJECT)
+                        .align_self(Align::Centre)
+                        .max_w(Length::Runtime(inside, "preview column less its insets"))
+                        .hit()
+                        .focusable()
+                        // A group of its parts, each published where the
+                        // component's own geometry puts it.
+                        .semantics(Role::Group)
+                        .name(entry.name)
+                        .action(el::Action::Focus),
+                    false,
+                )
+            }
             Story::Tokens(table) => (
                 el::col("Token table")
                     .id(SUBJECT)
@@ -264,12 +321,39 @@ impl Lab {
             .name(control.name())
             .action(el::Action::Focus);
         }
+        if control.input() == Input::Toggle {
+            let on = self.story.as_ref().and_then(|story| story.flag(control));
+            return el::leaf(
+                "Property switch",
+                Slot {
+                    width: Toggle::TRACK_W,
+                    height: Toggle::H,
+                },
+            )
+            .semantic()
+            .align_self(Align::Start)
+            .id(key)
+            .hit()
+            .focusable()
+            // Published as a switch that is on or off.
+            .semantics(Role::Button)
+            .name(control.name())
+            .selected(on == Some(true))
+            .action(el::Action::Click)
+            .action(el::Action::Focus);
+        }
         if self.is_story_dropdown(key) {
             return self
                 .dropdown(engine, key, control.name())
                 .align_self(Align::Start);
         }
-        let labels = self.segment_labels();
+        let labels: Vec<String> = self.story.as_ref().map_or(Vec::new(), |story| {
+            story
+                .options(control)
+                .iter()
+                .map(|option| option_text(&option.label))
+                .collect()
+        });
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
         // The shared segmented control draws no focus state: the box that
         // holds it wears the frame's, and is the control that is pressed.
@@ -293,7 +377,7 @@ impl Lab {
                     },
                 )
                 .decorative()
-                .id(SEGMENTS),
+                .id(segments_key(control)),
             )
     }
 }

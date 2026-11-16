@@ -8,10 +8,12 @@ use koru_draw::theme::Profile;
 use koru_workspace_host::accessibility::{SemanticNode, ViewSlot, WindowSlot};
 
 use super::super::tests::{
-    SIZE, SMALLEST, assert_sound, centre, draw, english, frame, named, press, record, tab,
+    SIZE, SMALLEST, assert_sound, centre, draw, english, frame, named, press, record, result, tab,
     type_text,
 };
 use super::*;
+
+mod parts;
 
 const NONE: ModifiersState = ModifiersState::empty();
 
@@ -166,7 +168,13 @@ fn the_text_input_is_typed_in_and_restyled() {
             unreachable!()
         };
         assert_eq!(story.style(), FieldStyle::Search);
-        let segments = lab.laid.as_ref().unwrap().segments.clone().unwrap();
+        let segments = lab
+            .laid
+            .as_ref()
+            .unwrap()
+            .segments_of(Control::Style)
+            .cloned()
+            .unwrap();
         assert_eq!(segments.segments.len(), 3);
         let (sx, sy) = segments.segments[2].centre();
         assert!(lab.click(&mut engine, sx, sy, false));

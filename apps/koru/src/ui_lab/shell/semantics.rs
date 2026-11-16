@@ -27,6 +27,9 @@
 //! │   ├── Button    the component under test s:ui-lab#subject      a button named by its label,
 //! │   │                                                            a text field with its value,
 //! │   │                                                            or a group for a layout or table
+//! │   │   └── a part of a widget             s:ui-lab.part#<part>      a button, switch, option,
+//! │   │                                                            list field or value, where
+//! │   │                                                            the component puts it
 //! │   ├── Label     a token and its value    s:ui-lab.token#<token>    a token table's rows
 //! │   ├── Label     what using it did        s:ui-lab#result       spoken when it changes
 //! │   ├── Heading   the record's status      s:ui-lab#status
@@ -37,7 +40,8 @@
 //!     ├── Label     its purpose              s:ui-lab.fact#purpose
 //!     ├── TextInput a free-text input        s:ui-lab.control#<input>   value = the text
 //!     ├── Group     a choice among a few     s:ui-lab.control#<input>
-//!     │   └── RadioButton  an option         s:ui-lab.style#<option>    checked on the one in force
+//!     │   └── RadioButton  an option         s:ui-lab.<input>#<option>  checked on the one in force
+//!     ├── Switch    a yes or a no            s:ui-lab.control#<input>   on or off
 //!     ├── ComboBox  a choice among many      s:ui-lab.control#<input>   value = the one in force
 //!     └── Label     each fact recorded       s:ui-lab.fact#<fact>
 //! └── Menu      the list that is open        s:ui-lab#menu             named for its field
@@ -69,8 +73,8 @@ use super::preview::{TOKEN, option_text};
 use super::settings::{MENU, OPTION};
 use super::*;
 
-/// The surface the style control's options are identified under.
-const STYLE_OPTIONS: &str = "ui-lab.style";
+use crate::ui_lab::stories::PartRole;
+
 /// The line under the preview that says what pressing the button did.
 const RESULT: Key = Key::surface("ui-lab", "result");
 
@@ -270,6 +274,8 @@ impl Lab {
             .with_children(options);
         if let Some(setting) = Setting::of(open.owner) {
             menu = menu.with_label(text(setting.name()));
+        } else if open.owner == SUBJECT {
+            menu = menu.with_label(text(self.entry.name));
         } else if let Some(control) = self.control_of(open.owner) {
             menu = menu.with_label(text(control.name()));
         }
@@ -311,8 +317,11 @@ impl Lab {
         let field = self.field(key);
         let row = self.nav.row_of(key);
         let dropdown = self.is_dropdown(key);
+        let toggle = self.toggle_of(key);
         let role = if field.is_some() {
             NativeRole::TextInput
+        } else if toggle.is_some() {
+            NativeRole::Switch
         } else if dropdown {
             // A field that shows one value and opens the list of the rest.
             NativeRole::ComboBox
@@ -364,6 +373,9 @@ impl Lab {
         if dropdown && let Some(choice) = self.chosen(key) {
             result = result.with_value(choice.label);
         }
+        if toggle.is_some() {
+            result = result.with_toggled(node.selected == Some(true));
+        }
         if let Some(side) = Side::ALL.into_iter().find(|side| side.toggle() == key) {
             // On while its column shows; a request toggles it, as a press
             // does. Its chord is said with it, written as this platform
@@ -413,11 +425,11 @@ impl Lab {
                 .iter()
                 .filter_map(|child| self.control_node(place, laid, child)),
         );
-        if self
-            .segmented()
-            .is_some_and(|(control, _)| control_key(control) == key)
-        {
-            children.extend(self.style_options(place, laid));
+        if let Some(control) = self.segmented_of(key) {
+            children.extend(self.style_options(place, laid, control));
+        }
+        if key == SUBJECT {
+            children.extend(self.part_nodes(place, laid));
         }
         if key == PAGE {
             children.extend(self.page_nodes(place, laid));
@@ -536,11 +548,12 @@ impl Lab {
     /// drew it. The control paints them itself, so the frame has no element
     /// for one; its measured segments are the same rectangles the pointer is
     /// answered from.
-    fn style_options(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
-        let (Some(segments), Some((_, options))) = (&laid.segments, self.segmented()) else {
+    fn style_options(&self, place: Place, laid: &Laid, control: Control) -> Vec<SemanticNode> {
+        let (Some(segments), Some(story)) = (laid.segments_of(control), self.story.as_ref()) else {
             return Vec::new();
         };
-        options
+        story
+            .options(control)
             .iter()
             .zip(&segments.segments)
             .map(|(option, rect)| {
@@ -548,7 +561,7 @@ impl Lab {
                     Occurrence::surface(
                         place.window,
                         place.view,
-                        STYLE_OPTIONS,
+                        control.options_surface(),
                         ControlPart::new(option.part),
                     ),
                     NativeRole::RadioButton,
@@ -557,6 +570,48 @@ impl Lab {
                 .with_bounds(*rect)
                 .with_toggled(option.selected)
                 .with_action(Action::Click)
+            })
+            .collect()
+    }
+
+    /// The parts of a widget story's component, each where the component's
+    /// own geometry put it in the last frame: the rectangles it was painted
+    /// in and the pointer is answered from.
+    fn part_nodes(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
+        let clip = laid.frame.node(SUBJECT).and_then(|placed| placed.clip);
+        laid.parts
+            .iter()
+            .map(|part| {
+                let (role, toggled) = match part.role {
+                    PartRole::Button => (NativeRole::Button, None),
+                    PartRole::Pressed(on) => (NativeRole::Button, Some(on)),
+                    PartRole::Switch(on) => (NativeRole::Switch, Some(on)),
+                    PartRole::Radio(on) => (NativeRole::RadioButton, Some(on)),
+                    PartRole::Combo => (NativeRole::ComboBox, None),
+                    PartRole::Readout => (NativeRole::Label, None),
+                };
+                let mut node = SemanticNode::new(
+                    Occurrence::surface(
+                        place.window,
+                        place.view,
+                        PART,
+                        ControlPart::new(part.part),
+                    ),
+                    role,
+                )
+                .with_label(part.name.clone())
+                .with_bounds(clip.map_or(part.rect, |clip| within(part.rect, clip)));
+                if let Some(value) = &part.value {
+                    node = node.with_value(value.clone());
+                }
+                if let Some(on) = toggled {
+                    node = node.with_toggled(on);
+                }
+                node.disabled = part.disabled;
+                if part.pressable() {
+                    node = node.with_action(Action::Click);
+                }
+                node
             })
             .collect()
     }
@@ -613,10 +668,27 @@ impl Lab {
         // Any other request is for the window under an open list: the list
         // closes first, as it does for a press outside it.
         self.close_menu();
-        if surface == STYLE_OPTIONS {
-            let Some((control, options)) = self.segmented() else {
-                return false;
+        if surface == PART {
+            // A part of the component under test: pressed as the pointer
+            // presses it, the keyboard going to the component.
+            let part = self.laid.as_ref().and_then(|laid| {
+                laid.parts
+                    .iter()
+                    .position(|part| part.part == occurrence.part.name())
+            });
+            return match (request.action, part) {
+                (Action::Click, Some(part)) => {
+                    let focused = self.set_focus(engine, Some(SUBJECT));
+                    self.press_part(engine, part) || focused
+                }
+                _ => false,
             };
+        }
+        if let Some((control, options)) = self
+            .segmented_controls()
+            .into_iter()
+            .find(|(control, _)| control.options_surface() == surface)
+        {
             let slot = options
                 .iter()
                 .position(|option| option.part == occurrence.part.name());

@@ -119,7 +119,8 @@ fn every_registered_story_opens_at_its_defaults() {
                 assert_eq!(story.controls(), recipe.controls, "{id}");
                 assert_eq!(entry.story_id(), Some(id), "{id} is its record's story");
                 for control in recipe.controls {
-                    // Each input is text or a choice, and answers as one.
+                    // Each input is text, a choice or a yes or a no, and
+                    // answers as one.
                     match control.input() {
                         registry::Input::Text => {
                             assert!(story.text(*control).is_some(), "{id} {control:?}");
@@ -136,6 +137,11 @@ fn every_registered_story_opens_at_its_defaults() {
                             parts.sort_unstable();
                             parts.dedup();
                             assert_eq!(parts.len(), options.len(), "{id} {control:?}");
+                        }
+                        registry::Input::Toggle => {
+                            assert!(story.flag(*control).is_some(), "{id} {control:?}");
+                            assert!(story.options(*control).is_empty());
+                            assert_eq!(story.text(*control), None);
                         }
                     }
                 }

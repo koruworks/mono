@@ -52,8 +52,8 @@
 //!
 //! **The controls are the production ones.** A story's component is the
 //! production one ([`preview`]); free text is typed into a `TextInput`, a
-//! choice is made on a `Segmented` or a `Dropdown`, Reset is an
-//! `ActionButton`, the three viewports are the element layer's scroll
+//! choice is made on a `Segmented` or a `Dropdown`, a yes or a no on a
+//! `Toggle`, Reset is an `ActionButton`, the three viewports are the element layer's scroll
 //! element with the shared scrollbar, and the window controls are the shared
 //! caption's. The tree
 //! gives each a slot and this file draws the real control in it; nothing here
@@ -72,7 +72,7 @@ use koru_draw::scene;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Ink, Line, Profile, Radius, Surface, alias, roles};
 use koru_ui::button::{self, ActionButton, ActionStyle};
-use koru_ui::{InputStyle, Segmented, TextInput, Typed, caption};
+use koru_ui::{InputStyle, Segmented, TextInput, Toggle, Typed, caption};
 use koru_window::{ImeEvent, RichKeyEvent, WindowApp, WindowRequest};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -85,7 +85,8 @@ use self::page::{PAGE, PANEL};
 use self::settings::{OpenMenu, PreviewWidth, Setting};
 use super::placement::Placement;
 use super::registry::{self, Control, Entry, Family};
-use super::story::Story;
+use super::stories::{Canvas, Part, Pointed};
+use super::story::{Story, WidgetStory};
 use super::tokens::*;
 
 /// The caption row: the band that drags the window and holds its controls.
@@ -98,10 +99,16 @@ const RESET: Key = Key::surface("ui-lab", "reset");
 const STAGE: Key = Key::surface("ui-lab", "stage");
 /// The component under test.
 const SUBJECT: Key = Key::surface("ui-lab", "subject");
+/// The surface a part of the component under test is identified under: a
+/// split button's two halves, a stepper's two buttons.
+const PART: &str = "ui-lab.part";
+
 /// The segments inside a choice: where the shared segmented control is
 /// drawn. The control's own key, the one that is pressed and focused, is
 /// [`control_key`] of the input it chooses.
-const SEGMENTS: Key = Key::surface("ui-lab", "segments");
+fn segments_key(control: Control) -> Key {
+    Key::surface("ui-lab.segments", control.part())
+}
 
 /// One of the two columns beside the preview.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -311,8 +318,12 @@ impl Leaf for Slot {
 /// answered from the same layout the person is looking at.
 struct Laid {
     frame: Frame,
-    /// The style control's segments, measured where they were drawn.
-    segments: Option<Segmented>,
+    /// Each choice shown as segments, measured where it was drawn.
+    segments: Vec<(Control, Segmented)>,
+    /// The parts of the component under test, where its own geometry put
+    /// them: what the pointer, the keyboard and the screen reader's tree
+    /// are answered from. Empty for a story whose component is one piece.
+    parts: Vec<Part>,
     /// The client size the frame was laid out at, in logical pixels.
     size: (f32, f32),
 }
@@ -320,6 +331,14 @@ struct Laid {
 impl Laid {
     fn rect(&self, key: Key) -> Option<Rect> {
         self.frame.node(key).map(|node| node.rect)
+    }
+
+    /// The measured segments of `control`'s choice.
+    fn segments_of(&self, control: Control) -> Option<&Segmented> {
+        self.segments
+            .iter()
+            .find(|(owner, _)| *owner == control)
+            .map(|(_, segments)| segments)
     }
 
     /// The keys Tab visits, in reading order. A control that is switched
@@ -361,9 +380,11 @@ pub(crate) struct Lab {
     /// Where the pointer last was, for the wheel: a notch scrolls the
     /// viewport under it.
     pointer: Option<(f32, f32)>,
-    /// The control under the pointer, and the style segment when it is one.
+    /// The control under the pointer; the segment of a choice when it is
+    /// one; and the part of the component under test when it is on that.
     hot: Option<Key>,
-    style_hover: Option<usize>,
+    style_hover: Option<(Control, usize)>,
+    part_hover: Option<usize>,
     /// The control the keyboard is on.
     focus: Option<Key>,
     /// The catalog's list: which groups are folded, where it is scrolled,
@@ -438,6 +459,7 @@ impl Lab {
             pointer: None,
             hot: None,
             style_hover: None,
+            part_hover: None,
             focus: None,
             nav: Navigator::new(entry),
             bring_shown_into_view: true,
@@ -529,8 +551,14 @@ impl Lab {
         self.laid.as_ref()?.frame.hit_at(x, y)
     }
 
-    fn segment_at(&self, x: f32, y: f32) -> Option<usize> {
-        self.laid.as_ref()?.segments.as_ref()?.segment_at(x, y)
+    fn segment_at(&self, control: Control, x: f32, y: f32) -> Option<usize> {
+        self.laid.as_ref()?.segments_of(control)?.segment_at(x, y)
+    }
+
+    /// The part of the component under test at a point of the last frame.
+    fn part_at(&self, x: f32, y: f32) -> Option<usize> {
+        let parts = &self.laid.as_ref()?.parts;
+        parts.iter().position(|part| part.rect.contains(x, y))
     }
 
     /// **Which side columns a window `width` wide shows.** The preview is
@@ -741,16 +769,23 @@ impl Lab {
             return false;
         }
         self.entry = entry;
-        self.story = Self::story_for(entry);
+        self.start(engine, Self::story_for(entry));
+        self.page_scroll = 0.0;
+        self.panel_scroll = 0.0;
+        true
+    }
+
+    /// Put `story` on the stage in place of the one that was running, with
+    /// a field for each thing in it that is typed.
+    fn start(&mut self, engine: &mut TextEngine, story: Option<Story>) {
+        self.story = story;
         // The search field is the navigator's and stays; the story's fields
         // go with the story.
         self.fields.retain(|(owner, _)| *owner == SEARCH);
         let fields = Self::story_fields(engine, self.story.as_ref());
         self.fields.extend(fields);
         self.style_hover = None;
-        self.page_scroll = 0.0;
-        self.panel_scroll = 0.0;
-        true
+        self.part_hover = None;
     }
 
     /// Fold or unfold a group. The keyboard stays on a row that still
@@ -780,7 +815,23 @@ impl Lab {
     /// the focused control both come here, so they cannot disagree.
     fn activate(&mut self, engine: &mut TextEngine, key: Key) -> bool {
         if key == SUBJECT {
-            self.story.as_mut().is_some_and(Story::press)
+            // A component with parts is pressed on the part the keyboard is
+            // on; any other is pressed whole.
+            let cursor = self
+                .story
+                .as_ref()
+                .and_then(Story::as_widget)
+                .map(WidgetStory::cursor);
+            match cursor {
+                Some(part) => self.press_part(engine, part),
+                None => self.story.as_mut().is_some_and(Story::press),
+            }
+        } else if let Some(control) = self.toggle_of(key) {
+            // A yes-or-no input flips.
+            let on = self.story.as_ref().and_then(|story| story.flag(control));
+            self.story
+                .as_mut()
+                .is_some_and(|story| story.set_flag(control, on != Some(true)))
         } else if key == RESET {
             self.reset(engine)
         } else if key == RESET_SEARCH {
@@ -979,14 +1030,17 @@ impl Lab {
                     field.click(engine, rect, x, y)
                 };
             }
-        } else if let Some((control, _)) = self
-            .segmented()
-            .filter(|(control, _)| control_key(*control) == key)
-        {
-            if let Some(slot) = self.segment_at(x, y)
+        } else if let Some(control) = self.segmented_of(key) {
+            if let Some(slot) = self.segment_at(control, x, y)
                 && let Some(story) = self.story.as_mut()
             {
                 changed |= story.choose(control, slot);
+            }
+        } else if key == SUBJECT && self.story.as_ref().is_some_and(|s| s.as_widget().is_some()) {
+            // A press on a component with parts is a press on the part
+            // under the pointer; between its parts it presses nothing.
+            if let Some(part) = self.part_at(x, y) {
+                changed |= self.press_part(engine, part);
             }
         } else {
             changed |= self.activate(engine, key);
@@ -1157,10 +1211,20 @@ impl Lab {
         {
             return self.open_menu(engine, focus);
         }
-        if let Some((control, _)) = self
-            .segmented()
-            .filter(|(control, _)| control_key(*control) == focus)
+        if focus == SUBJECT
+            && let Some(forward) = match key {
+                KeyboardKey::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => Some(true),
+                KeyboardKey::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => Some(false),
+                _ => None,
+            }
+            && let Some(parts) = self.laid.as_ref().map(|laid| laid.parts.clone())
+            && let Some(story) = self.story.as_mut().and_then(Story::as_widget_mut)
         {
+            // The arrows are the component's: between its parts, or
+            // whatever its story says they do.
+            return story.widget().arrow(story, &parts, forward);
+        }
+        if let Some(control) = self.segmented_of(focus) {
             let Some(story) = self.story.as_mut() else {
                 return false;
             };
@@ -1510,6 +1574,7 @@ impl WindowApp for Lab {
         self.laid = None;
         self.hot = None;
         self.style_hover = None;
+        self.part_hover = None;
         self.caption_hover = None;
         self.scroll_drag = None;
         self.edge_drag = None;
@@ -1567,25 +1632,33 @@ impl WindowApp for Lab {
             .navigator_grip()
             .is_some_and(|grip| grip.contains(x, y));
         let hot = self.hit_at(x, y).filter(|_| !on_edge);
-        let segment = self
-            .segmented()
-            .filter(|(control, _)| hot == Some(control_key(*control)))
-            .and_then(|_| self.segment_at(x, y));
-        let changed =
-            self.caption_hover != caption || self.hot != hot || self.style_hover != segment;
+        let segment = hot
+            .and_then(|key| self.segmented_of(key))
+            .and_then(|control| Some((control, self.segment_at(control, x, y)?)));
+        let part = hot
+            .filter(|key| *key == SUBJECT)
+            .and_then(|_| self.part_at(x, y));
+        let changed = self.caption_hover != caption
+            || self.hot != hot
+            || self.style_hover != segment
+            || self.part_hover != part;
         self.caption_hover = caption;
         self.hot = hot;
         self.style_hover = segment;
+        self.part_hover = part;
         changed
     }
 
     fn pointer_left(&mut self) -> bool {
-        let changed =
-            self.caption_hover.is_some() || self.hot.is_some() || self.style_hover.is_some();
+        let changed = self.caption_hover.is_some()
+            || self.hot.is_some()
+            || self.style_hover.is_some()
+            || self.part_hover.is_some();
         self.pointer = None;
         self.caption_hover = None;
         self.hot = None;
         self.style_hover = None;
+        self.part_hover = None;
         changed
     }
 
@@ -1768,13 +1841,50 @@ impl Lab {
         {
             self.focus = None;
         }
-        let segment_options = self.segmented().map_or(Vec::new(), |(_, options)| options);
-        let chosen_segment = segment_options.iter().position(|option| option.selected);
-        let labels = self.segment_labels();
-        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-        let segments = frame
-            .node(SEGMENTS)
-            .map(|node| Segmented::layout(engine, &labels, node.rect.x, node.rect.y));
+        // Each choice shown as segments: its labels, the one in force, and
+        // the shared control measured where the frame put its slot.
+        let segments: Vec<(Control, Vec<String>, Option<usize>, Segmented)> = self
+            .segmented_controls()
+            .into_iter()
+            .filter_map(|(control, options)| {
+                let node = frame.node(segments_key(control))?;
+                let labels: Vec<String> = options
+                    .iter()
+                    .map(|option| preview::option_text(&option.label))
+                    .collect();
+                let words: Vec<&str> = labels.iter().map(String::as_str).collect();
+                let measured = Segmented::layout(engine, &words, node.rect.x, node.rect.y);
+                let chosen = options.iter().position(|option| option.selected);
+                Some((control, labels, chosen, measured))
+            })
+            .collect();
+        // Each yes-or-no input, and what it says.
+        let toggles: Vec<(Key, bool)> = self
+            .story
+            .iter()
+            .flat_map(|story| {
+                story
+                    .controls()
+                    .iter()
+                    .filter_map(|control| Some((control_key(*control), story.flag(*control)?)))
+            })
+            .collect();
+        // The parts of a component that has them, from its own geometry in
+        // the slot the frame gave it; and where the pointer and the
+        // keyboard are among them.
+        let widget = self.story.as_ref().and_then(Story::as_widget);
+        let parts = match (frame.node(SUBJECT), widget) {
+            (Some(node), Some(story)) => story.widget().parts(story, engine, node.rect),
+            _ => Vec::new(),
+        };
+        let pointed = Pointed {
+            hovered: self.part_hover.filter(|part| *part < parts.len()),
+            focused: widget
+                .filter(|_| self.active && self.focus == Some(SUBJECT))
+                .map(WidgetStory::cursor),
+            open: self.menu.as_ref().is_some_and(|open| open.owner == SUBJECT),
+        };
+        let rtl = koru_i18n::current().is_rtl();
         let stage = frame.node(STAGE).map(|node| node.rect);
         let caption_state = caption::State {
             hovered: self.caption_hover,
@@ -1858,6 +1968,57 @@ impl Lab {
                         state.focused,
                     );
                     scene.pop_layer();
+                } else if key == SUBJECT
+                    && let Some(Story::Widget(story)) = story.as_ref()
+                {
+                    // What would not fit the column is clipped at the stage.
+                    let clip = stage.unwrap_or(rect);
+                    scene.push_clip_layer(
+                        vello::peniko::Fill::NonZero,
+                        root,
+                        &scene::rect(clip.x, clip.y, clip.w, clip.h),
+                    );
+                    let mut canvas = Canvas {
+                        scene: &mut *scene,
+                        root,
+                        engine: &mut *engine,
+                    };
+                    story.widget().paint(story, &mut canvas, rect, pointed);
+                    // A part whose component draws no focus mark of its own
+                    // wears the window's ring while the keyboard is on it.
+                    if let Some(part) = pointed.focused.and_then(|at| parts.get(at))
+                        && !part.own_focus
+                    {
+                        let gap = FOCUS_INSET.token.px(Profile::Desktop);
+                        scene::stroke(
+                            scene,
+                            root,
+                            theme::p().focus_ring,
+                            theme::BORDER_W,
+                            &scene::rrect(
+                                part.rect.x - gap,
+                                part.rect.y - gap,
+                                part.rect.w + 2.0 * gap,
+                                part.rect.h + 2.0 * gap,
+                                Radius::M.px(
+                                    Profile::Desktop,
+                                    part.rect.w + 2.0 * gap,
+                                    part.rect.h + 2.0 * gap,
+                                ),
+                            ),
+                        );
+                    }
+                    scene.pop_layer();
+                } else if let Some((_, on)) = toggles.iter().find(|(owner, _)| *owner == key) {
+                    Toggle::new(*on).draw(
+                        scene,
+                        root,
+                        engine,
+                        rect,
+                        rtl,
+                        state.hovered,
+                        state.focused,
+                    );
                 } else if key == MARK {
                     // The shared mark, as the ordinary caption draws it: 16
                     // in the text color, centred in its slot. A logo is not a
@@ -1900,18 +2061,15 @@ impl Lab {
                         _ => (InputStyle::form(state.focused), None),
                     };
                     field.draw(scene, root, engine, rect, style, hint, state.focused);
-                } else if key == SEGMENTS
-                    && let Some(segments) = &segments
+                } else if let Some((control, labels, chosen, measured)) = segments
+                    .iter()
+                    .find(|(control, ..)| segments_key(*control) == key)
                 {
-                    segments.draw(
-                        scene,
-                        root,
-                        engine,
-                        &labels,
-                        chosen_segment,
-                        *style_hover,
-                        1.0,
-                    );
+                    let words: Vec<&str> = labels.iter().map(String::as_str).collect();
+                    let hovered = style_hover
+                        .filter(|(owner, _)| owner == control)
+                        .map(|(_, slot)| slot);
+                    measured.draw(scene, root, engine, &words, *chosen, hovered, 1.0);
                 }
             },
         );
@@ -1923,7 +2081,11 @@ impl Lab {
         }
         self.laid = Some(Laid {
             frame,
-            segments,
+            segments: segments
+                .into_iter()
+                .map(|(control, _, _, measured)| (control, measured))
+                .collect(),
+            parts,
             size: (w, h),
         });
     }

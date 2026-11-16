@@ -375,6 +375,9 @@ pub(crate) enum Input {
     Text,
     /// One of a list the story offers, each a production value.
     Choice,
+    /// A yes or a no the production call takes as a `bool`: disabled,
+    /// selected, with or without its icon.
+    Toggle,
 }
 
 /// One input of a recipe that a story lets a person change. The properties
@@ -395,6 +398,18 @@ pub(crate) enum Control {
     /// The `koru_draw::theme::Space` a box keeps round its content
     /// (`El::pad`): a choice.
     Padding,
+    /// The recipe's tone: the option set of that name the recipe lists
+    /// ([`OptionSet::name`]): a choice.
+    #[allow(dead_code)] // Offered by the first widget story that has one.
+    Tone,
+    /// The recipe's size or metrics, from the option set of that name: a
+    /// choice.
+    #[allow(dead_code)] // Offered by the first widget story that has one.
+    Size,
+    /// The `disabled` or `enabled: bool` the production call takes: a yes
+    /// or a no.
+    #[allow(dead_code)] // Offered by the first widget story that has one.
+    Disabled,
 }
 
 impl Control {
@@ -406,6 +421,9 @@ impl Control {
             Self::Placeholder => koru_i18n::Key::UiLabControlPlaceholder,
             Self::Gap => koru_i18n::Key::UiLabControlGap,
             Self::Padding => koru_i18n::Key::UiLabControlPadding,
+            Self::Tone => koru_i18n::Key::UiLabControlTone,
+            Self::Size => koru_i18n::Key::UiLabControlSize,
+            Self::Disabled => koru_i18n::Key::UiLabControlDisabled,
         }
     }
 
@@ -418,13 +436,33 @@ impl Control {
             Self::Placeholder => "placeholder",
             Self::Gap => "gap",
             Self::Padding => "padding",
+            Self::Tone => "tone",
+            Self::Size => "size",
+            Self::Disabled => "disabled",
+        }
+    }
+
+    /// The surface this choice's options are identified under while it is
+    /// shown as segments, an option's own identifier being the part. One a
+    /// control, so two choices on one page can each have an option of the
+    /// same name.
+    pub(crate) const fn options_surface(self) -> &'static str {
+        match self {
+            Self::Style => "ui-lab.style",
+            Self::Gap => "ui-lab.gap",
+            Self::Padding => "ui-lab.padding",
+            Self::Tone => "ui-lab.tone",
+            Self::Size => "ui-lab.size",
+            // Free text and a yes or a no have no options.
+            Self::Label | Self::Placeholder | Self::Disabled => "ui-lab.text",
         }
     }
 
     pub(crate) const fn input(self) -> Input {
         match self {
             Self::Label | Self::Placeholder => Input::Text,
-            Self::Style | Self::Gap | Self::Padding => Input::Choice,
+            Self::Style | Self::Gap | Self::Padding | Self::Tone | Self::Size => Input::Choice,
+            Self::Disabled => Input::Toggle,
         }
     }
 }

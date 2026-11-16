@@ -6,7 +6,10 @@
 //! [`Story`] is one of the kinds the Lab can run: the dialog button, pressed
 //! for real ([`ButtonStory`]); the shared text input, typed in
 //! ([`FieldStory`]); the element layer's row or column with its gap and
-//! padding ([`LayoutStory`]); and a token table shown whole ([`TokenTable`]).
+//! padding ([`LayoutStory`]); a token table shown whole ([`TokenTable`]);
+//! and any other shared widget ([`WidgetStory`]), whose inputs are held as
+//! plain values and whose behavior is its [`Widget`]'s, so that a widget's
+//! story is written in one place ([`super::stories`]).
 //! Each is plain data with no window, text engine or clock behind it, which
 //! is what lets a story be driven in a test exactly as the window drives it.
 //!
@@ -21,7 +24,8 @@ use koru_draw::el::Axis;
 use koru_draw::theme::{Ink, Line, Profile, Space, Surface, roles};
 use koru_ui::button::ButtonRole;
 
-use super::registry::{self, Control, FieldStyle, Recipe, Styles};
+use super::registry::{self, Control, FieldStyle, Input, Recipe, Styles};
+use super::stories::{self, Widget};
 
 /// The button under test, and what has happened to it.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -334,6 +338,191 @@ fn space_label(step: Space) -> String {
     format!("{} ({})", step.name(), number(step.px(Profile::Desktop)))
 }
 
+/// What one input of a widget story holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Value {
+    /// Free text, exactly as typed.
+    Text(String),
+    /// The slot of the option in force.
+    Choice(usize),
+    /// A yes or a no.
+    Flag(bool),
+}
+
+/// **What a component on the stage remembers** beyond its inputs: what
+/// using it has done. Plain data, read and written only by the story's
+/// [`Widget`], which says what each field means for it; a reset puts back
+/// what the widget opens with.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Held {
+    /// How often each thing that can be pressed was: a button once, a split
+    /// button's two halves separately.
+    pub(crate) presses: [u64; 2],
+    /// Which of a set is chosen.
+    pub(crate) chosen: Option<usize>,
+    /// Whether a switch is on, or a confirmation is showing.
+    pub(crate) on: bool,
+    /// Where a stepper stands on its scale.
+    pub(crate) level: usize,
+    /// What the component would have handed to something outside the Lab:
+    /// the text a copy would have put on the clipboard.
+    pub(crate) note: Option<String>,
+}
+
+/// **Any other shared widget**: the recipe's inputs as plain values, the
+/// part the keyboard is on, and what the component remembers. What they
+/// mean is its [`Widget`]'s.
+#[derive(Clone)]
+pub(crate) struct WidgetStory {
+    widget: &'static dyn Widget,
+    recipe: &'static Recipe,
+    /// What each input opened holding, in the recipe's order.
+    opened: Vec<Value>,
+    values: Vec<Value>,
+    /// The part of the component the keyboard is on.
+    cursor: usize,
+    pub(crate) held: Held,
+}
+
+impl std::fmt::Debug for WidgetStory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WidgetStory")
+            .field("id", &self.widget.id())
+            .field("values", &self.values)
+            .field("cursor", &self.cursor)
+            .field("held", &self.held)
+            .finish()
+    }
+}
+
+impl PartialEq for WidgetStory {
+    fn eq(&self, other: &Self) -> bool {
+        self.widget.id() == other.widget.id()
+            && self.values == other.values
+            && self.cursor == other.cursor
+            && self.held == other.held
+    }
+}
+
+impl WidgetStory {
+    /// `widget`'s story at its defaults, offering `recipe`'s inputs. Its
+    /// sample text is in the display language.
+    pub(crate) fn open(widget: &'static dyn Widget, recipe: &'static Recipe) -> Self {
+        let opened: Vec<Value> = recipe
+            .controls
+            .iter()
+            .map(|control| match control.input() {
+                Input::Text => Value::Text(widget.sample(*control).map_or(String::new(), |key| {
+                    koru_i18n::t(koru_i18n::current(), key).to_owned()
+                })),
+                Input::Choice => Value::Choice(widget.opens_at(*control)),
+                Input::Toggle => Value::Flag(widget.opens_on(*control)),
+            })
+            .collect();
+        Self {
+            widget,
+            recipe,
+            values: opened.clone(),
+            opened,
+            cursor: 0,
+            held: widget.held(),
+        }
+    }
+
+    pub(crate) fn widget(&self) -> &'static dyn Widget {
+        self.widget
+    }
+
+    fn value(&self, control: Control) -> Option<&Value> {
+        let slot = self.recipe.controls.iter().position(|c| *c == control)?;
+        self.values.get(slot)
+    }
+
+    fn value_mut(&mut self, control: Control) -> Option<&mut Value> {
+        let slot = self.recipe.controls.iter().position(|c| *c == control)?;
+        self.values.get_mut(slot)
+    }
+
+    /// What a free-text input holds; nothing for an input the recipe does
+    /// not have.
+    #[allow(dead_code)] // Until the first widget story is registered.
+    pub(crate) fn text(&self, control: Control) -> &str {
+        match self.value(control) {
+            Some(Value::Text(text)) => text,
+            _ => "",
+        }
+    }
+
+    /// The slot of a choice's option in force.
+    pub(crate) fn choice(&self, control: Control) -> usize {
+        match self.value(control) {
+            Some(Value::Choice(slot)) => *slot,
+            _ => 0,
+        }
+    }
+
+    /// Whether a yes-or-no input says yes.
+    #[allow(dead_code)] // Until the first widget story is registered.
+    pub(crate) fn flag(&self, control: Control) -> bool {
+        matches!(self.value(control), Some(Value::Flag(true)))
+    }
+
+    /// The part the keyboard is on.
+    pub(crate) fn cursor(&self) -> usize {
+        self.cursor
+    }
+
+    /// Put the keyboard on the part at `part`. Returns whether it moved.
+    pub(crate) fn set_cursor(&mut self, part: usize) -> bool {
+        let changed = self.cursor != part;
+        self.cursor = part;
+        changed
+    }
+
+    /// A choice's options: the story's own where it supplies them, else the
+    /// members of the option set the recipe lists under the input's name.
+    fn options(&self, control: Control) -> Vec<StoryOption> {
+        let chosen = self.choice(control);
+        let mut options = self.widget.options(control).unwrap_or_else(|| {
+            self.recipe
+                .options
+                .iter()
+                .find(|set| set.name == control.name())
+                .map_or(Vec::new(), |set| {
+                    set.members
+                        .iter()
+                        .map(|member| StoryOption {
+                            part: member.ident,
+                            label: member.label.map_or_else(
+                                || OptionLabel::Literal(member.ident.to_owned()),
+                                OptionLabel::Key,
+                            ),
+                            selected: false,
+                        })
+                        .collect()
+                })
+        });
+        for (slot, option) in options.iter_mut().enumerate() {
+            option.selected = slot == chosen;
+        }
+        options
+    }
+
+    fn set(&mut self, control: Control, value: Value) -> bool {
+        match self.value_mut(control) {
+            Some(held) if *held != value => {
+                *held = value;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn is_pristine(&self) -> bool {
+        self.values == self.opened && self.cursor == 0 && self.held == self.widget.held()
+    }
+}
+
 /// **The story on show**: one of the kinds the Lab can run, with whatever a
 /// person has changed about it. The shell reads and changes every kind
 /// through the same few questions — its inputs, each one's text or options —
@@ -345,6 +534,30 @@ pub(crate) enum Story {
     Field(FieldStory),
     Layout(LayoutStory),
     Tokens(TokenTable),
+    Widget(WidgetStory),
+}
+
+/// A story of one of the first four kinds, by its registered ID. A widget
+/// story is not listed here: it is found in [`stories::ALL`].
+fn open_kind(story_id: &str, recipe: &Recipe) -> Option<Story> {
+    let text = |key| koru_i18n::t(koru_i18n::current(), key);
+    Some(match story_id {
+        registry::BUTTON_DIALOG_STORY => Story::Button(ButtonStory::new(text(
+            koru_i18n::Key::UiLabButtonSampleLabel,
+        ))),
+        registry::TEXT_INPUT_STORY => Story::Field(FieldStory::new(
+            recipe,
+            text(koru_i18n::Key::UiLabFieldSamplePlaceholder),
+        )),
+        registry::ROW_STORY => Story::Layout(LayoutStory::new(Axis::Horizontal)),
+        registry::COLUMN_STORY => Story::Layout(LayoutStory::new(Axis::Vertical)),
+        registry::SPACE_STORY => Story::Tokens(TokenTable::Space),
+        registry::SURFACE_STORY => Story::Tokens(TokenTable::Surface),
+        registry::INK_STORY => Story::Tokens(TokenTable::Ink),
+        registry::LINE_STORY => Story::Tokens(TokenTable::Line),
+        registry::TEXT_ROLES_STORY => Story::Tokens(TokenTable::TextRoles),
+        _ => return None,
+    })
 }
 
 impl Story {
@@ -353,24 +566,25 @@ impl Story {
     /// the Lab has no story for.
     pub(crate) fn open(story_id: &str) -> Option<Self> {
         let (_, recipe) = registry::story(story_id)?;
-        let text = |key| koru_i18n::t(koru_i18n::current(), key);
-        Some(match story_id {
-            registry::BUTTON_DIALOG_STORY => Self::Button(ButtonStory::new(text(
-                koru_i18n::Key::UiLabButtonSampleLabel,
-            ))),
-            registry::TEXT_INPUT_STORY => Self::Field(FieldStory::new(
-                recipe,
-                text(koru_i18n::Key::UiLabFieldSamplePlaceholder),
-            )),
-            registry::ROW_STORY => Self::Layout(LayoutStory::new(Axis::Horizontal)),
-            registry::COLUMN_STORY => Self::Layout(LayoutStory::new(Axis::Vertical)),
-            registry::SPACE_STORY => Self::Tokens(TokenTable::Space),
-            registry::SURFACE_STORY => Self::Tokens(TokenTable::Surface),
-            registry::INK_STORY => Self::Tokens(TokenTable::Ink),
-            registry::LINE_STORY => Self::Tokens(TokenTable::Line),
-            registry::TEXT_ROLES_STORY => Self::Tokens(TokenTable::TextRoles),
-            _ => return None,
-        })
+        match stories::find(story_id) {
+            Some(widget) => Some(Self::Widget(WidgetStory::open(widget, recipe))),
+            None => open_kind(story_id, recipe),
+        }
+    }
+
+    /// The widget story this is, when it is one.
+    pub(crate) fn as_widget(&self) -> Option<&WidgetStory> {
+        match self {
+            Self::Widget(story) => Some(story),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn as_widget_mut(&mut self) -> Option<&mut WidgetStory> {
+        match self {
+            Self::Widget(story) => Some(story),
+            _ => None,
+        }
     }
 
     /// The registered ID of the story this is.
@@ -387,12 +601,16 @@ impl Story {
             Self::Tokens(TokenTable::Ink) => registry::INK_STORY,
             Self::Tokens(TokenTable::Line) => registry::LINE_STORY,
             Self::Tokens(TokenTable::TextRoles) => registry::TEXT_ROLES_STORY,
+            Self::Widget(story) => story.widget.id(),
         }
     }
 
     /// The inputs the properties panel offers, in the registration's order.
     pub(crate) fn controls(&self) -> &'static [Control] {
-        registry::story(self.id()).map_or(&[][..], |(_, recipe)| recipe.controls)
+        match self {
+            Self::Widget(story) => story.recipe.controls,
+            _ => registry::story(self.id()).map_or(&[][..], |(_, recipe)| recipe.controls),
+        }
     }
 
     /// What a free-text input holds. `None` for an input that is not text,
@@ -401,7 +619,30 @@ impl Story {
         match (self, control) {
             (Self::Button(button), Control::Label) => Some(button.label()),
             (Self::Field(field), Control::Placeholder) => Some(field.placeholder()),
+            (Self::Widget(story), _) => match story.value(control) {
+                Some(Value::Text(text)) => Some(text),
+                _ => None,
+            },
             _ => None,
+        }
+    }
+
+    /// What a yes-or-no input says. `None` for an input that is not one, or
+    /// not this story's.
+    pub(crate) fn flag(&self, control: Control) -> Option<bool> {
+        match self.as_widget()?.value(control)? {
+            Value::Flag(on) => Some(*on),
+            _ => None,
+        }
+    }
+
+    /// Make a yes-or-no input say `on`. Returns whether the story changed.
+    pub(crate) fn set_flag(&mut self, control: Control, on: bool) -> bool {
+        match self {
+            Self::Widget(story) if control.input() == Input::Toggle => {
+                story.set(control, Value::Flag(on))
+            }
+            _ => false,
         }
     }
 
@@ -413,6 +654,9 @@ impl Story {
             (Self::Field(field), Control::Placeholder) if field.placeholder != text => {
                 text.clone_into(&mut field.placeholder);
                 true
+            }
+            (Self::Widget(story), _) if control.input() == Input::Text => {
+                story.set(control, Value::Text(text.to_owned()))
             }
             _ => false,
         }
@@ -451,6 +695,7 @@ impl Story {
                     })
                     .collect()
             }
+            (Self::Widget(story), _) if control.input() == Input::Choice => story.options(control),
             _ => Vec::new(),
         }
     }
@@ -475,6 +720,11 @@ impl Story {
                     }
                     _ => false,
                 }
+            }
+            (Self::Widget(story), _)
+                if control.input() == Input::Choice && slot < story.options(control).len() =>
+            {
+                story.set(control, Value::Choice(slot))
             }
             _ => false,
         }
@@ -505,6 +755,7 @@ impl Story {
             Self::Field(field) => field.is_pristine(),
             Self::Layout(layout) => *layout == LayoutStory::new(layout.axis),
             Self::Tokens(_) => true,
+            Self::Widget(story) => story.is_pristine(),
         }
     }
 
@@ -524,6 +775,11 @@ impl Story {
             }
             Self::Layout(layout) => *layout = LayoutStory::new(layout.axis),
             Self::Tokens(_) => {}
+            Self::Widget(story) => {
+                story.values.clone_from(&story.opened);
+                story.cursor = 0;
+                story.held = story.widget.held();
+            }
         }
         true
     }

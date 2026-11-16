@@ -208,6 +208,20 @@ impl Lab {
                     selected: lang == self.lang,
                 })
                 .collect(),
+            // The list the component under test opened: its story's.
+            None if owner == SUBJECT => self
+                .story
+                .as_ref()
+                .and_then(Story::as_widget)
+                .and_then(|story| story.widget().list(story, story.cursor()))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|option| Choice {
+                    part: option.part,
+                    label: preview::option_text(&option.label),
+                    selected: option.selected,
+                })
+                .collect(),
             // A choice of the story's: its options are the story's.
             None => match (self.control_of(owner), &self.story) {
                 (Some(control), Some(story)) => story
@@ -244,6 +258,11 @@ impl Lab {
             Some(Setting::Language) => Lang::ALL
                 .get(slot)
                 .is_some_and(|lang| self.set_language(engine, *lang)),
+            None if owner == SUBJECT => self
+                .story
+                .as_mut()
+                .and_then(Story::as_widget_mut)
+                .is_some_and(|story| story.widget().pick(story, slot)),
             None => match (self.control_of(owner), self.story.as_mut()) {
                 (Some(control), Some(story)) => story.choose(control, slot),
                 _ => false,
@@ -307,7 +326,16 @@ impl Lab {
 
     /// Open `owner`'s list under its field, the option in force lit.
     pub(super) fn open_menu(&mut self, engine: &mut TextEngine, owner: Key) -> bool {
-        let Some(field) = self.rect(owner) else {
+        // The component under test hangs its list from the part that was
+        // pressed for it.
+        let part = self
+            .story
+            .as_ref()
+            .and_then(Story::as_widget)
+            .filter(|_| owner == SUBJECT)
+            .and_then(|story| self.laid.as_ref()?.parts.get(story.cursor()))
+            .map(|part| part.rect);
+        let Some(field) = part.or_else(|| self.rect(owner)) else {
             return false;
         };
         let choices = self.choices(owner);

@@ -89,6 +89,8 @@ fn ask(lab: &mut Lab, engine: &mut TextEngine, locator: &str, action: Action) ->
     changed
 }
 
+/// The surface the style choice's options are identified under.
+const STYLE_OPTIONS: &str = "ui-lab.style";
 const SUBJECT_AT: &str = "s:ui-lab#subject";
 const RESET_AT: &str = "s:ui-lab#reset";
 const RESULT_AT: &str = "s:ui-lab#result";
@@ -555,7 +557,13 @@ fn every_node_stands_where_its_control_was_drawn() {
         ] {
             assert_eq!(find(&semantics, locator).bounds, lab.rect(key), "{locator}");
         }
-        let segments = lab.laid.as_ref().unwrap().segments.clone().unwrap();
+        let segments = lab
+            .laid
+            .as_ref()
+            .unwrap()
+            .segments_of(Control::Style)
+            .cloned()
+            .unwrap();
         for (style, rect) in story(&lab).styles().iter().zip(&segments.segments) {
             let locator = format!("s:{STYLE_OPTIONS}#{}", dialog_part(*style));
             assert_eq!(find(&semantics, &locator).bounds, Some(*rect));

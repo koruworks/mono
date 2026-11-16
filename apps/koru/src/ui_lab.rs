@@ -50,6 +50,7 @@
 mod placement;
 pub(crate) mod registry;
 mod shell;
+mod stories;
 mod story;
 mod tokens;
 mod windows;
