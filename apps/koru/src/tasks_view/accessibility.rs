@@ -375,7 +375,7 @@ impl TasksView {
                 Line::Task(i) => self.row_semantics(cx, *i, table.row_rect(&bands, line)),
                 // A week rule is a label for what is under it, and the capture
                 // line is published above the list rather than in it.
-                Line::Rule(_) | Line::Capture => None,
+                Line::Rule(_) | Line::FromSearch | Line::Capture => None,
             })
             .collect();
         SemanticNode::new(cx.surface(parts::LIST), Role::ListBox)

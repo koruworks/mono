@@ -55,7 +55,7 @@ use result_layout::ResultContent;
 use scope::SearchScope;
 pub use state::persist_choices_in;
 use state::{
-    DEFAULT_SORT, FilterState, SearchMenu, drop_hidden_kinds, hit_key, keep_top_hit_per_document,
+    DEFAULT_SORT, FilterState, SearchMenu, drop_hidden_kinds, hit_key, keep_top_hit_per_target,
 };
 
 use koru_ai_core::{ChatId, MessageBlockId, MessageId};
@@ -124,6 +124,29 @@ pub enum Target {
         trashed: bool,
         /// Authored evidence from the selected result, for placing a caret or a
         /// transient flash. Never used to find anything.
+        match_text: Option<String>,
+        disposition: Disposition,
+    },
+    /// A task list, to be opened as its page in Tasks.
+    List {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        /// The list's id in storage form. A string because this crate names
+        /// no list model; the host parses it and refuses what does not parse.
+        list: String,
+        disposition: Disposition,
+    },
+    /// A task, to be opened **in Tasks, on the page where it is now** — which
+    /// the host decides from the task as it is when it is opened, never from
+    /// the hit. `document` and `node` are where the task is written, which is
+    /// also where a host falls back to when the task is gone.
+    Task {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        /// The task's node: the hit's own, or the root of a page that is
+        /// itself a task.
+        node: String,
         match_text: Option<String>,
         disposition: Disposition,
     },
@@ -259,6 +282,8 @@ const PIN_TITLE_MAX_W: f32 = 140.0;
 /// size, so it sits in the line rather than above it, and the air before
 /// what follows it.
 const PICTURE_MARK_SIZE: f32 = 13.0;
+/// A list result's color square: the tasks rail's own swatch, at its size.
+const LIST_SWATCH: f32 = 9.0;
 const PICTURE_MARK_GAP: f32 = 4.0;
 
 fn initial_session_state() -> state::SearchSessionState {
@@ -1772,7 +1797,14 @@ impl SearchSurface {
         // Compared against the constants, not literals: a token renamed in the
         // wire crate is then a compile error here rather than a row that
         // silently stops rendering as a title.
-        matches!(hit.field.as_str(), field::TITLE | field::WORKSPACE)
+        //
+        // A list's name is its title. So is a task's own text: the store
+        // titles a task hit with it, and when that is also what matched, one
+        // highlighted line says it rather than two lines saying it twice.
+        matches!(
+            hit.field.as_str(),
+            field::TITLE | field::WORKSPACE | field::TASK_LIST
+        ) || (hit.task.is_some() && hit.snippet == hit.title)
     }
 
     fn edit_query(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) {
@@ -2076,8 +2108,11 @@ impl SearchSurface {
             // person typing `#` is what would fill this in.
             tags: Vec::new(),
             attributes,
-            include_lists: false,
-            task_results: false,
+            // **This surface asks for both.** A list is a result of its own,
+            // above everything, and a task is a task. Agents and the entity
+            // picker ask for neither and are answered as they always were.
+            include_lists: true,
+            task_results: true,
             sort: self.sort,
             page_size: if self.query.is_empty() { 3 } else { 50 },
             offset,
@@ -2417,7 +2452,7 @@ impl SearchSurface {
                         self.page = page;
                         self.pending_replace = None;
                     }
-                    keep_top_hit_per_document(&mut self.page.hits);
+                    keep_top_hit_per_target(&mut self.page.hits);
                     drop_hidden_kinds(&mut self.page.hits);
                     if self.selection_restore.is_some() {
                         continue_selection_restore = self.apply_selection_restore();
@@ -2499,7 +2534,7 @@ impl SearchSurface {
                     // the profile's, or the one workspace (OCR Plan 2.4).
                     self.page.reading = answer.page.reading;
                     self.page.request_seq = response.seq;
-                    keep_top_hit_per_document(&mut self.page.hits);
+                    keep_top_hit_per_target(&mut self.page.hits);
                     drop_hidden_kinds(&mut self.page.hits);
                     if self.selection_restore.is_some() {
                         continue_selection_restore = self.apply_selection_restore();
@@ -2967,6 +3002,13 @@ impl SearchSurface {
     }
 
     fn request_open(&mut self, disposition: Disposition) {
+        self.open_selected(disposition, false);
+    }
+
+    /// Open the selected result. `in_document` asks for a task's **source
+    /// document at its line** rather than its page in Tasks — the result
+    /// menu's *Open in document*. It changes nothing for any other result.
+    fn open_selected(&mut self, disposition: Disposition, in_document: bool) {
         // Rows retained during a replacement read belong to the last complete
         // query. They remain visible to avoid a blank-frame flicker but cannot
         // be activated as though they matched the new input.
@@ -3076,6 +3118,17 @@ impl SearchSurface {
             document.map(|id| id.to_storage()).as_deref().unwrap_or("-"),
             hit.node.as_deref().unwrap_or("-"),
         );
+        // **A list opens as its page in Tasks.** It is in no document, so
+        // there is nothing to record as a document navigation.
+        if let Some(list) = &hit.list {
+            self.target = Some(Target::List {
+                profile,
+                workspace,
+                list: list.id.clone(),
+                disposition,
+            });
+            return;
+        }
         if let Some(reader) = &self.reader {
             reader.record_navigation(
                 self.request_seq,
@@ -3085,6 +3138,22 @@ impl SearchSurface {
                 self.query.value(),
             );
         }
+        // **A task opens in Tasks**, unless its document is in the bin — a
+        // binned task is found under the trash filter and opens the bin, as
+        // every binned result does — or the person asked for the document.
+        if let (Some(task), Some(document), false, false) =
+            (&hit.task, document, trashed, in_document)
+        {
+            self.target = Some(Target::Task {
+                profile,
+                workspace,
+                document,
+                node: task.node.clone(),
+                match_text,
+                disposition,
+            });
+            return;
+        }
         self.target = Some(Target::Store {
             profile,
             workspace,
@@ -3093,7 +3162,13 @@ impl SearchSurface {
             // has to say where it lives or the node resolves to nothing and the
             // result opens nothing at all.
             document,
-            node: hit.node.clone(),
+            // *Open in document* on a page that is itself a task lands on
+            // that page's own line: the task's node, which a title hit does
+            // not otherwise name.
+            node: hit
+                .node
+                .clone()
+                .or_else(|| hit.task.as_ref().filter(|_| in_document).map(|t| t.node.clone())),
             trashed,
             match_text,
             disposition,
@@ -4030,6 +4105,10 @@ impl SearchSurface {
             let content = ResultContent::new(self.list.row_height, title_match);
             let glyph = if self.ai_targets.contains_key(&hit_key(&hit)) {
                 icons::SPARKLE
+            } else if hit.task.is_some() {
+                // A task wears the Tasks icon, so it reads as a task before
+                // a word of it is read.
+                icons::CHECK_SQUARE_OFFSET
             } else if hit.kind == "workspace" {
                 icons::FOLDER
             } else if hit.document_kind == "file" {
@@ -4037,15 +4116,56 @@ impl SearchSurface {
             } else {
                 icons::DOCUMENT
             };
-            let icon = self.engine.icon_layout(glyph, 16.0);
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &icon,
-                PAD,
-                y + content.title,
-                Some(p.text_dim),
-            );
+            if let Some(list) = &hit.list {
+                // **A list draws its color square**, the rail's own mark for
+                // a list, in the slot a document's glyph takes.
+                let color = list
+                    .color
+                    .as_deref()
+                    .and_then(theme::accent_tone)
+                    .map(|tone| tone.swatch)
+                    .unwrap_or(p.text_dim);
+                let line = self
+                    .engine
+                    .simple_layout(" ", theme::role::row());
+                let side = LIST_SWATCH;
+                let _mark = koru_draw::inspect::scope(
+                    "SearchListSwatch",
+                    "part",
+                    root,
+                    scene::rect(PAD, y + content.title, 16.0, scene::first_line_height(&line)),
+                    |record| {
+                        record.property("side", "LIST_SWATCH", "koru-search-ui");
+                        record.property(
+                            "color",
+                            list.color.clone().unwrap_or_else(|| "none".to_owned()),
+                            "the list's accent token",
+                        );
+                    },
+                );
+                scene::fill(
+                    canvas,
+                    root,
+                    color,
+                    &scene::rrect(
+                        PAD + (16.0 - side) * 0.5,
+                        y + content.title + (scene::first_line_height(&line) - side) * 0.5,
+                        side,
+                        side,
+                        side * 0.25,
+                    ),
+                );
+            } else {
+                let icon = self.engine.icon_layout(glyph, 16.0);
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &icon,
+                    PAD,
+                    y + content.title,
+                    Some(p.text_dim),
+                );
+            }
             let content_x = PAD + 26.0;
             let content_width = (text_width - 26.0).max(0.0);
             if title_match {
@@ -4095,10 +4215,15 @@ impl SearchSurface {
                 root,
                 &mut self.engine,
                 &context,
-                hit.breadcrumb_spans.iter().map(|span| Span {
-                    start: span.start + context_offset,
-                    end: span.end + context_offset,
-                }),
+                // A list's path is this surface's own sentence, so the
+                // store's spans over its breadcrumb do not index into it.
+                hit.breadcrumb_spans
+                    .iter()
+                    .filter(|_| hit.list.is_none())
+                    .map(|span| Span {
+                        start: span.start + context_offset,
+                        end: span.end + context_offset,
+                    }),
                 content_x,
                 context_y,
                 content_width,

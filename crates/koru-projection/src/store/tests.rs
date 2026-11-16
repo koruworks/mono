@@ -5073,3 +5073,191 @@ fn the_blob_one_file_document_holds_is_a_single_lookup() {
     );
     assert_eq!(p.file_blob(DocumentId::new()).unwrap(), None);
 }
+
+// ------------------------------------------- exactly these tasks (nested-lists S10)
+
+/// **One rule, two readers.** A row's own bucket, read through the selector,
+/// is the bucket the rail's counts put the same task in — for every task of
+/// the corpus, because both select the one shared `CASE`.
+#[test]
+fn a_rows_bucket_is_the_bucket_the_counts_put_it_in() {
+    let mut p = Projections::in_memory().unwrap();
+    TaskCorpus::medium().plan().write_into(&mut p, 1).unwrap();
+    let zone = FixedZone::new("Europe/Zurich", 2 * 3_600);
+    let windows = windows_on("2026-06-15", &zone);
+    let all = TaskRowQuery {
+        include_trashed: true,
+        limit: 100,
+        ..TaskRowQuery::default()
+    };
+    let counts = p.task_bucket_counts(&all, &windows).unwrap();
+
+    // Every task there is, whatever its lifecycle, a page at a time.
+    let mut refs: Vec<(String, String)> = Vec::new();
+    let mut after = None;
+    loop {
+        let page = p
+            .task_rows(&TaskRowQuery {
+                lifecycle: LifecycleFilter::All,
+                after: after.clone(),
+                ..all.clone()
+            })
+            .unwrap();
+        let Some(last) = page.rows.last() else { break };
+        after = Some(last.task.clone());
+        refs.extend(
+            page.rows
+                .iter()
+                .map(|row| (row.document.to_storage(), row.node.clone())),
+        );
+        if page.rows.len() < all.limit {
+            break;
+        }
+    }
+    assert!(refs.len() > 100, "the corpus is more than one page");
+
+    let mut placed: HashMap<String, usize> = HashMap::new();
+    for chunk in refs.chunks(50) {
+        let page = p
+            .task_rows(&TaskRowQuery {
+                only: Some(chunk.to_vec()),
+                windows: Some(windows.clone()),
+                ..all.clone()
+            })
+            .unwrap();
+        assert_eq!(page.rows.len(), chunk.len(), "every named task answers");
+        for row in page.rows {
+            *placed
+                .entry(row.bucket.expect("windows were sent"))
+                .or_default() += 1;
+        }
+    }
+    for bucket in Bucket::ALL {
+        let counted: usize = counts
+            .iter()
+            .filter(|c| c.bucket == bucket)
+            .map(|c| c.count)
+            .sum();
+        assert_eq!(
+            placed.get(bucket.as_str()).copied().unwrap_or(0),
+            counted,
+            "{bucket:?}"
+        );
+    }
+}
+
+/// The selector answers a task **as it is**, wherever a page would put it:
+/// an old completion under the default lifecycle and both completed windows,
+/// a pinned task with its natural bucket, and nothing for a reference that is
+/// not a task.
+#[test]
+fn the_selector_answers_exactly_the_tasks_it_names() {
+    let zone = FixedZone::new("UTC", 0);
+    let windows = windows_on("2026-09-06", &zone);
+    let mut p = Projections::in_memory().unwrap();
+    let (ws, doc) = (WorkspaceId::new(), DocumentId::new());
+    let marked = |id: &str, extra: Vec<crate::model::ProjectedAttr>| {
+        let mut attrs = vec![an_attr(
+            &format!("{id}-task"),
+            "koru.task",
+            "text",
+            "manual",
+        )];
+        attrs.extend(extra);
+        attributed(id, "Ship it", attrs)
+    };
+    seeded(
+        &mut p,
+        ws,
+        doc,
+        vec![
+            marked(
+                "old",
+                vec![
+                    an_attr("old-state", "koru.task_state", "text", "completed"),
+                    an_attr("old-at", "koru.completed_at", "date", "2026-07-01"),
+                    // Completed and overdue is still Completed.
+                    an_attr("old-due", "koru.due", "date", "2026-06-01"),
+                ],
+            ),
+            marked(
+                "pinned",
+                vec![
+                    an_attr("pinned-due", "koru.due", "date", "2026-09-10"),
+                    an_attr("pinned-today", "koru.today", "boolean", "true"),
+                ],
+            ),
+            marked("overdue", vec![an_attr("o-due", "koru.due", "date", "2026-09-01")]),
+            marked("high", vec![an_attr("h-pri", "koru.priority", "text", "high")]),
+            marked("plain", Vec::new()),
+            marked("far", vec![an_attr("f-due", "koru.due", "date", "2027-03-01")]),
+            a_node("prose", "not a task at all"),
+        ],
+    );
+    let name = |node: &str| (doc.to_storage(), node.to_owned());
+    let ask = |only: Vec<(String, String)>, windows: Option<BucketWindows>| {
+        p.task_rows(&TaskRowQuery {
+            only: Some(only),
+            windows,
+            // What a page of the last thirty days would send, and the default
+            // lifecycle: none of it narrows a selector.
+            completed_on_or_after: Some("2026-08-07".to_owned()),
+            recently_completed_since: Some("2026-09-05".to_owned()),
+            limit: 1,
+            ..TaskRowQuery::default()
+        })
+        .unwrap()
+        .rows
+    };
+
+    let every = ["old", "pinned", "overdue", "high", "plain", "far", "prose"];
+    let rows = ask(every.iter().map(|n| name(n)).collect(), Some(windows.clone()));
+    let bucket_of = |node: &str| {
+        rows.iter()
+            .find(|row| row.node == node)
+            .map(|row| row.bucket.clone().unwrap())
+    };
+    assert_eq!(bucket_of("old").as_deref(), Some("completed"));
+    assert_eq!(
+        bucket_of("pinned").as_deref(),
+        Some("next"),
+        "a pin is not a bucket: the natural one answers"
+    );
+    assert!(
+        rows.iter()
+            .find(|row| row.node == "pinned")
+            .unwrap()
+            .attrs
+            .iter()
+            .any(|attr| attr.role == "koru.today"),
+        "and the pin is on the row for whoever routes it"
+    );
+    assert_eq!(bucket_of("overdue").as_deref(), Some("today"));
+    assert_eq!(bucket_of("high").as_deref(), Some("next"));
+    assert_eq!(bucket_of("plain").as_deref(), Some("later"));
+    assert_eq!(bucket_of("far").as_deref(), Some("later"));
+    assert_eq!(bucket_of("prose"), None, "not a task: not in the answer");
+    assert_eq!(rows.len(), 6, "the limit does not bound a selector");
+
+    // No windows, no bucket: this layer never guesses a day.
+    let unplaced = ask(vec![name("plain")], None);
+    assert_eq!(unplaced.len(), 1);
+    assert_eq!(unplaced[0].bucket, None);
+
+    // A reference in another document is simply absent.
+    let elsewhere = ask(
+        vec![(DocumentId::new().to_storage(), "plain".to_owned())],
+        Some(windows.clone()),
+    );
+    assert!(elsewhere.is_empty());
+
+    // And an ordinary page, which names nothing, carries no bucket.
+    let page = p
+        .task_rows(&TaskRowQuery {
+            windows: Some(windows),
+            limit: 100,
+            ..TaskRowQuery::default()
+        })
+        .unwrap();
+    assert!(page.rows.iter().all(|row| row.bucket.is_none()));
+}

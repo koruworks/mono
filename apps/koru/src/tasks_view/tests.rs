@@ -72,6 +72,7 @@ fn wire_row(title: &str, attributes: Vec<AttributeRowValue>) -> TaskRow {
         breadcrumb: "Test / More Documents".to_owned(),
         title: title.to_owned(),
         attributes,
+        bucket: None,
     }
 }
 
@@ -5151,4 +5152,87 @@ mod note {
             "a queue's name is nobody's to change"
         );
     }
+}
+
+// ------------------------------------------------ the *From search* band
+
+fn rules_and_rows(view: &TasksView) -> (bool, Vec<String>) {
+    (
+        view.shows_from_search(),
+        view.rows.iter().map(|row| row.title.clone()).collect(),
+    )
+}
+
+/// A task opened from search that the page does not list — beyond its first
+/// page, behind a saved chip, completed longer ago than the window — is drawn
+/// from the row already read, in a band at the top.
+#[test]
+fn a_task_the_page_does_not_list_is_shown_in_the_from_search_band() {
+    let mut view = view_answered(
+        RailTarget::Bucket(Bucket::Completed),
+        vec![wire_row("recently done", Vec::new())],
+    );
+    let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
+    let old = TaskEntry::of(&wire_row("done 40 days ago", Vec::new()), today(), now_ms()).unwrap();
+    let key = (old.document, old.node);
+
+    view.set_from_search(old);
+    view.catch_up(&doc);
+    assert_eq!(
+        rules_and_rows(&view),
+        (true, vec!["done 40 days ago".into(), "recently done".into()])
+    );
+    assert_eq!(view.lines[0], super::view::Line::FromSearch, "labelled, at the very top");
+    assert_eq!(view.lines[1], super::view::Line::Task(0));
+    assert!(view.reveal_task(key.0, key.1), "and it can be lit like any row");
+
+    // Dismissed: the page is what it lists again.
+    assert!(view.clear_from_search());
+    view.catch_up(&doc);
+    assert_eq!(rules_and_rows(&view), (false, vec!["recently done".into()]));
+}
+
+/// Where the page's own rows hold the task there is nothing for a band to
+/// say: the row is revealed in place.
+#[test]
+fn a_task_the_page_lists_gets_no_band() {
+    let listed = wire_row("on the page", Vec::new());
+    let entry = TaskEntry::of(&listed, today(), now_ms()).unwrap();
+    let mut view = view_answered(RailTarget::Bucket(Bucket::Later), vec![listed]);
+    let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
+    view.set_from_search(entry);
+    view.catch_up(&doc);
+    assert_eq!(rules_and_rows(&view), (false, vec!["on the page".into()]));
+    assert!(!view.lines.contains(&super::view::Line::FromSearch));
+}
+
+/// The band belongs to the page it was shown on: leaving the page puts it
+/// away, and no saved filter was touched to show it.
+#[test]
+fn leaving_the_page_puts_the_band_away() {
+    let mut view = view_answered(RailTarget::Bucket(Bucket::Later), Vec::new());
+    let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
+    let filters = view.filters;
+    view.set_from_search(TaskEntry::of(&wire_row("elsewhere", Vec::new()), today(), now_ms()).unwrap());
+    view.catch_up(&doc);
+    assert!(view.shows_from_search());
+    assert_eq!(view.filters, filters);
+
+    view.set_target(RailTarget::Bucket(Bucket::Today));
+    assert!(!view.shows_from_search());
+    assert!(view.from_search.is_none());
+}
+
+/// Before the page has answered, *not in the rows* means *not asked yet*: no
+/// band appears only to vanish a moment later.
+#[test]
+fn no_band_before_the_page_has_answered() {
+    let mut view = TasksView::new(RailTarget::Bucket(Bucket::Later));
+    view.set_viewport(1000.0, 700.0);
+    let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
+    koru_workspace_host::View::adopt(&mut view, &doc);
+    view.set_from_search(TaskEntry::of(&wire_row("pending", Vec::new()), today(), now_ms()).unwrap());
+    view.catch_up(&doc);
+    assert!(!view.shows_from_search());
+    assert!(view.from_search.is_some(), "it is kept for when the page answers");
 }

@@ -11502,6 +11502,7 @@ fn seed_one_task_row_in(
                 }]
             })
             .unwrap_or_default(),
+        bucket: None,
     };
     let answered = koru_store_wire::tasks::TaskQueryResponse {
         rows: vec![row],

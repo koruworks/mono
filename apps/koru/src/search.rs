@@ -167,6 +167,55 @@ pub(crate) fn pane_request(target: koru_search_ui::Target) -> Option<PaneRequest
                 block: Some(block.to_string()),
             });
         }
+        // A list opens as its page in Tasks. An id this app cannot parse is
+        // a refusal, never the workspace instead.
+        koru_search_ui::Target::List {
+            profile,
+            workspace,
+            list,
+            disposition,
+        } => {
+            let Some(list) = koru_core::ids::ListId::parse(&list) else {
+                koru_workspace_host::search_debug!(
+                    "[Koru][search-open][pid={}] target rejected: unparseable list id",
+                    std::process::id()
+                );
+                return None;
+            };
+            return Some(PaneRequest::Navigate {
+                target: koru_workspace_host::NavigationTarget::TaskList {
+                    profile: ProfileId::from_uuid(profile.as_uuid()),
+                    workspace: WorkspaceId::from_uuid(workspace.as_uuid()),
+                    list,
+                },
+                match_text: None,
+                disposition: host_disposition(disposition),
+            });
+        }
+        // A task opens in Tasks, on the page where it is now.
+        koru_search_ui::Target::Task {
+            document,
+            node,
+            match_text,
+            disposition,
+            ..
+        } => {
+            let Some(node) = NodeId::parse(&node) else {
+                koru_workspace_host::search_debug!(
+                    "[Koru][search-open][pid={}] target rejected: unparseable task node id",
+                    std::process::id()
+                );
+                return None;
+            };
+            return Some(PaneRequest::Navigate {
+                target: koru_workspace_host::NavigationTarget::Task {
+                    document: koru_core::DocumentId::from_uuid(document.as_uuid()),
+                    node,
+                },
+                match_text,
+                disposition: host_disposition(disposition),
+            });
+        }
     };
     let document = document.map(|id| koru_core::DocumentId::from_uuid(id.as_uuid()));
     // The index stores a node id as a string, because it has no type for one.
@@ -195,11 +244,15 @@ pub(crate) fn pane_request(target: koru_search_ui::Target) -> Option<PaneRequest
     Some(PaneRequest::Navigate {
         target,
         match_text,
-        disposition: match disposition {
-            koru_search_ui::Disposition::CurrentWindow => SearchTargetDisposition::CurrentWindow,
-            koru_search_ui::Disposition::NewWindow => SearchTargetDisposition::NewWindow,
-        },
+        disposition: host_disposition(disposition),
     })
+}
+
+fn host_disposition(disposition: koru_search_ui::Disposition) -> SearchTargetDisposition {
+    match disposition {
+        koru_search_ui::Disposition::CurrentWindow => SearchTargetDisposition::CurrentWindow,
+        koru_search_ui::Disposition::NewWindow => SearchTargetDisposition::NewWindow,
+    }
 }
 
 // ------------------------------------------------------------------ the view

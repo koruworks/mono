@@ -4370,16 +4370,15 @@ impl Agent {
                     // one router and one set of rules rather than two that
                     // drift.
                     Some(target) => {
-                        let koru_search_ui::Target::Store {
+                        let Some(RoutedParts {
                             profile,
                             workspace,
                             document,
-                            node,
+                            node_present,
                             disposition,
-                            ..
-                        } = &target
+                        }) = routed_parts(&target)
                         else {
-                            unreachable!("wire routing only constructs Store targets")
+                            unreachable!("wire routing never constructs a chat target")
                         };
                         self.routing_log.event(format_args!(
                             "route requested by connection={} profile={} workspace={} document={} node_present={} new_window={}",
@@ -4387,7 +4386,7 @@ impl Agent {
                             profile.to_storage(),
                             workspace.to_storage(),
                             document.map_or_else(|| "none".into(), |id| id.to_storage()),
-                            node.is_some(),
+                            node_present,
                             matches!(disposition, koru_search_ui::Disposition::NewWindow)
                         ));
                         self.open_target(target);
@@ -5946,23 +5945,26 @@ impl Agent {
             self.show_restart_gate_warning();
             return;
         }
-        let (profile, workspace, document, node_present) = match &target {
-            koru_search_ui::Target::Store {
-                profile,
-                workspace,
-                document,
-                node,
-                ..
-            } => (*profile, *workspace, *document, node.is_some()),
-            koru_search_ui::Target::Chat {
+        // A list and a task are routed exactly as a document hit in the same
+        // workspace is; only a chat takes its own path.
+        let Some(RoutedParts {
+            profile,
+            workspace,
+            document,
+            node_present,
+            ..
+        }) = routed_parts(&target)
+        else {
+            if let koru_search_ui::Target::Chat {
                 chat,
                 block,
                 profile,
                 ..
-            } => {
+            } = &target
+            {
                 self.show_workspace_chat(chat.as_uuid(), Some(block.as_uuid()), *profile);
-                return;
             }
+            return;
         };
         self.routing_log.event(format_args!(
             "selection profile={} workspace={} document={} node_present={} registry={} connections={} pending_before={}",
@@ -6174,6 +6176,8 @@ impl Agent {
             "overlay target deferred source={source} kind={}",
             match &target {
                 koru_search_ui::Target::Store { .. } => "store",
+                koru_search_ui::Target::List { .. } => "task_list",
+                koru_search_ui::Target::Task { .. } => "task",
                 koru_search_ui::Target::Chat { .. } => "chat",
             }
         ));
@@ -6548,65 +6552,224 @@ fn update_paths_for(
     koru_update::UpdatePaths::for_install(paths.explicit_root(), install)
 }
 
-/// The other direction, for a target a shell asked to have routed.
-///
-/// **An id that will not parse is a refusal, never a `None`.** `None` already
-/// means something real on `document` — a workspace-level hit — so it cannot
-/// double as "unreadable", and routing a half-understood target would put a
-/// window somewhere nobody chose.
+/// A search target for the routing log: its kind and where it goes.
 fn search_target_label(target: &koru_search_ui::Target) -> String {
     match target {
         koru_search_ui::Target::Store {
             profile, workspace, ..
         } => format!("store:{}/{}", profile.to_storage(), workspace.to_storage()),
+        // Which kind, and where; never which list or which task.
+        koru_search_ui::Target::List {
+            profile, workspace, ..
+        } => format!(
+            "task_list:{}/{}",
+            profile.to_storage(),
+            workspace.to_storage()
+        ),
+        koru_search_ui::Target::Task {
+            profile, workspace, ..
+        } => format!("task:{}/{}", profile.to_storage(), workspace.to_storage()),
         koru_search_ui::Target::Chat { chat, block, .. } => {
             format!("chat:{chat}#{block}")
         }
     }
 }
 
+/// What routing a search target to a workspace window needs from it, and what
+/// the routing log says about it. A `List` is routed like a workspace-level
+/// `Store` hit — it names no document — and a `Task` like a hit on a node.
+struct RoutedParts {
+    profile: ProfileId,
+    workspace: WorkspaceId,
+    document: Option<koru_store_core::ids::DocumentId>,
+    node_present: bool,
+    disposition: koru_search_ui::Disposition,
+}
+
+/// `None` for a chat, which opens through its own path rather than the
+/// router.
+fn routed_parts(target: &koru_search_ui::Target) -> Option<RoutedParts> {
+    match target {
+        koru_search_ui::Target::Store {
+            profile,
+            workspace,
+            document,
+            node,
+            disposition,
+            ..
+        } => Some(RoutedParts {
+            profile: *profile,
+            workspace: *workspace,
+            document: *document,
+            node_present: node.is_some(),
+            disposition: *disposition,
+        }),
+        koru_search_ui::Target::List {
+            profile,
+            workspace,
+            disposition,
+            ..
+        } => Some(RoutedParts {
+            profile: *profile,
+            workspace: *workspace,
+            document: None,
+            node_present: false,
+            disposition: *disposition,
+        }),
+        koru_search_ui::Target::Task {
+            profile,
+            workspace,
+            document,
+            disposition,
+            ..
+        } => Some(RoutedParts {
+            profile: *profile,
+            workspace: *workspace,
+            document: Some(*document),
+            node_present: true,
+            disposition: *disposition,
+        }),
+        koru_search_ui::Target::Chat { .. } => None,
+    }
+}
+
+/// The other direction, for a target a shell asked to have routed.
+///
+/// **A refusal opens nothing.** An id that will not parse, a `task` without
+/// its document or its node, and a `task_list` without its list or with a
+/// document are each `None` — never the workspace or the document instead,
+/// because `None` already means something real on `document` and routing a
+/// half-understood target would put a window somewhere nobody chose. (An id
+/// that will not parse is a refusal, never a `None` document: a `None`
+/// document is a workspace-level hit.) The refusal is logged by kind and
+/// reason only.
 fn from_wire(target: koru_agent_wire::Target) -> Option<koru_search_ui::Target> {
-    let (profile, workspace) = ids(&target.profile, &target.workspace)?;
+    use koru_agent_wire::TargetKind;
+    let kind = target.kind;
+    let refuse = |reason: &str| -> Option<koru_search_ui::Target> {
+        koru_ipc::ipc_debug!(
+            "route: target refused kind={} reason={reason}",
+            kind.as_str()
+        );
+        None
+    };
+    let Some((profile, workspace)) = ids(&target.profile, &target.workspace) else {
+        return refuse("bad_id");
+    };
     let document = match target.document.as_deref() {
         None => None,
-        Some(raw) => Some(koru_store_core::ids::DocumentId::parse(raw)?),
-    };
-    Some(koru_search_ui::Target::Store {
-        profile,
-        workspace,
-        document,
-        node: target.node,
-        trashed: target.trashed,
-        match_text: target.match_text,
-        disposition: if target.new_window {
-            koru_search_ui::Disposition::NewWindow
-        } else {
-            koru_search_ui::Disposition::CurrentWindow
+        Some(raw) => match koru_store_core::ids::DocumentId::parse(raw) {
+            Some(document) => Some(document),
+            None => return refuse("bad_id"),
         },
-    })
+    };
+    let disposition = if target.new_window {
+        koru_search_ui::Disposition::NewWindow
+    } else {
+        koru_search_ui::Disposition::CurrentWindow
+    };
+    match kind {
+        TargetKind::Document => Some(koru_search_ui::Target::Store {
+            profile,
+            workspace,
+            document,
+            node: target.node,
+            trashed: target.trashed,
+            match_text: target.match_text,
+            disposition,
+        }),
+        TargetKind::Task => {
+            let Some(document) = document else {
+                return refuse("no_document");
+            };
+            let Some(node) = target.node else {
+                return refuse("no_node");
+            };
+            Some(koru_search_ui::Target::Task {
+                profile,
+                workspace,
+                document,
+                node,
+                match_text: target.match_text,
+                disposition,
+            })
+        }
+        TargetKind::TaskList => {
+            if document.is_some() {
+                return refuse("has_document");
+            }
+            let Some(list) = target.list else {
+                return refuse("no_list");
+            };
+            Some(koru_search_ui::Target::List {
+                profile,
+                workspace,
+                list,
+                disposition,
+            })
+        }
+    }
 }
 
 fn to_wire(target: koru_search_ui::Target) -> koru_agent_wire::Target {
-    let koru_search_ui::Target::Store {
-        profile,
-        workspace,
-        document,
-        node,
-        trashed,
-        match_text,
-        disposition,
-    } = target
-    else {
-        unreachable!("chat targets launch directly")
-    };
-    koru_agent_wire::Target {
-        profile: profile.to_storage(),
-        workspace: workspace.to_storage(),
-        document: document.map(|id| id.to_storage()),
-        node,
-        trashed,
-        match_text,
-        new_window: matches!(disposition, koru_search_ui::Disposition::NewWindow),
+    use koru_agent_wire::TargetKind;
+    let new_window =
+        |disposition| matches!(disposition, koru_search_ui::Disposition::NewWindow);
+    match target {
+        koru_search_ui::Target::Store {
+            profile,
+            workspace,
+            document,
+            node,
+            trashed,
+            match_text,
+            disposition,
+        } => koru_agent_wire::Target {
+            profile: profile.to_storage(),
+            workspace: workspace.to_storage(),
+            document: document.map(|id| id.to_storage()),
+            node,
+            trashed,
+            match_text,
+            new_window: new_window(disposition),
+            kind: TargetKind::Document,
+            list: None,
+        },
+        koru_search_ui::Target::List {
+            profile,
+            workspace,
+            list,
+            disposition,
+        } => koru_agent_wire::Target {
+            profile: profile.to_storage(),
+            workspace: workspace.to_storage(),
+            document: None,
+            node: None,
+            trashed: false,
+            match_text: None,
+            new_window: new_window(disposition),
+            kind: TargetKind::TaskList,
+            list: Some(list),
+        },
+        koru_search_ui::Target::Task {
+            profile,
+            workspace,
+            document,
+            node,
+            match_text,
+            disposition,
+        } => koru_agent_wire::Target {
+            profile: profile.to_storage(),
+            workspace: workspace.to_storage(),
+            document: Some(document.to_storage()),
+            node: Some(node),
+            trashed: false,
+            match_text,
+            new_window: new_window(disposition),
+            kind: TargetKind::Task,
+            list: None,
+        },
+        koru_search_ui::Target::Chat { .. } => unreachable!("chat targets launch directly"),
     }
 }
 

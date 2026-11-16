@@ -485,6 +485,17 @@ pub trait View {
         false
     }
 
+    /// Open a task list, or the Tasks page a task is on, in a view that can
+    /// host tabs — a list or a task chosen in search. A dedicated search pane
+    /// declines; the container accepts.
+    ///
+    /// For a task the view decides the page **from the task as it is now**,
+    /// and falls back to the task's own document when it cannot. Answering
+    /// `true` means the request was taken, not that the task has landed.
+    fn open_tasks_target(&mut self, _target: TasksTarget, _match_text: Option<&str>) -> bool {
+        false
+    }
+
     /// Open the profile-global reminder destination in this tab host.
     fn open_all_reminders(&mut self) -> bool {
         false
@@ -2436,6 +2447,29 @@ pub enum NavigationTarget {
     Workspace {
         profile: ProfileId,
         workspace: WorkspaceId,
+    },
+    /// A task list's page in Tasks. A list is in no document, so the
+    /// workspace is carried rather than located.
+    TaskList {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        list: koru_core::ids::ListId,
+    },
+    /// A task, opened in Tasks on the page where it is now. Located through
+    /// its document, as a document is.
+    Task {
+        document: koru_core::DocumentId,
+        node: NodeId,
+    },
+}
+
+/// What a view is asked to open in Tasks ([`View::open_tasks_target`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TasksTarget {
+    List(koru_core::ids::ListId),
+    Task {
+        document: koru_core::DocumentId,
+        node: NodeId,
     },
 }
 
