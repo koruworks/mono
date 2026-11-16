@@ -3,6 +3,50 @@
 use super::*;
 use crate::panes::explore::{PopoverKind, PopoverRow};
 
+#[test]
+fn opening_help_acknowledges_notes_even_when_the_headlines_arrive_later() {
+    let (mut view, _) = harness::container();
+    view.toggle_sidebar();
+    let (tx, rx) = std::sync::mpsc::channel();
+    view.help_headlines_rx = Some(rx);
+    view.help_headlines = None;
+    assert!(view.open_help_beside());
+    assert!(view.help_notes_read);
+    tx.send(Some(vec!["Latest release".into()])).unwrap();
+    view.refresh_help();
+    assert!(view.help_notes_read);
+    assert_eq!(view.help_headlines.as_ref().unwrap(), &["Latest release"]);
+}
+
+#[test]
+fn a_failed_release_load_retries_on_reopen_and_a_success_is_kept() {
+    let (mut view, _) = harness::container();
+    view.toggle_sidebar();
+    view.open_help_beside();
+    assert!(view.help_releases_asked);
+    let (tx, rx) = std::sync::mpsc::channel();
+    view.help_releases_rx = Some(rx);
+    tx.send(None).unwrap();
+    view.refresh_help();
+    assert!(view.help_releases_rx.is_none());
+    view.refresh_help();
+    assert!(view.help_releases_rx.is_none(), "no retry loop while open");
+    view.open_help_beside();
+    view.open_help_beside();
+    assert!(view.help_releases_asked);
+    let (tx, rx) = std::sync::mpsc::channel();
+    view.help_releases_rx = Some(rx);
+    let releases = crate::whatsnew::parse_releases(
+        r#"[{"tag_name":"v0.1.5","html_url":"https://github.com/koruworks/mono/releases/tag/v0.1.5","published_at":"2026-11-07T23:56:17Z"}]"#,
+    ).unwrap();
+    tx.send(Some(releases.clone())).unwrap();
+    view.refresh_help();
+    view.open_help_beside();
+    view.open_help_beside();
+    assert_eq!(view.help_releases, Some(releases));
+    assert!(view.help_releases_rx.is_none());
+}
+
 fn report(stage: UpdateStage) -> koru_agent_wire::UpdateReport {
     koru_agent_wire::UpdateReport {
         stage,

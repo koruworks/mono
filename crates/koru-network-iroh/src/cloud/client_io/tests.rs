@@ -12,6 +12,7 @@ use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 type TestClient = Client<'static, ReadHalf<DuplexStream>, WriteHalf<DuplexStream>>;
 
 mod claims;
+mod decision;
 
 fn config(limit: usize, budget: MemoryBudget) -> Config {
     let profile_id = CloudId::from_bytes(koru_store_core::ProfileId::new().as_uuid().into_bytes());
@@ -96,6 +97,24 @@ pub(super) async fn pair_with_claims(
     Scope,
     MemoryBudget,
 ) {
+    pair_with_mode(workspace, client, worker, false).await
+}
+
+/// [`pair_with_claims`] whose worker end requires its decision for every
+/// start when `deciding`.
+pub(super) async fn pair_with_mode(
+    workspace: bool,
+    client: koru_replication::cloud::transfer::ClaimReferences,
+    worker: koru_replication::cloud::transfer::ClaimReferences,
+    deciding: bool,
+) -> (
+    TestClient,
+    ReadHalf<DuplexStream>,
+    WriteHalf<DuplexStream>,
+    Stream,
+    Scope,
+    MemoryBudget,
+) {
     let budget = MemoryBudget::new(128 * 1024 * 1024);
     let mut config = config(transfer::RESTRICTED_LIMIT, budget.clone());
     config.accepted.claim_references = client;
@@ -124,6 +143,8 @@ pub(super) async fn pair_with_claims(
         transfer::MAX_PAYLOAD,
         budget.clone(),
     )
+    .unwrap()
+    .decision_required(deciding)
     .unwrap();
     let (a, b) = tokio::io::duplex(4096);
     let (ar, aw) = tokio::io::split(a);

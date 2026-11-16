@@ -101,6 +101,7 @@ pub struct Launcher {
     tiles: Vec<Tile>,
     /// One muted line under the tiles saying what the modifiers do.
     hint: Option<String>,
+    hint_emphasis: Vec<std::ops::Range<usize>>,
     highlight: usize,
     instance: u64,
 }
@@ -114,6 +115,7 @@ impl Launcher {
             name: name.into(),
             tiles,
             hint: None,
+            hint_emphasis: Vec::new(),
             highlight: 0,
             instance: NEXT.fetch_add(count + 1, Ordering::Relaxed),
         }
@@ -122,6 +124,22 @@ impl Launcher {
     /// A footer line under the tiles — what holding a modifier adds.
     pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
         self.hint = Some(hint.into());
+        self.hint_emphasis.clear();
+        self
+    }
+
+    /// Emphasize the host's translated modifier names within the hint.
+    pub fn with_hint_emphasis(mut self, words: &[&str]) -> Self {
+        self.hint_emphasis = self.hint.as_deref().map_or_else(Vec::new, |hint| {
+            words
+                .iter()
+                .filter(|word| !word.is_empty())
+                .flat_map(|word| {
+                    hint.match_indices(word)
+                        .map(|(start, text)| start..start + text.len())
+                })
+                .collect()
+        });
         self
     }
 
@@ -404,7 +422,7 @@ impl Launcher {
             }
             // The footer: what holding a modifier adds, muted and centred.
             if let (Some(hint), Some(r)) = (self.hint.as_deref(), self.hint_rect(viewport)) {
-                let layout = engine.simple_layout(hint, theme::role::hint());
+                let layout = hint_layout(engine, hint, &self.hint_emphasis);
                 let h = scene::first_line_height(&layout);
                 scene::draw_layout_first_line(
                     canvas,
@@ -417,6 +435,41 @@ impl Launcher {
             }
         });
     }
+}
+
+/// Shape the whole sentence together so emphasis preserves bidi ordering.
+fn hint_layout(
+    engine: &mut TextEngine,
+    hint: &str,
+    emphasis: &[std::ops::Range<usize>],
+) -> parley::Layout<theme::Brush> {
+    use parley::style::{FontFamily, FontWeight, LineHeight, StyleProperty};
+    let style = theme::role::hint();
+    let mut builder = engine
+        .layout_cx
+        .ranged_builder(&mut engine.font_cx, hint, 1.0, true);
+    builder.push_default(StyleProperty::FontFamily(FontFamily::Source(
+        std::borrow::Cow::Borrowed(theme::ui_stack()),
+    )));
+    builder.push_default(StyleProperty::FontSize(style.metrics.size));
+    builder.push_default(StyleProperty::LineHeight(LineHeight::Absolute(
+        style.metrics.line_height,
+    )));
+    koru_draw::text::push_axes(&mut builder, style.metrics.size, style.weight.value());
+    builder.push_default(StyleProperty::Brush(theme::Brush(theme::p().text_dim)));
+    for range in emphasis {
+        builder.push(
+            StyleProperty::FontWeight(FontWeight::new(theme::FontWeight::SemiBold.value())),
+            range.clone(),
+        );
+    }
+    let mut layout = builder.build(hint);
+    layout.break_all_lines(None);
+    layout.align(
+        parley::Alignment::Start,
+        parley::AlignmentOptions::default(),
+    );
+    layout
 }
 
 /// The word before the first appearance of `letter` (case-blind) and the

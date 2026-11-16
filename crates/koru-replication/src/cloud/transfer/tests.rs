@@ -11,6 +11,7 @@ mod admission;
 mod catalog;
 mod claim_amendment;
 mod claim_reference;
+mod decision;
 mod metadata;
 
 fn id(n: u8) -> CloudId {

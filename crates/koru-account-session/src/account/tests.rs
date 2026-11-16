@@ -6,8 +6,8 @@ use koru_device::{DeviceSigningKey, ReplicationEndpointSecret, SignatureBytes};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{
-    atomic::{AtomicI64, AtomicU64, Ordering},
     Arc, Mutex,
+    atomic::{AtomicI64, AtomicU64, Ordering},
 };
 
 impl koru_account_core::workspace_lifecycle::WorkspaceCloudLifecycleRepository for Repository {

@@ -210,6 +210,14 @@ where
             writing: self.writing.is_some(),
         }
     }
+    /// Whether the worker's current policy on this stream answers every
+    /// upload start before any body. A timed resource retry may send its
+    /// start only while this is true: absent, paused, not yet learned or a
+    /// closed stream are all false, and nothing carries over from an earlier
+    /// stream, so a held candidate stays held against any other worker.
+    pub fn upload_decision_required(&self) -> bool {
+        self.stream.peer_decision_required()
+    }
     fn now(&self) -> u64 {
         self.observed
             .elapsed()

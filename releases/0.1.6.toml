@@ -1,17 +1,17 @@
-title = "Cloud sync that starts by itself, notes on Tasks pages, and a new chat composer"
+title = "Cloud storage, task notes and smoother navigation"
 
 summary = [
-  "Sign in, create or choose a Profile, and it syncs through Koru Cloud with nothing else to press and no second device needed.",
+  "With Koru Cloud access, new and chosen Profiles sync automatically, and you can browse storage and inspect retained Cloud copies.",
   "Every Tasks page can carry a note and attached files above its tasks.",
   "The chat composer is rebuilt: files and folders, @ references, command and skill menus, and a context usage panel.",
-  "Workspaces can be pinned, reordered and moved between Profiles, and switching workspace keeps your tabs open.",
+  "Pin, reorder and move workspaces between Profiles, switch them with Ctrl+1 through Ctrl+9, and keep your tabs open.",
 ]
 
 body = """
 ## Koru Cloud
 
-A Profile you create while signed in, or choose from your account onto this
-computer, now starts with Cloud sync on. There is no switch to find and no
+With Koru Cloud access, a Profile you create while signed in, or choose from
+your account onto this computer, now starts with Cloud sync on. There is no switch to find and no
 question about moving your workspaces, and a chosen Profile no longer waits
 for another of your devices to come online. A local Profile you connect later
 still starts off, and switching sync off sticks.
@@ -23,6 +23,16 @@ Profile here. The separate Other Profiles group is gone.
 A Profile your sign-in is no longer linked to says Not linked to this sign-in
 and offers Connect, instead of showing Koru Cloud unavailable with nothing to
 do about it. The Account card shows when your sign-in was last checked.
+
+Cloud storage shows your plan, exact usage and when the information was
+checked. View files browses workspaces and documents, including retained
+items whose names or placement are unavailable. Open a retained Cloud copy
+to inspect it without importing it into your local workspace.
+
+Removing a selected file reference requires confirmation. Removing a
+retained attachment keeps the note's body, and usage refreshes after the
+removal is acknowledged. Changed or unavailable copies are identified before
+you act on them.
 
 Fixes:
 
@@ -36,6 +46,8 @@ Fixes:
 - A first run could stay on Finishing for good.
 - The notice that a Profile was deleted on another device appeared again and
   again. It now appears once and names the Profile.
+- Selecting an owned Profile no longer requires it to have a member workspace
+  first.
 
 ## Profiles and workspaces
 
@@ -58,8 +70,13 @@ organization is in.
   a quick switcher at the pointer, with a search field.
 - Switching workspace no longer closes your open tabs. A new setting,
   Workspace tabs, lets each workspace keep its own tabs instead.
-- The Profile menu holds Manage profiles, Add new profile and Global sync.
+- Workspace and Profile menus have balanced side margins, padded rows and
+  smaller gaps, with a settings icon in each heading. Create Profiles from
+  their management page. The Profile menu has one Sync row with a cloud icon.
   App settings has its own square on the rail.
+- Ctrl+1 through Ctrl+9 switch workspaces in rail order instead of tabs.
+  Ctrl+Tab still switches tabs. Search and Profile shortcuts are unchanged,
+  and the Profile shortcut tooltip shows only the keys.
 
 This release upgrades the local database. Once it has, an older version of
 Koru on the same computer will refuse to open that data.
@@ -128,6 +145,15 @@ The chat composer is rebuilt.
   wheel, from 1x to 4x. Trackpads are unchanged.
 - Help lists the published releases and the update on offer in one timeline,
   next to support, feedback and community links.
+- Opening Help clears the unread release-note indicator. Nightly entries
+  show their release date, and published releases remain visible through a
+  public feed when GitHub's API is unavailable or rate limited. Feedback,
+  GitHub and X links have icons.
+- The tab strip's plus button opens its list and submenus again. Ctrl+N keeps
+  the creation launcher, with the same dimmed background as Search and
+  clearer Alt and Shift hints.
+- Settings search says Search, with its icon and text aligned. Resize hints
+  keep the number and px together.
 - The setting for pinned tab titles applies to pins that are already open.
 
 ## MCP assistants
@@ -143,6 +169,10 @@ The chat composer is rebuilt.
   the workspaces its grant covers.
 
 ## Windows
+
+If you are upgrading from Koru 0.1.4, download and run this release's setup.exe
+once. The updater in 0.1.4 cannot install its own repair; this release includes
+the archive-extraction fix that lets subsequent updates install normally.
 
 - Koru starts faster from cold.
 - New document on the taskbar's jump list, used while Koru is closed, asks
