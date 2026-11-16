@@ -41,6 +41,9 @@ pub enum DecisionResumeStep {
     /// (O150), taken here when the confirmation itself did not settle it
     /// (a failed write, or a restart in between). The wait settles later.
     EffectSettled,
+    /// The decision's deadline passed unanswered or unconsumed (O157): its
+    /// cleanup was requested as expired. The cleanup owner ends the Run.
+    Expired,
 }
 
 /// A refusal that only means "not yet": retry on a later turn.
@@ -118,6 +121,10 @@ impl Orchestrator {
         let Some(state) = execution.decision_state.clone() else {
             return Ok(Step::Waiting("bot_cleanup_owned"));
         };
+        // The deadline comes before any further step of the chain (O157).
+        if let Some(step) = self.decision_deadline_step(owner, run, &execution)? {
+            return Ok(step);
+        }
         if state.kind == DecisionKind::NativeApproval {
             // The occupied prompt is answered in place; no stop, no successor.
             return Ok(Step::Waiting("bot_native_occupied"));
@@ -195,9 +202,6 @@ impl Orchestrator {
             .bot_ledger()?
             .bot_admission(run)?
             .ok_or(RunError::UnknownRun)?;
-        if admission.submission.provenance.routine.is_some() {
-            return Ok(Some("bot_routine_decision_unsupported"));
-        }
         if !self
             .ports
             .sessions

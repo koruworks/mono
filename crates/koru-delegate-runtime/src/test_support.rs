@@ -44,7 +44,8 @@ use koru_delegate_core::{
     BotProvenance, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey, BotWorkingFolder,
     CapturedBotPolicy, DelegateBootId, DelegationRequest, DeviceId, DocumentId,
     FreshBotPolicyProof, HostInstanceId, IdempotencyKey, Objective, PendingInput, ProfileId,
-    RunAttemptId, RunId, SessionId, SessionProfileKey, WorkspaceId, WorkspaceScope,
+    RoutinePolicyBarrier, RunAttemptId, RunId, SessionId, SessionProfileKey, WorkspaceId,
+    WorkspaceScope,
 };
 use koru_delegate_sqlite::{
     AnswerDecision, DecisionAcknowledgedContinuation, DecisionRecord, DecisionWaitExecution, RunsDb,
@@ -355,14 +356,210 @@ pub struct SuccessorKeys {
 /// must be queued ([`PreparedDecision::script_resume`]) before the driver
 /// can stop the origin or start a successor.
 pub fn decision_chain() -> DecisionChain {
+    chain(false)
+}
+
+/// [`decision_chain`] for a **Routine Run**: the same prepared Koru edit
+/// decision, on a Run a Bot Routine's occurrence started, bound to the
+/// Routine and to the grant it runs under (P4.3 section 4.10).
+///
+/// The Run is admitted the way a Routine occurrence is, through the ledger's
+/// own public owners rather than `bot_submit`: the Bot's admission barrier,
+/// the Routine's route, the global policy and the Routine's grant (revision
+/// 1, the same page access as the Bot's: no selected page) are installed; the
+/// occurrence is claimed with a claim authority minted from a live Schedule
+/// document (`claim_bot_routine`, as the scheduler does) and its link is
+/// acknowledged Linked (as the AI bridge does). No row is written directly.
+/// From there every step is [`decision_chain`]'s, plus
+/// `synchronize_routine_policy` with the grant. [`PreparedDecision::proof`]
+/// carries the Routine's barrier, and [`PreparedDecision::submission`] its
+/// Routine provenance.
+pub fn routine_decision_chain() -> DecisionChain {
+    chain(true)
+}
+
+/// Claim one occurrence of a Bot Routine for `submission` (made a Routine
+/// submission here) and acknowledge its link. Returns the Routine's grant.
+fn admit_routine(store: &mut RunsDb, submission: &mut BotSubmission) -> RoutinePolicyBarrier {
+    use koru_delegate_core::{
+        RoutineClaimObservation, RoutineDefinitionIdentity, RoutineDigest32, RoutineExecutionIds,
+        RoutineLinkAcknowledgement, RoutineLinkOutcome, RoutinePrepared, RoutineProvenance,
+        RoutineRouteIdentity, RoutineSlot, RunOrigin, ScheduleId,
+    };
+    use koru_delegate_document::{ScheduleClaimPlan, ScheduleDocument};
+    use koru_delegate_schedule::{
+        DelegationTemplate, RoutineAssociation, ScheduleDefinition, ScheduleHeader,
+        ScheduleLifecycle, SchedulePauseReason, routine_definition_digest,
+    };
+    use koru_delegate_sqlite::{BotLedger, NativeResultLedger};
+    use koru_recurrence::{CronExpression, RecurrenceRule};
+
+    // Just due on the fixture clock, as a claimed occurrence is.
+    const OCCURRENCE_MS: i64 = FIXTURE_NOW_MS - 100;
+    submission.input.text = submission.request.objective.as_str().to_owned();
+    // A Routine occurrence's execution ids are pairwise distinct; the
+    // interactive fixture reuses the run's id for its submission.
+    submission.provenance.submission = BotRequestId::from_uuid(fixture_uuid(0x53));
+    let owner = submission.provenance.owner;
+    let bot = submission.provenance.bot;
+    let association = RoutineAssociation::new(
+        owner,
+        bot,
+        submission.workspace,
+        BotRequestId::from_uuid(fixture_uuid(0x51)),
+    )
+    .expect("a fixture Routine association");
+    let schedule = ScheduleId::from_uuid(fixture_uuid(0x50));
+    let header = ScheduleHeader {
+        schedule,
+        created_at_ms: 0,
+        initial_owner: owner.device,
+        definition: ScheduleDefinition {
+            revision: 1,
+            effective_at_ms: 0,
+            template: DelegationTemplate {
+                requested_by: submission.request.requested_by.clone(),
+                objective: submission.request.objective.clone(),
+                agent: submission.request.agent.clone(),
+                requested_model: None,
+                scope: WorkspaceScope::Temporary,
+                grants: Default::default(),
+                context: vec![],
+            },
+            recurrence: RecurrenceRule::floating(
+                CronExpression::parse("* * * * *").expect("a fixture recurrence"),
+            ),
+            lifecycle: ScheduleLifecycle::Paused {
+                reason: SchedulePauseReason::Manual,
+            },
+            routine: Some(association.clone()),
+        },
+    };
+    let document = ScheduleDocument::create(&header).expect("a fixture Schedule document");
+    let mut definition = header.definition;
+    definition.revision = 2;
+    definition.effective_at_ms = 1;
+    definition.lifecycle = ScheduleLifecycle::Active;
+    document
+        .update_definition(owner.device, &definition)
+        .expect("enable the fixture Routine");
+    let identity = RoutineDefinitionIdentity {
+        revision: 2,
+        digest: routine_definition_digest(&definition, submission.workspace, None)
+            .expect("a fixture definition digest"),
+        owner_handoff: None,
+    };
+    let ids = RoutineExecutionIds {
+        submission: submission.provenance.submission,
+        run: submission.request.run,
+        chat: submission.provenance.chat_id,
+        attempt: submission
+            .provenance
+            .ai_attempt_id
+            .expect("the fixture admission has an AI attempt"),
+        user_message: fixture_uuid(0xe4),
+        assistant_message: submission
+            .provenance
+            .assistant_message_id
+            .expect("the fixture admission has an assistant message"),
+    };
+    submission.provenance.routine = Some(RoutineProvenance {
+        schedule,
+        occurrence_ms: OCCURRENCE_MS,
+        definition: identity,
+        grant_revision: 1,
+    });
+    submission.request.origin = RunOrigin::Scheduled {
+        schedule,
+        occurrence_ms: OCCURRENCE_MS,
+        revision: 2,
+    };
+    let prepared = RoutinePrepared {
+        slot: RoutineSlot {
+            owner,
+            bot,
+            schedule,
+            occurrence_ms: OCCURRENCE_MS,
+        },
+        definition: identity,
+        ids,
+        semantic_hash: RoutineDigest32::from_bytes([7; 32]),
+        preparation_hash: RoutineDigest32::from_bytes([8; 32]),
+        submission_version: 2,
+        submission: submission.clone(),
+    };
+    assert!(prepared.valid(), "a valid fixture Routine preparation");
+    let global = bot_policy(submission, submission.provenance.config_revision);
+    let grant = RoutinePolicyBarrier {
+        owner,
+        bot,
+        schedule,
+        request: BotRequestId::from_uuid(fixture_uuid(0x52)).into(),
+        grant_revision: 1,
+        policy: submission.policy.clone(),
+        effects_allowed: true,
+    };
+    let barrier = admission_barrier(submission);
+    store
+        .apply_bot_barrier(&barrier)
+        .expect("apply the admission barrier");
+    store
+        .register_routine_route(&RoutineRouteIdentity {
+            owner,
+            bot,
+            schedule,
+            workspace: association.home,
+            creation_request: association.creation_request,
+            seed_hash: RoutineDigest32::from_bytes([9; 32]),
+            created_at_ms: 0,
+        })
+        .expect("register the Routine route");
+    store
+        .install_native_policy(&global)
+        .expect("install the global policy");
+    store
+        .install_routine_policy(&grant)
+        .expect("install the Routine grant");
+    let authority = document
+        .claim_authority(
+            submission.workspace,
+            owner.device,
+            ScheduleClaimPlan::BotRoutine {
+                prepared: prepared.clone(),
+                representative_miss: None,
+            },
+        )
+        .expect("mint the claim authority")
+        .expect("the occurrence may be claimed");
+    let proof = FreshBotPolicyProof {
+        global,
+        routine: Some(grant.clone()),
+    };
+    let (outcome, _) = crate::RoutineLedger::claim_bot_routine(store, authority, &barrier, &proof)
+        .expect("claim the Routine occurrence");
+    let RoutineClaimObservation::Claimed { record } = outcome else {
+        panic!("the fixture occurrence is claimed: {outcome:?}");
+    };
+    store
+        .acknowledge_routine_link(&RoutineLinkAcknowledgement {
+            claim: record.claim,
+            outcome: RoutineLinkOutcome::Linked {},
+        })
+        .expect("acknowledge the Routine link");
+    grant
+}
+
+fn chain(routine: bool) -> DecisionChain {
     let clock = Arc::new(AtomicI64::new(FIXTURE_NOW_MS));
     let host = HostInstanceId::from_uuid(fixture_uuid(0xd1));
     let sessions = Arc::new(Mutex::new(SessionScript::new(host)));
-    let store = RunsDb::open_with_clock(
+    let mut store = RunsDb::open_with_clock(
         Path::new(":memory:"),
         Box::new(inert::SharedClock(Arc::clone(&clock))),
     )
     .expect("open the in-memory ledger");
+    let mut submission = bot_submission(1);
+    let grant = routine.then(|| admit_routine(&mut store, &mut submission));
     let documents = inert::MemoryRunDocuments::new();
     let faults = documents.faults();
     let waits = PublishedWaits::default();
@@ -389,7 +586,6 @@ pub fn decision_chain() -> DecisionChain {
         },
     );
 
-    let submission = bot_submission(1);
     let owner = submission.provenance.owner;
     let device = owner.device;
     let run = submission.request.run;
@@ -400,10 +596,18 @@ pub fn decision_chain() -> DecisionChain {
         script.script_turn(fixture_turn(1));
     }
 
-    orchestrator
-        .bot_submit(submission.clone(), device)
-        .expect("bot_submit");
+    if grant.is_none() {
+        // A Routine occurrence was admitted by its claim instead.
+        orchestrator
+            .bot_submit(submission.clone(), device)
+            .expect("bot_submit");
+    }
     replay_boot(&mut orchestrator, &submission);
+    if let Some(grant) = &grant {
+        orchestrator
+            .synchronize_routine_policy(grant.clone(), device)
+            .expect("synchronize_routine_policy");
+    }
     let run_key = BotRunKey {
         owner,
         bot: submission.provenance.bot,
@@ -439,7 +643,7 @@ pub fn decision_chain() -> DecisionChain {
         .expect("synchronize_native_policy");
     let proof = FreshBotPolicyProof {
         global: policy,
-        routine: None,
+        routine: grant,
     };
     let boot = orchestrator.delegate_boot();
     let decision = orchestrator

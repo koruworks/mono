@@ -209,10 +209,25 @@ pub(crate) fn validate_native_on(
     let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
         return Err(BotLedgerError::Invalid);
     };
+    // The lease's Routine policy (request, grant revision, payload digest)
+    // equals the binding's `routine_policy`, exactly as the global policy is
+    // compared below; an interactive decision's lease carries none.
+    let routine = match (&binding.routine, &binding.routine_policy, &lease.routine) {
+        (None, None, None) => true,
+        (Some(subject), Some(bound), Some(leased)) => {
+            leased.owner == bound.owner
+                && leased.bot == bound.bot
+                && leased.schedule == bound.schedule
+                && leased.schedule == subject.provenance.schedule
+                && leased.request == bound.request
+                && leased.grant_revision == bound.grant_revision.get()
+                && leased.payload_digest == bound.digest
+        }
+        _ => false,
+    };
     require(
         matches!(intent.purpose, NativeEffectPurpose::Result {})
-            && binding.routine.is_none()
-            && lease.routine.is_none()
+            && routine
             && intent.kind == NativeResultOperation::EditPage
             && intent.target == binding.target
             && intent.destination == binding.workspace

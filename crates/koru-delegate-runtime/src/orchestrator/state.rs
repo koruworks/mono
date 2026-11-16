@@ -61,6 +61,19 @@ pub struct RunState {
     /// creation is dispatched (or the reservation predates this process) the
     /// exact creation key is recovered by `lookup`, never created again.
     pub(crate) decision_launch: Option<DecisionLaunch>,
+    /// The deadline this process watches for the Run's open decision (O157).
+    /// Volatile: a restart closes such a decision as clock-uncertain instead.
+    pub(crate) decision_deadline: Option<DecisionDeadlineWatch>,
+}
+
+/// One open decision's deadline as this process measures it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DecisionDeadlineWatch {
+    pub decision: koru_delegate_core::decisions::DecisionId,
+    /// When the whole wait has elapsed on the monotonic clock.
+    pub monotonic: std::time::Instant,
+    /// A refused expiry request is not asked again before this (O142).
+    pub retry_at: Option<std::time::Instant>,
 }
 
 /// The one physical successor creation a decision reservation allows.
@@ -114,6 +127,7 @@ impl RunState {
             publication_returned: None,
             decision_cleanup: None,
             decision_launch: None,
+            decision_deadline: None,
         }
     }
 

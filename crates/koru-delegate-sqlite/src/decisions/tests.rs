@@ -22,6 +22,7 @@ mod projection;
 mod resume;
 mod resume_runs;
 mod retained_reads;
+mod routine;
 mod wait_read;
 
 struct Harness {

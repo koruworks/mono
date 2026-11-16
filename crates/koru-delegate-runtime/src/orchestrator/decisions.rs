@@ -23,8 +23,11 @@ use koru_delegate_sqlite::{AnswerDecision, DecisionRecord};
 mod authority;
 mod driver;
 mod edit;
+mod expiry;
 mod launch;
 mod resume;
+#[cfg(test)]
+mod routine_tests;
 mod settle;
 mod successor;
 pub use driver::DecisionResumeStep;

@@ -533,7 +533,14 @@ impl Actor {
             }
             if publication_at.is_some_and(|deadline| deadline <= now) {
                 // A step taken offers the next turn now rather than a tick later.
-                publication_at = if self.maintenance_tick() {
+                let stepped = self.maintenance_tick();
+                if stepped {
+                    // A step may have handed a Run to the cleanup owner (a
+                    // decision that expired, O157). Its cleanup is due now,
+                    // not at whatever budget deadline was computed before.
+                    bot_budget_at = None;
+                }
+                publication_at = if stepped {
                     Some(Instant::now())
                 } else {
                     self.publications_pending().then(|| Instant::now() + TICK)

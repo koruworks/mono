@@ -128,8 +128,8 @@ fn first_projection_is_accepted_at_bot5_and_at_the_previous_bot3_bot4_defaults()
     ] {
         let mut h = Harness::new();
         if routine {
-            // A Routine edit decision is refused at preparation; the Routine
-            // native decision opens the same wait for the projection.
+            // The Routine native decision opens the wait for the projection
+            // (a Routine edit decision opens the same one).
             h.native();
             h.routine(true);
         }

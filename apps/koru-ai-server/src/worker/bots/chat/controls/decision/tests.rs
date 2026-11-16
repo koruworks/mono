@@ -398,3 +398,56 @@ fn decision_card_without_its_receipt_is_no_longer_active_and_sends_nothing() {
         (inactive.code, inactive.message, false)
     );
 }
+
+/// P4.3 section 4.10: a Routine decision is answered (and its approved edit
+/// consumed) under the grant the Routine runs under now, read from the
+/// Routine's own Bound creation, never from the Bot's settings.
+#[test]
+fn routine_decision_proof_is_the_routines_current_grant() {
+    let (repository, preclaim) = crate::worker::bots::policy::preclaim_fixture();
+    let slot = preclaim.slot;
+    let bot = repository.bot(slot.bot).unwrap().unwrap();
+    let creation = repository
+        .bot_routine_creation(
+            BotOwner {
+                user_scope: bot.user_scope,
+                device: bot.owner_device,
+            },
+            bot.id,
+            slot.schedule,
+        )
+        .unwrap()
+        .unwrap();
+    let barrier = routine_grant_barrier(&repository, &bot, slot.schedule).unwrap();
+    assert_eq!(
+        (
+            barrier.owner,
+            barrier.bot,
+            barrier.schedule,
+            barrier.grant_revision
+        ),
+        (slot.owner, slot.bot, slot.schedule, 1)
+    );
+    assert_eq!(barrier.request, creation.identity.creation_request.into());
+    assert_eq!(barrier.policy, creation.identity.grant.policy);
+    assert!(barrier.effects_allowed);
+    assert!(barrier.valid());
+    // A Routine this Bot does not have, or one homed elsewhere, is not
+    // answerable: the card reads as no longer active.
+    let inactive = tool_not_resumable();
+    let unknown = routine_grant_barrier(
+        &repository,
+        &bot,
+        d::ScheduleId::from_uuid(uuid::Uuid::new_v4()),
+    )
+    .unwrap_err();
+    assert_eq!(unknown.code, inactive.code);
+    let mut moved = bot.clone();
+    moved.home_workspace = WorkspaceId::new();
+    assert_eq!(
+        routine_grant_barrier(&repository, &moved, slot.schedule)
+            .unwrap_err()
+            .code,
+        inactive.code
+    );
+}

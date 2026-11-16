@@ -59,9 +59,10 @@ impl ScheduleEvents for RecordingEvents {
     fn prepare_definition(
         &mut self,
         _: ScheduleEventRef,
-        definition: &ScheduleDefinition,
+        _: &ScheduleDefinition,
+        event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
-        self.push(match schedule_definition_event(definition) {
+        self.push(match event {
             ScheduleDefinitionEvent::Updated => "prepare_updated",
             ScheduleDefinitionEvent::Paused(_) => "prepare_paused",
         });
@@ -574,7 +575,8 @@ fn routine_control_answers_only_after_the_commit_and_makes_its_event_ready_last(
             ("ready", Some(2)),
             ("prepare_paused", Some(2)),
             ("ready", Some(3)),
-            ("prepare_paused", Some(3)),
+            // The Routine is paused when it is edited: still `updated`.
+            ("prepare_updated", Some(3)),
             ("ready", Some(4)),
         ]
     );

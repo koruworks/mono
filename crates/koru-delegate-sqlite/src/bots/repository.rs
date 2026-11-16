@@ -673,6 +673,13 @@ impl BotLedger for RunsDb {
     ) -> Result<bool, BotLedgerError> {
         RunsDb::decision_other_effects_pending(self, owner, run, decision)
     }
+    fn decision_routine_subject(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<koru_delegate_core::decisions::DecisionRoutineSubject>, BotLedgerError> {
+        RunsDb::decision_routine_subject(self, owner, run)
+    }
     fn record_decision_source(
         &mut self,
         owner: BotOwner,

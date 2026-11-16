@@ -333,9 +333,18 @@ struct Saved {
     creation: IdempotencyKey,
     request: koru_delegate_core::PrepareNativeResult,
     payload: koru_delegate_core::decisions::DecisionPayload,
+    /// The one instant the orchestrator and the ledger read.
+    clock: Arc<std::sync::atomic::AtomicI64>,
 }
 
 fn saved() -> Saved {
+    saved_from(decision_chain(), None)
+}
+
+/// [`saved`] over `chain` (a manual or a Routine Run). With `answer_before`
+/// the person's answer arrives that many milliseconds before the decision's
+/// deadline, and the clock stays there through the consume and the save.
+fn saved_from(chain: DecisionChain, answer_before: Option<i64>) -> Saved {
     use koru_delegate_core::decisions::{
         DecisionAuthorization, DecisionBindingV1, DecisionClosureReason, DecisionPhase,
     };
@@ -349,8 +358,9 @@ fn saved() -> Saved {
         sessions,
         prepared,
         waits,
+        clock,
         ..
-    } = decision_chain();
+    } = chain;
     let (owner, run) = (prepared.owner, prepared.run);
     let successor = SessionId::mint();
     let turn = AgentTurnId::mint();
@@ -378,6 +388,17 @@ fn saved() -> Saved {
         );
         turn_once(&mut actor, &inbox);
         if !allowed && steps(&actor.resume_log).contains(&Step::OriginStopped) {
+            if let Some(before) = answer_before {
+                let at = ledger(&mut actor)
+                    .bot_decision(owner, run, prepared.decision)
+                    .unwrap()
+                    .unwrap()
+                    .receipt
+                    .deadline
+                    .deadline_at_ms
+                    - before;
+                clock.store(at, Ordering::SeqCst);
+            }
             prepared.allow_once(&mut actor.orchestrator).unwrap();
             allowed = true;
         }
@@ -480,6 +501,7 @@ fn saved() -> Saved {
         creation: keys.creation,
         request,
         payload,
+        clock,
     }
 }
 
@@ -638,5 +660,449 @@ fn a_stop_after_the_settlement_finishes_on_the_real_tick() {
         0,
         "capacity released"
     );
+    s.replay_saves_nothing();
+}
+
+// ------------------------------------------------------------------ O157
+
+fn decision_of(
+    actor: &mut Actor,
+    prepared: &koru_delegate_runtime::test_support::PreparedDecision,
+) -> koru_delegate_sqlite::DecisionRecord {
+    ledger(actor)
+        .bot_decision(prepared.owner, prepared.run, prepared.decision)
+        .unwrap()
+        .unwrap()
+}
+
+/// One loop iteration as `run` serves it: the maintenance tick with its
+/// wakes, then the Bot budget deadline for every Run it tracks (the cleanup
+/// owner's retry lives there).
+fn loop_once(actor: &mut Actor, inbox: &mpsc::Receiver<Command>) {
+    turn_once(actor, inbox);
+    for tracked in actor.orchestrator.bot_budget_runs() {
+        let _ = actor.orchestrator.bot_budget_tick(tracked);
+    }
+}
+
+/// O157 on the real actor loop. A Koru edit decision is prepared, its origin
+/// is stopped and held, and nobody answers. Before the deadline nothing
+/// closes it. Once the clock passes the deadline, the actor's own maintenance
+/// tick expires it, the existing cleanup owner records the final cleanup and
+/// publishes it, the wait settles, the decision-wait fence lifts, and the Run
+/// ends interrupted (the "Needed you" closing, not a failure) with its
+/// capacity released.
+#[test]
+fn an_unanswered_edit_decision_expires_at_its_deadline_on_the_real_tick() {
+    use koru_delegate_core::decisions::{
+        DecisionAuthorization, DecisionClosureReason, DecisionPhase,
+    };
+    use koru_delegate_core::{BotAdmissionState, RunStatus};
+    let DecisionChain {
+        orchestrator,
+        sessions,
+        prepared,
+        waits,
+        clock,
+        ..
+    } = decision_chain();
+    let (owner, run) = (prepared.owner, prepared.run);
+    prepared.script_resume(
+        &mut sessions.lock().unwrap(),
+        SessionId::mint(),
+        AgentTurnId::mint(),
+    );
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    actor
+        .attach_decision_bridge(Box::new(bridge(&listener)))
+        .unwrap();
+    let answering = prepared.clone();
+    let server = std::thread::spawn(move || {
+        let mut stream = accept_within(&listener, Duration::from_secs(30));
+        reply(&mut stream, |request: &EnrollBotWaitCleanup| {
+            answering.enrolled_reply(request)
+        });
+    });
+    let bound = Instant::now() + Duration::from_secs(30);
+    while !steps(&actor.resume_log).contains(&Step::OriginStopped) {
+        assert!(
+            Instant::now() < bound,
+            "the origin was not stopped: {:?}",
+            steps(&actor.resume_log)
+        );
+        loop_once(&mut actor, &inbox);
+    }
+    server.join().unwrap();
+    let deadline = decision_of(&mut actor, &prepared)
+        .receipt
+        .deadline
+        .deadline_at_ms;
+
+    // One millisecond short of the deadline, however often the loop turns:
+    // the decision keeps waiting for its person, fence up.
+    clock.store(deadline - 1, Ordering::SeqCst);
+    for _ in 0..5 {
+        loop_once(&mut actor, &inbox);
+    }
+    let waiting = decision_of(&mut actor, &prepared);
+    assert_eq!(
+        (
+            waiting.receipt.state.authorization,
+            waiting.receipt.state.phase
+        ),
+        (DecisionAuthorization::Pending, DecisionPhase::Held)
+    );
+    assert!(!steps(&actor.resume_log).contains(&Step::Expired));
+    assert!(waits.get(run).is_some(), "the Run classifies as waiting");
+
+    // The deadline passes with nobody answering.
+    clock.store(deadline, Ordering::SeqCst);
+    let bound = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut actor)
+        .bot_execution(run)
+        .unwrap()
+        .unwrap()
+        .state
+        != BotAdmissionState::Settled
+    {
+        assert!(
+            Instant::now() < bound,
+            "the expired decision did not end its Run: steps {:?}, wait {:?}",
+            steps(&actor.resume_log),
+            ledger(&mut actor)
+                .decision_wait_execution(owner, run)
+                .unwrap()
+                .map(|execution| (execution.wait.phase, execution.wait.cleanup.is_some()))
+        );
+        loop_once(&mut actor, &inbox);
+    }
+    loop_once(&mut actor, &inbox);
+
+    // The decision: expired, settled with that reason, asked for once.
+    let expired = decision_of(&mut actor, &prepared);
+    assert_eq!(
+        (
+            expired.receipt.state.authorization,
+            expired.receipt.state.phase,
+            expired
+                .receipt
+                .closure
+                .as_ref()
+                .map(|closure| closure.reason),
+            expired.receipt.answer.is_none()
+        ),
+        (
+            DecisionAuthorization::Expired,
+            DecisionPhase::Settled,
+            Some(DecisionClosureReason::Expired),
+            true
+        )
+    );
+    assert_eq!(
+        steps(&actor.resume_log)
+            .iter()
+            .filter(|step| **step == Step::Expired)
+            .count(),
+        1
+    );
+    // The wait: settled. The fence: lifted.
+    assert!(
+        ledger(&mut actor)
+            .decision_wait_execution(owner, run)
+            .unwrap()
+            .is_none(),
+        "the wait settled"
+    );
+    assert_eq!(
+        waits.get(run),
+        None,
+        "the Run no longer classifies as waiting"
+    );
+    assert!(!actor.orchestrator.run_publication_pending(run));
+    // The Run: ended interrupted, never failed, and no successor was made.
+    let last = ledger(&mut actor)
+        .latest_applied_decision_projection(owner, run)
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(last.target.effects().status, RunStatus::Interrupted { .. }),
+        "{:?}",
+        last.target.effects().status
+    );
+    assert_eq!(last.target.effects().failure_reason, None);
+    assert_eq!(
+        ledger(&mut actor)
+            .bot_execution_inventory(owner.device)
+            .unwrap()
+            .occupied,
+        0,
+        "capacity released"
+    );
+    assert_eq!(
+        sessions.lock().unwrap().created().len(),
+        1,
+        "only the origin"
+    );
+    // A late answer changes nothing.
+    assert!(prepared.allow_once(&mut actor.orchestrator).is_err());
+    assert_eq!(decision_of(&mut actor, &prepared).receipt, expired.receipt);
+}
+
+/// An answer accepted one millisecond before the deadline wins: its edit is
+/// consumed and saved under that clock, the decision settles as Completed,
+/// and when the clock then runs far past the deadline the actor neither
+/// expires nor reopens it; the resumed Run keeps executing.
+#[test]
+fn an_answer_just_before_the_deadline_wins_and_the_settled_decision_is_never_reopened() {
+    use koru_delegate_core::decisions::{DecisionClosureReason, DecisionPhase};
+    use koru_delegate_core::{BotAdmissionState, NativeResultStage};
+    let mut s = saved_from(decision_chain(), Some(1));
+    let (owner, run) = (s.prepared.owner, s.prepared.run);
+    let settled = decision_of(&mut s.actor, &s.prepared);
+    let deadline = settled.receipt.deadline.deadline_at_ms;
+    assert_eq!(
+        settled
+            .receipt
+            .answer
+            .as_ref()
+            .map(|answer| answer.answered_at_ms),
+        Some(deadline - 1)
+    );
+    // An hour past the deadline, with the settlement's Control still owed.
+    s.clock.store(deadline + 3_600_000, Ordering::SeqCst);
+    let bound = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut s.actor)
+        .decision_wait_execution(owner, run)
+        .unwrap()
+        .is_some()
+    {
+        assert!(Instant::now() < bound, "the wait did not settle");
+        loop_once(&mut s.actor, &s.inbox);
+    }
+    for _ in 0..3 {
+        loop_once(&mut s.actor, &s.inbox);
+    }
+    assert!(!steps(&s.actor.resume_log).contains(&Step::Expired));
+    let after = decision_of(&mut s.actor, &s.prepared);
+    assert_eq!(after.receipt, settled.receipt, "never reopened");
+    assert_eq!(after.receipt.state.phase, DecisionPhase::Settled);
+    assert_eq!(
+        after.receipt.closure.as_ref().map(|closure| closure.reason),
+        Some(DecisionClosureReason::Completed)
+    );
+    assert_eq!(s.waits.get(run), None);
+    assert_eq!(s.native_stage(), NativeResultStage::Registered);
+    assert_eq!(
+        ledger(&mut s.actor)
+            .bot_execution(run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Executing
+    );
+    let row = s
+        .actor
+        .orchestrator
+        .ports_mut()
+        .store
+        .current_attempt(run)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (row.attempt, row.generation, row.retired),
+        (s.consumer.attempt, s.consumer.generation, false)
+    );
+    s.replay_saves_nothing();
+}
+
+/// After a delegate restart the elapsed wait is unproven: the new process
+/// accepts no answer for the decision, and the actor's first maintenance
+/// turns close it as clock-uncertain although its saved deadline is still
+/// minutes away. The cleanup owner then finishes it from the ledger alone.
+#[test]
+fn a_decision_left_open_across_a_delegate_restart_is_closed_on_the_real_tick() {
+    use koru_delegate_core::RunStatus;
+    use koru_delegate_core::decisions::{
+        DecisionAuthorization, DecisionClosureReason, DecisionPhase,
+    };
+    use koru_delegate_runtime::test_support::publish_owed;
+    let DecisionChain {
+        mut orchestrator,
+        sessions,
+        prepared,
+        waits,
+        clock,
+        ..
+    } = decision_chain();
+    let (owner, run) = (prepared.owner, prepared.run);
+    prepared.script_resume(
+        &mut sessions.lock().unwrap(),
+        SessionId::mint(),
+        AgentTurnId::mint(),
+    );
+    // The first process stops and holds the origin, then goes away.
+    let mut enrollment = prepared.enrollment_bridge();
+    for expected in [
+        Step::EnrollmentRequested,
+        Step::Enrolled,
+        Step::OriginStopped,
+    ] {
+        assert_eq!(
+            orchestrator
+                .bot_advance_decision_resume(owner, run, &mut enrollment)
+                .unwrap(),
+            expected
+        );
+    }
+    publish_owed(&mut orchestrator, run).unwrap();
+    let orchestrator = koru_delegate_runtime::Orchestrator::new(
+        orchestrator.into_ports(),
+        koru_delegate_runtime::Options {
+            reask_attempts: 3,
+            ..Default::default()
+        },
+    );
+    assert_ne!(orchestrator.delegate_boot(), prepared.boot);
+    // One minute later; the saved deadline is nine minutes away.
+    clock.store(
+        koru_delegate_runtime::test_support::FIXTURE_NOW_MS + 60_000,
+        Ordering::SeqCst,
+    );
+    sessions.lock().unwrap().script_retirement(
+        prepared.origin_creation,
+        koru_session_protocol::CreationLookup::NoEvidence,
+    );
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    assert!(prepared.allow_once(&mut actor.orchestrator).is_err());
+
+    let bound = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut actor)
+        .decision_wait_execution(owner, run)
+        .unwrap()
+        .is_some()
+    {
+        assert!(
+            Instant::now() < bound,
+            "the restarted delegate did not close the decision: steps {:?}, wait {:?}",
+            steps(&actor.resume_log),
+            ledger(&mut actor)
+                .decision_wait_execution(owner, run)
+                .unwrap()
+                .map(|execution| (execution.wait.phase, execution.wait.cleanup.is_some()))
+        );
+        loop_once(&mut actor, &inbox);
+    }
+    loop_once(&mut actor, &inbox);
+    let closed = decision_of(&mut actor, &prepared);
+    assert_eq!(
+        (
+            closed.receipt.state.authorization,
+            closed.receipt.state.phase,
+            closed
+                .receipt
+                .closure
+                .as_ref()
+                .map(|closure| closure.reason)
+        ),
+        (
+            DecisionAuthorization::Expired,
+            DecisionPhase::Settled,
+            Some(DecisionClosureReason::ClockUncertain)
+        )
+    );
+    assert_eq!(
+        steps(&actor.resume_log)
+            .iter()
+            .filter(|step| **step == Step::Expired)
+            .count(),
+        1
+    );
+    assert_eq!(waits.get(run), None, "the fence lifted");
+    let last = ledger(&mut actor)
+        .latest_applied_decision_projection(owner, run)
+        .unwrap()
+        .unwrap();
+    assert!(
+        matches!(last.target.effects().status, RunStatus::Interrupted { .. }),
+        "{:?}",
+        last.target.effects().status
+    );
+    assert_eq!(
+        sessions.lock().unwrap().created().len(),
+        1,
+        "only the origin"
+    );
+}
+
+/// P4.3 section 4.10 on the real actor loop: a Routine Run's page edit
+/// outside its grant is a decision bound to the Routine; the person allows
+/// it; the successor of the same Routine occurrence consumes it once under
+/// the Routine's grant; the confirmed save settles the decision and the
+/// actor lifts the fence while the Run keeps executing.
+#[test]
+fn a_routine_runs_approved_edit_is_saved_once_and_settles_on_the_real_tick() {
+    use koru_delegate_core::decisions::DecisionBindingV1;
+    use koru_delegate_core::{BotAdmissionState, NativeResultStage};
+    use koru_delegate_runtime::test_support::routine_decision_chain;
+    let mut s = saved_from(routine_decision_chain(), None);
+    let (owner, run) = (s.prepared.owner, s.prepared.run);
+    let routine = s
+        .prepared
+        .submission
+        .provenance
+        .routine
+        .expect("a Routine Run");
+    let record = decision_of(&mut s.actor, &s.prepared);
+    let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
+        panic!("a Koru edit decision")
+    };
+    assert_eq!(
+        binding.routine.as_ref().map(|subject| subject.provenance),
+        Some(routine)
+    );
+    assert_eq!(
+        binding
+            .routine_policy
+            .as_ref()
+            .map(|policy| policy.schedule),
+        Some(routine.schedule)
+    );
+    // The lease the edit ran under names the Routine's grant.
+    let intent = s
+        .actor
+        .orchestrator
+        .ports_mut()
+        .store
+        .native_results()
+        .unwrap()
+        .native_result(&s.request.key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        intent
+            .lease
+            .as_ref()
+            .and_then(|lease| lease.routine.as_ref())
+            .map(|grant| grant.schedule),
+        Some(routine.schedule)
+    );
+    let bound = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut s.actor)
+        .decision_wait_execution(owner, run)
+        .unwrap()
+        .is_some()
+    {
+        assert!(Instant::now() < bound, "the wait did not settle");
+        loop_once(&mut s.actor, &s.inbox);
+    }
+    loop_once(&mut s.actor, &s.inbox);
+    assert_eq!(s.waits.get(run), None);
+    assert_eq!(s.native_stage(), NativeResultStage::Registered);
+    let admitted = ledger(&mut s.actor).bot_admission(run).unwrap().unwrap();
+    assert_eq!(admitted.state, BotAdmissionState::Executing);
+    assert_eq!(admitted.submission.provenance.routine, Some(routine));
     s.replay_saves_nothing();
 }

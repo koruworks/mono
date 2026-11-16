@@ -503,7 +503,11 @@ fn advanced_definition_keeps_the_prepared_row_out_of_the_ready_queue() {
         reason: SchedulePauseReason::Manual,
     };
     let prepared = events
-        .prepare_definition(reference, &header.definition)
+        .prepare_definition(
+            reference,
+            &header.definition,
+            koru_delegate_runtime::schedule_definition_event(&header.definition),
+        )
         .unwrap();
     let record = ledger
         .schedule_publications(schedule_id)
@@ -839,5 +843,115 @@ fn live_and_repair_paths_converge_on_the_first_semantic_row() {
             .len(),
         2,
         "one created root and one occurrence row"
+    );
+}
+
+/// P4.3 section 4.11: the event kind is the control's own fact, carried into
+/// the stored prepared event. A Pause is `paused`; an Edit of the Routine
+/// while it is paused leaves it paused and is `updated`, at preparation, on
+/// exact replay and when a restart reconciles the stored row.
+#[test]
+fn routine_control_edit_of_a_paused_routine_publishes_updated_not_paused() {
+    use koru_delegate_runtime::ScheduleDefinitionEvent;
+    let temp = tempfile::tempdir().unwrap();
+    let ledger = SharedLedger::new(RunsDb::open(&temp.path().join("runs.db")).unwrap());
+    let client = koru_api_client::Client::new(koru_api_client::Discovery {
+        port: 0,
+        token: String::new(),
+        expires_at_millis: i64::MAX,
+    });
+    let mut events = BusScheduleEvents::new(client, ledger.clone());
+    let schedule_id = ScheduleId::mint();
+    let mut header = header(schedule_id, ProfileId::new());
+    let reference = koru_delegate_runtime::ScheduleEventRef {
+        schedule: schedule_id,
+        workspace: WorkspaceId::new(),
+        document: DocumentId::from_uuid(schedule_id.as_uuid()),
+    };
+    events.existing_created(reference, &header).unwrap();
+    let manual = ScheduleLifecycle::Paused {
+        reason: SchedulePauseReason::Manual,
+    };
+
+    // Revision 2: the Routine is paused.
+    header.definition.revision = 2;
+    header.definition.effective_at_ms = 25;
+    header.definition.lifecycle = manual.clone();
+    let paused = events
+        .prepare_definition(
+            reference,
+            &header.definition,
+            ScheduleDefinitionEvent::Paused(SchedulePauseReason::Manual),
+        )
+        .unwrap();
+    // Revision 3: its timing is edited while it stays paused.
+    header.definition.revision = 3;
+    header.definition.effective_at_ms = 30;
+    assert_eq!(header.definition.lifecycle, manual);
+    let edited = events
+        .prepare_definition(
+            reference,
+            &header.definition,
+            ScheduleDefinitionEvent::Updated,
+        )
+        .unwrap();
+    let row = |event| {
+        ledger
+            .schedule_publications(schedule_id)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.event == event)
+            .unwrap()
+    };
+    assert_eq!(
+        row(paused.event).fact,
+        SchedulePublicationFact::Paused { revision: 2 }
+    );
+    assert!(row(paused.event).body.as_str().contains("schedule.paused"));
+    let stored = row(edited.event);
+    assert_eq!(
+        stored.fact,
+        SchedulePublicationFact::Updated { revision: 3 }
+    );
+    assert!(stored.body.as_str().contains("schedule.updated"));
+    assert!(!stored.body.as_str().contains("schedule.paused"));
+
+    // An exact replay of the edit returns the same prepared event.
+    assert_eq!(
+        events
+            .prepare_definition(
+                reference,
+                &header.definition,
+                ScheduleDefinitionEvent::Updated
+            )
+            .unwrap()
+            .event,
+        edited.event
+    );
+    // A restart reconciles the stored `updated` row against the committed,
+    // still paused, revision 3 and makes it Ready rather than abandoning it.
+    assert_eq!(
+        events
+            .reconcile_definition_authority(&stored, 3, &header.definition)
+            .unwrap(),
+        ReconcileDisposition::Settled
+    );
+    let ready = row(edited.event);
+    assert!(ready.ready_at_ms.is_some());
+    assert_eq!(ready.body.as_str(), stored.body.as_str());
+
+    // A `paused` event is only ever the definition's own pause.
+    let mut active = header.definition.clone();
+    active.revision = 4;
+    active.effective_at_ms = 35;
+    active.lifecycle = ScheduleLifecycle::Active;
+    assert!(
+        events
+            .prepare_definition(
+                reference,
+                &active,
+                ScheduleDefinitionEvent::Paused(SchedulePauseReason::Manual)
+            )
+            .is_err()
     );
 }

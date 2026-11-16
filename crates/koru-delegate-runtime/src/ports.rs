@@ -445,15 +445,20 @@ pub struct ScheduleEventRef {
     pub document: DocumentId,
 }
 
-/// A definition transition classified exhaustively from the committed
-/// lifecycle. There is no production edit/resume endpoint yet; keeping the
-/// active arm typed means adding one cannot silently omit its event.
+/// What a definition revision is, as an event: the fact the mutation's owner
+/// names, carried through `prepare_definition` into the stored prepared
+/// event. It is not derived from the resulting lifecycle alone: editing a
+/// paused Routine leaves it paused and is still `Updated` (P4.3 section
+/// 4.11); only a transition into Paused is `Paused`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ScheduleDefinitionEvent {
     Updated,
     Paused(koru_delegate_schedule::SchedulePauseReason),
 }
 
+/// The event of a mutation whose only effect is its resulting lifecycle (a
+/// schedule made active or paused). A mutation that keeps the lifecycle, such
+/// as an edit, names `Updated` itself.
 pub fn schedule_definition_event(
     definition: &koru_delegate_schedule::ScheduleDefinition,
 ) -> ScheduleDefinitionEvent {
@@ -527,10 +532,14 @@ pub trait ScheduleEvents: Send {
         header: &koru_delegate_schedule::ScheduleHeader,
     ) -> PortResult<PreparedScheduleEvent>;
 
+    /// Prepare the event of one definition revision. `event` is the fact the
+    /// mutation's owner names; `Paused` must agree with the definition's own
+    /// pause reason.
     fn prepare_definition(
         &mut self,
         schedule: ScheduleEventRef,
         definition: &koru_delegate_schedule::ScheduleDefinition,
+        event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent>;
 
     fn prepare_occurrence(
@@ -594,6 +603,7 @@ impl ScheduleEvents for NoScheduleEvents {
         &mut self,
         _schedule: ScheduleEventRef,
         _definition: &koru_delegate_schedule::ScheduleDefinition,
+        _event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
         Ok(PreparedScheduleEvent {
             event: koru_delegate_core::EventId::mint(),

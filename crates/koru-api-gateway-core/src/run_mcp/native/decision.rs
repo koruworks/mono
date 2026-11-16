@@ -96,10 +96,14 @@ pub(super) struct PageWriteDenial {
 }
 
 /// The only refusal that may become a decision (contract section 1, O98):
-/// an `edit_document` of an existing page in the Run's own home, under an
-/// interactive (non-Routine, O105) Bot whose captured or current policy does
-/// not grant the page while every other identity matches and effects are
-/// allowed. Anything else is `None` and keeps its existing refusal.
+/// an `edit_document` of an existing page in the Run's own home that the
+/// Run's own page access does not grant, while every other identity matches
+/// and effects are allowed. An interactive Run is judged against the Bot's
+/// captured and current policy and asks when either refuses the page. A
+/// Routine Run is judged against the Routine's own grant alone, captured and
+/// current (P4.3 section 4.10, the reviewed exception O105 asked for), never
+/// the Bot's ordinary-chat access, and asks only when both refuse it.
+/// Anything else is `None` and keeps its existing refusal.
 pub(super) fn selected_page_denial(
     provenance: &BotProvenance,
     captured: &CapturedBotPolicy,
@@ -107,22 +111,37 @@ pub(super) fn selected_page_denial(
     workspace: WorkspaceId,
     description: &NativeWriteDescription,
 ) -> Option<PageWriteDenial> {
-    let current = &proof.global.policy;
+    // The subject and the proof name the Routine together, or neither does.
+    let (current, routine) = match (&provenance.routine, &proof.routine) {
+        (None, None) => (&proof.global.policy, false),
+        (Some(subject), Some(grant))
+            if grant.owner == provenance.owner
+                && grant.bot == provenance.bot
+                && grant.schedule == subject.schedule
+                && grant.effects_allowed =>
+        {
+            (&grant.policy, true)
+        }
+        _ => return None,
+    };
     let target = description.document?;
     let homed =
         |p: &CapturedBotPolicy| p.valid() && p.workspace == workspace && p.destination == workspace;
     let grants = |p: &CapturedBotPolicy| {
         p.access == BotAccess::Workspace || p.selected_pages.contains(&target)
     };
+    let denied = if routine {
+        !grants(captured) && !grants(current)
+    } else {
+        !(grants(captured) && grants(current))
+    };
     let eligible = description.kind == NativeWriteKind::Edited
-        && provenance.routine.is_none()
-        && proof.routine.is_none()
         && proof.global.effects_allowed
         && description.workspace == workspace
         && description.expected_revision.is_some()
         && homed(captured)
         && homed(current)
-        && !(grants(captured) && grants(current));
+        && denied;
     eligible.then_some(PageWriteDenial { target })
 }
 

@@ -389,6 +389,14 @@ pub trait BotLedger {
         run: RunId,
         decision: koru_delegate_core::decisions::DecisionId,
     ) -> Result<bool, BotLedgerError>;
+    /// The complete retained Routine subject (provenance, claim, route) a
+    /// decision binding of this Run must carry; `None` for an interactive
+    /// Run. Read-only history: it grants nothing.
+    fn decision_routine_subject(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<koru_delegate_core::decisions::DecisionRoutineSubject>, BotLedgerError>;
     /// Record a delivery receipt (successor-aware, as `record_bot_delivery`)
     /// and its owed Delivery Control atomically while the handle is held
     /// exclusively. `artifacts` is D's observed count, used only by Completed.

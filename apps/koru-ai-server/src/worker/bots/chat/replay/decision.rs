@@ -597,16 +597,18 @@ impl WorkerState {
             }
             Err(_) => return Err(DecisionApplyGap::NotNow),
         };
+        // A Routine Run's approved edit is consumed under the Routine's own
+        // current grant, as its answer was (P4.3 section 4.10).
+        let routine = self
+            .decision_routine_proof(&bot, &view.receipt.binding)
+            .map_err(|_| DecisionApplyGap::NotNow)?;
         Ok(ApplyWork {
             store: recovery.store.clone(),
             port,
             authority,
             view: view.clone(),
             consumer: consumer.clone(),
-            proof: koru_delegate_core::FreshBotPolicyProof {
-                global,
-                routine: None,
-            },
+            proof: koru_delegate_core::FreshBotPolicyProof { global, routine },
         })
     }
 

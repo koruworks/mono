@@ -91,6 +91,7 @@ impl ScheduleEvents for RecordingScheduleEvents {
         &mut self,
         _schedule: ScheduleEventRef,
         definition: &koru_delegate_schedule::ScheduleDefinition,
+        kind: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
         let mut script = self.script.lock().unwrap();
         if script.fail_definition_prepare {
@@ -103,10 +104,9 @@ impl ScheduleEvents for RecordingScheduleEvents {
         }
         let event = EventId::mint();
         script.definitions.push(definition.clone());
-        script.calls.push(ScheduleEventCall::PrepareDefinition(
-            event,
-            schedule_definition_event(definition),
-        ));
+        script
+            .calls
+            .push(ScheduleEventCall::PrepareDefinition(event, kind));
         Ok(PreparedScheduleEvent { event })
     }
 

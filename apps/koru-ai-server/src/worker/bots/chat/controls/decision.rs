@@ -270,7 +270,58 @@ pub(super) fn answer(
     )
 }
 
+/// The barrier of the grant a Bot Routine runs under now, from the one reader
+/// (`routine_current_grant_of`) over its Bound creation in the Bot's home.
+/// Anything else (no such Routine, not Bound, another home) is not
+/// answerable: the card reads as no longer active.
+pub(in crate::worker) fn routine_grant_barrier(
+    repository: &Repository,
+    bot: &Bot,
+    schedule: koru_delegate_core::ScheduleId,
+) -> ApiResult<koru_delegate_core::RoutinePolicyBarrier> {
+    let owner = BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    let creation = repository
+        .bot_routine_creation(owner, bot.id, schedule)
+        .map_err(|_| tool_not_resumable())?
+        .ok_or_else(tool_not_resumable)?;
+    if creation.state != koru_ai_core::bots::BotRoutineCreationState::Bound
+        || creation.identity.home != bot.home_workspace
+    {
+        return Err(tool_not_resumable());
+    }
+    let current = repository
+        .routine_current_grant_of(&creation)
+        .map_err(|_| tool_not_resumable())?;
+    Ok(crate::worker::bots::policy::current_routine_barrier(
+        &creation.identity,
+        &current,
+    ))
+}
+
 impl WorkerState {
+    /// The Routine half of a decision's fresh proof: `None` for an
+    /// interactive decision; for a Routine decision, the barrier of the grant
+    /// the Routine runs under now, from the one reader (never today's Bot
+    /// settings). The delegate's ledger compares it with the decision's
+    /// binding and its own current row; this only says what is current.
+    pub(in crate::worker) fn decision_routine_proof(
+        &self,
+        bot: &Bot,
+        binding: &DecisionBindingV1,
+    ) -> ApiResult<Option<koru_delegate_core::RoutinePolicyBarrier>> {
+        let subject = match binding {
+            DecisionBindingV1::KoruEdit(v) => v.routine.as_ref(),
+            DecisionBindingV1::NativeApproval(v) => v.routine.as_ref(),
+        };
+        let Some(subject) = subject else {
+            return Ok(None);
+        };
+        routine_grant_barrier(&self.repository, bot, subject.provenance.schedule).map(Some)
+    }
+
     /// Prepare one card answer on the writer. `None` from the registry means
     /// the decision's receipt was never handed over: honestly not answerable.
     pub(super) fn prepare_decision_answer(
@@ -314,10 +365,13 @@ impl WorkerState {
         {
             return Err(tool_decision_conflict());
         }
-        // Routine Koru edits and Routine native decisions are refused (O105, O125).
-        if routine {
+        // A Routine Koru edit is answered, under the Routine's own current
+        // grant (P4.3 section 4.10). A native prompt on a Routine Run is not
+        // a decision (O125) and stays refused.
+        if routine && !koru {
             return Err(tool_not_resumable());
         }
+        let routine = self.decision_routine_proof(bot, &receipt.binding)?;
         let choice = card_choice(
             &receipt.binding,
             decision.choice.as_deref(),
@@ -364,10 +418,7 @@ impl WorkerState {
         };
         let command = DelegateCommand::AnswerDecision {
             answer,
-            proof: FreshBotPolicyProof {
-                global,
-                routine: None,
-            },
+            proof: FreshBotPolicyProof { global, routine },
             boot: receipt.deadline.created_boot,
         };
         super::super::preparation::encoded_size(&command).map_err(ai_failure)?;

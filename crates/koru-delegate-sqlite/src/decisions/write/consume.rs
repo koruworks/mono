@@ -75,10 +75,20 @@ pub(crate) fn consume_on(
     )?;
     clock(&old.receipt, boot, now)?;
     let admitted = authority::current_policy(tx, &old.receipt.binding, proof)?;
+    // Binding and proof carry the same Routine, or neither does. A Routine
+    // edit is consumed under the Routine's own grant; an interactive proof
+    // never consumes it, and a Routine proof never consumes an interactive one.
     require(
-        binding.routine.is_none()
-            && proof.routine.is_none()
-            && admitted.active_elapsed_at(now) < crate::BOT_ACTIVE_BUDGET_MS,
+        match (&binding.routine, &binding.routine_policy, &proof.routine) {
+            (None, None, None) => true,
+            (Some(subject), Some(bound), Some(offered)) => {
+                offered.owner == bound.owner
+                    && offered.bot == bound.bot
+                    && offered.schedule == bound.schedule
+                    && offered.schedule == subject.provenance.schedule
+            }
+            _ => false,
+        } && admitted.active_elapsed_at(now) < crate::BOT_ACTIVE_BUDGET_MS,
     )?;
     let resume = old.resume.as_ref().ok_or(BotLedgerError::Fenced)?;
     require(matches!(
@@ -111,7 +121,23 @@ pub(crate) fn consume_on(
                 }),
     )?;
     let (policy, routine) = crate::native_results::current_composite(tx, &admitted, proof)?;
-    require(routine.is_none())?;
+    // The lease is taken with the Routine policy the decision was bound to:
+    // the current Routine policy must equal the binding's `routine_policy`
+    // (request, grant revision and payload digest), exactly as the global
+    // policy was compared by `current_policy` above. A changed grant revision
+    // makes the answer stale here.
+    require(match (&binding.routine_policy, &routine) {
+        (None, None) => true,
+        (Some(bound), Some(current)) => {
+            current.owner == bound.owner
+                && current.bot == bound.bot
+                && current.schedule == bound.schedule
+                && current.request == bound.request
+                && current.grant_revision == bound.grant_revision.get()
+                && current.payload_digest == bound.digest
+        }
+        _ => false,
+    })?;
     crate::native_results::insert_prepared_on(tx, request, now)?;
     let lease = crate::native_results::hold_lease_on(tx, &request.key, policy, routine, now)?;
     tx.execute("INSERT INTO native_decision_leases(run_id,operation_id,decision_id,binding_digest,consumer_attempt_id,consumer_generation,consumer_turn_id,consumed_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",params![expected.run.to_storage(),request.key.operation_id.to_string(),expected.decision.to_storage(),expected.binding_digest.as_bytes().as_slice(),attempt.to_storage(),generation.get(),acknowledgment.turn.to_string(),now]).map_err(sql)?;

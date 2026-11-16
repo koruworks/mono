@@ -338,20 +338,28 @@ impl BusScheduleEvents {
             event_id: record.event,
             occurred_at_ms: definition.effective_at_ms,
         };
-        let expected = match schedule_definition_event(definition) {
-            ScheduleDefinitionEvent::Updated => chain.updated(
+        // The stored fact says which event this row is. An `updated` row
+        // matches its revision whatever the lifecycle (an edit of a paused
+        // Routine stays paused); a `paused` row needs the definition's own
+        // pause reason. The stamp binds either to this exact revision's
+        // effective time, so another mutation at the same revision differs.
+        let expected = match (record.fact, schedule_definition_event(definition)) {
+            (SchedulePublicationFact::Updated { .. }, _) => chain.updated(
                 stamp,
                 ScheduleUpdated {
                     revision: definition.revision,
                 },
             ),
-            ScheduleDefinitionEvent::Paused(reason) => chain.paused(
-                stamp,
-                SchedulePaused {
-                    revision: definition.revision,
-                    reason,
-                },
-            ),
+            (SchedulePublicationFact::Paused { .. }, ScheduleDefinitionEvent::Paused(reason)) => {
+                chain.paused(
+                    stamp,
+                    SchedulePaused {
+                        revision: definition.revision,
+                        reason,
+                    },
+                )
+            }
+            _ => return Ok(false),
         };
         Ok(stored == expected)
     }
@@ -948,8 +956,19 @@ impl ScheduleEvents for BusScheduleEvents {
         &mut self,
         schedule: ScheduleEventRef,
         definition: &ScheduleDefinition,
+        event: ScheduleDefinitionEvent,
     ) -> PortResult<PreparedScheduleEvent> {
-        let fact = match schedule_definition_event(definition) {
+        // The kind is the caller's fact. A `paused` event must be the
+        // definition's own pause; an `updated` one may leave it paused.
+        if matches!(event, ScheduleDefinitionEvent::Paused(_))
+            && event != schedule_definition_event(definition)
+        {
+            return Err(Self::error(
+                "schedule_event_conflict",
+                "a paused event needs the definition's own pause reason",
+            ));
+        }
+        let fact = match event {
             ScheduleDefinitionEvent::Updated => SchedulePublicationFact::Updated {
                 revision: definition.revision,
             },
@@ -986,7 +1005,7 @@ impl ScheduleEvents for BusScheduleEvents {
         })?;
         let chain = ScheduleChain::rejoin(&self.ctx, Self::chain_ref(schedule), root.event);
         let stamp = Stamp::fresh(definition.effective_at_ms);
-        let envelope = match schedule_definition_event(definition) {
+        let envelope = match event {
             ScheduleDefinitionEvent::Updated => chain.updated(
                 stamp,
                 ScheduleUpdated {

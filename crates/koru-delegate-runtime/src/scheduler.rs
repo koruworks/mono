@@ -530,7 +530,11 @@ impl ScheduleCoordinator {
             workspace,
             document,
         };
-        let prepared = self.events.prepare_definition(reference, &definition)?;
+        let prepared = self.events.prepare_definition(
+            reference,
+            &definition,
+            crate::schedule_definition_event(&definition),
+        )?;
         handle.commit(&mut |document| {
             if self
                 .mutation_header(location, &expected, &document.header()?)
@@ -640,6 +644,7 @@ impl ScheduleCoordinator {
                 document,
             },
             &definition,
+            crate::schedule_definition_event(&definition),
         )?;
         handle.commit(&mut |document| {
             let route = self
@@ -1705,7 +1710,11 @@ fn pause(
         .ok_or(ScheduleDocumentError::RevisionExhausted)?;
     definition.effective_at_ms = now_ms.max(definition.effective_at_ms.saturating_add(1));
     definition.lifecycle = ScheduleLifecycle::Paused { reason };
-    let prepared = events.prepare_definition(schedule, &definition)?;
+    let prepared = events.prepare_definition(
+        schedule,
+        &definition,
+        crate::schedule_definition_event(&definition),
+    )?;
     handle.commit(&mut |document| document.update_definition(device, &definition))?;
     events.ready(prepared)
 }

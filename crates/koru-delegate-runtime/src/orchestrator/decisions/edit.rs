@@ -74,10 +74,6 @@ impl Orchestrator {
         if provenance.owner != fence.owner || provenance.bot != fence.bot {
             return Err(refused("bot_fenced"));
         }
-        // O105: no Routine setup-grant bypass through a one-use edit.
-        if provenance.routine.is_some() {
-            return Err(refused("bot_routine_decision_unsupported"));
-        }
         let ActorRef::Person { profile } = submission.request.requested_by else {
             return Err(refused("bot_fenced"));
         };
@@ -87,6 +83,10 @@ impl Orchestrator {
             return Err(refused(code));
         }
         let global_policy = self.decision_global_policy(proof)?;
+        // A Routine Run's question is bound to the Routine itself and to the
+        // grant it runs under now (P4.3 section 4.10): never the Bot's
+        // ordinary-chat access, and never a change to the grant.
+        let (routine, routine_policy) = self.decision_routine_binding(fence, provenance, proof)?;
         let binding = DecisionBindingV1::KoruEdit(DecisionEditBinding {
             version: DecisionVersionV1,
             owner: fence.owner,
@@ -97,7 +97,7 @@ impl Orchestrator {
             origin_session: fence.session,
             origin_turn: turn,
             submission: provenance.submission,
-            routine: None,
+            routine,
             human_profile: profile,
             workspace: submission.workspace,
             target: edit.target,
@@ -111,7 +111,7 @@ impl Orchestrator {
                 .map_err(|_| refused("bot_invalid"))?,
             captured_policy: submission.policy.clone(),
             global_policy,
-            routine_policy: None,
+            routine_policy,
         });
         let base = self.decision_base(run)?;
         let record = self
@@ -255,6 +255,58 @@ impl Orchestrator {
             return Err(refused("bot_conflict"));
         }
         Ok(Some(record))
+    }
+
+    /// The Routine subject and the current Routine policy a Routine Run's
+    /// binding carries; `(None, None)` for an interactive Run. The subject
+    /// comes from the ledger's sole decoders, the policy from the retained
+    /// current row, which must be exactly the one the proof offers.
+    fn decision_routine_binding(
+        &mut self,
+        fence: &BotExecutionFence,
+        provenance: &koru_delegate_core::BotProvenance,
+        proof: &FreshBotPolicyProof,
+    ) -> Result<
+        (
+            Option<koru_delegate_core::decisions::DecisionRoutineSubject>,
+            Option<koru_delegate_core::decisions::DecisionRoutinePolicy>,
+        ),
+        RunError,
+    > {
+        let subject = self
+            .bot_ledger()?
+            .decision_routine_subject(fence.owner, fence.run)?;
+        let (subject, offered) = match (provenance.routine, subject, proof.routine.as_ref()) {
+            (None, None, None) => return Ok((None, None)),
+            (Some(admitted), Some(subject), Some(offered))
+                if subject.provenance == admitted
+                    && offered.owner == fence.owner
+                    && offered.bot == fence.bot
+                    && offered.schedule == admitted.schedule =>
+            {
+                (subject, offered)
+            }
+            // A Routine Run without its Routine proof (or the reverse) is
+            // never bound as an interactive question.
+            _ => return Err(refused("bot_policy_stale")),
+        };
+        let current = self
+            .native_ledger()?
+            .current_routine_native_policy(fence.owner, fence.bot, offered.schedule)?
+            .ok_or_else(|| refused("bot_policy_unavailable"))?;
+        if current.request != offered.request || current.grant_revision != offered.grant_revision {
+            return Err(refused("bot_policy_stale"));
+        }
+        let policy = koru_delegate_core::decisions::DecisionRoutinePolicy {
+            owner: fence.owner,
+            bot: fence.bot,
+            schedule: offered.schedule,
+            request: current.request,
+            grant_revision: DecisionRevision::new(current.grant_revision)
+                .map_err(|_| refused("bot_policy_unavailable"))?,
+            digest: current.payload_digest,
+        };
+        Ok((Some(subject), Some(policy)))
     }
 
     pub(super) fn decision_global_policy(

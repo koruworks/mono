@@ -106,11 +106,17 @@ fn decision_prepare_requires_real_selected_write_denial() {
     assert_eq!(h.count("bot_decisions"), 0);
 }
 #[test]
-fn decision_prepare_refuses_routine_edit_grant_bypass_but_keeps_native_subject() {
+fn decision_prepare_routine_edit_asks_under_its_own_grant_and_keeps_native_subject() {
+    // P4.3 section 4.10: a Routine edit its own grant refuses is a question
+    // bound to that grant (the `routine_decision_` cohort covers the rest).
     let mut h = Harness::new();
     h.routine(true);
-    assert!(matches!(h.prepare_at(1000), Err(BotLedgerError::Fenced)));
-    assert_eq!(h.count("bot_decisions"), 0);
+    let asked = h.prepare();
+    assert!(
+        matches!(asked.receipt.binding,DecisionBindingV1::KoruEdit(ref v) if v.routine.is_some() && v.routine_policy.is_some())
+    );
+    let mut h = Harness::new();
+    h.routine(true);
     h.native();
     let saved = h.prepare();
     assert_eq!(saved.receipt.state.kind, DecisionKind::NativeApproval);

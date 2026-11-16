@@ -450,6 +450,14 @@ impl BotDelegatePort for DecisionOwner {
                 }
                 Err(refusal("bot_native_unavailable"))
             }
+            // A Routine Run's ordinary path also synchronizes its grant.
+            BotCommand::SynchronizeRoutinePolicy { barrier } => {
+                s.log.push("routine_sync");
+                Ok(BotReply::RoutinePolicyBarrier {
+                    barrier,
+                    state: koru_delegate_core::BotPolicyBarrierState::Effective,
+                })
+            }
             _ => panic!("unexpected command"),
         }
     }
@@ -1408,4 +1416,126 @@ fn a_verified_reply_without_the_decisions_replay_keeps_todays_answer() {
         "no decision replay outside its context"
     );
     assert_eq!((s.consumes, s.leases), (1, 1));
+}
+
+/// Make the fixture's Run a Routine Run whose own grant (captured and
+/// current) is the fixture's policy: no selected page.
+fn as_routine(f: &mut Fixture) {
+    use koru_delegate_core::{
+        RoutineDefinitionIdentity, RoutineDigest32, RoutinePolicyBarrier, RoutineProvenance,
+        ScheduleId,
+    };
+    let schedule = ScheduleId::from_uuid(Uuid::new_v4());
+    f.provenance.routine = Some(RoutineProvenance {
+        schedule,
+        occurrence_ms: 900,
+        definition: RoutineDefinitionIdentity {
+            revision: 2,
+            digest: RoutineDigest32::from_bytes([5; 32]),
+            owner_handoff: None,
+        },
+        grant_revision: 1,
+    });
+    f.policy.evidence.proof.routine = Some(RoutinePolicyBarrier {
+        owner: f.provenance.owner,
+        bot: f.provenance.bot,
+        schedule,
+        request: Uuid::new_v4().try_into().unwrap(),
+        grant_revision: 1,
+        policy: f.owner.policy.clone(),
+        effects_allowed: true,
+    });
+}
+
+/// P4.3 section 4.10. With decisions switched off (this build) a Routine
+/// Run's edit outside its grant behaves exactly as before and exactly as a
+/// manual Run's: the ordinary lease path, its existing refusal, and no
+/// decision command. Only an opened gate asks, once, for the Routine too.
+#[test]
+fn a_routine_runs_denied_edit_is_unchanged_while_decisions_are_off_and_asks_when_on() {
+    assert!(!super::super::super::decision::EDIT_DECISIONS_AVAILABLE);
+    let ordinary = vec![
+        "reconcile",
+        "native_lookup",
+        "sync",
+        "effect_fence",
+        "ordinary_prepare",
+    ];
+    let mut logs = Vec::new();
+    for routine in [false, true] {
+        let mut f = Fixture::new();
+        let arguments = denied_edit(&f);
+        if routine {
+            as_routine(&mut f);
+        }
+        let owner = DecisionOwner::new(&f);
+        owner.script().ordinary_refusal = true;
+        assert_eq!(
+            edit_with(
+                &f,
+                &f.policy,
+                &owner,
+                arguments.clone(),
+                EditDecisions::production()
+            )
+            .unwrap_err()
+            .code,
+            "native_owner_unavailable",
+            "routine={routine}"
+        );
+        let s = owner.script();
+        assert_eq!(s.created, 0, "no question, routine={routine}");
+        assert!(s.proposals.is_empty());
+        logs.push(s.log.clone());
+        drop(s);
+        assert_eq!(text_count(&f, &arguments, "Needs approval"), 0);
+    }
+    assert_eq!(logs[0], ordinary);
+    // The same path; a Routine Run additionally synchronizes its own grant
+    // there, as it did before this change. No boot probe, no decision.
+    assert_eq!(
+        logs[1]
+            .iter()
+            .filter(|step| **step == "routine_sync")
+            .count(),
+        1
+    );
+    logs[1].retain(|step| *step != "routine_sync");
+    assert_eq!(logs[1], logs[0], "a Routine Run takes the same path");
+
+    // Gate opened: the Routine Run's denial becomes one decision.
+    let mut f = Fixture::new();
+    let arguments = denied_edit(&f);
+    as_routine(&mut f);
+    let owner = DecisionOwner::new(&f);
+    let answer = edit(&f, &owner, arguments.clone()).unwrap_err();
+    assert_eq!(answer.code, "permission_pending");
+    let s = owner.script();
+    assert_eq!(s.created, 1, "one question");
+    assert!(s.log.contains(&"prepare_decision"));
+    assert!(!s.log.contains(&"ordinary_prepare"));
+    drop(s);
+    assert_eq!(text_count(&f, &arguments, "Needs approval"), 0);
+
+    // A page the Routine's own grant selects is not a denial even when open.
+    let mut f = Fixture::new();
+    let arguments = denied_edit(&f);
+    as_routine(&mut f);
+    let document: DocumentId = serde_json::from_value(arguments["document_id"].clone()).unwrap();
+    f.policy
+        .evidence
+        .proof
+        .routine
+        .as_mut()
+        .unwrap()
+        .policy
+        .selected_pages
+        .insert(document);
+    let owner = DecisionOwner::new(&f);
+    owner.script().ordinary_refusal = true;
+    assert!(edit(&f, &owner, arguments).is_err());
+    let s = owner.script();
+    assert!(!s.log.contains(&"hello") && !s.log.contains(&"prepare_decision"));
+    assert!(s.log.contains(&"ordinary_prepare"));
+    assert_eq!(s.created, 0);
 }

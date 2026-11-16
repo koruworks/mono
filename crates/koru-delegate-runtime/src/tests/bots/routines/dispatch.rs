@@ -705,3 +705,35 @@ fn routine_dispatch_restart_reattaches_retained_session_without_new_attempt_or_i
     );
     assert_eq!(count_submits(&h), 1);
 }
+
+/// O125, kept by P4.3 section 4.10: a native prompt on a Routine Run is not
+/// a decision. Only its Koru page-edit question may be asked and answered.
+#[test]
+fn routine_decision_native_prompt_on_a_routine_run_is_still_refused() {
+    let (mut h, p, fresh) = linked();
+    let device = p.slot.owner.device;
+    let mut fence = start(&mut h, &p, &fresh);
+    observe(&mut h, &fence);
+    fence.turn = Some(
+        h.orchestrator
+            .bot_begin_turn(&fence, device, p.submission.input.clone())
+            .unwrap(),
+    );
+    let approval = super::super::decisions::prompt(
+        &mut h,
+        &fence,
+        vec![
+            super::super::decisions::choice("allow"),
+            super::super::decisions::choice("reject"),
+        ],
+    );
+    let boot = h.orchestrator.delegate_boot();
+    let error = h
+        .orchestrator
+        .bot_prepare_native_decision(&fence, device, approval, &fresh, boot)
+        .unwrap_err();
+    assert!(
+        matches!(&error, RunError::Port(port) if port.code == "bot_routine_decision_unsupported"),
+        "{error:?}"
+    );
+}

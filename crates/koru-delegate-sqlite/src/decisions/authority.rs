@@ -225,13 +225,16 @@ pub(super) fn selected_denial(
     let DecisionBindingV1::KoruEdit(v) = binding else {
         return Ok(());
     };
-    // v2's captured/current policy is the independent Routine setup grant.
-    // Native leases do not use global selected-page access for that subject;
-    // do not invent a denial or turn its grant refusal into a one-use bypass.
-    if proof.routine.is_some() || v.routine.is_some() {
-        return Err(BotLedgerError::Fenced);
-    }
-    let current = &proof.global.policy;
+    // A Routine Run's captured and current policy is the Routine's own grant
+    // (v2), never the Bot's ordinary-chat access: the question is judged
+    // against that grant alone (P4.3 section 4.10, the reviewed exception
+    // O105 asked for). The binding, its Routine policy and the proof must all
+    // name the Routine, or none of them; a mixed subject is fenced.
+    let (current, routine) = match (&v.routine, &v.routine_policy, &proof.routine) {
+        (None, None, None) => (&proof.global.policy, false),
+        (Some(_), Some(_), Some(current)) => (&current.policy, true),
+        _ => return Err(BotLedgerError::Fenced),
+    };
     require(
         v.workspace == current.workspace
             && v.workspace == current.destination
@@ -240,10 +243,65 @@ pub(super) fn selected_denial(
     let permits = |p: &CapturedBotPolicy| {
         p.access == BotAccess::Workspace || p.selected_pages.contains(&v.target)
     };
-    if (permits(&v.captured_policy) && permits(current))
-        || crate::native_results::created_page_on(conn, admitted, v.workspace, v.target)?
-    {
+    // An interactive Run asks when either side refuses the page, as its lease
+    // would. A Routine asks only when both its captured grant and its current
+    // grant refuse it: a one-use answer never papers over a grant that changed
+    // under the Run (which an access edit cannot do while the Run is
+    // unsettled; this is the last line of defence). A page this subject
+    // created (for a Routine: the same Schedule, O83) needs no question.
+    let granted = if routine {
+        permits(&v.captured_policy) || permits(current)
+    } else {
+        permits(&v.captured_policy) && permits(current)
+    };
+    if granted || crate::native_results::created_page_on(conn, admitted, v.workspace, v.target)? {
         return Err(BotLedgerError::Fenced);
     }
     Ok(())
+}
+
+/// The complete retained Routine subject a decision binding of this Run must
+/// carry (P4.3 section 4.10): its Routine provenance, the claim that admitted
+/// this occurrence and the Routine's route, each through its sole decoder.
+/// `None` for an interactive Run. History only: it grants nothing, and the
+/// writer repeats every comparison against the binding (`retained`).
+fn routine_subject(
+    conn: &Connection,
+    subject: BotOwner,
+    run: RunId,
+) -> Result<Option<DecisionRoutineSubject>, BotLedgerError> {
+    owner(conn, subject, run)?;
+    routines::bounded_admission(conn, run)?;
+    let admitted = routines::native_admission(conn, run)?;
+    match (
+        admitted.submission_version,
+        admitted.submission.provenance.routine,
+    ) {
+        (1, None) => {
+            routines::deny_run_metadata(conn, run)?;
+            Ok(None)
+        }
+        (2, Some(provenance)) => {
+            let claim = routines::validate_admission(conn, &admitted)?;
+            let route = routines::read(conn, provenance.schedule)?.ok_or(BotLedgerError::Fenced)?;
+            Ok(Some(DecisionRoutineSubject {
+                provenance,
+                claim: claim.claim,
+                route,
+            }))
+        }
+        _ => Err(BotLedgerError::Fenced),
+    }
+}
+
+impl RunsDb {
+    /// [`routine_subject`]: the Routine subject of a Routine Run's decision
+    /// binding, or `None` for an interactive Run. Read-only.
+    pub fn decision_routine_subject(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<DecisionRoutineSubject>, BotLedgerError> {
+        routine_subject(self.conn(), owner, run)
+    }
 }

@@ -60,6 +60,16 @@ impl BotLedger for RecordingStore {
             .unwrap()
             .decision_retained_effect(owner, run, decision)
     }
+    fn decision_routine_subject(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<koru_delegate_core::decisions::DecisionRoutineSubject>, BotLedgerError> {
+        self.inner
+            .lock()
+            .unwrap()
+            .decision_routine_subject(owner, run)
+    }
     fn decision_other_effects_pending(
         &self,
         owner: BotOwner,

@@ -117,9 +117,6 @@ impl Orchestrator {
         if submission.provenance.owner != owner || submission.request.run != run {
             return Err(refused("bot_fenced"));
         }
-        if submission.provenance.routine.is_some() {
-            return Err(refused("bot_routine_decision_unsupported"));
-        }
         let retained = self
             .bot_ledger()?
             .bot_decision(owner, run, expected.decision)?
@@ -187,7 +184,8 @@ impl Orchestrator {
     /// A fresh proof of the Bot's current global policy, from the snapshot
     /// the AI owner synchronized, rechecked against the retained ledger row.
     /// Usable while decision publication owns the handle (the ordinary
-    /// execution-policy read refuses then); a Routine Run refuses (O125).
+    /// execution-policy read refuses then). For a Routine Run it also carries
+    /// the Routine's current policy, after the Linked claim check.
     pub(in crate::orchestrator) fn decision_policy_proof(
         &mut self,
         run: RunId,
@@ -197,10 +195,10 @@ impl Orchestrator {
             .bot_admission(run)?
             .ok_or(RunError::UnknownRun)?;
         self.linked_routine_admission(&admitted)?;
+        // A Routine Run's proof carries its current Routine policy as well:
+        // `current_policy_for_submission` composes it from the Routine's own
+        // synchronized barrier and the retained current row.
         let provenance = &admitted.submission.provenance;
-        if provenance.routine.is_some() {
-            return Err(refused("bot_routine_decision_unsupported"));
-        }
         let current = self
             .native_ledger()?
             .current_native_policy(provenance.owner, provenance.bot)?
@@ -305,7 +303,9 @@ impl Orchestrator {
             .ok_or(RunError::UnknownRun)?;
         let submission = admission.submission;
         let provenance = submission.provenance;
-        if provenance.owner != owner || provenance.routine.is_some() {
+        // A Routine Run's successor launches under the same admission, and
+        // so the same Routine provenance, as its origin.
+        if provenance.owner != owner {
             return Err(refused("bot_fenced"));
         }
         let request = submission.request;

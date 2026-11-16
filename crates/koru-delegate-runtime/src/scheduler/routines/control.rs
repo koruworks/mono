@@ -287,7 +287,19 @@ impl ScheduleCoordinator {
             lifecycle: lifecycle.clone(),
         };
         let device = self.device;
-        let prepared = self.events.prepare_definition(location, &definition)?;
+        // The event is the control's own fact, not the resulting lifecycle:
+        // an Edit of a paused Routine leaves it paused and is `updated`.
+        let event = match &control {
+            RoutineControl::Enable | RoutineControl::Edit { .. } => {
+                crate::ScheduleDefinitionEvent::Updated
+            }
+            RoutineControl::Pause => {
+                crate::ScheduleDefinitionEvent::Paused(SchedulePauseReason::Manual)
+            }
+        };
+        let prepared = self
+            .events
+            .prepare_definition(location, &definition, event)?;
         let mut written = None;
         let mut route_changed = false;
         let committed = handle.commit(&mut |document| {
