@@ -67,6 +67,21 @@ class AppViewModel(private val container: AppContainer) : ViewModel() {
     fun accountAction(intent: app.koru.mobile.services.AccountIntent, locale: String, ownerScope: Long, profile: ProfileId? = null, accountId: String? = null, profiles: List<ProfileId> = emptyList()) =
         container.account.act(intent, ownerScope, locale, profile, accountId, profiles)
     val cloudSync = container.account.cloudSyncState
+    val cloudStorage = container.account.cloudStorageState
+    fun cloudStorageVisible(visible: Boolean) = container.account.cloudStorageVisible(visible)
+    fun refreshCloudStorage() = container.account.refreshCloudStorage()
+    val cloudInventory = container.account.cloudInventoryState
+    fun cloudInventoryVisible(visible: Boolean) = container.account.cloudInventoryVisible(visible)
+    fun cloudInventoryFirst(owner: Long) = container.account.cloudInventoryFirst(owner)
+    fun cloudInventoryNext(owner: Long) = container.account.cloudInventoryNext(owner)
+    fun cloudInventoryPrevious(owner: Long) = container.account.cloudInventoryPrevious(owner)
+    fun cloudInventoryWorkspaces(owner: Long) = container.account.cloudInventoryWorkspaces(owner)
+    fun cloudInventoryDocuments(row: app.koru.mobile.services.CloudWorkspaceRow, owner: Long) = container.account.cloudInventoryDocuments(row, owner)
+    internal val cloudCopy = container.account.cloudCopyState
+    internal fun openCloudCopy(row: app.koru.mobile.services.CloudDocumentRow, epoch: app.koru.mobile.services.CloudDocumentEpoch, owner: Long) = container.account.openCloudCopy(row, epoch, owner)
+    internal fun closeCloudCopy() = container.account.closeCloudCopy()
+    internal fun reloadCloudCopy(key: app.koru.mobile.ui.editor.CloudCopyViewKey) = container.account.reloadCloudCopy(key)
+    internal fun removeCloudFile(key: app.koru.mobile.ui.editor.CloudCopyViewKey, node: BlockId) = container.account.removeCloudFile(key, node)
     fun setProfileCloudSync(profile: ProfileId, enabled: Boolean, ownerScope: Long) =
         container.account.setCloudSync(profile, enabled, ownerScope)
     /** **How far one Profile's Cloud sync has got**, for the Sync status

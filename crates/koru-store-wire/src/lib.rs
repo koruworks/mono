@@ -63,6 +63,7 @@ pub use profile_deletion::*;
 pub mod bundle;
 mod creation;
 pub use creation::{CreateProfileWithWorkspace, CreatedProfile, FirstWorkspace};
+pub mod cloud_document;
 pub mod internal;
 pub mod profile_lifecycle;
 pub mod readings;

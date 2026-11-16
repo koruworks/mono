@@ -233,7 +233,7 @@ impl SharingEvidence {
 ///   defaults are applied separately through the Store initializer.
 /// - Existing defaults are also promoted when a scope is bound. This seed
 ///   handles new rows; `Store::enable_linked_defaults` handles older rows,
-///   preserving explicit choices (ADR-000-syncchoices).
+///   preserving explicit choices (ADR-498-syncchoices).
 ///
 /// It lands as a default (`explicit_choice = false`), so a person who then
 /// sets that subject Local-only outranks it exactly as they outrank every

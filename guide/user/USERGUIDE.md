@@ -146,8 +146,9 @@ returns the Profile to its existing device-to-device connection behavior.
 **The Koru Cloud page.** Click the cloud status at the bottom of the Profile
 popover to open **Manage › Koru Cloud** directly, including when Cloud is not
 set up yet. In the **Manage** tab, **Koru Cloud** under *This
-computer* in the nav (its *On* / *Off* says whether you subscribe) shows the
-subscription for your signed-in Koru account, from top to bottom:
+computer* in the nav (its *On* / *Off* says whether you have Cloud access) shows
+access for your signed-in Koru account, whether you signed in with email,
+Google, or Apple. From top to bottom:
 
 - **When Koru can't connect**, a card at the top says so, with **Try again**
   and **Continue offline**; your local Profiles stay available. A Profile's own
@@ -165,7 +166,7 @@ subscription for your signed-in Koru account, from top to bottom:
   you signed in with, a card under Account says *This device has Profiles from
   another account*, with **Create a new Profile with** your email, **Sign in
   with another Google Account**, and **Continue offline**.
-- **Not subscribed:** *One subscription covers every profile on this computer.
+- **No Cloud access or current subscription:** *One subscription covers every profile on this computer.
   Each signed-in profile chooses whether it syncs.*, the list of what Koru Cloud
   includes, **Subscribe to Koru Cloud** (the website's pricing page) and
   **Learn more**.
@@ -173,6 +174,11 @@ subscription for your signed-in Koru account, from top to bottom:
   profiles*, and **Manage subscription**, which opens the website's dashboard,
   where you can sign in and manage the plan. A scheduled cancellation remains
   manageable until it ends.
+- **Complimentary access:** *Subscribed · syncing 1 of 2 profiles*, just like a paid
+  account. An active grant enables desktop sync without a paid subscription. There is no
+  **Manage subscription** button unless you also have a subscription to manage.
+  An unpaid current subscription remains manageable but says *Cloud access is
+  inactive* when neither paid access nor a complimentary grant applies.
 - While the subscription is being checked, could not be checked (**Try
   again**), or you are signed out (**Sign in with Google**), the page says so in
   one line.
@@ -186,8 +192,8 @@ subscription for your signed-in Koru account, from top to bottom:
   says the same. [CONTRIBUTING.md](../../CONTRIBUTING.md) explains how to give a
   build a Koru Cloud.
 
-The subscription is checked again each time the page comes to the front, so
-return to Koru after changing the plan. This page reports billing status, not
+Cloud access is checked again each time the page comes to the front, so
+return to Koru after changing the plan or grant. This page reports access, not
 whether documents have finished syncing through Cloud.
 
 **Turning Cloud sync on.** Under **Which profiles sync** on the Koru Cloud
@@ -197,8 +203,9 @@ switch; switch it on and that Profile's workspaces sync through Koru Cloud:
 another device of yours receives them even when this one is closed. The row
 says what is happening underneath — turning on, connecting, or syncing via Koru
 Cloud. The Profile's own *Sign-in and sync* section offers **Sync off | P2P |
-Cloud** for the Profile and each Workspace. Cloud is only live for a Profile of the account
-you are signed in to and only while the subscription is current; otherwise it
+Cloud** for the Profile and each Workspace. Cloud is only live for a Profile of
+the account you are signed in to and only while that account has Cloud access;
+otherwise it
 is shown dimmed with the reason. A Profile that belongs to your account but
 is not linked to the Google Account you are signed in with reads *Not linked
 to this sign-in*: after you unlink a Google Account from a Profile, that is
@@ -1308,11 +1315,11 @@ wrong.
 | | |
 | --- | --- |
 | `Ctrl+T` | a new tab — a blank page, ready to type in |
-| `Ctrl+Shift+A` | open **Add…** — create a document or import content |
+| tab strip **+** | open the New menu and its submenus |
 | `Ctrl+W` | close this one — not a pinned tab; unpin or right-click Close |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | the next tab, or the previous |
 | `Ctrl+Shift+T` | reopen the tab closed last (a document or a terminal; this window only) |
-| `Ctrl+1` … `Ctrl+9` | the tab in that position |
+| `Ctrl+1` … `Ctrl+9` | the workspace in that position down the rail |
 
 **Open tabs stay when you switch workspace.** Every document you have open remains in the strip, whichever workspace it belongs to. **Selecting a tab only changes the page** — it does not move the active workspace or the Explore pane. To land Explore on the page under a tab, use **`Ctrl+Shift+E`** or right-click the tab → **Reveal in Explore View** (same chord): that switches to the tab's home workspace if needed, focuses the tree, and scrolls the file into view.
 
@@ -4020,7 +4027,7 @@ nothing behind.
 ## Shells and agents
 
 Koru runs terminal shells and coding agents as tabs, right beside your
-documents. Press **+** at the end of the tab strip (or **Ctrl+Shift+A**) and
+documents. Press **+** at the end of the tab strip and
 pick **Shell** or **Agents**. **Active** lists running sessions of that kind
 you can switch to; below it are the same new-profile rows as before
 (System, PowerShell, Bash; Claude, OpenCode, Codex, Grok, Kimi). The session
@@ -4029,6 +4036,14 @@ that are turned on and installed on this computer, then **Manage…**, which
 opens **Settings → Coding → Agent providers** to turn the others on or
 install them; with none installed it is **Manage…** alone. A shell that is
 not installed is shown greyed out with *Not installed*.
+
+The **+** opens a popover beneath the button. It lists **Welcome**,
+**Documents**, **Canvases**, **Shell**, **Agents**, **Delegate**, **Chats**,
+**Socials**, and **Import**, where those features are available. Submenus
+offer recent documents, running sessions, installed profiles, and import
+formats. Welcome reuses its existing tab. Opening the menu creates nothing.
+**Ctrl+N** opens the separate New launcher, with the same dimmed background
+as Search; **Ctrl+T** creates a document tab.
 
 The left navigator's fourth mode — the robot icon, beside Documents, Files
 and Tasks — is **Agents**: every running session, grouped by project. Click one to open or
@@ -4242,7 +4257,7 @@ column is not visible.
 
 ### Finding scheduled work
 
-Open the **Agents** column (`Ctrl+4`) and look under **Schedules**, beside the
+Open the **Agents** column and look under **Schedules**, beside the
 Projects and Runs sections. Each schedule is labeled by the name you gave it.
 Open its fold to see its rule in ordinary words — for example, *Every weekday
 at 09:00* — when it will fire next, which device owns it, and whether
@@ -4297,7 +4312,7 @@ are also named separately.
 ### Following a run you handed to an agent
 
 You handed a piece of work to an agent and walked away. **The Agents column
-(`Ctrl+4`) lists the runs of the workspace you are in**, under *Runs*,
+lists the runs of the workspace you are in**, under *Runs*,
 newest first, named by what you asked for. Choose one and it opens in a tab
 with four views:
 newest first.
@@ -5681,10 +5696,9 @@ nothing than tell you the wrong person deleted your page.
 ## More than one window
 
 A tab is a thing you opened; a **window is a whole workspace**. Most of the time
-a tab is what you want — `Ctrl+N` is for when you want two of them on screen at
-once.
+a tab is what you want; another window lets you keep two views on screen at once.
 
-`Ctrl+N` opens another window on the same workspace. Both show the same work,
+When two windows open the same workspace, both show the same work,
 each keeps its own tabs, caret and scroll position, and typing in either shows up
 in the other straight away — there is nothing to save or refresh.
 
@@ -5997,7 +6011,8 @@ as *Manage workspace* and names the pin action or its refusal reason.
 
 In a workspace window, click the **Profile tile** at the bottom of the rail,
 or press **`Ctrl+Alt+P`**, to open the Profile menu. The shortcut works with
-Explore folded and leaves it open or closed as you set it. Each Profile is
+Explore folded and leaves it open or closed as you set it. The tile's hover
+hint shows only the shortcut. Each Profile is
 one line; hover its name to see its email, or *On this computer*. Screen
 readers receive the same description. Selecting a different Profile closes
 the menu and opens its usable workspace, or its waiting/recovery screen.
@@ -6005,21 +6020,26 @@ the menu and opens its usable workspace, or its waiting/recovery screen.
 Each profile's **Manage** control works as a workspace's does: point at the
 row to show it, or press `→` on the lit profile to move onto it and `←` to
 come back; `Enter` or `Space` opens the **Manage** tab on that Profile. A
-screen reader announces it as *Manage profile*. **Manage profiles** in the
-heading opens Manage on the current Profile.
+screen reader announces it as *Manage profile*. The config icon at the right
+of the Profiles heading opens Manage on the current Profile. The matching
+icon in the Workspaces heading opens Manage workspaces.
 
-The fixed rows below the Profiles are **Add new profile**, **Global sync**
-and **App settings**. Add opens the combined Profile/workspace creation form.
-Global sync opens **Linked devices** in Manage. In both menus,
-the device icon opens **Linked devices** and the cloud icon opens **Koru Cloud**.
-When both channels are configured, each icon is a separate control. With neither
-configured, the computer icon opens Linked devices. These destinations reuse
-the existing Manage tab. The glyphs show configured channels independently of
-their health. App settings opens Settings and carries its shortcut in the tooltip.
-Each row is its own keyboard stop and closes the menu when activated.
+The fixed row below the Profiles is **Sync**, with one cloud icon. The icon
+and label form one selectable row that opens **Linked devices** in Manage.
+Hovering it shows no tooltip; its status remains available to screen readers.
+It is one keyboard stop and closes the menu when activated. Profile creation
+remains available in Manage. The heading's config button highlights only when
+the pointer reaches the button itself or the keyboard selects it.
 
-The rail's **Help (`?`)** opens **What's new** with a release timeline. The
-current version opens its GitHub release page in your browser; local builds open
+The rail's **Help (`?`)** opens directly onto the release timeline. The
+nightly row shows the date of its latest completed release-file upload, in
+your date format, followed by the stable releases and their publication dates.
+Release subtitles truncate to fit the menu. If a date is unavailable, it is omitted.
+If GitHub's API is unavailable or rate limited, Help reads its public release
+feed instead. In that fallback, nightly shows its latest release update date;
+stable dates are omitted because the feed does not give publication dates.
+If both sources fail, reopening Help retries the list.
+The current version opens its GitHub release page in your browser; local builds open
 the GitHub releases list. A build without bundled notes says
 *Not shipped with this build*. An offered update appears above it with its
 current stage and one available action: **Download**, **Download manually**,
@@ -6028,11 +6048,11 @@ progress without another action. Restart retains the existing separate install
 consent and terminal-session warning.
 
 Choosing **Later** in the update banner keeps the offer in Help and clears
-that offer's dot. Unread release notes can keep the dot lit; opening Help does
-not read them. Opening the release clears the notes' contribution for this
+that offer's dot. Opening Help clears the unread release-notes dot for this
 window, while an active update offer still contributes its own dot. **View all
 releases**, **Send feedback**, **Star us on GitHub** and
-**Follow on X** are the remaining Help rows.
+**Follow on X** are the remaining Help rows. The last three use feedback,
+GitHub and X icons.
 
 The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
@@ -6137,6 +6157,12 @@ not move out of reach.
 
 `↑` and `↓` walk the list, `Enter` picks, `Esc` closes it and leaves the
 keyboard where it was.
+
+Workspace and Profile menus leave four pixels between rows, including fixed
+workspace actions. Row highlights have vertical padding and equal side insets.
+A divider separates the Workspaces heading from its list; the Profiles heading
+has space below it. Workspaces stay in one list without a divider after pinned
+entries or before the bottom actions.
 
 Each row wears a small tile carrying that workspace's colour and emoji, so a
 list of six is something you recognise rather than something you read. A
@@ -6625,7 +6651,7 @@ paragraph ready for typing. The title remains unchanged.
 | `F7` | document only — page layout: Page → Narrow → Full |
 | `Ctrl+Shift+P` `N` `G` | document only — Page, Narrow, Full width |
 | `Ctrl+Shift+W` | close every tab — one welcome tab is left, never an empty window. Not listed in the tab menu |
-| `Ctrl+N` | open another window on this workspace |
+| `Ctrl+N` | open the New launcher |
 | `Alt+←` / `Alt+→` (macOS: `⌘[` / `⌘]`) | back / forward through the places you have been (or the mouse's thumb buttons) |
 | click a document pill | follow it in this tab |
 | `Ctrl+click` a document pill | open in a background tab |
@@ -6663,7 +6689,7 @@ restart.
 | `Enter` | open the row the keyboard is on |
 | `Ctrl+W` | close this tab — or the window, when it *is* one document |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | next tab / previous tab |
-| `Ctrl+1` … `Ctrl+9` | the tab in that position |
+| `Ctrl+1` … `Ctrl+9` | the workspace in that position down the rail |
 | drag a tab | reorder it |
 | right-click a tab → Move to New Window | move it into its own window |
 | the two arrows in `LIBRARY` | fold / unfold the whole tree |

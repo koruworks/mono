@@ -49,9 +49,12 @@ use koru_store_core::service::JoinUnit;
 /// as an opaque decode error on one request. Bumping makes the same mismatch
 /// surface at the greeting, which is where it was designed to surface and
 /// where it says what it is.
-pub const CONTROL_PROTOCOL_VERSION: u32 = 8;
+/// 9 adds bounded detached Cloud inspection Start/Poll/Cancel. It changes
+/// only this machine's control contract, never a Cloud or peer protocol.
+pub const CONTROL_PROTOCOL_VERSION: u32 = 9;
 pub const CONTROL_FRAME_VERSION: u8 = 1;
 pub mod cloud;
+pub mod inspection;
 pub const CONTROL_SERVICE: &str = "koru-store-sync";
 
 /// The peer-to-peer protocol number — the fourth schema version in the tree,
@@ -309,6 +312,22 @@ fn is_zero(value: &u32) -> bool {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ControlRequest {
+    StartCloudInspection {
+        control_session_id: ControlSessionId,
+        owner: inspection::InspectionOwner,
+        token: Uuid,
+        request: Box<inspection::InspectionRequest>,
+    },
+    PollCloudInspection {
+        control_session_id: ControlSessionId,
+        owner: inspection::InspectionOwner,
+        token: Uuid,
+    },
+    CancelCloudInspection {
+        control_session_id: ControlSessionId,
+        owner: inspection::InspectionOwner,
+        token: Uuid,
+    },
     ProvisionEndpoint {
         secret: EndpointSecretBytes,
     },
@@ -515,6 +534,10 @@ pub enum ControlRequest {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ControlResponse {
+    CloudInspectionStarted {
+        token: Uuid,
+    },
+    CloudInspection(inspection::InspectionPoll),
     Ok,
     AuthorizationApplied {
         session_id: ControlSessionId,
@@ -895,6 +918,42 @@ impl ControlHost {
             return rejected(HostError::StaleSession);
         }
         match request {
+            ControlRequest::StartCloudInspection {
+                control_session_id,
+                owner,
+                token,
+                request,
+            } => {
+                if control_session_id != session_id
+                    || !owner.validate()
+                    || !request.validate()
+                    || token.get_version_num() != 4
+                    || request.selection.account_id != owner.account_id.to_string()
+                {
+                    return rejected(HostError::CloudPermitMismatch);
+                }
+                // The daemon resolves the exact live ordinary session and
+                // queues the bounded selector after releasing this lock.
+                ControlResponse::Ok
+            }
+            ControlRequest::PollCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            }
+            | ControlRequest::CancelCloudInspection {
+                control_session_id,
+                owner,
+                token,
+            } => {
+                if control_session_id != session_id
+                    || !owner.validate()
+                    || token.get_version_num() != 4
+                {
+                    return rejected(HostError::CloudPermitMismatch);
+                }
+                ControlResponse::Ok
+            }
             ControlRequest::ProvisionEndpoint { secret } => {
                 let endpoint =
                     koru_device::ReplicationEndpointSecret::from_secret_bytes(*secret.expose())
@@ -1988,6 +2047,9 @@ pub fn is_cloud_request(request: &ControlRequest) -> bool {
     matches!(
         request,
         ControlRequest::ReplaceCloudContext { .. }
+            | ControlRequest::StartCloudInspection { .. }
+            | ControlRequest::PollCloudInspection { .. }
+            | ControlRequest::CancelCloudInspection { .. }
             | ControlRequest::InstallCloudSession { .. }
             | ControlRequest::FenceCloud { .. }
             | ControlRequest::CloudStatus { .. }

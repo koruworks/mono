@@ -224,6 +224,7 @@ impl ManageView {
         }
         if page != Page::Cloud {
             self.switcher.open = false;
+            self.c.cloud_inventory_mut().hide();
         }
         self.page = Some(page);
         match page {
@@ -709,6 +710,7 @@ impl View for ManageView {
 
     fn invalidate(&mut self) {
         self.engine = TextEngine::new();
+        self.laid.inventory = None;
         self.relayout();
         self.size_creation_form();
     }

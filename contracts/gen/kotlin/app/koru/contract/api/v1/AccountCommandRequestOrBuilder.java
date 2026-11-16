@@ -158,4 +158,128 @@ public interface AccountCommandRequestOrBuilder extends
    * @return The cloudSyncEnabled.
    */
   boolean getCloudSyncEnabled();
+
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return Whether the cloudWorkspaceId field is set.
+   */
+  boolean hasCloudWorkspaceId();
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return The cloudWorkspaceId.
+   */
+  java.lang.String getCloudWorkspaceId();
+  /**
+   * <pre>
+   * Inventory reads only. The exact Workspace/incarnation pair is required
+   * only for DOCUMENTS. Cursor is canonical URL-safe ASCII, at most 2048 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_workspace_id = 12 [json_name = "cloudWorkspaceId"];</code>
+   * @return The bytes for cloudWorkspaceId.
+   */
+  com.google.protobuf.ByteString
+      getCloudWorkspaceIdBytes();
+
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return Whether the cloudIncarnationId field is set.
+   */
+  boolean hasCloudIncarnationId();
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return The cloudIncarnationId.
+   */
+  java.lang.String getCloudIncarnationId();
+  /**
+   * <code>optional string cloud_incarnation_id = 13 [json_name = "cloudIncarnationId"];</code>
+   * @return The bytes for cloudIncarnationId.
+   */
+  com.google.protobuf.ByteString
+      getCloudIncarnationIdBytes();
+
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return Whether the cloudCursor field is set.
+   */
+  boolean hasCloudCursor();
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return The cloudCursor.
+   */
+  java.lang.String getCloudCursor();
+  /**
+   * <code>optional string cloud_cursor = 14 [json_name = "cloudCursor"];</code>
+   * @return The bytes for cloudCursor.
+   */
+  com.google.protobuf.ByteString
+      getCloudCursorBytes();
+
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return Whether the cloudDocumentSelectionJson field is set.
+   */
+  boolean hasCloudDocumentSelectionJson();
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The cloudDocumentSelectionJson.
+   */
+  java.lang.String getCloudDocumentSelectionJson();
+  /**
+   * <pre>
+   * Exact account/Workspace/incarnation/unit/document/head selection, &lt;=1024 UTF-8 bytes.
+   * </pre>
+   *
+   * <code>optional string cloud_document_selection_json = 15 [json_name = "cloudDocumentSelectionJson"];</code>
+   * @return The bytes for cloudDocumentSelectionJson.
+   */
+  com.google.protobuf.ByteString
+      getCloudDocumentSelectionJsonBytes();
+
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return Whether the cloudFileNodeId field is set.
+   */
+  boolean hasCloudFileNodeId();
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return The cloudFileNodeId.
+   */
+  java.lang.String getCloudFileNodeId();
+  /**
+   * <pre>
+   * REMOVE_CLOUD_FILE only. A native eligible attachment leaf, not a page purge.
+   * </pre>
+   *
+   * <code>optional string cloud_file_node_id = 16 [json_name = "cloudFileNodeId"];</code>
+   * @return The bytes for cloudFileNodeId.
+   */
+  com.google.protobuf.ByteString
+      getCloudFileNodeIdBytes();
 }

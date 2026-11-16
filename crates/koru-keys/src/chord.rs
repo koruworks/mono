@@ -89,7 +89,7 @@ pub const fn named(n: NamedKey) -> On {
 /// `0x1C`, and the three codes after it belong to `]`, `^` and `_`. Anything
 /// else printable is simply itself, which is what lets a chord be written on a
 /// key that is not a letter at all — and what lets digits arrive verbatim, so
-/// `Ctrl+1` can select a tab.
+/// `Ctrl+1` can select a workspace.
 pub fn letter(key: &Key, text: Option<&str>) -> Option<char> {
     fn from_char(ch: char) -> Option<char> {
         if ch.is_ascii_alphabetic() {

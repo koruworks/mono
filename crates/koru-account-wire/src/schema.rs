@@ -20,6 +20,11 @@ macro_rules! define_catalogue {
 }
 
 define_catalogue!(
+    cloud_plan::CloudPlanResponseV1,
+    cloud_plan::CloudUsageWorkspacesResponseV1,
+    cloud_plan::CloudUsageWorkspacesQueryV1,
+    cloud_plan::documents::CloudUsageDocumentsQueryV1,
+    cloud_plan::documents::CloudUsageDocumentsResponseV1,
     Version1,
     CloudSyncRouteV1,
     CloudSyncSeedV1,

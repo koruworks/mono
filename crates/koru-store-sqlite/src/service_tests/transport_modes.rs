@@ -1081,10 +1081,16 @@ fn answering_the_same_thing_twice_changes_nothing() {
     assert!(!again.profile.wrote());
     assert_eq!(again.workspaces_moved, 0);
     assert_eq!(
-        again.workspaces_left_alone, 3,
-        "they are explicit now, so the group leaves them alone",
+        again.workspaces_left_alone, 0,
+        "inherited Workspaces remain defaults rather than explicit choices",
     );
     for (workspace, revision) in children.iter().zip(revisions) {
+        assert!(
+            !store
+                .transport_mode(TransportSubject::Workspace(*workspace))
+                .unwrap()
+                .explicit_choice
+        );
         assert_eq!(
             store
                 .transport_mode(TransportSubject::Workspace(*workspace))

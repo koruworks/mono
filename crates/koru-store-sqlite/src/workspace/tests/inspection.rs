@@ -205,3 +205,5 @@ fn missing_causal_ancestors_remain_pending_and_uncommitted_memory_is_invisible()
     };
     assert_eq!(authority.name, "Awaiting ancestors");
 }
+
+mod document;

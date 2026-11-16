@@ -1629,14 +1629,17 @@ impl SettingsSurface {
             scene::stroke(scene_out, root, p.focus_ring, theme::BORDER_W, &shape);
         }
         let glass = self.engine.icon_layout(icons::SEARCH, 13.0);
-        scene::draw_layout(
-            scene_out,
-            root,
-            &glass,
-            r.x + 9.0,
-            r.y + (r.h - glass.height()) * 0.5,
-            Some(p.placeholder),
-        );
+        let placeholder = koru_i18n::t(self.lang, Key::SettingsSearchPlaceholder);
+        let label = self
+            .engine
+            .simple_layout(placeholder, InputStyle::search().style);
+        // TextInput centers its baseline; align the icon's visible ink to
+        // the label's visible ink rather than to the icon font's line box.
+        let label_y = koru_ui::text_field::baseline_centred_y(&label, r.y, r.h);
+        let (_, centered_label_y) = scene::centre_in(&label, r);
+        let icon_box = Rect::new(r.x + 9.0, r.y + label_y - centered_label_y, 13.0, r.h);
+        let (icon_x, icon_y) = scene::centre_in(&glass, icon_box);
+        scene::draw_layout(scene_out, root, &glass, icon_x, icon_y, Some(p.placeholder));
         let text = self.search_text_rect();
         self.search.draw(
             scene_out,
@@ -1648,7 +1651,7 @@ impl SettingsSurface {
                 border: None,
                 ..InputStyle::search()
             },
-            Some(koru_i18n::t(self.lang, Key::SettingsSearchPlaceholder)),
+            Some(placeholder),
             self.search_focused,
         );
     }

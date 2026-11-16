@@ -190,6 +190,7 @@ fn manager_wrapper_focus_refreshes_only_the_visible_cloud_card() {
                     koru_agent_wire::AccountOperationResult::CloudSubscription {
                         request_id,
                         current: Some(true),
+                        access: Some(true),
                     },
                 )
             });
@@ -412,10 +413,9 @@ fn file_rows_offer_open_in_app_and_save_as() {
     let file = koru_core::NodeId::new();
     v.explore.show_files();
     assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
-    assert_eq!(
-        v.menu.as_ref().unwrap().items(),
-        context_menu::file_items(1, None)
-    );
+    let mut expected = context_menu::file_items(1, None);
+    expected.extend([MenuAction::Divider, MenuAction::ViewExtractedText]);
+    assert_eq!(v.menu.as_ref().unwrap().items(), expected);
     // Opening a file's menu asks the shell what its reading offers (OCR Plan
     // 3.2); nothing was fetched to open it.
     assert_eq!(
@@ -462,9 +462,11 @@ fn a_files_note_goes_through_the_shell_either_way() {
     );
 
     assert!(v.open_node_menu(vec![file], (120.0, 300.0), false));
+    let mut expected = context_menu::file_items(1, Some(true));
+    expected.extend([MenuAction::Divider, MenuAction::ViewExtractedText]);
     assert_eq!(
         v.menu.as_ref().unwrap().items(),
-        context_menu::file_items(1, Some(true)),
+        expected,
         "the entry says the file has a note, so the menu offers to open it"
     );
     assert_eq!(
@@ -1723,10 +1725,10 @@ fn ctrl_w_closes_and_ctrl_t_opens() {
     assert_eq!(v.tabs().len(), before);
 }
 
-/// **Ctrl+N opens the New… launcher**, the `+` button's dialog; Ctrl+Shift+A,
+/// **Ctrl+N opens the New… launcher**; Ctrl+Shift+A,
 /// the old Add… chord, opens nothing.
 #[test]
-fn ctrl_n_opens_the_launcher_the_plus_opens() {
+fn ctrl_n_opens_the_launcher() {
     let (mut v, mut workspace) = container();
     assert!(v.launcher.is_none());
     let _ = v.key(&mut workspace.ws, &ch("a"), Some("a"), PRIMARY_SHIFT);
@@ -2226,17 +2228,41 @@ fn ctrl_shift_s_does_not_open_the_snapshot_prompt() {
 }
 
 #[test]
-fn ctrl_digits_select_by_position_and_a_missing_tab_is_ignored() {
+fn ctrl_digits_select_rail_workspaces_and_leave_tab_selection_alone() {
     let (mut v, mut workspace) = on_document();
+    let current = workspace.ws.id().unwrap();
+    let first = WorkspaceId::new();
+    let second = WorkspaceId::new();
+    let hidden = WorkspaceId::new();
+    let mut entries = vec![koru_core::WorkspaceEntry::new(hidden, "Not pinned", 0)];
+    for (index, id) in [first, second, current].into_iter().enumerate() {
+        let mut entry = koru_core::WorkspaceEntry::new(id, "Pinned", index as i64 + 1);
+        entry.pinned = true;
+        entries.push(entry);
+    }
+    v.set_pane_context(vec![], ProfileId::new(), entries, Some(current));
     let ws = &mut workspace.ws;
     v.select(0);
+    while View::take_pane_request(&mut v).is_some() {}
     assert!(v.key(ws, &ch("2"), Some("2"), PRIMARY));
-    assert_eq!(v.tabs().active(), 1);
+    assert!(
+        matches!(View::take_pane_request(&mut v), Some(PaneRequest::Switch(id)) if id == second)
+    );
+    assert_eq!(
+        v.tabs().active(),
+        0,
+        "workspace shortcuts do not select tabs"
+    );
+    assert!(v.key(ws, &ch("1"), Some("1"), PRIMARY));
+    assert!(
+        matches!(View::take_pane_request(&mut v), Some(PaneRequest::Switch(id)) if id == first)
+    );
     assert!(
         !v.key(ws, &ch("9"), Some("9"), PRIMARY),
-        "there is no ninth tab"
+        "there is no ninth workspace square"
     );
-    assert_eq!(v.tabs().active(), 1, "and the selection did not move");
+    assert!(View::take_pane_request(&mut v).is_none());
+    assert_eq!(v.tabs().active(), 0, "and the selection did not move");
 }
 
 /// Ctrl+Tab reaches the container as a direction, because the shell is the only
@@ -6695,30 +6721,24 @@ fn the_workspace_popover_owns_the_resize_grip_under_its_rows() {
         .find(|(row, _)| matches!(row, crate::panes::explore::PopoverRow::Workspace(0)))
         .expect("the workspace row");
     let grip = v.sidebar_grip();
-    // Where the row's pin and the grip overlap. Since ELEMENTS P4 a
-    // target owns its start edge and not its end edge, so the point is the
-    // middle of the overlap, not the pin's last line.
-    let pin = v
-        .explore
-        .workspace_row_parts(crate::panes::explore::PopoverRow::Workspace(0), rect)
-        .pin;
-    let left = pin.x.max(grip.x);
-    let right = (pin.x + pin.w).min(grip.x + grip.w);
+    // The row's right inset now covers the grip. The floating surface still
+    // owns this space, even though it is outside the pin's highlighted plate.
+    let left = rect.x.max(grip.x);
+    let right = (rect.x + rect.w).min(grip.x + grip.w);
     assert!(
         left < right,
-        "this test point is where the pin and the grip overlap"
+        "this test point is where the menu row and the grip overlap"
     );
     let x = (left + right) * 0.5;
     let y = rect.centre().1;
 
     v.mouse_move(x, y);
-    assert_eq!(View::cursor_icon(&v), koru_ui::cursor::PRESS);
+    assert_ne!(View::cursor_icon(&v), winit::window::CursorIcon::ColResize);
     v.mouse_down(&mut workspace.ws, x, y, false);
     assert!(
         v.sidebar_drag.is_none(),
         "the underlying grip did not start"
     );
-    assert!(v.explore.popover_open(), "pinning keeps the menu open");
     assert!(!matches!(v.tabs().active_tab().view, TabView::Manage(_)));
     let _ = workspace_id;
 }
@@ -8785,9 +8805,6 @@ fn every_caption_tooltip_takes_its_chord_from_the_registry() {
     for (hit, id) in [
         (Hit::ToggleSidebar, ShortcutId::ToggleExplore),
         (Hit::Search, ShortcutId::Search),
-        // The historical hit name is the caption `+`; it now opens Add rather
-        // than directly creating the Ctrl+T document.
-        (Hit::NewTab, ShortcutId::New),
     ] {
         let Some(tip) = v.caption_tooltip(hit) else {
             continue;
@@ -8931,16 +8948,13 @@ fn no_tooltip_shows_while_a_rail_view_is_carried() {
 }
 
 #[test]
-fn the_plus_tooltip_names_new_and_its_own_shortcut() {
+fn the_plus_tooltip_names_new_without_claiming_the_launcher_shortcut() {
     let (v, _workspace) = container();
     let tip = v
         .caption_tooltip(Hit::NewTab)
         .expect("the visible plus has a tooltip");
     assert_eq!(tip.label, "New…");
-    assert_eq!(
-        tip.shortcut,
-        Some(koru_keys::label_of(koru_keys::ShortcutId::New))
-    );
+    assert_eq!(tip.shortcut, None);
 }
 
 #[test]
@@ -14201,10 +14215,7 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                 v.explore
                     .advance_popover(std::time::Instant::now() + std::time::Duration::from_secs(1));
                 assert!(v.explore.popover_is(PopoverKind::Help));
-                assert!(
-                    !v.help_notes_read,
-                    "opening Help does not read release notes"
-                );
+                assert!(v.help_notes_read, "opening Help acknowledges release notes");
                 let area = v.explore_popover_area();
                 let rows = v.explore.popover_rects(area, v.viewport);
                 assert_eq!(
@@ -14221,10 +14232,12 @@ fn the_help_popover_lists_the_timeline_and_links_beside_the_rail() {
                     .with_page(area, v.viewport, |frame| {
                         let semantics = frame.semantics();
                         assert_eq!(semantics[0].role, Role::Menu);
-                        assert_eq!(semantics[0].children[0].role, Role::Heading);
-                        assert_eq!(
-                            semantics[0].children[0].name,
-                            Some(Name::Key(koru_i18n::Key::WhatsNew))
+                        assert_eq!(semantics[0].children[0].role, Role::MenuItem);
+                        assert!(
+                            semantics[0]
+                                .children
+                                .iter()
+                                .all(|item| item.role != Role::Heading)
                         );
                         assert!(
                             frame.node(Action::Offer.key()).is_none(),

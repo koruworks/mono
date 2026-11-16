@@ -17,6 +17,9 @@
 //! subscription read and the per-Profile read share a state struct rather than
 //! sitting in two modules that would have to agree.
 use super::*;
+pub(crate) mod inspection;
+pub(crate) mod inventory;
+mod storage;
 use crate::mainview::cloud_sync::Connection;
 use koru_agent_wire::CloudSyncProfile;
 use koru_i18n::{Key as TextKey, Lang};
@@ -29,6 +32,7 @@ pub enum Status {
     Loading,
     Subscribe,
     Manage,
+    Active,
     Unavailable,
 }
 pub(super) struct Pending {
@@ -47,7 +51,11 @@ pub(super) struct SyncPending {
     set: Option<(String, bool)>,
 }
 pub(super) struct State {
+    storage: storage::Storage,
+    pub(super) inventory: inventory::Inventory,
+    pub(super) inspection: inspection::Inspection,
     pub(super) status: Status,
+    access: Option<bool>,
     due: bool,
     pending: Option<Pending>,
     /// Per-Profile Cloud sync as the Agent last reported it. `None` until the
@@ -65,7 +73,11 @@ pub(super) struct State {
 impl Default for State {
     fn default() -> Self {
         Self {
+            storage: Default::default(),
+            inventory: Default::default(),
+            inspection: Default::default(),
             status: Status::Unknown,
+            access: None,
             due: true,
             pending: None,
             sync: None,
@@ -86,13 +98,26 @@ impl ProfilesController {
     pub fn cloud_status(&self) -> Status {
         self.cloud.status
     }
+    pub fn cloud_access(&self) -> Option<bool> {
+        match self.cloud.status {
+            Status::Unknown | Status::Loading | Status::Unavailable => None,
+            Status::Active => Some(true),
+            Status::Manage => Some(self.cloud.access.unwrap_or(true)),
+            Status::Subscribe => Some(false),
+        }
+    }
     pub fn set_cloud_visible(&mut self, visible: bool) {
+        if self.cloud_visible && !visible {
+            self.cloud.inventory.suspend();
+            self.cloud.inspection.close();
+        }
         if visible && !self.cloud_visible {
             self.refresh_cloud();
         }
         self.cloud_visible = visible;
     }
     pub fn refresh_cloud(&mut self) {
+        self.cloud.storage.refresh();
         if self.cloud.pending.is_none() {
             self.cloud.due = true;
             self.cloud.status = Status::Unknown;
@@ -110,8 +135,28 @@ impl ProfilesController {
             && self.account.active_account_id.is_some()
     }
     pub(super) fn take_cloud_request(&mut self) -> Option<AccountCommand> {
+        if let Some(cancel) = self.cloud.inspection.take_cancel() {
+            return Some(cancel);
+        }
+        if let Some(cancel) = self.cloud.inventory.take_cancel() {
+            return Some(cancel);
+        }
         if !self.cloud_readable() {
             return None;
+        }
+        if let Some(request) = self.cloud.inspection.take(
+            std::time::Instant::now(),
+            self.inventory_cancellations.len() + self.cloud.inventory.backlog(),
+        ) {
+            return Some(request);
+        }
+        if self
+            .cloud
+            .inventory
+            .capacity(self.inventory_cancellations.len() + self.cloud.inspection.backlog())
+            && let Some(request) = self.cloud.inventory.take(std::time::Instant::now())
+        {
+            return Some(request);
         }
         if self.cloud.due && self.cloud.pending.is_none() {
             let id = next_request_id();
@@ -124,7 +169,7 @@ impl ProfilesController {
             });
             return Some(AccountCommand::InspectCloudSubscription { request_id: id });
         }
-        if self.cloud.sync_pending.is_some() {
+        if self.cloud.pending.is_some() || self.cloud.sync_pending.is_some() {
             return None;
         }
         // A write the person has already made is more urgent than a re-read, and
@@ -143,9 +188,8 @@ impl ProfilesController {
                 enabled,
             });
         }
-        // Nothing can be synced without a subscription, so the per-Profile read
-        // waits for the subscription answer rather than racing it.
-        if self.cloud.sync_due && self.cloud.status == Status::Manage {
+        // Per-Profile sync waits for confirmed account access.
+        if self.cloud.sync_due && self.cloud_access() == Some(true) {
             let id = next_request_id();
             self.cloud.sync_due = false;
             self.cloud.sync_pending = Some(SyncPending {
@@ -156,10 +200,21 @@ impl ProfilesController {
             });
             return Some(AccountCommand::InspectCloudSync { request_id: id });
         }
-        None
+        self.cloud.storage.take(std::time::Instant::now())
     }
     pub(super) fn cloud_submission(&self, command: &AccountCommand) -> Option<CommandSubmissionId> {
         match command {
+            AccountCommand::InspectCloudDocument { request_id, .. }
+            | AccountCommand::RemoveCloudFile { request_id, .. } => {
+                self.cloud.inspection.submission(*request_id)
+            }
+            AccountCommand::InspectCloudUsageWorkspaces { request_id, .. }
+            | AccountCommand::InspectCloudUsageDocuments { request_id, .. } => {
+                self.cloud.inventory.submission(*request_id)
+            }
+            AccountCommand::InspectCloudPlan { request_id } => {
+                self.cloud.storage.submission(*request_id)
+            }
             AccountCommand::InspectCloudSubscription { request_id } => self
                 .cloud
                 .pending
@@ -179,6 +234,15 @@ impl ProfilesController {
     pub(super) fn cloud_admitted(&mut self, admission: CommandAdmission) -> bool {
         if admission.owner_scope != self.account.active_scope {
             return false;
+        }
+        if self.cloud.storage.admit(admission) {
+            return true;
+        }
+        if self.cloud.inspection.admit(admission) {
+            return true;
+        }
+        if self.cloud.inventory.admit(admission) {
+            return true;
         }
         if let Some(pending) = self
             .cloud
@@ -201,6 +265,15 @@ impl ProfilesController {
         false
     }
     pub(super) fn cloud_failed(&mut self, failure: CommandFailure) -> bool {
+        if self.cloud.inspection.fail(failure) {
+            return true;
+        }
+        if self.cloud.inventory.fail(failure) {
+            return true;
+        }
+        if self.cloud.storage.fail(failure) {
+            return true;
+        }
         if self
             .cloud
             .pending
@@ -244,10 +317,32 @@ impl ProfilesController {
         generation: u64,
         result: &AccountOperationResult,
     ) -> bool {
+        if let Some(refresh_usage) = self.cloud.inspection.result(generation, result) {
+            if refresh_usage {
+                self.cloud.storage.usage_changed();
+                self.cloud.inventory.workspaces();
+            }
+            return true;
+        }
+        if self.cloud.inventory.result(generation, result) {
+            return true;
+        }
         match result {
+            AccountOperationResult::CloudPlan {
+                request_id,
+                payload,
+                request_elapsed_millis,
+            } => self.cloud.storage.result(
+                generation,
+                *request_id,
+                payload.as_ref(),
+                *request_elapsed_millis,
+                std::time::Instant::now(),
+            ),
             AccountOperationResult::CloudSubscription {
                 request_id,
                 current,
+                access,
             } => {
                 let Some(pending) = self.cloud.pending.as_ref() else {
                     return false;
@@ -259,15 +354,16 @@ impl ProfilesController {
                 {
                     return false;
                 }
+                self.cloud.access = access.or(*current);
                 self.cloud.status = match current {
                     Some(true) => Status::Manage,
+                    Some(false) if self.cloud.access == Some(true) => Status::Active,
                     Some(false) => Status::Subscribe,
                     None => Status::Unavailable,
                 };
                 self.cloud.pending = None;
-                // A confirmed subscription is what makes the per-Profile state
-                // worth reading at all, so confirming one asks for it.
-                if self.cloud.status == Status::Manage {
+                // Confirmed access makes the per-Profile state worth reading.
+                if self.cloud_access() == Some(true) {
                     self.cloud.sync_due = true;
                 } else {
                     self.cloud.sync = None;
@@ -375,10 +471,11 @@ impl ProfilesController {
             Status::Unknown | Status::Loading => TextKey::CloudLoading,
             Status::Unavailable => TextKey::CloudUnavailable,
             Status::Subscribe => TextKey::CloudSubscribeIntro,
-            Status::Manage if self.cloud_profile_counts().is_some() => {
+            Status::Manage if self.cloud_access() == Some(false) => TextKey::CloudAccessInactive,
+            Status::Manage | Status::Active if self.cloud_profile_counts().is_some() => {
                 TextKey::CloudSubscribedSyncing
             }
-            Status::Manage => TextKey::CloudSubscribed,
+            Status::Manage | Status::Active => TextKey::CloudSubscribed,
         }
     }
     pub fn cloud_body_text(&self, lang: Lang) -> String {
@@ -394,9 +491,10 @@ impl ProfilesController {
     pub fn cloud_actionable(&self) -> bool {
         self.cloud.pending.is_none()
             && match self.account.stage {
-                AccountStage::SignedIn => {
-                    !matches!(self.cloud.status, Status::Loading | Status::Unknown)
-                }
+                AccountStage::SignedIn => !matches!(
+                    self.cloud.status,
+                    Status::Loading | Status::Unknown | Status::Active
+                ),
                 AccountStage::SignedOut
                 | AccountStage::Cancelled
                 | AccountStage::Failed
@@ -484,7 +582,13 @@ impl ProfilesController {
         if self.profile_unlinked_from_sign_in(profile) {
             return SyncAvailability::Disabled(TextKey::CloudSyncNotLinkedReason);
         }
-        if self.cloud.status != Status::Manage {
+        if self.cloud_access() != Some(true) {
+            if self.cloud_access().is_none() {
+                return SyncAvailability::Disabled(self.cloud_message());
+            }
+            if self.cloud.status == Status::Manage {
+                return SyncAvailability::Disabled(TextKey::CloudAccessInactive);
+            }
             return SyncAvailability::Disabled(TextKey::CloudSyncSubscribeReason);
         }
         match self.account.active_account_id.as_deref() {

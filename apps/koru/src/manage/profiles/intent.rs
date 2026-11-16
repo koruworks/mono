@@ -84,6 +84,7 @@ pub enum Intent {
 
     // ---- Koru Cloud ----------------------------------------------------------
     /// The card's primary action: sign in, subscribe, manage, or retry.
+    CloudStorageRetry,
     CloudPrimary,
     CloudLearnMore,
     /// Turn one Profile's Cloud sync on or off.
@@ -156,6 +157,7 @@ impl ProfilesController {
                     | Intent::SignInGoogle
                     | Intent::SignInAnotherAccount
                     | Intent::AccountSwitcher(_)
+                    | Intent::CloudStorageRetry
                     | Intent::CloudPrimary
                     | Intent::CloudSync(_)
                     | Intent::Connect(_)
@@ -399,6 +401,7 @@ impl ProfilesController {
                 self.different_account_dismissed = true;
                 self.notice = None;
             }
+            Intent::CloudStorageRetry => self.refresh_cloud_storage(),
             Intent::CloudPrimary => self.cloud_activate(),
             Intent::CloudLearnMore => self.cloud_learn_more_activate(),
             // Deliberately not a selection: the switch changes one Profile's

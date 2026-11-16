@@ -391,6 +391,9 @@ debug = false
 # third-party/patches/sherpa-onnx.md. Fetched and patched, not committed:
 # third-party/README.md.
 [patch.crates-io]
+# ZIP 9 fixes the archive advisories in oar-ocr's language-model loader.
+# See third-party/patches/oar-ocr.md.
+oar-ocr = { path = "third-party/crates/oar-ocr" }
 sherpa-onnx = { path = "third-party/crates/sherpa-onnx" }
 sherpa-onnx-sys = { path = "third-party/crates/sherpa-onnx-sys" }
 # **merman-render with the sequence geometry its layout JSON leaves out.**

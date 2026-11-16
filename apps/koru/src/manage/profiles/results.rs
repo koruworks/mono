@@ -9,6 +9,9 @@ impl ProfilesController {
         &mut self,
         failure: koru_workspace_host::account_ui::CommandFailure,
     ) -> bool {
+        if self.inventory_cancellations.fail(failure) {
+            return true;
+        }
         self.apply_to_forms(|form| form.account_command_failed_active(failure))
     }
     fn account_command_failed_active(
@@ -52,6 +55,9 @@ impl ProfilesController {
         &mut self,
         admission: koru_workspace_host::account_ui::CommandAdmission,
     ) -> bool {
+        if self.inventory_cancellations.admit(admission) {
+            return true;
+        }
         self.apply_to_forms(|form| {
             if form.cloud_admitted(admission) {
                 return true;
@@ -362,7 +368,12 @@ impl ProfilesController {
         }
         match result {
             // Only the scope/request-correlated branch may accept this result.
-            AccountOperationResult::CloudSubscription { .. }
+            AccountOperationResult::CloudPlan { .. }
+            | AccountOperationResult::CloudUsageWorkspaces { .. }
+            | AccountOperationResult::CloudUsageDocuments { .. }
+            | AccountOperationResult::CloudDocumentInspection { .. }
+            | AccountOperationResult::CloudFileRemoval { .. }
+            | AccountOperationResult::CloudSubscription { .. }
             | AccountOperationResult::CloudSync { .. } => return false,
             AccountOperationResult::AccountCreationRequired => {
                 self.creation_submission = None;
@@ -422,8 +433,10 @@ impl ProfilesController {
                 provider,
                 verified_email,
             } => {
-                // Both browser providers land here; email has its own journey.
-                if matches!(provider.as_str(), "google" | "apple") {
+                // Session inspection is shared by every sign-in method. Leaving
+                // a valid email identity unknown repeats inspection on each
+                // account update and can fill the account command queue.
+                if matches!(provider.as_str(), "google" | "apple" | "email") {
                     self.signed_in_identity = Some((provider, verified_email));
                     self.account_profiles.clear();
                     self.account_profiles_loaded = false;
@@ -440,6 +453,7 @@ impl ProfilesController {
                 }
             }
             AccountOperationResult::SignedOut => {
+                self.retire_cloud_inventory();
                 self.cloud.invalidate();
                 self.cloud_uri = None;
                 self.creation_submission = None;

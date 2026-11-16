@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_inventory_title">Cloud files</string>
+    <string name="cloud_inventory_view">View files</string>
+    <string name="cloud_inventory_loading">Loading Cloud files…</string>
+    <string name="cloud_inventory_unavailable">Cloud files are unavailable</string>
+    <string name="cloud_inventory_restarted">Cloud changed. The list has been restarted.</string>
+    <string name="cloud_inventory_empty">No entries on this page.</string>
+    <string name="cloud_inventory_profile">Profile</string>
+    <string name="cloud_inventory_unassigned">Unassigned Workspaces</string>
+    <string name="cloud_inventory_placement_unknown">Placement unavailable</string>
+    <string name="cloud_inventory_profile_total">Profile files: %1$s bytes</string>
+    <string name="cloud_inventory_unfiled">Unfiled documents</string>
+    <string name="cloud_inventory_trash">Trash</string>
+    <string name="cloud_inventory_structure">Workspace structure</string>
+    <string name="cloud_inventory_documents_unavailable">Unavailable documents</string>
+    <string name="cloud_inventory_non_additive">Files may appear in more than one document. These sizes are not an account total.</string>
+    <string name="cloud_inventory_recovery">Recoverable documents keep their files in Cloud storage.</string>
+    <string name="cloud_inventory_previous">Previous page</string>
+    <string name="cloud_inventory_next">Next page</string>
+    <string name="cloud_inventory_first">First page</string>
+    <string name="cloud_inventory_identifier">Identifier: %1$s</string>
+</resources>

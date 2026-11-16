@@ -27,14 +27,15 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use koru_account_core::workspace_lifecycle::WorkspaceCloudState;
-use koru_account_core::{KoruIdentityId, ProfileId, WorkspaceId};
+use koru_account_core::workspace_lifecycle::{WorkspaceActivationTranscript, WorkspaceCloudState};
+use koru_account_core::{DeviceId, KoruIdentityId, ProfileId, WorkspaceId};
 use koru_account_wire::{
     BeginWorkspaceCloudActivationRequestV1, CloudWorkspaceCandidateV1, CloudWorkspaceCursorV1,
     CompleteWorkspaceCloudActivationRequestV1, MutateWorkspaceCloudRequestV1, Version1,
-    WorkspaceCloudLifecycleResponseV1,
+    WorkspaceCloudActivationChallengeV1, WorkspaceCloudLifecycleResponseV1,
 };
 use koru_agent_wire::{AccountCommand, AccountOperationResult, AccountStage, CloudSyncProfile};
+use koru_device::DevicePublicKey;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -54,6 +55,12 @@ const VERSION_MISMATCH: &str = "workspace_version_mismatch";
 /// A challenge answered for a different Workspace than the one asked about.
 /// Refusing here keeps a device signature off bytes minted for another row.
 const DATASET_MISMATCH: &str = "cloud_dataset_mismatch";
+/// The bytes the account service asked this device to sign are not the
+/// activation this device asked for, so they were not signed.
+const ACTIVATION_UNVERIFIED: &str = "workspace_activation_unverified";
+/// The longest an activation challenge may say it lives. The service issues
+/// minutes; this only refuses a transcript whose times make no sense.
+const MAX_ACTIVATION_LIFETIME_MILLIS: i64 = 60 * 60 * 1000;
 
 /// Discovery is a position, never an account-wide snapshot: one apply reads at
 /// most this many eligibility pairs and stops. A larger catalog resolves over
@@ -267,6 +274,85 @@ fn listed_version(candidate: &CloudWorkspaceCandidateV1) -> u64 {
     u64::try_from(candidate.authorization_version).unwrap_or(0)
 }
 
+/// What this device asked for when it began an activation, and who it is.
+/// The bytes it is then handed to sign must say all of it back.
+struct ActivationAsked {
+    workspace: WorkspaceId,
+    operation_id: Uuid,
+    owner_profile: ProfileId,
+    expected_authorization_version: u64,
+    device: DeviceId,
+    device_key: DevicePublicKey,
+    account: Uuid,
+    /// The session the access token belongs to, when this process knows it.
+    session: Option<Uuid>,
+}
+
+/// **The device signing key signs an activation only after reading it.**
+///
+/// The challenge's `signing_bytes` come from the account service. Signed
+/// unread, they would put this device's signature on whatever the service —
+/// or anything answering as it — chose to send, and the same key signs
+/// pairing transcripts, trust records and Workspace key grants. So the bytes
+/// must be exactly one activation transcript, and every field this device
+/// already knows must be the value it knows.
+///
+/// `Err` names the field that differed, for the log; never its value.
+///
+/// Not compared, because this device has nothing of its own to compare with:
+/// the region and the issuer (read and bounded by the parser), the Profile
+/// lifecycle revision, the nonce, and this device's clock — the operation id
+/// is minted here per request, which is what makes the transcript fresh, and
+/// a device whose clock is wrong must still be able to turn Cloud sync on.
+fn activation_is_what_was_asked(
+    challenge: &WorkspaceCloudActivationChallengeV1,
+    asked: &ActivationAsked,
+) -> Result<(), &'static str> {
+    let said = WorkspaceActivationTranscript::parse(&challenge.signing_bytes).ok_or("layout")?;
+    let lifetime = said
+        .expires_at_millis
+        .checked_sub(said.issued_at_millis)
+        .ok_or("lifetime")?;
+    let checks = [
+        ("challenge_id", said.challenge_id == challenge.challenge_id),
+        ("workspace_id", said.workspace_id == asked.workspace),
+        ("operation_id", said.operation_id == asked.operation_id),
+        (
+            "owner_profile_id",
+            said.owner_profile_id == asked.owner_profile,
+        ),
+        (
+            "expected_authorization_version",
+            said.expected_authorization_version == asked.expected_authorization_version,
+        ),
+        ("device_id", said.device_id == asked.device),
+        (
+            "device_key",
+            said.registered_device_signing_public_key == asked.device_key,
+        ),
+        ("owner_account_id", said.owner_account_id == asked.account),
+        (
+            "session_id",
+            asked
+                .session
+                .is_none_or(|session| said.session_id == session),
+        ),
+        ("issuer", !said.issuer.is_empty()),
+        (
+            "expires_at_millis",
+            said.expires_at_millis == challenge.expires_at_millis,
+        ),
+        (
+            "lifetime",
+            (1..=MAX_ACTIVATION_LIFETIME_MILLIS).contains(&lifetime),
+        ),
+    ];
+    match checks.iter().find(|(_, holds)| !holds) {
+        Some((field, _)) => Err(field),
+        None => Ok(()),
+    }
+}
+
 fn client_error_code(error: &ClientError) -> Option<&str> {
     match error {
         ClientError::Api { code, .. } => Some(code.as_str()),
@@ -341,14 +427,10 @@ impl ProductionAccountService {
     /// The settings page's own question (`InspectCloudSubscription`) is
     /// remembered, so the usual pass costs nothing. Only an Agent nobody has
     /// asked yet reads it here, once: a `false` is kept until the page asks
-    /// again, so an account with no subscription is not polled on the
+    /// again, so an account with no access is not polled on the
     /// heartbeat. A read that failed is not an answer and is asked again.
-    fn cloud_subscription_known(
-        &mut self,
-        account: KoruIdentityId,
-        cancel: &Cancel,
-    ) -> Option<bool> {
-        if let Some((known, current)) = self.cloud_subscribed
+    fn cloud_access_known(&mut self, account: KoruIdentityId, cancel: &Cancel) -> Option<bool> {
+        if let Some((known, current)) = self.cloud_access
             && known == account
         {
             return Some(current);
@@ -356,9 +438,10 @@ impl ProductionAccountService {
         let authorization = self.authorization().ok()?;
         let current = self
             .client
-            .has_cloud_subscription(&authorization, &|| cancel.cancelled())
-            .ok()?;
-        self.cloud_subscribed = Some((account, current));
+            .cloud_subscription_status(&authorization, &|| cancel.cancelled())
+            .ok()?
+            .cloud_access;
+        self.cloud_access = Some((account, current));
         Some(current)
     }
 
@@ -414,6 +497,16 @@ impl ProductionAccountService {
         }
         all.truncate(MAX_LISTED_CANDIDATES);
         Ok(all)
+    }
+
+    /// The session the access token in hand was issued to: the one just
+    /// issued and not yet acknowledged if there is one, else the durable one.
+    /// `None` when this process holds neither as an id it can read.
+    fn access_session_id(&self) -> Option<Uuid> {
+        self.unacknowledged_session_id
+            .as_ref()
+            .or(self.durable_session_id.as_ref())
+            .and_then(|session| Uuid::parse_str(session).ok())
     }
 
     fn mint_operation_id(&self) -> Uuid {
@@ -496,19 +589,25 @@ impl ProductionAccountService {
             Ok(authorization) => authorization,
             Err(error) => return Some(error.code.into()),
         };
+        // Each begin is remembered as it was sent: the challenge that comes
+        // back is signed only if it repeats this operation and this version.
         let begin = |expected_authorization_version: u64| {
-            self.client.begin_workspace_cloud_activation(
+            let operation_id = self.mint_operation_id();
+            let asked = (operation_id, expected_authorization_version);
+            let answer = self.client.begin_workspace_cloud_activation(
                 workspace,
                 &BeginWorkspaceCloudActivationRequestV1 {
                     version: Version1,
-                    operation_id: self.mint_operation_id(),
+                    operation_id,
                     owner_profile_id: profile,
                     expected_authorization_version,
                 },
                 &authorization,
-            )
+            );
+            (asked, answer)
         };
-        let challenge = match begin(entry.authorization_version) {
+        let (mut asked, first) = begin(entry.authorization_version);
+        let challenge = match first {
             Ok(challenge) => challenge,
             Err(error) if client_error_code(&error) == Some(VERSION_MISMATCH) => {
                 // Another device moved the row between the read and this
@@ -523,7 +622,9 @@ impl ProductionAccountService {
                 if entry.enabled {
                     return None;
                 }
-                match begin(entry.authorization_version) {
+                let (again, second) = begin(entry.authorization_version);
+                asked = again;
+                match second {
                     Ok(challenge) => challenge,
                     Err(error) => {
                         return Some(
@@ -544,6 +645,29 @@ impl ProductionAccountService {
         };
         if challenge.workspace_id != workspace {
             return Some(DATASET_MISMATCH.into());
+        }
+        let Some(owner) = self.durable_owner else {
+            return Some("credential_owner_unavailable".into());
+        };
+        let (operation_id, expected_authorization_version) = asked;
+        let asked = ActivationAsked {
+            workspace,
+            operation_id,
+            owner_profile: profile,
+            expected_authorization_version,
+            device: self.descriptor.device_id,
+            device_key: self.signing_key.public_key(),
+            account: owner.account.as_uuid(),
+            session: self.access_session_id(),
+        };
+        if let Err(field) = activation_is_what_was_asked(&challenge, &asked) {
+            // Content-free on purpose: which field, never what it held.
+            tracing::warn!(
+                target: "koru_account",
+                field,
+                "cloud activation: the challenge is not the activation this device asked for; not signed"
+            );
+            return Some(ACTIVATION_UNVERIFIED.into());
         }
         let signature = self.signing_key.sign_message(&challenge.signing_bytes);
         match self.client.complete_workspace_cloud_activation(
@@ -640,12 +764,15 @@ impl ProductionAccountService {
         cancel: &Cancel,
         woken: &mut bool,
         persist: &mut dyn FnMut(ProfileId, &ProfileCloudSync),
-    ) -> CloudSyncProfile {
-        let mut last_error: Option<String> = None;
+    ) -> (CloudSyncProfile, bool) {
+        // A code recorded this pass means a Workspace did not settle. The
+        // profile row stays clear of it: copying one refusal there painted
+        // every Workspace unavailable. The bool is what the default spends.
+        let mut unsettled = false;
         let mut record = |entry: &mut WorkspaceCloudSync, code: Option<String>| {
             if let Some(code) = code {
-                entry.error = Some(code.clone());
-                last_error = Some(code);
+                entry.error = Some(code);
+                unsettled = true;
             }
         };
         match change {
@@ -743,13 +870,18 @@ impl ProductionAccountService {
                     .is_some_and(|entry| entry.enabled)
             })
             .count();
-        CloudSyncProfile {
-            profile_id: profile.to_storage(),
-            enabled: state.enabled,
-            workspaces: u32::try_from(local.len()).unwrap_or(u32::MAX),
-            synced_workspaces: u32::try_from(synced).unwrap_or(u32::MAX),
-            error: last_error,
-        }
+        (
+            CloudSyncProfile {
+                profile_id: profile.to_storage(),
+                enabled: state.enabled,
+                workspaces: u32::try_from(local.len()).unwrap_or(u32::MAX),
+                synced_workspaces: u32::try_from(synced).unwrap_or(u32::MAX),
+                // A Workspace refusal stays on that Workspace. Copying it here
+                // painted every row, including the ones that synced, as unavailable.
+                error: None,
+            },
+            !unsettled,
+        )
     }
 
     /// Both Cloud sync commands. `InspectCloudSync` reports every local
@@ -851,7 +983,7 @@ impl ProductionAccountService {
             let waiting = applied.is_none()
                 && (profile_state.starts_on
                     || (port.starts_connected_profiles_on() && !profile_state.enabled))
-                && self.cloud_subscription_known(account, cancel) == Some(true);
+                && self.cloud_access_known(account, cancel) == Some(true);
             // **Cloud sync on means the Store is open to Cloud.** One rule,
             // however the Profile came to be on: the switch, the default, or
             // another device's switch mirrored here. The two used to be
@@ -898,7 +1030,7 @@ impl ProductionAccountService {
                 // Written before it is applied, as a pressed switch is.
                 persist(*profile, &profile_state);
             }
-            let row = self.apply_profile(
+            let (row, settled) = self.apply_profile(
                 *profile,
                 &mut profile_state,
                 &workspaces,
@@ -912,8 +1044,10 @@ impl ProductionAccountService {
             // The intention is spent by the first pass that settled every
             // Workspace the Profile has here. Until one has arrived there is
             // nothing to settle; a refusal or an outage tries again on the
-            // next pass, as a Workspace the Cloud has never held does.
-            if starting && row.error.is_none() && row.workspaces > 0 && !cancel.cancelled() {
+            // next pass, as a Workspace the Cloud has never held does. The
+            // profile row's error stays empty either way, so the settle is
+            // the pass itself, not that field.
+            if starting && settled && row.workspaces > 0 && !cancel.cancelled() {
                 profile_state.starts_on = false;
             }
             persist(*profile, &profile_state);

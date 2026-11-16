@@ -166,6 +166,20 @@ pub(crate) enum Control {
     DifferentSignIn,
     DifferentOffline,
     /// Subscribe, *Manage subscription*, *Try again* or sign in.
+    CloudStorageRetry,
+    CloudInventory,
+    CloudInventoryBack,
+    CloudInventoryWorkspaces,
+    CloudInventoryFirst,
+    CloudInventoryNext,
+    CloudInventoryPrevious,
+    CloudInventoryWorkspace(uuid::Uuid, uuid::Uuid),
+    CloudInventoryDetails(uuid::Uuid),
+    CloudInventoryProfileDetails(uuid::Uuid),
+    CloudInventoryDocument(uuid::Uuid),
+    CloudCopyBack,
+    CloudCopyReload,
+    CloudCopyRemove(uuid::Uuid),
     CloudPrimary,
     CloudLearnMore,
     /// A Profile's Cloud sync switch on *Which profiles sync*.
@@ -319,6 +333,7 @@ pub(crate) struct Laid {
     pub devices: Option<devices::DevicesLaid>,
     /// The Koru Cloud page, when that is the page.
     pub cloud: Option<cloud::CloudLaid>,
+    pub inventory: Option<cloud::inventory::InventoryLaid>,
     /// The New profile page's head, when that is the page: the form goes
     /// under it.
     pub head: Option<page::Head>,
@@ -428,6 +443,7 @@ impl ManageView {
             footer,
             devices: None,
             cloud: None,
+            inventory: None,
             head: None,
             controls,
             disabled,
@@ -857,6 +873,20 @@ impl ManageView {
             | Control::DifferentCreate
             | Control::DifferentSignIn
             | Control::DifferentOffline
+            | Control::CloudStorageRetry
+            | Control::CloudInventory
+            | Control::CloudInventoryBack
+            | Control::CloudInventoryWorkspaces
+            | Control::CloudInventoryFirst
+            | Control::CloudInventoryNext
+            | Control::CloudInventoryPrevious
+            | Control::CloudInventoryWorkspace(..)
+            | Control::CloudInventoryDetails(_)
+            | Control::CloudInventoryProfileDetails(_)
+            | Control::CloudInventoryDocument(_)
+            | Control::CloudCopyBack
+            | Control::CloudCopyReload
+            | Control::CloudCopyRemove(_)
             | Control::CloudPrimary
             | Control::CloudLearnMore
             | Control::ProfileSync(_)

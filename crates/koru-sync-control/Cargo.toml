@@ -11,6 +11,7 @@ description = "Transport-neutral Agent-to-Store replication control contract."
 koru-device = { path = "../koru-device" }
 koru-pairing = { path = "../koru-pairing" }
 koru-store-core = { path = "../koru-store-core" }
+koru-store-wire = { path = "../koru-store-wire" }
 serde.workspace = true
 # Only to validate a control-plane origin's shape. Parsing a URL is not
 # reaching one: this crate opens no socket and never will.

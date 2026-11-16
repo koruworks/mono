@@ -197,9 +197,15 @@ impl ManageView {
                 .map_or_else(|| "Profile".to_owned(), |row| row.name.clone()),
             Some(Page::NewProfile) => new_profile::TITLE.to_owned(),
             Some(Page::Devices) => self.devices_title(),
-            Some(Page::Cloud) => {
-                koru_i18n::t(crate::format::lang(), koru_i18n::Key::CloudTitle).to_owned()
-            }
+            Some(Page::Cloud) => koru_i18n::t(
+                crate::format::lang(),
+                if self.c.cloud_inventory().visible {
+                    koru_i18n::Key::CloudInventoryTitle
+                } else {
+                    koru_i18n::Key::CloudTitle
+                },
+            )
+            .to_owned(),
             None => "Manage".to_owned(),
         }
     }
@@ -208,6 +214,19 @@ impl ManageView {
     /// accessibility tree. One title line tall: the tree wants a place to
     /// point at, not a second measurement of the wrap.
     pub(super) fn heading_rect(&self) -> Rect {
+        if let Some(inventory) = &self.laid.inventory
+            && let Some(node) = inventory
+                .frame
+                .borrow()
+                .node(koru_draw::el::Key::surface("manage", "inventory-title"))
+        {
+            return Rect::new(
+                node.rect.x,
+                node.rect.y - self.page_scroll,
+                node.rect.w,
+                node.rect.h,
+            );
+        }
         let column = self.column();
         let line = theme::role::title().metrics.line_height;
         let y = column.y - self.page_scroll;

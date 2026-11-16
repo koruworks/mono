@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_inventory_title">云端文件</string>
+    <string name="cloud_inventory_view">查看文件</string>
+    <string name="cloud_inventory_loading">正在加载云端文件…</string>
+    <string name="cloud_inventory_unavailable">云端文件暂不可用</string>
+    <string name="cloud_inventory_restarted">云端内容已更改。列表已重新开始加载。</string>
+    <string name="cloud_inventory_empty">此页没有条目。</string>
+    <string name="cloud_inventory_profile">配置文件</string>
+    <string name="cloud_inventory_unassigned">未分配的工作区</string>
+    <string name="cloud_inventory_placement_unknown">归属信息不可用</string>
+    <string name="cloud_inventory_profile_total">配置文件中的文件：%1$s 字节</string>
+    <string name="cloud_inventory_unfiled">未归档文档</string>
+    <string name="cloud_inventory_trash">废纸篓</string>
+    <string name="cloud_inventory_structure">工作区结构</string>
+    <string name="cloud_inventory_documents_unavailable">不可用的文档</string>
+    <string name="cloud_inventory_non_additive">文件可能出现在多个文档中。这些大小不能相加作为账户总用量。</string>
+    <string name="cloud_inventory_recovery">可恢复的文档会保留其云端文件。</string>
+    <string name="cloud_inventory_previous">上一页</string>
+    <string name="cloud_inventory_next">下一页</string>
+    <string name="cloud_inventory_first">第一页</string>
+    <string name="cloud_inventory_identifier">标识符：%1$s</string>
+</resources>

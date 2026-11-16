@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+<resources>
+    <string name="cloud_inventory_title">クラウドファイル</string>
+    <string name="cloud_inventory_view">ファイルを表示</string>
+    <string name="cloud_inventory_loading">クラウドファイルを読み込み中…</string>
+    <string name="cloud_inventory_unavailable">クラウドファイルを表示できません</string>
+    <string name="cloud_inventory_restarted">クラウドの内容が変更されました。一覧を最初から読み込み直しました。</string>
+    <string name="cloud_inventory_empty">このページには項目がありません。</string>
+    <string name="cloud_inventory_profile">プロファイル</string>
+    <string name="cloud_inventory_unassigned">未割り当てのワークスペース</string>
+    <string name="cloud_inventory_placement_unknown">配置先を確認できません</string>
+    <string name="cloud_inventory_profile_total">プロファイル内のファイル：%1$s バイト</string>
+    <string name="cloud_inventory_unfiled">未整理のドキュメント</string>
+    <string name="cloud_inventory_trash">ゴミ箱</string>
+    <string name="cloud_inventory_structure">ワークスペースの構造</string>
+    <string name="cloud_inventory_documents_unavailable">利用できないドキュメント</string>
+    <string name="cloud_inventory_non_additive">同じファイルが複数のドキュメントに含まれる場合があります。これらのサイズはアカウントの合計ではありません。</string>
+    <string name="cloud_inventory_recovery">復元可能なドキュメントのファイルはクラウドに保持されます。</string>
+    <string name="cloud_inventory_previous">前のページ</string>
+    <string name="cloud_inventory_next">次のページ</string>
+    <string name="cloud_inventory_first">最初のページ</string>
+    <string name="cloud_inventory_identifier">識別子：%1$s</string>
+</resources>

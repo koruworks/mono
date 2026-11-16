@@ -506,7 +506,7 @@ fn the_release_rows_follow_the_offer_and_replace_this_builds_row() {
         PublishedRelease {
             version: None,
             url: page("nightly"),
-            published: None,
+            published: Some((2026, 11, 13)),
         },
         PublishedRelease {
             version: Some("0.1.5".into()),
@@ -524,10 +524,7 @@ fn the_release_rows_follow_the_offer_and_replace_this_builds_row() {
     with_current(Lang::En, || {
         let (title, detail) = model.release_lines(0).unwrap();
         assert_eq!(title, "Nightly");
-        assert!(
-            detail.starts_with("Built from main every night"),
-            "{detail}"
-        );
+        assert!(detail.starts_with("11/13/2026"), "{detail}");
         let (title, detail) = model.release_lines(1).unwrap();
         assert_eq!(title, "0.1.5");
         assert!(detail.starts_with("11/07/2026"), "{detail}");

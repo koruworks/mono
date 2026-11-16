@@ -113,3 +113,29 @@ fn cancellation_during_the_final_http_response_discards_the_decision() {
     });
     assert!(run(transport).is_err());
 }
+
+#[test]
+fn cloud_access_is_independent_of_a_purchase_to_manage() {
+    for (subscriptions, access, current) in [
+        (json!([]), true, false),
+        (json!([]), false, false),
+        (json!([{"status":"past_due"}]), false, true),
+        (json!([{"status":"active"}]), true, true),
+    ] {
+        let client = AccountClient::with_transport(script(vec![json!({
+            "subscriptions": subscriptions, "next_cursor": null, "cloud_access": access
+        })]));
+        assert_eq!(
+            client
+                .cloud_subscription_status(
+                    &AccountAuthorization::Bearer(&AccessToken("memory-only".into())),
+                    &|| false
+                )
+                .unwrap(),
+            CloudSubscriptionStatus {
+                current,
+                cloud_access: access
+            }
+        );
+    }
+}

@@ -1013,6 +1013,11 @@ fn hosted_command(command: &AccountCommand) -> bool {
         command,
         AccountCommand::InspectAccountSession
             | AccountCommand::InspectCloudSubscription { .. }
+            | AccountCommand::InspectCloudPlan { .. }
+            | AccountCommand::InspectCloudUsageWorkspaces { .. }
+            | AccountCommand::InspectCloudUsageDocuments { .. }
+            | AccountCommand::InspectCloudDocument { .. }
+            | AccountCommand::RemoveCloudFile { .. }
             | AccountCommand::SetProfileCloudSync { .. }
             | AccountCommand::InspectCloudSync { .. }
             | AccountCommand::ListProfiles
