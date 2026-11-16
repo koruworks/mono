@@ -130,6 +130,24 @@ fn decision_native_drain_supplies_the_complete_drain_a_cleanup_needs() {
         h.db.record_nondecision_cleanup(&ticket, begin, DecisionTransitionId::mint(), &proof)
             .unwrap();
     assert_eq!(wait.cleanup, Some(proof));
+    // Once final cleanup is recorded nothing more can be requested: a retry
+    // must not supersede the still-unpublished final Control (O152).
+    let after =
+        h.db.decision_wait_execution(f.owner, f.run)
+            .unwrap()
+            .expect("the wait is still owed its final Control")
+            .expected;
+    let controls = h.count("bot_decision_publications");
+    assert_eq!(
+        h.db.request_decision_cleanup(
+            &after,
+            DecisionTransitionId::mint(),
+            DecisionClosureReason::Canceled
+        )
+        .unwrap_err(),
+        BotLedgerError::Stale
+    );
+    assert_eq!(h.count("bot_decision_publications"), controls);
 }
 
 #[test]

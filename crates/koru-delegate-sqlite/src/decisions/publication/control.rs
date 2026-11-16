@@ -135,6 +135,11 @@ pub(super) fn request_on(
             observed.wait.reason,
             BotWaitReason::Decision { .. }
         ))?;
+        // The same rule as a settled decision above: once final cleanup is
+        // recorded, a retry must not supersede its unpublished final Control.
+        if observed.wait.cleanup.is_some() {
+            return Err(BotLedgerError::Stale);
+        }
         tx.execute("UPDATE bot_wait_runtime SET phase='cleanup_pending',revision=?2,updated_at_ms=max(updated_at_ms,?3) WHERE wait_id=?1 AND revision=?4",
                     params![expected.wait.to_storage(),next_wait.get(),now,expected.revision.get()]).map_err(sql)?;
         None
