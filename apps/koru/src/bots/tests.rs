@@ -44,6 +44,7 @@ pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot
         open_operation: None,
         held_by: None,
         pending_change: None,
+        connections: Default::default(),
     }
 }
 

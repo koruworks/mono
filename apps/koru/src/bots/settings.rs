@@ -576,6 +576,9 @@ impl Settings {
                 expected_policy_revision: policy,
                 access: draft.access,
                 selected_pages: draft.pages.clone(),
+                // This control changes pages only. Leaving connections out
+                // keeps every connection grant the Bot holds (M5).
+                connections: None,
             }),
         )
     }

@@ -937,6 +937,7 @@ fn every_change_to_a_trashed_bot_or_its_conversation_answers_its_code() {
             expected_policy_revision: bot.policy_revision,
             access: BotAccess::Workspace,
             selected_pages: vec![],
+            connections: None,
         },
         BotCommand::Pause {
             request_id: BotRequestId::mint(),

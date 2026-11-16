@@ -5716,6 +5716,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-connections"
+version = "0.0.3"
+dependencies = [
+ "base64 0.22.1",
+ "blake3",
+ "koru-ai-core",
+ "koru-ai-sqlite",
+ "koru-delegate-core",
+ "koru-oauth-credentials",
+ "sha2 0.10.9",
+ "uuid",
+]
+
+[[package]]
 name = "koru-contract"
 version = "0.0.3"
 dependencies = [

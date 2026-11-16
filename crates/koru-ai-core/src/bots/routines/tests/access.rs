@@ -38,7 +38,7 @@ fn routine_current_grant_is_the_creation_grant_until_an_edit_with_its_own_reques
     original.validate(&identity).unwrap();
 
     let command = update(&identity);
-    let grant = command.grant(identity.home, 7).unwrap();
+    let grant = command.grant(identity.home, 7, &Default::default()).unwrap();
     assert_eq!(grant.grant_revision, 2);
     assert_eq!(grant.source_bot_policy_revision, 7);
     assert_eq!(grant.policy.workspace, identity.home);
@@ -91,7 +91,7 @@ fn routine_access_update_uses_the_bot_access_bounds_and_builds_only_the_next_rev
     let identity = bound();
     let command = update(&identity);
     command.validate().unwrap();
-    let summary = command.grant(identity.home, 3).unwrap().summary().unwrap();
+    let summary = command.grant(identity.home, 3, &Default::default()).unwrap().summary().unwrap();
     assert_eq!(
         summary,
         BotRoutineGrantSummary {
@@ -105,7 +105,7 @@ fn routine_access_update_uses_the_bot_access_bounds_and_builds_only_the_next_rev
     let mut default = command.clone();
     default.access = crate::bots::BotAccess::Default;
     default.selected_pages.clear();
-    let grant = default.grant(identity.home, 3).unwrap();
+    let grant = default.grant(identity.home, 3, &Default::default()).unwrap();
     assert_eq!(grant.policy.access, BotAccess::Default);
     assert!(grant.policy.selected_pages.is_empty());
 
@@ -130,23 +130,31 @@ fn routine_access_update_uses_the_bot_access_bounds_and_builds_only_the_next_rev
             _ => bad.expected_grant_revision = i64::MAX as u64,
         }
         assert_eq!(
-            bad.grant(identity.home, 3).err(),
+            bad.grant(identity.home, 3, &Default::default()).err(),
             Some(BotError::Invalid),
             "{mutation}"
         );
     }
-    assert!(command.grant(identity.home, 0).is_err());
-    assert!(command.grant(WorkspaceId::from_uuid(id(60)), 3).is_err());
+    assert!(
+        command
+            .grant(identity.home, 0, &Default::default())
+            .is_err()
+    );
+    assert!(
+        command
+            .grant(WorkspaceId::from_uuid(id(60)), 3, &Default::default())
+            .is_err()
+    );
 }
 
 #[test]
 fn routine_access_receipt_answers_only_its_own_request_and_carries_no_page_list() {
     let identity = bound();
     let command = update(&identity);
-    let grant = command.grant(identity.home, 3).unwrap();
+    let grant = command.grant(identity.home, 3, &Default::default()).unwrap();
     let receipt = BotRoutineAccessReceipt::updated(&command, &grant).unwrap();
     assert_eq!(receipt.summary(), Some(grant.summary().unwrap()));
-    assert!(receipt.answers(&command, identity.home));
+    assert!(receipt.answers(&command, identity.home, &Default::default()));
     for mutation in 0..5 {
         let mut other = command.clone();
         match mutation {
@@ -156,13 +164,20 @@ fn routine_access_receipt_answers_only_its_own_request_and_carries_no_page_list(
             3 => other.schedule = ScheduleId::from_uuid(id(61)),
             _ => other.bot = BotId::from_uuid(id(62)),
         }
-        assert!(!receipt.answers(&other, identity.home), "{mutation}");
+        assert!(
+            !receipt.answers(&other, identity.home, &Default::default()),
+            "{mutation}"
+        );
     }
-    assert!(!receipt.answers(&command, WorkspaceId::from_uuid(id(60))));
+    assert!(!receipt.answers(
+        &command,
+        WorkspaceId::from_uuid(id(60)),
+        &Default::default()
+    ));
     // The request id is the receipt's key, not part of what it answers.
     let mut renamed = command.clone();
     renamed.request = BotRequestId::from_uuid(id(63));
-    assert!(receipt.answers(&renamed, identity.home));
+    assert!(receipt.answers(&renamed, identity.home, &Default::default()));
 
     let encoded = serde_json::to_string(&receipt).unwrap();
     assert!(encoded.len() <= BOT_ROUTINE_RECEIPT_BYTES);
@@ -209,7 +224,7 @@ fn routine_access_receipt_answers_only_its_own_request_and_carries_no_page_list(
     let refused =
         BotRoutineAccessReceipt::refused(&command, BotRoutineAccessRefusal::NotPaused).unwrap();
     assert_eq!(refused.summary(), None);
-    assert!(refused.answers(&command, identity.home));
+    assert!(refused.answers(&command, identity.home, &Default::default()));
     assert_eq!(
         serde_json::to_value(&refused).unwrap()["outcome"],
         serde_json::json!({"kind":"refused","reason":"not_paused"})
@@ -220,7 +235,7 @@ fn routine_access_receipt_answers_only_its_own_request_and_carries_no_page_list(
 fn routine_access_record_pairs_stage_with_outcome_and_reads_as_one_operation() {
     let identity = bound();
     let command = update(&identity);
-    let grant = command.grant(identity.home, 3).unwrap();
+    let grant = command.grant(identity.home, 3, &Default::default()).unwrap();
     let updated = BotRoutineAccessReceipt::updated(&command, &grant).unwrap();
     let refused =
         BotRoutineAccessReceipt::refused(&command, BotRoutineAccessRefusal::PageForbidden).unwrap();

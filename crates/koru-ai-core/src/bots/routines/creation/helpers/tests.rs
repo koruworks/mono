@@ -160,3 +160,39 @@ fn creation_semantic_validation_and_canonical_source_matching_are_separate() {
     assert!(!format!("{:?}", fixture().0).contains("Private"));
     assert!(!format!("{:?}", source).contains("fixture"));
 }
+
+#[test]
+fn m5_ai_a_new_routine_captures_no_connection_whatever_its_bot_holds() {
+    let (command, mut source) = fixture();
+    let without = source.grant().unwrap();
+    let copied_without = source.copied_grant().unwrap();
+    // The Bot now holds a connection grant.
+    source.policy.connections = [koru_delegate_core::ConnectionGrantRef {
+        connection: koru_delegate_core::ConnectionId::from_uuid(id(30)),
+        operation: koru_delegate_core::PrivateOperationKind::ReadItem,
+    }]
+    .into();
+    source.validate_for(&command).unwrap();
+    // The grant a new Routine starts from is the same bytes and digest.
+    let with = source.grant().unwrap();
+    assert_eq!(with, without);
+    assert!(with.policy.connections.is_empty());
+    assert_eq!(
+        with.canonical_bytes().unwrap(),
+        without.canonical_bytes().unwrap()
+    );
+    // Not even the copy a pre-D4a creation is recognized by carries one.
+    let copied = source.copied_grant().unwrap();
+    assert!(copied.policy.connections.is_empty());
+    assert_eq!(copied, copied_without);
+    let frozen = command
+        .freeze(
+            &source,
+            ScheduleId::from_uuid(id(5)),
+            id(7),
+            RoutineDigest32::from_bytes([11; 32]),
+            0,
+        )
+        .unwrap();
+    assert!(frozen.grant.policy.connections.is_empty());
+}

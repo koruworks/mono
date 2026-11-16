@@ -372,6 +372,7 @@ impl Repository {
                 pending_change: None,
                 main_chat: main,
                 selected_pages,
+                connections: crate::repository::connections::bot_grants_on(&self.connection, id)?,
             },
             lifecycle,
         )))
@@ -468,11 +469,17 @@ impl Repository {
             validate_access_policy(bot, barrier)?;
         }
         let kind = match expected {
+            // A Bot is created without a connection grant (M5): a grant is
+            // given by `update_access`, to a Bot that exists.
+            None if !bot.connections.is_empty() => return Err(BotError::Invalid),
             None => "create",
             Some(_) => {
                 let previous = self.bot(bot.id)?.ok_or(BotError::NotFound)?;
                 if previous.policy_revision != bot.policy_revision {
                     "update_access"
+                } else if previous.connections != bot.connections {
+                    // Grants are policy: only an access change moves them.
+                    return Err(BotError::Invalid);
                 } else {
                     "update"
                 }
@@ -555,6 +562,21 @@ impl Repository {
                 ],
             )
             .map_err(bad)?;
+        }
+        // The Bot's connection grants are replaced as a set with its access
+        // (M5). A grant that stays keeps when it was given; a new one needs a
+        // connected connection of the same person on this computer.
+        if kind == "update_access" {
+            crate::repository::connections::replace_bot_grants_on(
+                &tx,
+                BotOwner {
+                    user_scope: bot.user_scope,
+                    device: bot.owner_device,
+                },
+                bot.id,
+                &bot.connections,
+                bot.updated_at_ms,
+            )?;
         }
         let (stage, outcome) = match barrier {
             Some(barrier) if kind == "update_access" => (

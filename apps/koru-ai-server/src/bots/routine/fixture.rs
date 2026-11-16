@@ -97,6 +97,7 @@ impl Fixture {
             open_operation: None,
             held_by: None,
             pending_change: None,
+            connections: Default::default(),
         };
         let mut repository = Repository::in_memory().unwrap();
         repository

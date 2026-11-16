@@ -117,6 +117,10 @@ impl Repository {
         let mut desired = current;
         desired.access = bot.access;
         desired.selected_pages = bot.selected_pages.clone();
+        // The caller states the whole grant set. A command that did not
+        // mention connections passes the Bot's current set, so nothing is
+        // removed; the writer accepts a new grant only for a usable one.
+        desired.connections = bot.connections.clone();
         desired.revision += 1;
         desired.policy_revision += 1;
         desired.updated_at_ms = bot.updated_at_ms;

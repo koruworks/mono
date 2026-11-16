@@ -220,7 +220,9 @@ pub(super) fn source(
                 _ => return Err(BotError::Storage),
             },
             selected_pages: selected,
-            connections: Default::default(),
+            // The Bot's own grants, as its policy holds them (M5). A new
+            // Routine never starts from them: see the creation source.
+            connections: crate::repository::connections::bot_grants_on(conn, bot)?,
         },
     })
 }

@@ -18,6 +18,8 @@ pub struct BotPolicyMetadata {
     pub paused: bool,
     pub access: BotAccess,
     pub selected_pages: Vec<BotPage>,
+    /// The Bot's current connection grants (M5), at most 16.
+    pub connections: std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
     /// An unfinished whole-Bot operation, including a parked operation.
     /// Chat-only lifecycle operations do not fence a fresh Routine.
     pub pending_lifecycle: Option<BotRequestId>,
@@ -25,7 +27,12 @@ pub struct BotPolicyMetadata {
 }
 impl BotPolicyMetadata {
     pub fn policy(&self) -> CapturedBotPolicy {
-        bot_native_policy_from(self.home_workspace, self.access, &self.selected_pages)
+        bot_native_policy_from(
+            self.home_workspace,
+            self.access,
+            &self.selected_pages,
+            &self.connections,
+        )
     }
 }
 
@@ -56,14 +63,23 @@ impl BotAccessReceipt {
 
 /// Canonical current policy only. Task capture is intersected by the delegate.
 pub fn bot_native_policy(bot: &Bot) -> CapturedBotPolicy {
-    bot_native_policy_from(bot.home_workspace, bot.access, &bot.selected_pages)
+    bot_native_policy_from(
+        bot.home_workspace,
+        bot.access,
+        &bot.selected_pages,
+        &bot.connections,
+    )
 }
 
 /// Shared policy construction for full Bot and bounded authority-only reads.
+/// `connections` is the Bot's grant set as ai.db holds it. An empty set is
+/// not serialized, so a policy without a grant keeps its pre-M5 bytes and
+/// every digest computed over them.
 pub fn bot_native_policy_from(
     home: WorkspaceId,
     access: BotAccess,
     pages: &[BotPage],
+    connections: &std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
 ) -> CapturedBotPolicy {
     CapturedBotPolicy {
         workspace: home,
@@ -73,7 +89,7 @@ pub fn bot_native_policy_from(
             BotAccess::Workspace => koru_delegate_core::BotAccess::Workspace,
         },
         selected_pages: pages.iter().map(|p| p.document).collect(),
-        connections: Default::default(),
+        connections: connections.clone(),
     }
 }
 
@@ -90,6 +106,7 @@ pub fn validate_access_policy(bot: &Bot, barrier: &BotPolicyBarrier) -> Result<(
         || barrier.key.bot != bot.id
         || barrier.config_revision != bot.revision
         || barrier.policy_revision != bot.policy_revision
+        || bot.connections.len() > koru_delegate_core::CONNECTION_GRANT_LIMIT
         || barrier.policy != bot_native_policy(bot)
         || !barrier.effects_allowed
     {

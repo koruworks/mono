@@ -118,6 +118,14 @@ pub struct Bot {
     /// stored, exactly as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_change: Option<BotPendingChange>,
+    /// The private connections this Bot may use without asking (M5): part of
+    /// its policy, changed only by `update_access` with `connections`
+    /// present. Omitted when the Bot holds none, so a Bot without a grant
+    /// serializes, and every stored receipt that holds one is, exactly as
+    /// before the field existed (ai.db 25).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
+    pub connections: std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -572,6 +580,16 @@ pub enum BotCommand {
         expected_policy_revision: u64,
         access: BotAccess,
         selected_pages: Vec<BotPage>,
+        /// The Bot's whole set of connection grants (M5). Absent changes no
+        /// grant, so a caller that does not know the field keeps them all;
+        /// present replaces the set, and an empty list removes every grant.
+        /// A grant is accepted only for a connection of the same person on
+        /// this computer that is connected: otherwise
+        /// `connection_unavailable`. The request fingerprint covers it only
+        /// when it is present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
+        connections: Option<std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>>,
     },
     /// Settle the Bot's work and keep it, with its history, out of the roster.
     Archive {
@@ -1171,6 +1189,9 @@ pub enum BotError {
     Settling,
     /// A new attempt cannot convert a Routine Run into a Manual continuation.
     RoutineRetryUnsupported,
+    /// A connection grant names a connection that is not this person's on
+    /// this computer, or is not connected (M5).
+    ConnectionUnavailable,
 }
 impl BotError {
     pub const fn code(self) -> &'static str {
@@ -1186,6 +1207,7 @@ impl BotError {
             Self::Storage => "storage_error",
             Self::Settling => "bot_operation_pending",
             Self::RoutineRetryUnsupported => "routine_retry_unsupported",
+            Self::ConnectionUnavailable => "connection_unavailable",
         }
     }
 }

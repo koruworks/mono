@@ -248,6 +248,7 @@ fn an_archived_bot_reads_and_every_change_answers_bot_archived_after_authority()
             expected_policy_revision: bot.policy_revision,
             access: BotAccess::Workspace,
             selected_pages: vec![],
+            connections: None,
         },
         BotCommand::Pause {
             request_id: BotRequestId::mint(),

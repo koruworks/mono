@@ -268,6 +268,7 @@ impl WorkerState {
                 expected_policy_revision,
                 access,
                 selected_pages,
+                connections,
                 ..
             } = normalized
             else {
@@ -286,6 +287,11 @@ impl WorkerState {
             desired.policy_revision = next_revision(expected_policy_revision)?;
             desired.access = access;
             desired.selected_pages = selected_pages;
+            // Absent changes no connection grant; present is the whole set
+            // (M5). The repository refuses a new grant that is not usable.
+            if let Some(connections) = connections {
+                desired.connections = connections;
+            }
             desired.updated_at_ms = Timestamp::now().millis();
             let snapshot = barrier(&desired)?;
             self.repository

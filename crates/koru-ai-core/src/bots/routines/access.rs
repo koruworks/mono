@@ -109,10 +109,18 @@ impl BotRoutineAccessUpdate {
     /// home, recording the Bot policy revision the writer observed. The same
     /// bounds as a Bot's own access change (at most 1024 pages, all in the
     /// home, already normalized).
+    ///
+    /// `connections` is the set of connection grants the Routine holds now
+    /// (M5). This edit names access and pages only, so it carries them over
+    /// unchanged: an edit that does not mention connections never removes
+    /// one. They are the Routine's own, read from its grant, never the
+    /// Bot's. An empty set is not serialized, so the grant of a Routine
+    /// without one keeps its pre-M5 bytes and digest.
     pub fn grant(
         &self,
         home: WorkspaceId,
         source_bot_policy_revision: u64,
+        connections: &std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
     ) -> Result<BotRoutineGrant, BotError> {
         self.validate()?;
         let mut normalized = self.selected_pages.clone();
@@ -135,7 +143,7 @@ impl BotRoutineAccessUpdate {
                     .iter()
                     .map(|page| page.document)
                     .collect(),
-                connections: Default::default(),
+                connections: connections.clone(),
             },
             digest: RoutineDigest32::from_bytes([0; 32]),
         };
@@ -248,7 +256,15 @@ impl BotRoutineAccessReceipt {
     /// Whether `command` is the request this receipt answered: the same
     /// Routine and expected revision and, for an applied edit, the same
     /// resulting grant, recomputed from the command and compared by digest.
-    pub fn answers(&self, command: &BotRoutineAccessUpdate, home: WorkspaceId) -> bool {
+    /// `connections` is the set the Routine's grant holds now, which an edit
+    /// carries over; while nothing can change that set between an edit and
+    /// its retry, it is the set the edit was written with.
+    pub fn answers(
+        &self,
+        command: &BotRoutineAccessUpdate,
+        home: WorkspaceId,
+        connections: &std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
+    ) -> bool {
         if self.bot != command.bot
             || self.schedule != command.schedule
             || self.expected_grant_revision != command.expected_grant_revision
@@ -261,7 +277,7 @@ impl BotRoutineAccessReceipt {
                 grant_digest,
                 ..
             } => command
-                .grant(home, *source_bot_policy_revision)
+                .grant(home, *source_bot_policy_revision, connections)
                 .is_ok_and(|grant| grant.digest == *grant_digest),
             BotRoutineAccessOutcome::Refused { .. } => command.validate().is_ok(),
         }

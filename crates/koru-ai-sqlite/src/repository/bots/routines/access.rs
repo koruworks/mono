@@ -122,12 +122,20 @@ fn record_on(
 /// An exact retry returns what was retained; the same request with other
 /// content, or another fingerprint, is a conflict.
 fn replayed(
+    conn: &Connection,
     record: BotRoutineAccessRecord,
     command: &BotRoutineAccessUpdate,
     fingerprint: RoutineDigest32,
-    home: WorkspaceId,
+    creation: &BotRoutineCreation,
 ) -> Result<BotRoutineAccessRecord, BotError> {
-    if record.fingerprint != fingerprint || !record.receipt.answers(command, home) {
+    // An edit carries the Routine's connection grants over (M5), so the
+    // grant it wrote is recomputed with the set the Routine holds.
+    let connections = current_on(conn, creation)?.grant.policy.connections;
+    if record.fingerprint != fingerprint
+        || !record
+            .receipt
+            .answers(command, creation.identity.home, &connections)
+    {
         return Err(BotError::Conflict);
     }
     Ok(record)
@@ -252,10 +260,11 @@ impl Repository {
         let home = creation.identity.home;
         if let Some(record) = retained {
             return Ok(BotRoutineAccessAdmission::Retained(replayed(
+                &tx,
                 record,
                 command,
                 fingerprint,
-                home,
+                &creation,
             )?));
         }
         // Bot Active, nothing of the Bot pending, no Archive or Trash open.
@@ -274,7 +283,9 @@ impl Repository {
         if observed.home != home {
             return Err(BotError::Forbidden);
         }
-        let grant = command.grant(home, observed.policy)?;
+        // The Routine's own connection grants ride along unchanged (M5):
+        // this edit names access and pages only.
+        let grant = command.grant(home, observed.policy, &current.grant.policy.connections)?;
         let record = BotRoutineAccessRecord {
             request: command.request,
             fingerprint,
@@ -338,7 +349,7 @@ impl Repository {
         let creation = bounded::by_schedule(&tx, owner, command.bot, command.schedule)?
             .ok_or(BotError::NotFound)?;
         if let Some(record) = retained {
-            return replayed(record, command, fingerprint, creation.identity.home);
+            return replayed(&tx, record, command, fingerprint, &creation);
         }
         let record = BotRoutineAccessRecord {
             request: command.request,

@@ -132,13 +132,20 @@ impl BotRoutineCreationSource {
             destination: self.home,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            // A new Routine holds no connection grant, whatever its Bot
+            // holds (M5): a Routine cannot ask, so it is given one only by
+            // the person, in advance.
             connections: Default::default(),
         })
     }
     /// The grant a creation prepared before D4a froze: a copy of the Bot's
-    /// access. Never given to a new Routine.
+    /// access. Never given to a new Routine. Such a copy was made before
+    /// connections existed, so it holds none; the Bot's connection grants
+    /// are never copied into a Routine by any path.
     fn copied_grant(&self) -> Result<BotRoutineGrant, BotError> {
-        self.grant_of(self.policy.clone())
+        let mut policy = self.policy.clone();
+        policy.connections.clear();
+        self.grant_of(policy)
     }
     fn grant_of(&self, policy: CapturedBotPolicy) -> Result<BotRoutineGrant, BotError> {
         let mut grant = BotRoutineGrant {

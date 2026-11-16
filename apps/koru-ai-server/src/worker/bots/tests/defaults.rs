@@ -129,6 +129,7 @@ fn an_access_change_rewrites_no_conversation_either() {
             expected_policy_revision: bot.policy_revision,
             access: BotAccess::Workspace,
             selected_pages: vec![],
+            connections: None,
         },
     )
     .unwrap() else {

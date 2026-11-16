@@ -28,6 +28,7 @@ use crate::db::{self, OpenError};
 mod attachments;
 mod bot_replay;
 mod bots;
+mod connections;
 mod mutations;
 use koru_ai_core::bots::ChatReadAccess;
 

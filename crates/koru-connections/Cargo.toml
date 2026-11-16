@@ -1,0 +1,36 @@
+[package]
+rust-version.workspace = true
+name = "koru-connections"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "A person's private connections: the vendor port, the credential slot, and the service that reads one item under the delegate's obligations."
+
+[features]
+default = []
+# The scripted in-memory vendor, effect ledger and clock. For this crate's
+# tests and for the tests of the crates above it; only dev-dependencies turn
+# it on. It opens no socket and reaches no credential store.
+test-support = []
+
+[dependencies]
+# `Connection`, its items, receipts and codes: what ai.db holds.
+koru-ai-core = { path = "../koru-ai-core" }
+# The effect vocabulary the delegate's ledger speaks, and the ids.
+koru-delegate-core = { path = "../koru-delegate-core" }
+# The credential port and the redacted secret type. **Never with the
+# `desktop` feature**: this crate takes `Arc<dyn CredentialStore>` and names
+# no OS store. Only the composition that runs the service constructs one, so
+# no test of this crate, or of a crate that tests through it, can reach a
+# real keychain. `src/tests/isolation.rs` holds this manifest to that.
+koru-oauth-credentials = { path = "../koru-oauth-credentials" }
+base64.workspace = true
+blake3.workspace = true
+sha2.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+# The real ai.db writer on an in-memory database: the flows are tested
+# against the rows and constraints production has, not a second model of them.
+koru-ai-sqlite = { path = "../koru-ai-sqlite", features = ["fixtures"] }

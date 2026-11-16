@@ -496,6 +496,7 @@ fn role_edits_do_not_require_bot_reacceptance_and_access_edits_use_cas() {
         expected_policy_revision: 1,
         access: BotAccess::Workspace,
         selected_pages: vec![],
+        connections: None,
     };
     let BotResponse::Bot { bot: updated } = execute_bot_command(
         &mut repo,
@@ -952,5 +953,98 @@ fn ordinary_branch_copy_commits_and_inflight_destination_is_reserved() {
     assert_eq!(
         repo.attachment_records(copy.chat.id).unwrap(),
         copy.attachments
+    );
+}
+
+/// M5: `update_access` states the Bot's connection grants only when it
+/// carries `connections`. A caller that leaves the field out, which is every
+/// caller that does not know it, removes no grant.
+#[test]
+fn m5_grant_commands_update_access_without_connections_changes_no_grant() {
+    use koru_ai_core::connections::*;
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let owner = koru_ai_core::bots::BotOwner {
+        user_scope: bot.user_scope,
+        device: bot.owner_device,
+    };
+    // A connected connection of the same person, written by its own owner.
+    let (request, planned) = (BotRequestId::mint(), ConnectionId::mint());
+    repo.begin_connect(owner, request, &"a".repeat(64), planned, "Work", 1)
+        .unwrap();
+    let connection = repo
+        .complete_connect(
+            owner,
+            request,
+            &ConnectedAccount {
+                provider: ProviderToken::parse(vendors::QUALIFIED[0]).unwrap(),
+                service_origin: "https://vendor.example".into(),
+                name: "Work".into(),
+                account_subject_digest: [1; 32],
+                account_label: "label".into(),
+                scopes: vec![],
+                credential_slot_digest: [2; 32],
+                items: vec![],
+            },
+            2,
+        )
+        .unwrap();
+    let grant = connection.read_grant();
+    let mut revision = 1;
+    let mut update = |repo: &mut _, connections| {
+        let response = execute_bot_command(
+            repo,
+            authority.clone(),
+            |_| panic!("access does not rediscover runtime"),
+            context(true),
+            BotCommand::UpdateAccess {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+                expected_revision: revision,
+                expected_policy_revision: revision,
+                access: BotAccess::Workspace,
+                selected_pages: vec![],
+                connections,
+            },
+        );
+        if response.is_ok() {
+            revision += 1;
+        }
+        response.map(|response| match response {
+            BotResponse::Bot { bot } => bot,
+            other => panic!("{other:?}"),
+        })
+    };
+    // Present: the set is what the command states.
+    let granted = update(&mut repo, Some([grant].into())).unwrap();
+    assert_eq!(granted.connections, [grant].into());
+    assert_eq!(
+        koru_ai_core::bots::bot_native_policy(&granted).connections,
+        [grant].into()
+    );
+    // Absent: nothing about connections changes.
+    let kept = update(&mut repo, None).unwrap();
+    assert_eq!(kept.connections, [grant].into());
+    assert_eq!((kept.revision, kept.policy_revision), (3, 3));
+    // A grant for a connection that does not exist is refused, and the
+    // grant the Bot holds stays.
+    let missing = ConnectionGrantRef {
+        connection: ConnectionId::mint(),
+        operation: PrivateOperationKind::ReadItem,
+    };
+    assert_eq!(
+        update(&mut repo, Some([grant, missing].into()))
+            .unwrap_err()
+            .code,
+        "connection_unavailable"
+    );
+    // Present and empty: every grant is removed.
+    let removed = update(&mut repo, Some(Default::default())).unwrap();
+    assert!(removed.connections.is_empty());
+    assert_eq!(
+        koru_ai_core::bots::BotRepository::bot(&repo, bot.id)
+            .unwrap()
+            .unwrap(),
+        removed
     );
 }

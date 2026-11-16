@@ -229,6 +229,7 @@ fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_w
         open_operation: None,
         held_by: None,
         pending_change: None,
+        connections: Default::default(),
     };
     // Active with nothing open: no lifecycle field is written, so receipts
     // that store a Bot and older readers see the same bytes as before P1.7.

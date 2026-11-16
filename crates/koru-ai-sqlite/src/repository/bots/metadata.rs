@@ -77,6 +77,7 @@ impl Repository {
                 _ => return Err(BotError::Storage),
             },
             selected_pages: selected,
+            connections: crate::repository::connections::bot_grants_on(&self.connection, id)?,
             pending_lifecycle: pending_lifecycle(&self.connection, owner, id)?,
             pending_change: pending_change(&self.connection, owner, id)?,
         };

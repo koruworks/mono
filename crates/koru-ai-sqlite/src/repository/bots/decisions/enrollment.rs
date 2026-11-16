@@ -291,7 +291,7 @@ impl Repository {
         }
         if qualified.fresh_stop_eligibility != FreshWaitStopEligibility::EligibleOriginWaitStop
             || qualified.current_revision != request.key.wait_revision
-            || !matches!(&qualified.disposition, DecisionDisposition::Open { state } if state.kind == DecisionKind::KoruEdit && state.authorization == DecisionAuthorization::Pending && state.phase == DecisionPhase::Holding && state.revision == request.key.decision_revision)
+            || !matches!(&qualified.disposition, DecisionDisposition::Open { state } if state.kind.resumes_by_successor() && state.authorization == DecisionAuthorization::Pending && state.phase == DecisionPhase::Holding && state.revision == request.key.decision_revision)
             || !matches!(qualified.publication, DecisionPublication::Applied { .. })
             || !matches!(qualified.origin_stop, OriginWaitStop::Pending {})
             || !matches!(qualified.consumer_cleanup, ConsumerCleanup::NotRequested {})

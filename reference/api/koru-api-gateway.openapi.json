@@ -2623,6 +2623,15 @@
           "config": {
             "$ref": "#/components/schemas/BotConfig"
           },
+          "connections": {
+            "description": "The private connections this Bot may use without asking (M5): part of\nits policy, changed only by `update_access` with `connections`\npresent. Omitted when the Bot holds none, so a Bot without a grant\nserializes, and every stored receipt that holds one is, exactly as\nbefore the field existed (ai.db 25).",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGrantRef"
+            },
+            "maxItems": 16,
+            "type": "array",
+            "uniqueItems": true
+          },
           "created_at_ms": {
             "format": "int64",
             "type": "integer"
@@ -3907,6 +3916,16 @@
                   "update_access"
                 ],
                 "type": "string"
+              },
+              "connections": {
+                "description": "The Bot's whole set of connection grants (M5). Absent changes no\ngrant, so a caller that does not know the field keeps them all;\npresent replaces the set, and an empty list removes every grant.\nA grant is accepted only for a connection of the same person on\nthis computer that is connected: otherwise\n`connection_unavailable`. The request fingerprint covers it only\nwhen it is present.",
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionGrantRef"
+                },
+                "maxItems": 16,
+                "nullable": true,
+                "type": "array",
+                "uniqueItems": true
               },
               "expected_policy_revision": {
                 "format": "uint64",
@@ -8655,6 +8674,28 @@
             "type": "object"
           }
         ]
+      },
+      "ConnectionGrantRef": {
+        "additionalProperties": false,
+        "description": "A reference and a permission. Whether the connection can be used now is\nchecked at use time by its owner, never inferred from this value.\nOrdered by connection, then operation.",
+        "properties": {
+          "connection": {
+            "$ref": "#/components/schemas/ConnectionId"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/PrivateOperationKind"
+          }
+        },
+        "required": [
+          "connection",
+          "operation"
+        ],
+        "type": "object"
+      },
+      "ConnectionId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
       },
       "ContentEncoding": {
         "description": "How `read` spells the bytes it returns.",
@@ -14416,6 +14457,13 @@
             "type": "string"
           }
         ]
+      },
+      "PrivateOperationKind": {
+        "description": "What one grant permits. A closed list: M5 qualifies one read.",
+        "enum": [
+          "read_item"
+        ],
+        "type": "string"
       },
       "ProcessState": {
         "oneOf": [

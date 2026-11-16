@@ -17,6 +17,7 @@ fn metadata_epoch_and_bot_wrapper_preserve_the_original_golden_bytes() {
         selected_pages: bot.selected_pages.clone(),
         pending_lifecycle: None,
         pending_change: None,
+        connections: Default::default(),
     };
     let actual = key(metadata.owner, metadata.id, metadata.revision).unwrap();
     assert_eq!(actual.to_storage(), "702efbc8-a8b3-8a7f-b84a-8bdd51ac4385");

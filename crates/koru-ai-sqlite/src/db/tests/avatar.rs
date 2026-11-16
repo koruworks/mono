@@ -11,9 +11,22 @@ use super::*;
 const ADDED: &str =
     ",avatarINTEGERCHECK(avatarISNULLOR(typeof(avatar)='integer'ANDavatarBETWEEN0AND23))";
 
+/// This step and no later one: ai.db 25 exists now, so the real opener goes
+/// further than the step under test.
+pub(super) fn ai24() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 24,
+        migrations: &MIGRATIONS[..24],
+    }
+}
+fn prepare_ai24(c: &mut Connection) {
+    koru_sqlite::prepare_with_preflight(&ai24(), c, refuse_superseded_18).unwrap();
+}
+
 /// The populated ai22 fixture with the ai23 rows, migrated to ai23 and no
 /// further: what the previous build left.
-fn populated_ai23() -> Connection {
+pub(super) fn populated_ai23() -> Connection {
     let mut c = populated();
     koru_sqlite::prepare_with_preflight(&ai23(), &mut c, refuse_superseded_18).unwrap();
     assert_eq!(user_version(&c).unwrap(), 23);
@@ -36,8 +49,7 @@ fn migration_ai24_keeps_every_populated_ai23_row_and_adds_one_nullable_column() 
     let before = snapshot(&c);
     let keys_before = foreign_keys(&c);
     assert!(!before["bots"].1.is_empty(), "the fixture holds no Bot");
-    prepare(&mut c).unwrap();
-    assert_eq!(SCHEMA_VERSION, 24);
+    prepare_ai24(&mut c);
     assert_eq!(user_version(&c).unwrap(), 24);
     let after = snapshot(&c);
 
@@ -81,14 +93,14 @@ fn migration_ai24_keeps_every_populated_ai23_row_and_adds_one_nullable_column() 
     foreign_keys_held(&c);
 
     // Reopened, it is already current and nothing runs again.
-    prepare(&mut c).unwrap();
+    prepare_ai24(&mut c);
     assert_eq!(snapshot(&c), after);
 }
 
 #[test]
 fn migration_ai24_avatar_is_null_or_a_whole_number_inside_the_face_table() {
     let mut c = populated_ai23();
-    prepare(&mut c).unwrap();
+    prepare_ai24(&mut c);
     let case = |value: &str, accepts: bool| {
         let result = c.execute(&format!("UPDATE bots SET avatar={value}"), []);
         assert_eq!(result.is_ok(), accepts, "avatar={value}: {result:?}");
@@ -142,14 +154,14 @@ fn migration_ai24_failure_rolls_back_the_column_and_the_stamp() {
     assert_eq!(snapshot(&c), before);
     foreign_keys_held(&c);
     // The real step still applies to what the failure left.
-    prepare(&mut c).unwrap();
+    prepare_ai24(&mut c);
     assert_eq!(user_version(&c).unwrap(), 24);
 }
 
 #[test]
 fn migration_ai23_build_refuses_ai24_before_preflight_or_configuration() {
     let mut c = populated_ai23();
-    prepare(&mut c).unwrap();
+    prepare_ai24(&mut c);
     let before = snapshot(&c);
     c.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF")
         .unwrap();
@@ -173,9 +185,7 @@ fn migration_ai23_build_refuses_ai24_before_preflight_or_configuration() {
 
 #[test]
 fn migration_fresh_database_reaches_ai24_with_a_nullable_avatar_column() {
-    let c = open_in_memory().unwrap();
-    assert_eq!(SCHEMA_VERSION, 24);
-    assert_eq!(MIGRATIONS.len(), 24);
+    let c = koru_sqlite::open_in_memory(&ai24()).unwrap();
     assert_eq!(MIGRATIONS[23].to, 24);
     assert_eq!(user_version(&c).unwrap(), 24);
     let (kind, not_null, default): (String, bool, Option<String>) = c
@@ -216,8 +226,10 @@ fn migration_ai24_through_the_real_open_of_a_populated_ai23_file() {
     };
     let mut first = None;
     for _ in 0..2 {
+        // The real opener goes on to the current schema; the Bot rows this
+        // step carried are compared all the same.
         let c = open(&path).unwrap();
-        assert_eq!(user_version(&c).unwrap(), 24);
+        assert_eq!(user_version(&c).unwrap(), SCHEMA_VERSION);
         let after = snapshot(&c);
         for (name, (_, rows)) in &before {
             if name == "bots" {

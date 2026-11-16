@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use crate::repository::bots::tests::fixture_bot;
+mod connections;
 
 fn fixture() -> (Repository, Bot, ProfileId, BotRequestId, BotPolicyBarrier) {
     let mut repo = Repository::in_memory().unwrap();

@@ -287,3 +287,16 @@ fn persist_transition(
     }
     Ok(())
 }
+
+#[cfg(test)]
+impl Repository {
+    /// The creation source as the Routine writer reads it, for a test of
+    /// what it captures from the Bot.
+    pub(crate) fn routine_creation_source_for_test(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+    ) -> Result<BotRoutineCreationSource, BotError> {
+        bounded::source(&self.connection, owner, bot)
+    }
+}

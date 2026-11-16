@@ -499,6 +499,7 @@ fn execute_bot_command(
                     open_operation: None,
                     held_by: None,
                     pending_change: None,
+                    connections: Default::default(),
                 },
                 None,
             )
@@ -525,6 +526,7 @@ fn execute_bot_command(
             expected_policy_revision,
             access,
             selected_pages,
+            connections,
             ..
         } => {
             let mut bot = repository
@@ -536,6 +538,9 @@ fn execute_bot_command(
             }
             bot.access = access;
             bot.selected_pages = selected_pages;
+            if let Some(connections) = connections {
+                bot.connections = connections;
+            }
             bot.revision = next_revision(expected_revision)?;
             bot.policy_revision = next_revision(expected_policy_revision)?;
             bot.updated_at_ms = now;

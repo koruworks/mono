@@ -354,3 +354,64 @@ fn enrollment_insert_failure_rolls_back_and_lost_response_replays_first_receipt(
         10
     );
 }
+
+/// M5: a private question is a Koru decision that resumes by a successor, so
+/// its origin wait can be enrolled and held exactly as an edit's is. A native
+/// approval, the agent's own prompt, is still refused here.
+#[test]
+fn m5_ai_enrollment_private_decision_is_held_like_an_edit_and_a_native_one_is_not() {
+    for (kind, enrolls) in [
+        (DecisionKind::KoruEdit, true),
+        (DecisionKind::PrivateOperation, true),
+        (DecisionKind::NativeApproval, false),
+    ] {
+        let (mut repo, owner, request, mut qualified, attempt) = fixture();
+        let DecisionDisposition::Open { state } = &mut qualified.disposition else {
+            panic!("the fixture holds an open decision")
+        };
+        state.kind = kind;
+        let reply = enroll(&mut repo, owner, &request, &qualified);
+        if enrolls {
+            let reply = reply.unwrap();
+            assert!(
+                matches!(&reply, BotWaitEnrollmentReply::Enrolled { ai_attempt, .. } if *ai_attempt == attempt.as_uuid()),
+                "{kind:?}"
+            );
+            assert_eq!(count(&repo), 1, "{kind:?}");
+            // The exact retry returns the retained enrollment.
+            assert_eq!(
+                enroll(&mut repo, owner, &request, &qualified).unwrap(),
+                reply
+            );
+            assert_eq!(count(&repo), 1);
+        } else {
+            // A native prompt is never held by Koru at all: the state the
+            // observation claims is not one a native decision can have.
+            assert_eq!(reply, Err(BotError::Invalid), "{kind:?}");
+            assert_eq!(count(&repo), 0);
+        }
+    }
+    // Still only while it is pending and being held: a private decision in
+    // any other state is refused as an edit is.
+    for (authorization, phase) in [
+        (DecisionAuthorization::Pending, DecisionPhase::Publishing),
+        (DecisionAuthorization::Pending, DecisionPhase::Held),
+        (DecisionAuthorization::Granted, DecisionPhase::Held),
+    ] {
+        let (mut repo, owner, request, mut qualified, _) = fixture();
+        let DecisionDisposition::Open { state } = &mut qualified.disposition else {
+            panic!("the fixture holds an open decision")
+        };
+        state.kind = DecisionKind::PrivateOperation;
+        state.authorization = authorization;
+        state.phase = phase;
+        assert!(
+            matches!(
+                enroll(&mut repo, owner, &request, &qualified),
+                Err(BotError::RevisionConflict | BotError::Invalid)
+            ),
+            "{authorization:?} {phase:?}"
+        );
+        assert_eq!(count(&repo), 0);
+    }
+}

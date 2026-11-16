@@ -639,6 +639,7 @@ impl BotCreationRecord {
             open_operation: None,
             held_by: None,
             pending_change: None,
+            connections: Default::default(),
         })
     }
 
