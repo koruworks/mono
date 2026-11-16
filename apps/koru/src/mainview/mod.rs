@@ -6105,6 +6105,7 @@ impl MainView {
             self.bot_trash.owe_refresh();
             // Every tab of the Bot, not only the one in front.
             self.bot_moved_elsewhere(done.bot);
+            self.bot_routines_restored(done.bot, &done.routines);
             changed = true;
         }
         // **A Retry or an Abandon from the Unfinished group**: a create tab
@@ -15389,7 +15390,7 @@ impl View for MainView {
         // touch no disk and this is the only thread that could.
         let delegate_folder = self.maintain_delegate_folder();
         let delegation_requested = self.drain_delegate_request();
-        let delegation_answered = self.maintain_delegation();
+        let delegation_answered = self.maintain_delegation() | self.maintain_routine_timing();
         self.refresh_device_names();
         let root_sync_changed = self.refresh_root_sync();
         let welcome_ticks = self.welcome_progress.maintain(now);

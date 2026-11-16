@@ -276,7 +276,9 @@ fn pieces_for_language(
 
     let title = t(
         lang,
-        if modal.edit.is_some() {
+        if modal.routine.is_some() {
+            I18nKey::BotsRoutineEditTiming
+        } else if modal.edit.is_some() {
             I18nKey::DelegateScheduleEditTitle
         } else {
             I18nKey::DelegateTitle
@@ -284,6 +286,50 @@ fn pieces_for_language(
     );
     out.push(Piece::Sentence(title.to_owned()));
     y += theme::role::ui().metrics.line_height + GAP;
+
+    // **A Bot Routine's timing and name**: the name field, the recurrence
+    // picker, and Save. The same pieces a Repeat draws, and none of a run's.
+    if let (Some(routine), Phase::Editing { problem }) = (&modal.routine, &modal.phase) {
+        let mut said = Vec::new();
+        if let Some(problem) = problem {
+            said.push(t(lang, *problem).to_owned());
+        }
+        if routine.on {
+            said.push(t(lang, I18nKey::BotsRoutineOnEditNotice).to_owned());
+        }
+        said.push(routine.zone.clone());
+        for sentence in said {
+            y += sentence_height(engine, &sentence, inner);
+            out.push(Piece::Dim(sentence));
+        }
+        y += GAP;
+        schedule_pieces(engine, modal, lang, x, inner, &mut y, &mut out);
+        let cancel = t(lang, I18nKey::DelegateCancel);
+        let submit = t(lang, I18nKey::BotsRoutineSave);
+        let cancel_w = ActionButton::new(cancel, ActionStyle::Secondary, None).width(engine);
+        let submit_w = ActionButton::new(submit, ActionStyle::Primary, None).width(engine);
+        let right = x + inner;
+        if modal.ready() {
+            out.push(Piece::Action {
+                rect: Rect::new(right - submit_w, y, submit_w, ActionButton::H),
+                hit: Hit::Submit,
+                label: submit.to_owned(),
+                style: ActionStyle::Primary,
+            });
+        }
+        let cancel_x = if modal.ready() {
+            right - submit_w - ActionButton::GAP - cancel_w
+        } else {
+            right - cancel_w
+        };
+        out.push(Piece::Action {
+            rect: Rect::new(cancel_x, y, cancel_w, ActionButton::H),
+            hit: Hit::Cancel,
+            label: cancel.to_owned(),
+            style: ActionStyle::Secondary,
+        });
+        return out;
+    }
 
     match &modal.phase {
         Phase::Editing { problem } => {
@@ -690,6 +736,25 @@ fn pieces_for_language(
     out
 }
 
+/// Every sentence the surface says now, in order: a test reading the
+/// dialog's words without a window.
+#[cfg(test)]
+pub(crate) fn sentences(
+    engine: &mut TextEngine,
+    modal: &Delegation,
+    viewport: (f32, f32),
+) -> Vec<String> {
+    let panel = panel(engine, modal, viewport);
+    pieces_for_language(engine, modal, panel, koru_i18n::Lang::En)
+        .into_iter()
+        .filter_map(|piece| match piece {
+            Piece::Sentence(text) | Piece::Dim(text) => Some(text),
+            Piece::Action { label, .. } => Some(label),
+            _ => None,
+        })
+        .collect()
+}
+
 fn schedule_pieces(
     engine: &mut TextEngine,
     modal: &Delegation,
@@ -954,6 +1019,10 @@ pub(crate) fn finished_sentences(lang: koru_i18n::Lang, phase: &Phase) -> Vec<St
 }
 
 fn finished_sentences_for(modal: &Delegation, lang: koru_i18n::Lang, phase: &Phase) -> Vec<String> {
+    // A Routine's timing has one phase besides the form: its Save is out.
+    if modal.routine.is_some() {
+        return vec![t(lang, I18nKey::BotsRoutineSaving).to_owned()];
+    }
     if modal.edit.is_some() {
         return match phase {
             Phase::Scheduling => vec![t(lang, I18nKey::DelegateScheduleSaving).to_owned()],
@@ -981,7 +1050,9 @@ fn finished_sentences_for(modal: &Delegation, lang: koru_i18n::Lang, phase: &Pha
 fn finished_prompt(modal: &Delegation, lang: koru_i18n::Lang, phase: &Phase) -> KoruPrompt<Hit> {
     let title = t(
         lang,
-        if modal.edit.is_some() {
+        if modal.routine.is_some() {
+            I18nKey::BotsRoutineEditTiming
+        } else if modal.edit.is_some() {
             I18nKey::DelegateScheduleEditTitle
         } else {
             I18nKey::DelegateTitle

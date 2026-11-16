@@ -750,8 +750,18 @@ fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
                 (Question::TrashConversation, Known::Idle) => Words::BotsTrashMainBodyIdle,
                 (Question::TrashConversation, Known::Unknown) => Words::BotsTrashMainBodyUnknown,
             };
+            // A whole Bot's question ends with what happens to its Routines
+            // (P4.3): this tab has not read them, so it says any it has.
+            let ending = match question {
+                Question::TrashConversation => t(lang, body).to_owned(),
+                _ => format!(
+                    "{}\n\n{}",
+                    t(lang, body),
+                    t(lang, Words::BotsRoutinesWillPauseAny)
+                ),
+            };
             assert!(
-                dialog.body().ends_with(t(lang, body)),
+                dialog.body().ends_with(&ending),
                 "{case}: {:?}: {}",
                 body,
                 dialog.body()

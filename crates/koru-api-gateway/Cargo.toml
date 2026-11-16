@@ -39,6 +39,9 @@ koru-channel = { path = "../koru-channel" }
 koru-network-bridge = { path = "../koru-network-bridge" }
 koru-ipc = { path = "../koru-ipc" }
 koru-store-server = { path = "../../apps/koru-store-server" }
+# This computer's time zone, for a Bot Routine it owns (P4.3, D5): the same
+# detection the delegate's scheduler runs, read again on every Routine read.
+koru-time-zone = { path = "../koru-time-zone" }
 koru-session-protocol = { path = "../koru-session-protocol" }
 # The settings authority. This process hosts it: it resolves the locations and
 # hands it down once, before serving.

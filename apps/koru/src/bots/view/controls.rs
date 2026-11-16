@@ -170,6 +170,49 @@ impl Leaf for ButtonLeaf {
     }
 }
 
+/// **A Routine's switch**: the shared `Toggle`, showing the state the owner
+/// last confirmed. On and off differ by the knob's place as well as the
+/// track's fill; `pending` dims it while a change is with the owner.
+pub(crate) struct ToggleLeaf {
+    pub(crate) on: bool,
+    pub(crate) enabled: bool,
+    pub(crate) pending: bool,
+    pub(crate) focused: bool,
+    pub(crate) rtl: bool,
+}
+
+impl Leaf for ToggleLeaf {
+    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
+        (
+            koru_ui::toggle::Toggle::TRACK_W,
+            metrics::BUTTON_MIN.value.max(koru_ui::toggle::Toggle::H),
+        )
+    }
+
+    fn paint(
+        &self,
+        scene: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        at: Rect,
+        _cx: &FrameCx,
+        state: ElState,
+    ) {
+        koru_ui::toggle::Toggle::new(self.on)
+            .enabled(self.enabled)
+            .pending(self.pending)
+            .draw(
+                scene,
+                root,
+                engine,
+                at,
+                self.rtl,
+                state.hovered,
+                self.focused,
+            );
+    }
+}
+
 /// **An icon-only action**: the shared inline `icon_button` — a page's or a
 /// row's `⋯` — in a square as tall as an action. Its name is the element's;
 /// its keyboard ring is the element's focus treatment.

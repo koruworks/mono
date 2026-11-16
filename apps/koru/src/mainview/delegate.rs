@@ -411,6 +411,120 @@ impl MainView {
         true
     }
 
+    /// **Open the timing dialog of one Bot Routine** (P4.3): the delegation
+    /// surface narrowed to the name and the recurrence picker, seeded from
+    /// what the Bot's pane last read. Nothing is read or sent to open it.
+    pub(crate) fn begin_routine_timing(
+        &mut self,
+        bot: koru_ai_core::bots::BotId,
+        tab: u64,
+        seed: crate::bots::routines::control::TimingSeed,
+    ) -> bool {
+        if self.delegation.is_some() {
+            return false;
+        }
+        let Some((_, profile, _, Some(workspace))) = self.pane_context.clone() else {
+            return false;
+        };
+        let lang = crate::format::lang();
+        // An answer left by a dialog closed while its Save was out is not
+        // this dialog's.
+        if let Some(view) = self.asking_bot_tab_mut(tab, bot) {
+            let _ = view.routines.take_timing_answer();
+        }
+        let world = world::World {
+            workspace: koru_delegate_core::WorkspaceId::from_uuid(workspace.as_uuid()),
+            workspace_name: String::new(),
+            profile: koru_store_core::ProfileId::from_uuid(profile.as_uuid()),
+            agents: Vec::new(),
+            scopes: Vec::new(),
+            context: Vec::new(),
+            attachable: None,
+            objective: String::new(),
+            pill_anchor: None,
+            temporary_base: String::new(),
+            base_problem: None,
+            dropped_context: false,
+            chosen_model: None,
+            chosen_agent: None,
+            chosen_scope: None,
+            grant: false,
+        };
+        let timing = modal::RoutineTiming {
+            bot,
+            tab,
+            schedule: seed.schedule,
+            on: seed.on,
+            zone: crate::bots::view::context_routines::detail::zone_words(lang, &seed.zone),
+        };
+        self.delegation = Some(Delegation::open_routine_timing(
+            &mut self.engine,
+            world,
+            self.reminder_environment.locale.clone(),
+            self.reminder_environment.resolution.current_zone.as_str(),
+            timing,
+            &seed.name,
+            &seed.recurrence,
+        ));
+        true
+    }
+
+    /// The open surface's sentences and button labels, for a test.
+    #[cfg(test)]
+    pub(crate) fn delegation_sentences(&mut self) -> Vec<String> {
+        match self.delegation.as_ref() {
+            Some(modal) => paint::sentences(&mut self.engine, modal, self.viewport),
+            None => Vec::new(),
+        }
+    }
+
+    /// **The Bot's tab answered the timing dialog's Save.** Applied: the
+    /// dialog closes and the pane shows the new timing. Refused: the form
+    /// comes back with what was typed and the sentence. Polled from
+    /// `maintain`, never from a draw.
+    pub(crate) fn maintain_routine_timing(&mut self) -> bool {
+        use crate::bots::routines::control::TimingAnswer;
+        let Some(routine) = self
+            .delegation
+            .as_ref()
+            .and_then(|modal| modal.routine.clone())
+        else {
+            return false;
+        };
+        let saving = self
+            .delegation
+            .as_ref()
+            .is_some_and(|modal| matches!(modal.phase, Phase::Scheduling));
+        let Some(view) = self.asking_bot_tab_mut(routine.tab, routine.bot) else {
+            // The tab that asked is gone: nothing can be saved from here.
+            self.delegation = None;
+            return self.say_asking_tab_gone();
+        };
+        let answer = view.routines.take_timing_answer();
+        let busy = view.routines.control_busy();
+        match answer {
+            Some(TimingAnswer::Applied) if saving => {
+                self.delegation = None;
+                true
+            }
+            Some(TimingAnswer::Problem(words)) if saving => {
+                if let Some(modal) = self.delegation.as_mut() {
+                    modal.routine_answered(words);
+                }
+                true
+            }
+            // The pane was hidden while the Save was out: its answer is
+            // dropped there, so what happened is read again, not claimed.
+            None if saving && !busy => {
+                if let Some(modal) = self.delegation.as_mut() {
+                    modal.routine_answered(koru_i18n::Key::BotsRoutineChecking);
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn schedule_context_row(
         &self,
         pointer: &koru_delegate_schedule::ScheduleContextPointer,
@@ -940,6 +1054,33 @@ impl MainView {
                     title: koru_i18n::t(lang, koru_i18n::Key::DelegateFolderPickerTitle).to_owned(),
                     start,
                 })
+            }
+            // **One Save is one command**, sent by the Bot's own tab over its
+            // link. The surface stays up, saying *Saving…*, until that tab
+            // answers (`maintain_routine_timing`).
+            Outcome::SaveRoutineTiming {
+                schedule,
+                name,
+                recurrence,
+            } => {
+                let Some(routine) = self
+                    .delegation
+                    .as_ref()
+                    .and_then(|modal| modal.routine.clone())
+                else {
+                    return false;
+                };
+                let sent = match self.asking_bot_tab_mut(routine.tab, routine.bot) {
+                    Some(view) => view.save_routine_timing(schedule, name, recurrence),
+                    None => {
+                        self.delegation = None;
+                        return self.say_asking_tab_gone();
+                    }
+                };
+                if let (Err(words), Some(modal)) = (sent, self.delegation.as_mut()) {
+                    modal.routine_answered(words);
+                }
+                true
             }
             Outcome::Delegate(request) => {
                 // `begin_delegation` keeps this unreachable through the UI,

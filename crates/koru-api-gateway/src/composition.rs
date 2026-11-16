@@ -142,7 +142,8 @@ pub(crate) fn open(
             .map(|worker_config| {
                 let worker_config = worker_config
                     .with_store_context(store_context)
-                    .with_tool_executor(tools);
+                    .with_tool_executor(tools)
+                    .with_owner_zone(Arc::new(owner_zone));
                 // Local agents drive the session host over its private,
                 // root-qualified endpoint — the same rule the session
                 // bridge follows. A host that is not up costs nothing
@@ -315,4 +316,16 @@ fn report_settings_fault(configuration: koru_api_gateway_core::settings::FaultCo
             "the internal settings write fault named an unknown operation and was ignored"
         ),
     }
+}
+
+/// This computer's time zone name, as the delegate's scheduler detects it
+/// (`SystemZone::detect`, UTC when the system does not say). Read on every
+/// call and never cached, so a system zone change is seen by the next
+/// Routine read (P4.3 controls contract, 4.8).
+fn owner_zone() -> Option<String> {
+    Some(
+        koru_time_zone::SystemZone::detect()
+            .rules_fingerprint()
+            .canonical_zone,
+    )
 }

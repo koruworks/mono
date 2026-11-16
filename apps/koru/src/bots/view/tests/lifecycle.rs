@@ -1166,3 +1166,230 @@ fn an_older_bot_read_drained_with_continues_answer_does_not_park_it_again() {
         Some(Words::BotsTrashingConversation)
     );
 }
+
+/// A list read of the tab's Routines, answered with `count` of them.
+fn routines_listed(f: &mut Fixture, count: usize) -> Vec<koru_delegate_core::ScheduleId> {
+    use koru_ai_core::bots::routines::*;
+    let bot = f.bot.id;
+    f.view.routines.show(Some(bot), true);
+    let Some(Command::ReadRoutines { seq, .. }) = f.view.routines.read() else {
+        panic!("a list read is owed")
+    };
+    let items: Vec<BotRoutineListItem> = (0..count)
+        .map(|_| BotRoutineListItem {
+            schedule_id: koru_delegate_core::ScheduleId::mint(),
+            creation: BotRoutineCreationObservation {
+                request_id: BotRequestId::mint(),
+                state: BotRoutineCreationState::Bound,
+                refusal: None,
+                updated_at_ms: 0,
+            },
+            grant: BotRoutineGrantSummary {
+                source_bot_policy_revision: 1,
+                grant_revision: 1,
+                access: BotAccess::Default,
+                selected_page_count: 0,
+            },
+            live: BotRoutineLiveObservation::NotLive {},
+            local_conversations: BotRoutineLocalConversations::Unavailable {},
+        })
+        .collect();
+    let ids = items.iter().map(|item| item.schedule_id).collect();
+    assert!(f.view.routines.answer(
+        seq,
+        bot,
+        Ok(BotRoutineListPage {
+            bot_id: bot,
+            bot_revision: 1,
+            effective_model: BotRoutineModelObservation::Unavailable {},
+            items,
+            next_schedule: None,
+        }),
+    ));
+    ids
+}
+
+/// **The Archive and Trash questions say the Bot's Routines will be
+/// paused**: with their number when the list was read, plainly when it was
+/// not, and not at all for a Bot known to have none.
+#[test]
+fn routine_control_archive_and_trash_questions_say_the_routines_will_be_paused() {
+    let idle = crate::bots::stops::WorkNow::Idle;
+    let mut f = listed(&[]);
+    for ask in [Ask::Archive, Ask::Trash] {
+        let (_, body, _) = f.view.confirm_words(ask, idle).unwrap();
+        assert!(
+            body.ends_with("Any Routines it has will be paused."),
+            "{body}"
+        );
+    }
+    routines_listed(&mut f, 3);
+    for ask in [Ask::Archive, Ask::Trash] {
+        let (_, body, _) = f.view.confirm_words(ask, idle).unwrap();
+        assert!(body.ends_with("Its 3 Routines will be paused."), "{body}");
+    }
+    let mut f = listed(&[]);
+    routines_listed(&mut f, 1);
+    let (_, body, _) = f.view.confirm_words(Ask::Trash, idle).unwrap();
+    assert!(body.ends_with("Its Routine will be paused."), "{body}");
+    let mut f = listed(&[]);
+    routines_listed(&mut f, 0);
+    let (_, body, _) = f.view.confirm_words(Ask::Trash, idle).unwrap();
+    assert!(!body.contains("Routine"), "{body}");
+    nothing_sent(&f);
+}
+
+/// **While a Trash or an Archive is pausing the Bot's Routines the tab says
+/// so**, from the owner's own members: a Routine is paused only on its
+/// owner's answer, and the sentence goes when none is left to hear about.
+#[test]
+fn routine_control_trash_says_its_routines_are_being_paused() {
+    use koru_ai_core::bots::{
+        BotLifecycleIntended, BotLifecycleMemberOutcome, BotLifecycleMemberStage,
+        BotLifecycleSubject,
+    };
+    for (ask, kind) in [
+        (Ask::Trash, BotLifecycleKind::Trash),
+        (Ask::Archive, BotLifecycleKind::Archive),
+    ] {
+        let mut f = listed(&[]);
+        assert!(f.view.begin_lifecycle(ask));
+        let (request, _) = f.wrote();
+        let bot = f.bot.clone();
+        let member = |stage| BotLifecycleMemberOutcome {
+            subject: BotLifecycleSubject::Routine {
+                workspace_id: bot.home_workspace,
+                document_id: koru_ai_core::DocumentId::new(),
+            },
+            intended: BotLifecycleIntended::Hide,
+            stage,
+            retained: None,
+        };
+        let moving = |members| {
+            let Ok(BotResponse::Lifecycle { mut operation }) =
+                progress(&bot, request, kind, BotLifecycleStage::Captured)
+            else {
+                unreachable!()
+            };
+            operation.members = members;
+            Ok(BotResponse::Lifecycle { operation })
+        };
+        f.reply(
+            request,
+            moving(vec![
+                member(BotLifecycleMemberStage::Acknowledged),
+                member(BotLifecycleMemberStage::Pending),
+            ]),
+        );
+        assert_eq!(
+            f.view.lifecycle_said().map(|said| said.words),
+            Some(Words::BotsRoutinesPausingForLifecycle)
+        );
+        // Every Routine answered: the rest of the operation's own sentence.
+        f.view.lifecycle_read_now();
+        f.view.shown_pass(None);
+        let (asked, _) = f.wrote();
+        assert_eq!(asked, request);
+        f.reply(
+            request,
+            moving(vec![
+                member(BotLifecycleMemberStage::Acknowledged),
+                member(BotLifecycleMemberStage::Acknowledged),
+            ]),
+        );
+        assert_eq!(
+            f.view.lifecycle_said().map(|said| said.words),
+            Some(Words::BotsSettling)
+        );
+    }
+}
+
+/// **After an Unarchive or a Restore the Routines stay paused, and the three
+/// lists are the owner's**: which need their access chosen again, and which
+/// may still be on. The tab says to look before the Bot is resumed, and the
+/// Routines pane holds the lists.
+#[test]
+fn routine_control_restore_reports_routines_needing_access_and_still_on() {
+    let mut f = listed(&[]);
+    f.view.begin_lifecycle(Ask::Archive);
+    let (request, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    let _ = f.view.take_lifecycle_finished();
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    let mut archived = f.bot.clone();
+    archived.lifecycle = BotLifecycle::Archived;
+    archived.revision += 2;
+    f.answer(seq, archived.id, Ok(archived.clone()));
+    let ids = routines_listed(&mut f, 3);
+    assert!(f.view.perform(region::Act::Unarchive));
+    let (undo, _) = f.wrote();
+    let Ok(BotResponse::Lifecycle { mut operation }) = progress(
+        &archived,
+        undo,
+        BotLifecycleKind::Restore,
+        BotLifecycleStage::Completed,
+    ) else {
+        unreachable!()
+    };
+    operation.routines_needing_access = vec![ids[0]];
+    operation.routines_still_on = vec![ids[1]];
+    f.reply(undo, Ok(BotResponse::Lifecycle { operation }));
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsRestoredCheckRoutines)
+    );
+    let restored = f.view.routines.controls_data().restored.expect("held");
+    assert_eq!(restored.needing_access, [ids[0]]);
+    assert_eq!(restored.still_on, [ids[1]]);
+    // The window's book carries them to the Bot's other surfaces.
+    let finished = f.view.take_lifecycle_finished();
+    assert_eq!(finished.last().unwrap().routines, restored);
+
+    // A Restore that names none: paused, and nothing more to look at.
+    let mut f = listed(&[]);
+    f.view.begin_lifecycle(Ask::Archive);
+    let (request, _) = f.wrote();
+    let bot = f.bot.clone();
+    f.reply(
+        request,
+        progress(
+            &bot,
+            request,
+            BotLifecycleKind::Archive,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    f.view.shown_pass(None);
+    let seq = f.asked();
+    let mut again = f.bot.clone();
+    again.lifecycle = BotLifecycle::Archived;
+    again.revision += 2;
+    f.answer(seq, again.id, Ok(again));
+    assert!(f.view.perform(region::Act::Unarchive));
+    let (undo, _) = f.wrote();
+    f.reply(
+        undo,
+        progress(
+            &bot,
+            undo,
+            BotLifecycleKind::Restore,
+            BotLifecycleStage::Completed,
+        ),
+    );
+    assert_eq!(
+        f.view.lifecycle_said().map(|said| said.words),
+        Some(Words::BotsUnarchivedPaused)
+    );
+    let restored = f.view.routines.controls_data().restored.expect("held");
+    assert!(!restored.needs_a_look());
+}

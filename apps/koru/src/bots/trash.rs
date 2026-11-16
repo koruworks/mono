@@ -760,6 +760,7 @@ impl BotTrash {
                     reverses,
                     chat,
                     at_ms: 0,
+                    routines: super::routines::control::Restored::of(&operation),
                 });
                 let words = match restoring.subject {
                     BotSubject::Bot(_) => Words::TrashBotRestored,

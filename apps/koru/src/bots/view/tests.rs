@@ -38,6 +38,7 @@ impl Fixture {
                 }
                 Command::ListChats { .. } | Command::ReadLibrary { .. } => continue,
                 Command::List { .. }
+                | Command::RoutineControl { .. }
                 | Command::ReadRoutines { .. }
                 | Command::ReadRoutineDetail { .. }
                 | Command::RoutineLabel { .. }

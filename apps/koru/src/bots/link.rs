@@ -38,6 +38,16 @@ const ANSWER_CAPACITY: usize = 8;
 pub(crate) const SCOPES: &[&str] = &["ai.chat", "bots.manage"];
 
 pub(crate) enum Command {
+    /// **One owner control of a Bot Routine** (P4.3): `SetRoutineLifecycle`,
+    /// `TestRoutine`, `EditRoutine` or `UpdateRoutineAccess`, each carrying
+    /// the revision the pane read. Answered by `seq`, so an answer can only
+    /// settle the control it is about.
+    RoutineControl {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        command: Box<BotCommand>,
+    },
     ReadRoutineDetail {
         seq: u64,
         bot: BotId,
@@ -123,6 +133,14 @@ pub(crate) enum Command {
 
 #[derive(Debug)]
 pub(crate) enum Answer {
+    /// What the owner said to a [`Command::RoutineControl`]: its reply, or
+    /// the refusal with the reasons it named (`details.reasons`).
+    RoutineControl {
+        seq: u64,
+        bot: BotId,
+        schedule: koru_delegate_core::ScheduleId,
+        result: Result<BotResponse, super::routines::control::Refusal>,
+    },
     RoutineDetail {
         seq: u64,
         bot: BotId,
@@ -489,6 +507,47 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
     let mut client: Option<koru_api_client::Client> = None;
     while let Ok(command) = commands.recv() {
         match command {
+            Command::RoutineControl {
+                seq,
+                bot,
+                schedule,
+                command,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => connected.ai().bots(&command).map_err(|failure| {
+                        super::routines::control::Refusal {
+                            reasons: refusal_reasons(&failure.details),
+                            failure: Failure::of(said(failure.code, failure.retryable)),
+                        }
+                    }),
+                    None => Err(super::routines::control::Refusal::unanswered()),
+                };
+                if let Err(refusal) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(&refusal.failure),
+                        "A Routine control was not applied"
+                    );
+                    // A refusal is an answer: only a lost one drops the client.
+                    if refusal.failure == Failure::Unanswered {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::RoutineControl {
+                        seq,
+                        bot,
+                        schedule,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Command::ReadRoutineDetail {
                 seq,
                 bot,
@@ -1113,6 +1172,25 @@ pub(crate) fn refusal_reason(
         .and_then(serde_json::Value::as_str)
         .filter(|reason| !reason.is_empty())
         .map(str::to_owned)
+}
+
+/// **A refusal's `details.reasons`**: the stable words for why a Routine is
+/// not ready (`koru_ai_wire::bot_routine_not_ready_reasons`), in the order
+/// the owner reports them. Empty when it named none.
+pub(crate) fn refusal_reasons(
+    details: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Vec<String> {
+    details
+        .get("reasons")
+        .and_then(serde_json::Value::as_array)
+        .map(|reasons| {
+            reasons
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A content-free word for the log: the code, never the message.

@@ -190,11 +190,40 @@ impl BotView {
             ),
             (Ask::Unarchive | Ask::Restore, _) => return None,
         };
+        // Its Routines are paused first: said with their number when the
+        // list was read, and plainly when it was not.
+        let body = match self.routines_pause_words() {
+            Some(routines) => format!("{}\n\n{routines}", t(self.lang, body)),
+            None => t(self.lang, body).to_owned(),
+        };
         Some((
             koru_i18n::fill(t(self.lang, title), &[name.as_str()]),
-            t(self.lang, body).to_owned(),
+            body,
             t(self.lang, confirm).to_owned(),
         ))
+    }
+
+    /// **The sentence an Archive or Trash question adds about the Bot's
+    /// Routines**: *Its {n} Routines will be paused.* from the rows the list
+    /// read holds. A list not read, or with more pages, cannot say how many:
+    /// the sentence then says any it has. `None` when the Bot is known to
+    /// have none.
+    pub(crate) fn routines_pause_words(&self) -> Option<String> {
+        let counted = self
+            .routines
+            .held
+            .as_ref()
+            .filter(|page| page.next_schedule.is_none() && !self.routines.stale)
+            .map(|page| page.items.len());
+        Some(match counted {
+            Some(0) => return None,
+            Some(1) => t(self.lang, Words::BotsRoutinesWillPauseOne).to_owned(),
+            Some(count) => koru_i18n::fill(
+                t(self.lang, Words::BotsRoutinesWillPauseMany),
+                &[&count.to_string()],
+            ),
+            None => t(self.lang, Words::BotsRoutinesWillPauseAny).to_owned(),
+        })
     }
 
     /// **What this tab knows itself of work running now**: the
@@ -423,6 +452,17 @@ impl BotView {
     /// **Another surface of the window restored or unarchived this Bot, or
     /// one of its conversations**: what the tab shows is old, and it reads
     /// the Bot and its list again when it is next in front.
+    /// **Another surface restored or unarchived this Bot**: what that
+    /// Restore said of its Routines, shown in their pane as this tab's own
+    /// Restore would show it.
+    pub(crate) fn routines_restored_elsewhere(
+        &mut self,
+        restored: crate::bots::routines::control::Restored,
+    ) {
+        self.restored_routines_need_a_look = restored.needs_a_look();
+        self.routines.note_restored(restored);
+    }
+
     pub(crate) fn lifecycle_moved_elsewhere(&mut self) {
         self.lifecycle.moved_elsewhere();
         self.conversations.owe_read();
@@ -440,6 +480,13 @@ impl BotView {
         let Some(outcome) = self.lifecycle.take_just() else {
             return;
         };
+        // A Restore's word about the Routines goes to their pane: they stay
+        // paused, and which of them need a look.
+        if matches!(outcome, Outcome::Restored | Outcome::Unarchived) {
+            let restored = self.lifecycle.take_restored().unwrap_or_default();
+            self.restored_routines_need_a_look = restored.needs_a_look();
+            self.routines.note_restored(restored);
+        }
         match outcome {
             Outcome::Trashed => {
                 if let Some(facts) = &mut self.facts {
@@ -649,6 +696,10 @@ impl BotView {
                 // Koru AI did not answer the last ask: said, rather than
                 // that the Bot's work is finishing. Still asked on the clock.
                 Stage::Moving if op.unanswered => fact(Words::BotsLifecycleUnanswered),
+                // Its Routines are paused before anything else is settled.
+                Stage::Moving if self.lifecycle.pausing_routines() => {
+                    fact(Words::BotsRoutinesPausingForLifecycle)
+                }
                 Stage::Moving => fact(match op.kind {
                     koru_ai_core::bots::BotLifecycleKind::Restore
                     | koru_ai_core::bots::BotLifecycleKind::RestoreChat => Words::BotsRestoring,
@@ -678,6 +729,11 @@ impl BotView {
             return fact(Words::BotsInTrash);
         }
         match self.lifecycle.outcome() {
+            // Some Routines may still be on, or need their access chosen
+            // again: said before the Bot is resumed.
+            Some(Outcome::Restored | Outcome::Unarchived) if self.restored_routines_need_a_look => {
+                return fact(Words::BotsRestoredCheckRoutines);
+            }
             Some(Outcome::Restored) => return fact(Words::BotsRestoredPaused),
             Some(Outcome::Unarchived) => return fact(Words::BotsUnarchivedPaused),
             _ => {}

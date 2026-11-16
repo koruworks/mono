@@ -202,6 +202,9 @@ pub(crate) struct Finished {
     pub reverses: Option<BotLifecycleKind>,
     pub chat: Option<(ChatId, String)>,
     pub at_ms: i64,
+    /// What a Restore said of the Bot's Routines: those whose access must
+    /// be chosen again, and those not confirmed paused.
+    pub routines: super::routines::control::Restored,
 }
 
 #[derive(Default)]
@@ -218,6 +221,11 @@ pub(crate) struct Lifecycle {
     read_bot_owed: bool,
     /// The outcome an answer just reached, for the tab to act on once.
     just: Option<Outcome>,
+    /// How many of the Bot's Routines an Archive or a Trash on its way has
+    /// still to pause, as the owner last said.
+    routines_pausing: usize,
+    /// What the Restore that just finished said of the Bot's Routines.
+    restored: Option<super::routines::control::Restored>,
 }
 
 impl Lifecycle {
@@ -769,6 +777,23 @@ impl Lifecycle {
         op.refusal = progress
             .refusal
             .filter(|_| progress.stage == BotLifecycleStage::Incomplete);
+        // Its Routines are paused first: how many the owner has still to
+        // hear back about.
+        self.routines_pausing = progress
+            .members
+            .iter()
+            .filter(|member| {
+                matches!(
+                    member.subject,
+                    koru_ai_core::bots::BotLifecycleSubject::Routine { .. }
+                ) && member.stage == koru_ai_core::bots::BotLifecycleMemberStage::Pending
+            })
+            .count();
+        if progress.stage == BotLifecycleStage::Completed
+            && progress.kind == BotLifecycleKind::Restore
+        {
+            self.restored = Some(super::routines::control::Restored::of(progress));
+        }
         match progress.stage {
             BotLifecycleStage::Completed => self.finish(),
             // Still parked: read again on the slower clock, each time a
@@ -801,6 +826,7 @@ impl Lifecycle {
         let Some(op) = self.op.take() else {
             return;
         };
+        self.routines_pausing = 0;
         let outcome = match (op.kind, op.reverses, op.chat) {
             (BotLifecycleKind::Archive, _, _) => {
                 self.archive = Some(op.request);
@@ -836,11 +862,27 @@ impl Lifecycle {
                 reverses: op.reverses,
                 chat: op.chat.zip(op.title.clone()),
                 at_ms: now_ms(),
+                routines: self.restored.clone().unwrap_or_default(),
             });
         }
         self.just = outcome.clone();
         self.outcome = outcome;
         self.read_bot_owed = true;
+    }
+
+    /// Whether the Archive or Trash on its way is still pausing the Bot's
+    /// Routines.
+    pub(crate) fn pausing_routines(&self) -> bool {
+        self.routines_pausing > 0
+            && self.op.as_ref().is_some_and(|op| {
+                matches!(op.kind, BotLifecycleKind::Archive | BotLifecycleKind::Trash)
+            })
+    }
+
+    /// What the Restore that just finished said of the Bot's Routines,
+    /// taken once.
+    pub(crate) fn take_restored(&mut self) -> Option<super::routines::control::Restored> {
+        self.restored.take()
     }
 
     /// The operations finished since the window last asked, for its book.

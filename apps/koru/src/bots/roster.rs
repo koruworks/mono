@@ -864,6 +864,7 @@ impl BotsRoster {
                     reverses: Some(BotLifecycleKind::Archive),
                     chat: None,
                     at_ms: 0,
+                    routines: super::routines::control::Restored::of(&operation),
                 });
             }
             // The outcome is unknown: never said as not unarchived. The

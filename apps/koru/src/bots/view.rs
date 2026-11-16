@@ -317,6 +317,8 @@ pub(crate) struct BotView {
     settings: Box<Settings>,
     library: Box<super::library::Library>,
     pub(crate) routines: Box<super::routines::Routines>,
+    /// The Routine whose timing dialog was asked for: the window opens it.
+    routine_timing_request: Option<super::routines::control::TimingSeed>,
     memory: Box<super::memory::Memory>,
     #[cfg(test)]
     memory_test_available: bool,
@@ -379,6 +381,9 @@ pub(crate) struct BotView {
     /// only the read says which, so the ⋯ and the rows' Trash offer nothing
     /// until it answers rather than something the owner would refuse.
     lifecycle_awaits_read: bool,
+    /// The last Restore or Unarchive left Routines that may still be on, or
+    /// whose access must be chosen again.
+    restored_routines_need_a_look: bool,
     /// **When the Bot's read is asked again** after one that did not answer
     /// while [`Self::lifecycle_awaits_read`] holds, on the bounded clock
     /// (250 ms doubling to 2 s), only while shown.
@@ -476,6 +481,7 @@ impl BotView {
             settings: Box::default(),
             library: Box::default(),
             routines: Box::default(),
+            routine_timing_request: None,
             memory: Box::default(),
             #[cfg(test)]
             memory_test_available: false,
@@ -504,6 +510,7 @@ impl BotView {
             lifecycle: Box::default(),
             trashed_bot: None,
             lifecycle_awaits_read: false,
+            restored_routines_need_a_look: false,
             bot_read_next: None,
             bot_read_backoff: BOT_READ_FIRST,
             vouching: super::link::Vouching::default(),
@@ -853,6 +860,11 @@ impl BotView {
         }
     }
 
+    /// The home workspace's name as the window's catalog last gave it.
+    pub(crate) fn home_name(&self) -> Option<String> {
+        self.home_name.clone()
+    }
+
     /// The home workspace's name, from the window's catalog. `true` when it
     /// changed what the header says.
     pub(crate) fn set_home_name(&mut self, name: Option<String>) -> bool {
@@ -1100,6 +1112,22 @@ impl BotView {
                 }
                 Answer::Routines { seq, bot, result } => {
                     changed |= self.routines.answer(seq, bot, result);
+                }
+                // The owner's answer to one Routine control: confirmed, or
+                // refused in a sentence. Never folded for another control.
+                Answer::RoutineControl {
+                    seq,
+                    bot,
+                    schedule,
+                    result,
+                } => {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|elapsed| i64::try_from(elapsed.as_millis()).unwrap_or(i64::MAX))
+                        .unwrap_or(0);
+                    changed |= self
+                        .routines
+                        .control_answer(seq, bot, schedule, result, now_ms);
                 }
                 Answer::RoutineLabel {
                     seq,
@@ -2209,7 +2237,13 @@ impl View for BotView {
                     && !self.stale
                     && self.settings_open
                     && self.memory.busy())
-                || (self.form_open() && self.catalog.waiting()))
+                || (self.form_open() && self.catalog.waiting())
+                // A Routine read or control on its way, shown only.
+                || (!self.stale
+                    && self.routines.visible()
+                    && (self.routines.loading()
+                        || self.routines.detail.loading()
+                        || self.routines.control_busy())))
             .then(|| {
                 now.checked_add(std::time::Duration::from_millis(50))
                     .unwrap_or(now)
@@ -2226,6 +2260,8 @@ impl View for BotView {
             .flatten();
         let mine = [
             read,
+            // A Test's wait or minute ending, while its Routines are shown.
+            (!self.stale).then(|| self.routines_deadline(now)).flatten(),
             self.settings.deadline(now),
             self.lifecycle_deadline(now),
             creating,
@@ -2259,6 +2295,7 @@ impl View for BotView {
         let read = !self.stale && self.send_create_read(now);
         let library = !self.stale && self.library_pass();
         let memory = self.memory_pass();
+        let routines = !self.stale && self.routines_pass();
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
         let folded = folded
@@ -2269,7 +2306,8 @@ impl View for BotView {
             || read
             || reread
             || library
-            || memory;
+            || memory
+            || routines;
         let chat = self
             .conversation_mut()
             .is_some_and(|conversation| View::maintain(conversation, ws, now));

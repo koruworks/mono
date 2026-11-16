@@ -113,6 +113,26 @@ impl Detail {
         self.notice = None;
         true
     }
+    /// The page of history before the oldest line shown.
+    pub fn older(&mut self) -> bool {
+        if !self.visible || self.selected.is_none() || self.loading() {
+            return false;
+        }
+        let Some(before) = self.held.as_ref().and_then(|d| match &d.occurrences {
+            RoutineOccurrenceHistoryObservation::Available {
+                next_before_occurrence_ms,
+                ..
+            } => *next_before_occurrence_ms,
+            _ => None,
+        }) else {
+            return false;
+        };
+        self.before = Some(before);
+        self.owed = true;
+        self.stale = self.held.is_some();
+        self.notice = None;
+        true
+    }
     pub fn answer(
         &mut self,
         seq: u64,
@@ -152,18 +172,27 @@ impl Detail {
     }
     pub fn can_open(&self, chat: ChatId) -> bool {
         self.data().navigable
-            && self
-                .held
-                .as_ref()
-                .is_some_and(|detail| match &detail.local_history {
+            && self.held.as_ref().is_some_and(|detail| {
+                let listed = |item: &BotRoutineLocalConversation| {
+                    item.chat_id == chat.as_uuid()
+                        && item.conversation == BotRoutineConversationVisibility::Available
+                };
+                let local = match &detail.local_history {
                     RoutineLocalHistoryObservation::Available { items, .. } => {
-                        items.iter().any(|item| {
-                            item.chat_id == chat.as_uuid()
-                                && item.conversation == BotRoutineConversationVisibility::Available
-                        })
+                        items.iter().any(listed)
                     }
                     _ => false,
-                })
+                };
+                // A history line's conversation is the same checked row.
+                let history = match &detail.occurrences {
+                    RoutineOccurrenceHistoryObservation::Available { items, .. } => items
+                        .iter()
+                        .filter_map(|line| line.conversation.as_ref())
+                        .any(listed),
+                    _ => false,
+                };
+                local || history
+            })
     }
 }
 pub(crate) fn detailed(reply: Result<BotResponse, Said>) -> Result<BotRoutineDetail, ReadFailure> {
@@ -177,6 +206,7 @@ pub(crate) fn detailed(reply: Result<BotResponse, Said>) -> Result<BotRoutineDet
             if reply.detail.bot_revision == 0
                 || reply.detail.bot_revision > i64::MAX as u64
                 || matches!(&reply.detail.local_history,RoutineLocalHistoryObservation::Available{items,..} if items.len()>16)
+                || matches!(&reply.detail.occurrences,RoutineOccurrenceHistoryObservation::Available{items,..} if items.len()>16)
             {
                 return Err(ReadFailure::Other(Failure::Unanswered));
             }

@@ -4077,9 +4077,39 @@ column is not visible.
 ### Finding routines
 
 This section describes repeating delegations created with **Repeat**.
-Bot-created routines start paused and have separate read-only detail in the
-Bot’s **Routines** context. Their editing and activation controls are not
-available yet; the ordinary controls below do not change a Bot routine’s access.
+Bot-created routines start paused and are managed in the Bot’s **Routines**
+context, described next; the ordinary controls below do not change a Bot
+routine’s access.
+
+#### A Bot’s routines
+
+Open a Bot, open the context pane and choose **Routines**. Each routine shows
+its name, a switch, its state in words (**On** or **Paused**) and, while it is
+on, its next time.
+
+- **Turn on or pause.** Use the switch. It reads *Turning on…* or *Pausing…*
+  until the computer that owns the routine confirms, and only then shows the
+  new state. If the change is refused, the row says why. Pausing does not stop
+  a run that has already started.
+- **Test.** While a routine is paused, **Test** runs it once now without
+  turning it on. The result appears in the routine’s history. Late in a minute
+  the button reads *Test available at* a time; press it again then.
+- **Details** shows the timing, the time zone, the access and the history.
+  *Time zone* is this computer’s zone when this computer owns the routine, and
+  *Owner local* otherwise.
+- **Edit timing** changes the name and the time in one save. It works while
+  the routine is on or paused; while it is on, the new time applies right away.
+  The task itself cannot be edited.
+- **Change access** is offered only while the routine is paused. A new routine
+  starts with the default access: it asks before editing pages it did not
+  create or was not given. The other choice lets it edit any page in the Bot’s
+  home workspace.
+- **History** lists what each past time became: *Ran* (press it to open that
+  conversation), *Missed*, *Skipped, Bot was busy*, or *Test*. Missed runs are
+  not caught up.
+
+Archiving a Bot or moving it to Trash pauses its routines first. After you
+unarchive or restore the Bot they stay paused until you turn them on.
 
 Open the **Agents** column and look under **Routines**, beside the
 Projects and Runs sections. Each routine is labeled by the name you gave it.

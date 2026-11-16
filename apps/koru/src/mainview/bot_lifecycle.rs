@@ -81,6 +81,25 @@ impl MainView {
         told
     }
 
+    /// **A Restore or an Unarchive made outside the Bot's tab finished** —
+    /// from the Trash, or the roster's Archived filter: every tab of `bot`
+    /// shows what it said of the Bot's Routines, as the tab's own would.
+    pub(super) fn bot_routines_restored(
+        &mut self,
+        bot: BotId,
+        restored: &crate::bots::routines::control::Restored,
+    ) {
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.tabs_mut().iter_mut() {
+                if let TabView::Bot(view) = &mut tab.view
+                    && view.bot() == Some(bot)
+                {
+                    view.routines_restored_elsewhere(restored.clone());
+                }
+            }
+        }
+    }
+
     /// **A Retry or an Abandon from the roster's Unfinished group answered
     /// for `request`**: every create tab holding that creation reads it
     /// again and follows its stage — made (it becomes the Bot's tab),
@@ -303,6 +322,9 @@ impl MainView {
         for done in self.bot_trash.take_finished() {
             // Every tab of the Bot, wherever it is, shows what it holds now.
             self.bot_moved_elsewhere(done.bot);
+            if done.chat.is_none() {
+                self.bot_routines_restored(done.bot, &done.routines);
+            }
             self.explore.bots_mut().owe_lifecycle_refresh();
             changed = true;
         }

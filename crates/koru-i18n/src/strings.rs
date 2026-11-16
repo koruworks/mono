@@ -3938,13 +3938,169 @@ pub enum Key {
     BotsNewBotAgent,
     /// Opens the full create form on the same draft. Non-English columns machine-written, awaiting a native read.
     BotsNewBotFullForm,
+    /// A Routine's switch, on. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineOn,
+    /// A Routine's switch, paused. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinePausedState,
+    /// A Routine's switch while Enable waits for its owner. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTurningOn,
+    /// A Routine's switch while Pause waits for its owner. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinePausing,
+    /// A Routine's control whose answer was lost: its state is being read again. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineChecking,
+    /// The accessible name of a paused Routine's switch. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTurnOnName,
+    /// The accessible name of a Routine's switch while it is on. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinePauseName,
+    /// A Routine row's next time. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineNextAt,
+    /// A Routine row's next time when only the owning computer knows it. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineNextOwnerLocal,
+    /// Under a paused Routine whose Run is still going. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineRunWillFinish,
+    /// The button that runs a paused Routine once now, and the label of that line in its history. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTest,
+    /// The Test button while the Test waits for its owner. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTestStarting,
+    /// The Test button while it waits for the next minute. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTestAvailableAt,
+    /// A Test that was accepted and never started. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTestNotStarted,
+    /// The button and the dialog title for a Routine's timing and name. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineEditTiming,
+    /// Saves a Routine's timing, or its access. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineSave,
+    /// While a Routine's timing or access is being saved. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineSaving,
+    /// The owner refused a Routine's new timing or name. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineInvalidTime,
+    /// In the timing dialog of a Routine that is on. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineOnEditNotice,
+    /// A Routine's access now, the default. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessNowDefault,
+    /// A Routine's access now, the whole home workspace. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessNowWorkspace,
+    /// What a Routine with the default access must ask for. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessAsks,
+    /// What a Routine with workspace access may do. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessAnyPage,
+    /// What a Routine with workspace access may do, when the workspace's name is not known here. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessAnyPageHome,
+    /// Opens a paused Routine's access choices. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineChangeAccess,
+    /// The default access, as a choice. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessChoiceDefault,
+    /// Workspace access, as a choice. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessChoiceWorkspace,
+    /// In a Routine's access choices: where a new Routine starts. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessStartsDefault,
+    /// In a Routine's access choices, when pages were selected at setup: saving drops them. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineAccessClearsPages,
+    /// A Routine control refused: no such Routine. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrGone,
+    /// A Routine control refused: not this person's. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrWrongOwner,
+    /// A Routine control refused: the workspace could not be read. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrWorkspace,
+    /// A Routine control refused: the Bot is in Trash. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrBotTrashed,
+    /// A Routine control refused: an Archive, Trash or Restore of the Bot is open. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrLifecyclePending,
+    /// A Routine control refused: the Bot is archived. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrBotArchived,
+    /// A Routine control refused: a change of the Bot is not yet acknowledged. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrOperationPending,
+    /// A Routine control refused: the Routine changed since it was shown. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrChanged,
+    /// A Routine control refused: its setup is not finished. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrNotBound,
+    /// A Routine control refused: the Routine was deleted. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrDeleted,
+    /// A Routine control refused: another computer owns the Routine. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrElsewhere,
+    /// A Routine control refused: another control of it is unresolved. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrPending,
+    /// A Routine control refused: the Routine service is unreachable. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrUnavailable,
+    /// A Routine control refused for a reason this pane has no sentence for. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrOther,
+    /// A Routine cannot be turned on or tested, and the owner named no reason this pane knows. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrNotReady,
+    /// A Routine cannot be turned on or tested: the Bot is paused. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrBotPaused,
+    /// A Routine cannot be turned on or tested: the Bot is archived. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrBotIsArchived,
+    /// A Routine cannot be turned on or tested: its access cannot be read. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrAccessUnreadable,
+    /// A Routine cannot be turned on or tested: an access change is still being applied. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrAccessApplying,
+    /// A Test refused: the Routine is on. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrPauseToTest,
+    /// A Test refused: this minute already ran or was skipped. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrMinuteTaken,
+    /// A Test refused: another Test is outstanding. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrTestBusy,
+    /// Why a Routine's access cannot be changed while it is on. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrPauseForAccess,
+    /// An access change refused: a Run of the Routine has not finished. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrRunInProgress,
+    /// An access change refused: an earlier one is still being applied. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrAccessPending,
+    /// An access change refused: the person cannot edit a selected page. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineErrPageRights,
+    /// The heading over a Routine's past occurrences. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineHistoryTitle,
+    /// A history line: the occurrence ran. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineRan,
+    /// A history line: the occurrence was missed. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineMissed,
+    /// A history line: the occurrence was skipped because the Bot was busy. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineSkippedBusy,
+    /// A history line: a Test that ran. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTestRan,
+    /// A history line: a Test whose minute was missed. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTestMissed,
+    /// A history line: a Test that found the Bot busy. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineTestSkippedBusy,
+    /// A Routine's history, empty. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineNothingRan,
+    /// Reads the next page of a Routine's history. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineHistoryOlder,
+    /// A Routine's time zone line. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineZone,
+    /// A Routine's time zone when this computer owns it. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineZoneThisComputer,
+    /// A Routine's time zone when another computer owns it. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineZoneOwnerLocal,
+    /// Under a Routine whose Run is waiting for the person's decision. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineNeedsYou,
+    /// Opens the conversation of the Run that is waiting for a decision. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineOpenDecision,
+    /// Over a Bot's Routines when one of them is waiting for the person's decision. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesNeedYou,
+    /// Added to the Archive and Trash questions of a Bot with one Routine. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesWillPauseOne,
+    /// Added to the Archive and Trash questions of a Bot with several Routines. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesWillPauseMany,
+    /// Added to the Archive and Trash questions when the Bot's Routines were not counted here. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesWillPauseAny,
+    /// While an Archive or a Trash is pausing the Bot's Routines. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesPausingForLifecycle,
+    /// After a Bot is restored or unarchived. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesStayPaused,
+    /// On a Routine whose access could not be read after a Restore. Non-English columns machine-written, awaiting a native read.
+    BotsRoutineChooseAccessAgain,
+    /// After the Restore of an Archive or Trash that stopped early: the Routines not confirmed paused. Non-English columns machine-written, awaiting a native read.
+    BotsRoutinesMayStillBeOn,
+    /// A restored Bot's sentence when some of its Routines need a look. Non-English columns machine-written, awaiting a native read.
+    BotsRestoredCheckRoutines,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2677] = [
+    pub const ALL: [Key; 2755] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6622,6 +6778,84 @@ impl Key {
         Key::BotsNewBotWorksIn,
         Key::BotsNewBotAgent,
         Key::BotsNewBotFullForm,
+        Key::BotsRoutineOn,
+        Key::BotsRoutinePausedState,
+        Key::BotsRoutineTurningOn,
+        Key::BotsRoutinePausing,
+        Key::BotsRoutineChecking,
+        Key::BotsRoutineTurnOnName,
+        Key::BotsRoutinePauseName,
+        Key::BotsRoutineNextAt,
+        Key::BotsRoutineNextOwnerLocal,
+        Key::BotsRoutineRunWillFinish,
+        Key::BotsRoutineTest,
+        Key::BotsRoutineTestStarting,
+        Key::BotsRoutineTestAvailableAt,
+        Key::BotsRoutineTestNotStarted,
+        Key::BotsRoutineEditTiming,
+        Key::BotsRoutineSave,
+        Key::BotsRoutineSaving,
+        Key::BotsRoutineInvalidTime,
+        Key::BotsRoutineOnEditNotice,
+        Key::BotsRoutineAccessNowDefault,
+        Key::BotsRoutineAccessNowWorkspace,
+        Key::BotsRoutineAccessAsks,
+        Key::BotsRoutineAccessAnyPage,
+        Key::BotsRoutineAccessAnyPageHome,
+        Key::BotsRoutineChangeAccess,
+        Key::BotsRoutineAccessChoiceDefault,
+        Key::BotsRoutineAccessChoiceWorkspace,
+        Key::BotsRoutineAccessStartsDefault,
+        Key::BotsRoutineAccessClearsPages,
+        Key::BotsRoutineErrGone,
+        Key::BotsRoutineErrWrongOwner,
+        Key::BotsRoutineErrWorkspace,
+        Key::BotsRoutineErrBotTrashed,
+        Key::BotsRoutineErrLifecyclePending,
+        Key::BotsRoutineErrBotArchived,
+        Key::BotsRoutineErrOperationPending,
+        Key::BotsRoutineErrChanged,
+        Key::BotsRoutineErrNotBound,
+        Key::BotsRoutineErrDeleted,
+        Key::BotsRoutineErrElsewhere,
+        Key::BotsRoutineErrPending,
+        Key::BotsRoutineErrUnavailable,
+        Key::BotsRoutineErrOther,
+        Key::BotsRoutineErrNotReady,
+        Key::BotsRoutineErrBotPaused,
+        Key::BotsRoutineErrBotIsArchived,
+        Key::BotsRoutineErrAccessUnreadable,
+        Key::BotsRoutineErrAccessApplying,
+        Key::BotsRoutineErrPauseToTest,
+        Key::BotsRoutineErrMinuteTaken,
+        Key::BotsRoutineErrTestBusy,
+        Key::BotsRoutineErrPauseForAccess,
+        Key::BotsRoutineErrRunInProgress,
+        Key::BotsRoutineErrAccessPending,
+        Key::BotsRoutineErrPageRights,
+        Key::BotsRoutineHistoryTitle,
+        Key::BotsRoutineRan,
+        Key::BotsRoutineMissed,
+        Key::BotsRoutineSkippedBusy,
+        Key::BotsRoutineTestRan,
+        Key::BotsRoutineTestMissed,
+        Key::BotsRoutineTestSkippedBusy,
+        Key::BotsRoutineNothingRan,
+        Key::BotsRoutineHistoryOlder,
+        Key::BotsRoutineZone,
+        Key::BotsRoutineZoneThisComputer,
+        Key::BotsRoutineZoneOwnerLocal,
+        Key::BotsRoutineNeedsYou,
+        Key::BotsRoutineOpenDecision,
+        Key::BotsRoutinesNeedYou,
+        Key::BotsRoutinesWillPauseOne,
+        Key::BotsRoutinesWillPauseMany,
+        Key::BotsRoutinesWillPauseAny,
+        Key::BotsRoutinesPausingForLifecycle,
+        Key::BotsRoutinesStayPaused,
+        Key::BotsRoutineChooseAccessAgain,
+        Key::BotsRoutinesMayStillBeOn,
+        Key::BotsRestoredCheckRoutines,
     ];
 }
 
@@ -20704,4 +20938,82 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsNewBotWorksIn, en: "Works in {}.", es: "Trabaja en {}.", pt_br: "Trabalha em {}.", de: "Arbeitet in {}.", fr: "Travaille dans {}.", ar: "يعمل في {}.", zh_hans: "在 {} 中工作。", ja: "{} で作業します。" },
     Row { key: Key::BotsNewBotAgent, en: "Agent", es: "Agente", pt_br: "Agente", de: "Agent", fr: "Agent", ar: "الوكيل", zh_hans: "智能体", ja: "エージェント" },
     Row { key: Key::BotsNewBotFullForm, en: "Open the full form", es: "Abrir el formulario completo", pt_br: "Abrir o formulário completo", de: "Vollständiges Formular öffnen", fr: "Ouvrir le formulaire complet", ar: "فتح النموذج الكامل", zh_hans: "打开完整表单", ja: "すべての項目を開く" },
+    Row { key: Key::BotsRoutineOn, en: "On", es: "Activada", pt_br: "Ativada", de: "Ein", fr: "Activée", ar: "تعمل", zh_hans: "已开启", ja: "オン" },
+    Row { key: Key::BotsRoutinePausedState, en: "Paused", es: "En pausa", pt_br: "Pausada", de: "Pausiert", fr: "En pause", ar: "متوقفة مؤقتًا", zh_hans: "已暂停", ja: "一時停止中" },
+    Row { key: Key::BotsRoutineTurningOn, en: "Turning on…", es: "Activando…", pt_br: "Ativando…", de: "Wird eingeschaltet…", fr: "Activation…", ar: "جارٍ التشغيل…", zh_hans: "正在开启…", ja: "オンにしています…" },
+    Row { key: Key::BotsRoutinePausing, en: "Pausing…", es: "Pausando…", pt_br: "Pausando…", de: "Wird pausiert…", fr: "Mise en pause…", ar: "جارٍ الإيقاف المؤقت…", zh_hans: "正在暂停…", ja: "一時停止しています…" },
+    Row { key: Key::BotsRoutineChecking, en: "Checking…", es: "Comprobando…", pt_br: "Verificando…", de: "Wird geprüft…", fr: "Vérification…", ar: "جارٍ التحقق…", zh_hans: "正在检查…", ja: "確認しています…" },
+    Row { key: Key::BotsRoutineTurnOnName, en: "Turn on {}", es: "Activar {}", pt_br: "Ativar {}", de: "{} einschalten", fr: "Activer {}", ar: "تشغيل \u{2068}{}\u{2069}", zh_hans: "开启 {}", ja: "{} をオンにする" },
+    Row { key: Key::BotsRoutinePauseName, en: "Pause {}", es: "Pausar {}", pt_br: "Pausar {}", de: "{} pausieren", fr: "Mettre {} en pause", ar: "إيقاف \u{2068}{}\u{2069} مؤقتًا", zh_hans: "暂停 {}", ja: "{} を一時停止" },
+    Row { key: Key::BotsRoutineNextAt, en: "Next: {}", es: "Próxima: {}", pt_br: "Próxima: {}", de: "Nächste: {}", fr: "Prochaine : {}", ar: "التالي: \u{2068}{}\u{2069}", zh_hans: "下次：{}", ja: "次回：{}" },
+    Row { key: Key::BotsRoutineNextOwnerLocal, en: "Next: Owner local", es: "Próxima: hora local del propietario", pt_br: "Próxima: hora local do proprietário", de: "Nächste: Ortszeit des Besitzers", fr: "Prochaine : heure locale du propriétaire", ar: "التالي: بالتوقيت المحلي للمالك", zh_hans: "下次：所有者本地时间", ja: "次回：所有者のローカル時刻" },
+    Row { key: Key::BotsRoutineRunWillFinish, en: "A run in progress will finish.", es: "La ejecución en curso terminará.", pt_br: "A execução em andamento será concluída.", de: "Ein laufender Durchlauf wird beendet.", fr: "L'exécution en cours se terminera.", ar: "سيكتمل التشغيل الجاري.", zh_hans: "正在进行的运行会完成。", ja: "実行中の処理は最後まで行われます。" },
+    Row { key: Key::BotsRoutineTest, en: "Test", es: "Probar", pt_br: "Testar", de: "Testen", fr: "Tester", ar: "اختبار", zh_hans: "测试", ja: "テスト" },
+    Row { key: Key::BotsRoutineTestStarting, en: "Starting test…", es: "Iniciando prueba…", pt_br: "Iniciando teste…", de: "Test wird gestartet…", fr: "Démarrage du test…", ar: "جارٍ بدء الاختبار…", zh_hans: "正在开始测试…", ja: "テストを開始しています…" },
+    Row { key: Key::BotsRoutineTestAvailableAt, en: "Test available at {}", es: "Prueba disponible a las {}", pt_br: "Teste disponível às {}", de: "Test verfügbar um {}", fr: "Test disponible à {}", ar: "الاختبار متاح عند \u{2068}{}\u{2069}", zh_hans: "{} 可测试", ja: "{} にテストできます" },
+    Row { key: Key::BotsRoutineTestNotStarted, en: "The test didn't start. Try again.", es: "La prueba no se inició. Inténtalo de nuevo.", pt_br: "O teste não começou. Tente novamente.", de: "Der Test wurde nicht gestartet. Versuche es erneut.", fr: "Le test n'a pas démarré. Réessayez.", ar: "لم يبدأ الاختبار. حاول مجددًا.", zh_hans: "测试未开始。请重试。", ja: "テストを開始できませんでした。もう一度お試しください。" },
+    Row { key: Key::BotsRoutineEditTiming, en: "Edit timing", es: "Editar horario", pt_br: "Editar horário", de: "Zeitplan bearbeiten", fr: "Modifier l'horaire", ar: "تعديل التوقيت", zh_hans: "编辑时间", ja: "時刻を編集" },
+    Row { key: Key::BotsRoutineSave, en: "Save", es: "Guardar", pt_br: "Salvar", de: "Speichern", fr: "Enregistrer", ar: "حفظ", zh_hans: "保存", ja: "保存" },
+    Row { key: Key::BotsRoutineSaving, en: "Saving…", es: "Guardando…", pt_br: "Salvando…", de: "Wird gespeichert…", fr: "Enregistrement…", ar: "جارٍ الحفظ…", zh_hans: "正在保存…", ja: "保存しています…" },
+    Row { key: Key::BotsRoutineInvalidTime, en: "Choose a valid time.", es: "Elige una hora válida.", pt_br: "Escolha um horário válido.", de: "Wähle eine gültige Zeit.", fr: "Choisissez une heure valide.", ar: "اختر وقتًا صالحًا.", zh_hans: "请选择有效的时间。", ja: "有効な時刻を選んでください。" },
+    Row { key: Key::BotsRoutineOnEditNotice, en: "This Routine is on. The new time applies right away.", es: "Esta rutina está activada. La nueva hora se aplica de inmediato.", pt_br: "Esta rotina está ativada. O novo horário vale imediatamente.", de: "Diese Routine ist eingeschaltet. Die neue Zeit gilt sofort.", fr: "Cette routine est activée. Le nouvel horaire s'applique immédiatement.", ar: "هذه المهمة الدورية تعمل. يسري الوقت الجديد فورًا.", zh_hans: "此例行任务已开启。新时间立即生效。", ja: "このルーティンはオンです。新しい時刻はすぐに適用されます。" },
+    Row { key: Key::BotsRoutineAccessNowDefault, en: "Access: create pages; edit created or {} selected pages.", es: "Acceso: crear páginas; editar las creadas o {} seleccionadas.", pt_br: "Acesso: criar páginas; editar as criadas ou {} selecionadas.", de: "Zugriff: Seiten erstellen; erstellte oder {} ausgewählte Seiten bearbeiten.", fr: "Accès : créer des pages ; modifier les pages créées ou {} sélectionnées.", ar: "الوصول: إنشاء صفحات وتعديل الصفحات المنشأة أو \u{2068}{}\u{2069} صفحات محددة.", zh_hans: "访问权限：创建页面；编辑已创建的页面或 {} 个选定页面。", ja: "アクセス：ページを作成し、作成済みまたは選択した {} ページを編集。" },
+    Row { key: Key::BotsRoutineAccessNowWorkspace, en: "Access: pages in this Bot's home workspace.", es: "Acceso: páginas del espacio de trabajo de este bot.", pt_br: "Acesso: páginas do espaço de trabalho deste bot.", de: "Zugriff: Seiten im Heimat-Arbeitsbereich dieses Bots.", fr: "Accès : pages de l'espace de travail de ce bot.", ar: "الوصول: صفحات مساحة العمل الرئيسية لهذا البوت.", zh_hans: "访问权限：此机器人主工作区中的页面。", ja: "アクセス：この Bot のホームワークスペース内のページ。" },
+    Row { key: Key::BotsRoutineAccessAsks, en: "Asks before editing pages it didn't create or wasn't given.", es: "Pregunta antes de editar páginas que no creó o que no se le dieron.", pt_br: "Pergunta antes de editar páginas que não criou ou que não recebeu.", de: "Fragt, bevor Seiten bearbeitet werden, die sie nicht erstellt oder erhalten hat.", fr: "Demande avant de modifier des pages qu'elle n'a pas créées ou reçues.", ar: "تسأل قبل تعديل صفحات لم تنشئها أو لم تُمنح لها.", zh_hans: "编辑并非由它创建或未授予它的页面前会先询问。", ja: "自分で作成していない、または渡されていないページを編集する前に確認します。" },
+    Row { key: Key::BotsRoutineAccessAnyPage, en: "Can edit any page in {}.", es: "Puede editar cualquier página de {}.", pt_br: "Pode editar qualquer página de {}.", de: "Kann jede Seite in {} bearbeiten.", fr: "Peut modifier n'importe quelle page de {}.", ar: "يمكنها تعديل أي صفحة في \u{2068}{}\u{2069}.", zh_hans: "可以编辑 {} 中的任何页面。", ja: "{} 内のすべてのページを編集できます。" },
+    Row { key: Key::BotsRoutineAccessAnyPageHome, en: "Can edit any page in this Bot's home workspace.", es: "Puede editar cualquier página del espacio de trabajo de este bot.", pt_br: "Pode editar qualquer página do espaço de trabalho deste bot.", de: "Kann jede Seite im Heimat-Arbeitsbereich dieses Bots bearbeiten.", fr: "Peut modifier n'importe quelle page de l'espace de travail de ce bot.", ar: "يمكنها تعديل أي صفحة في مساحة العمل الرئيسية لهذا البوت.", zh_hans: "可以编辑此机器人主工作区中的任何页面。", ja: "この Bot のホームワークスペース内のすべてのページを編集できます。" },
+    Row { key: Key::BotsRoutineChangeAccess, en: "Change access", es: "Cambiar acceso", pt_br: "Alterar acesso", de: "Zugriff ändern", fr: "Modifier l'accès", ar: "تغيير الوصول", zh_hans: "更改访问权限", ja: "アクセスを変更" },
+    Row { key: Key::BotsRoutineAccessChoiceDefault, en: "Default access", es: "Acceso predeterminado", pt_br: "Acesso padrão", de: "Standardzugriff", fr: "Accès par défaut", ar: "الوصول الافتراضي", zh_hans: "默认访问权限", ja: "既定のアクセス" },
+    Row { key: Key::BotsRoutineAccessChoiceWorkspace, en: "Whole workspace", es: "Todo el espacio de trabajo", pt_br: "Todo o espaço de trabalho", de: "Gesamter Arbeitsbereich", fr: "Tout l'espace de travail", ar: "مساحة العمل كاملة", zh_hans: "整个工作区", ja: "ワークスペース全体" },
+    Row { key: Key::BotsRoutineAccessStartsDefault, en: "A new Routine starts with the default access.", es: "Una rutina nueva empieza con el acceso predeterminado.", pt_br: "Uma rotina nova começa com o acesso padrão.", de: "Eine neue Routine beginnt mit dem Standardzugriff.", fr: "Une nouvelle routine commence avec l'accès par défaut.", ar: "تبدأ المهمة الدورية الجديدة بالوصول الافتراضي.", zh_hans: "新的例行任务从默认访问权限开始。", ja: "新しいルーティンは既定のアクセスで始まります。" },
+    Row { key: Key::BotsRoutineAccessClearsPages, en: "Saving removes the {} pages selected at setup.", es: "Al guardar se quitan las {} páginas seleccionadas al configurar.", pt_br: "Salvar remove as {} páginas selecionadas na configuração.", de: "Beim Speichern werden die {} bei der Einrichtung ausgewählten Seiten entfernt.", fr: "L'enregistrement retire les {} pages sélectionnées à la configuration.", ar: "يزيل الحفظ الصفحات المحددة عند الإعداد وعددها \u{2068}{}\u{2069}.", zh_hans: "保存后将移除设置时选定的 {} 个页面。", ja: "保存すると、設定時に選択した {} ページが外されます。" },
+    Row { key: Key::BotsRoutineErrGone, en: "This Routine is no longer here.", es: "Esta rutina ya no está aquí.", pt_br: "Esta rotina não está mais aqui.", de: "Diese Routine ist nicht mehr hier.", fr: "Cette routine n'est plus ici.", ar: "هذه المهمة الدورية لم تعد هنا.", zh_hans: "此例行任务已不在这里。", ja: "このルーティンはもうここにありません。" },
+    Row { key: Key::BotsRoutineErrWrongOwner, en: "You can't change this Routine.", es: "No puedes cambiar esta rutina.", pt_br: "Você não pode alterar esta rotina.", de: "Du kannst diese Routine nicht ändern.", fr: "Vous ne pouvez pas modifier cette routine.", ar: "لا يمكنك تغيير هذه المهمة الدورية.", zh_hans: "你无法更改此例行任务。", ja: "このルーティンは変更できません。" },
+    Row { key: Key::BotsRoutineErrWorkspace, en: "Koru couldn't reach this workspace. Try again.", es: "Koru no pudo acceder a este espacio de trabajo. Inténtalo de nuevo.", pt_br: "O Koru não conseguiu acessar este espaço de trabalho. Tente novamente.", de: "Koru konnte diesen Arbeitsbereich nicht erreichen. Versuche es erneut.", fr: "Koru n'a pas pu accéder à cet espace de travail. Réessayez.", ar: "تعذر على Koru الوصول إلى مساحة العمل هذه. حاول مجددًا.", zh_hans: "Koru 无法访问此工作区。请重试。", ja: "Koru はこのワークスペースにアクセスできませんでした。もう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrBotTrashed, en: "This Bot is in Trash. Restore the Bot first.", es: "Este bot está en la papelera. Restaura el bot primero.", pt_br: "Este bot está na lixeira. Restaure o bot primeiro.", de: "Dieser Bot ist im Papierkorb. Stelle den Bot zuerst wieder her.", fr: "Ce bot est dans la corbeille. Restaurez d'abord le bot.", ar: "هذا البوت في سلة المهملات. استعد البوت أولًا.", zh_hans: "此机器人在废纸篓中。请先恢复机器人。", ja: "この Bot はゴミ箱にあります。先に Bot を復元してください。" },
+    Row { key: Key::BotsRoutineErrLifecyclePending, en: "This Bot is being archived, moved to Trash or restored.", es: "Este bot se está archivando, moviendo a la papelera o restaurando.", pt_br: "Este bot está sendo arquivado, movido para a lixeira ou restaurado.", de: "Dieser Bot wird gerade archiviert, in den Papierkorb verschoben oder wiederhergestellt.", fr: "Ce bot est en cours d'archivage, de mise à la corbeille ou de restauration.", ar: "هذا البوت قيد الأرشفة أو النقل إلى سلة المهملات أو الاستعادة.", zh_hans: "此机器人正在归档、移至废纸篓或恢复。", ja: "この Bot はアーカイブ、ゴミ箱への移動、または復元の処理中です。" },
+    Row { key: Key::BotsRoutineErrBotArchived, en: "This Bot is archived. Unarchive it first.", es: "Este bot está archivado. Desarchívalo primero.", pt_br: "Este bot está arquivado. Desarquive-o primeiro.", de: "Dieser Bot ist archiviert. Hole ihn zuerst aus dem Archiv.", fr: "Ce bot est archivé. Désarchivez-le d'abord.", ar: "هذا البوت مؤرشف. ألغِ أرشفته أولًا.", zh_hans: "此机器人已归档。请先取消归档。", ja: "この Bot はアーカイブされています。先にアーカイブを解除してください。" },
+    Row { key: Key::BotsRoutineErrOperationPending, en: "The Bot is still applying a change. Try again in a moment.", es: "El bot aún está aplicando un cambio. Inténtalo de nuevo en un momento.", pt_br: "O bot ainda está aplicando uma alteração. Tente novamente em instantes.", de: "Der Bot wendet noch eine Änderung an. Versuche es gleich noch einmal.", fr: "Le bot applique encore une modification. Réessayez dans un instant.", ar: "ما زال البوت يطبّق تغييرًا. حاول مجددًا بعد قليل.", zh_hans: "机器人仍在应用更改。请稍后重试。", ja: "Bot はまだ変更を適用しています。少ししてからもう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrChanged, en: "This Routine changed. Showing the latest.", es: "Esta rutina cambió. Se muestra la versión más reciente.", pt_br: "Esta rotina mudou. Mostrando a versão mais recente.", de: "Diese Routine wurde geändert. Der neueste Stand wird angezeigt.", fr: "Cette routine a changé. Affichage de la dernière version.", ar: "تغيّرت هذه المهمة الدورية. يُعرض أحدث إصدار.", zh_hans: "此例行任务已更改。正在显示最新内容。", ja: "このルーティンは変更されました。最新の内容を表示しています。" },
+    Row { key: Key::BotsRoutineErrNotBound, en: "This Routine isn't finished being set up.", es: "Esta rutina aún no ha terminado de configurarse.", pt_br: "Esta rotina ainda não terminou de ser configurada.", de: "Diese Routine ist noch nicht fertig eingerichtet.", fr: "La configuration de cette routine n'est pas terminée.", ar: "لم يكتمل إعداد هذه المهمة الدورية بعد.", zh_hans: "此例行任务尚未完成设置。", ja: "このルーティンの設定はまだ完了していません。" },
+    Row { key: Key::BotsRoutineErrDeleted, en: "This Routine was deleted.", es: "Esta rutina se eliminó.", pt_br: "Esta rotina foi excluída.", de: "Diese Routine wurde gelöscht.", fr: "Cette routine a été supprimée.", ar: "حُذفت هذه المهمة الدورية.", zh_hans: "此例行任务已删除。", ja: "このルーティンは削除されました。" },
+    Row { key: Key::BotsRoutineErrElsewhere, en: "This Routine runs on another computer. Change it there.", es: "Esta rutina se ejecuta en otro ordenador. Cámbiala allí.", pt_br: "Esta rotina é executada em outro computador. Altere-a lá.", de: "Diese Routine läuft auf einem anderen Computer. Ändere sie dort.", fr: "Cette routine s'exécute sur un autre ordinateur. Modifiez-la là-bas.", ar: "تعمل هذه المهمة الدورية على حاسوب آخر. غيّرها هناك.", zh_hans: "此例行任务在另一台电脑上运行。请在那里更改。", ja: "このルーティンは別のコンピューターで実行されます。そちらで変更してください。" },
+    Row { key: Key::BotsRoutineErrPending, en: "Still applying the last change.", es: "Aún se está aplicando el último cambio.", pt_br: "A última alteração ainda está sendo aplicada.", de: "Die letzte Änderung wird noch angewendet.", fr: "La dernière modification est encore en cours d'application.", ar: "ما زال التغيير الأخير قيد التطبيق.", zh_hans: "仍在应用上一次更改。", ja: "前回の変更をまだ適用しています。" },
+    Row { key: Key::BotsRoutineErrUnavailable, en: "Routines aren't available right now. Try again.", es: "Las rutinas no están disponibles ahora. Inténtalo de nuevo.", pt_br: "As rotinas não estão disponíveis agora. Tente novamente.", de: "Routinen sind gerade nicht verfügbar. Versuche es erneut.", fr: "Les routines ne sont pas disponibles pour le moment. Réessayez.", ar: "المهام الدورية غير متاحة الآن. حاول مجددًا.", zh_hans: "例行任务目前不可用。请重试。", ja: "現在ルーティンを利用できません。もう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrOther, en: "That didn't work. Refresh routines and try again.", es: "No funcionó. Actualiza las rutinas e inténtalo de nuevo.", pt_br: "Não funcionou. Atualize as rotinas e tente novamente.", de: "Das hat nicht geklappt. Aktualisiere die Routinen und versuche es erneut.", fr: "Cela n'a pas fonctionné. Actualisez les routines et réessayez.", ar: "لم ينجح ذلك. حدّث المهام الدورية وحاول مجددًا.", zh_hans: "操作未成功。请刷新例行任务后重试。", ja: "うまくいきませんでした。ルーティンを更新して、もう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrNotReady, en: "This Routine isn't ready yet. Refresh routines and try again.", es: "Esta rutina aún no está lista. Actualiza las rutinas e inténtalo de nuevo.", pt_br: "Esta rotina ainda não está pronta. Atualize as rotinas e tente novamente.", de: "Diese Routine ist noch nicht bereit. Aktualisiere die Routinen und versuche es erneut.", fr: "Cette routine n'est pas encore prête. Actualisez les routines et réessayez.", ar: "هذه المهمة الدورية ليست جاهزة بعد. حدّث المهام الدورية وحاول مجددًا.", zh_hans: "此例行任务尚未就绪。请刷新例行任务后重试。", ja: "このルーティンはまだ準備ができていません。ルーティンを更新して、もう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrBotPaused, en: "The Bot is paused. Resume the Bot first.", es: "El bot está en pausa. Reanuda el bot primero.", pt_br: "O bot está pausado. Retome o bot primeiro.", de: "Der Bot ist pausiert. Setze den Bot zuerst fort.", fr: "Le bot est en pause. Reprenez d'abord le bot.", ar: "البوت متوقف مؤقتًا. استأنف البوت أولًا.", zh_hans: "机器人已暂停。请先恢复机器人。", ja: "Bot は一時停止中です。先に Bot を再開してください。" },
+    Row { key: Key::BotsRoutineErrBotIsArchived, en: "The Bot is archived.", es: "El bot está archivado.", pt_br: "O bot está arquivado.", de: "Der Bot ist archiviert.", fr: "Le bot est archivé.", ar: "البوت مؤرشف.", zh_hans: "机器人已归档。", ja: "Bot はアーカイブされています。" },
+    Row { key: Key::BotsRoutineErrAccessUnreadable, en: "Koru can't read this Routine's access. Choose its access again.", es: "Koru no puede leer el acceso de esta rutina. Elige su acceso de nuevo.", pt_br: "O Koru não consegue ler o acesso desta rotina. Escolha o acesso novamente.", de: "Koru kann den Zugriff dieser Routine nicht lesen. Wähle den Zugriff erneut.", fr: "Koru ne peut pas lire l'accès de cette routine. Choisissez à nouveau son accès.", ar: "يتعذر على Koru قراءة وصول هذه المهمة الدورية. اختر وصولها مجددًا.", zh_hans: "Koru 无法读取此例行任务的访问权限。请重新选择。", ja: "Koru はこのルーティンのアクセスを読み取れません。アクセスを選び直してください。" },
+    Row { key: Key::BotsRoutineErrAccessApplying, en: "An access change is still being applied.", es: "Aún se está aplicando un cambio de acceso.", pt_br: "Uma alteração de acesso ainda está sendo aplicada.", de: "Eine Zugriffsänderung wird noch angewendet.", fr: "Une modification de l'accès est encore en cours d'application.", ar: "ما زال تغيير في الوصول قيد التطبيق.", zh_hans: "访问权限的更改仍在应用中。", ja: "アクセスの変更をまだ適用しています。" },
+    Row { key: Key::BotsRoutineErrPauseToTest, en: "Pause this Routine to test it.", es: "Pausa esta rutina para probarla.", pt_br: "Pause esta rotina para testá-la.", de: "Pausiere diese Routine, um sie zu testen.", fr: "Mettez cette routine en pause pour la tester.", ar: "أوقف هذه المهمة الدورية مؤقتًا لاختبارها.", zh_hans: "请先暂停此例行任务再测试。", ja: "テストするには、このルーティンを一時停止してください。" },
+    Row { key: Key::BotsRoutineErrMinuteTaken, en: "This Routine already ran this minute. Try again in a minute.", es: "Esta rutina ya se ejecutó en este minuto. Inténtalo de nuevo en un minuto.", pt_br: "Esta rotina já foi executada neste minuto. Tente novamente em um minuto.", de: "Diese Routine lief in dieser Minute bereits. Versuche es in einer Minute erneut.", fr: "Cette routine s'est déjà exécutée pendant cette minute. Réessayez dans une minute.", ar: "عملت هذه المهمة الدورية في هذه الدقيقة بالفعل. حاول مجددًا بعد دقيقة.", zh_hans: "此例行任务在这一分钟内已运行过。请一分钟后重试。", ja: "このルーティンはこの 1 分間にすでに実行されました。1 分後にもう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrTestBusy, en: "Another test is starting. Try again in a moment.", es: "Otra prueba se está iniciando. Inténtalo de nuevo en un momento.", pt_br: "Outro teste está começando. Tente novamente em instantes.", de: "Ein anderer Test wird gerade gestartet. Versuche es gleich noch einmal.", fr: "Un autre test est en cours de démarrage. Réessayez dans un instant.", ar: "اختبار آخر قيد البدء. حاول مجددًا بعد قليل.", zh_hans: "另一个测试正在开始。请稍后重试。", ja: "別のテストを開始しています。少ししてからもう一度お試しください。" },
+    Row { key: Key::BotsRoutineErrPauseForAccess, en: "Pause this Routine to change its access.", es: "Pausa esta rutina para cambiar su acceso.", pt_br: "Pause esta rotina para alterar o acesso.", de: "Pausiere diese Routine, um ihren Zugriff zu ändern.", fr: "Mettez cette routine en pause pour modifier son accès.", ar: "أوقف هذه المهمة الدورية مؤقتًا لتغيير وصولها.", zh_hans: "请先暂停此例行任务再更改其访问权限。", ja: "アクセスを変更するには、このルーティンを一時停止してください。" },
+    Row { key: Key::BotsRoutineErrRunInProgress, en: "A run of this Routine is still in progress. Change its access when it finishes.", es: "Una ejecución de esta rutina sigue en curso. Cambia su acceso cuando termine.", pt_br: "Uma execução desta rotina ainda está em andamento. Altere o acesso quando ela terminar.", de: "Ein Durchlauf dieser Routine läuft noch. Ändere den Zugriff, wenn er beendet ist.", fr: "Une exécution de cette routine est encore en cours. Modifiez son accès quand elle sera terminée.", ar: "ما زال تشغيل لهذه المهمة الدورية جاريًا. غيّر وصولها عند انتهائه.", zh_hans: "此例行任务的一次运行仍在进行。请在其完成后更改访问权限。", ja: "このルーティンの実行がまだ続いています。完了してからアクセスを変更してください。" },
+    Row { key: Key::BotsRoutineErrAccessPending, en: "The last access change is still being applied.", es: "El último cambio de acceso aún se está aplicando.", pt_br: "A última alteração de acesso ainda está sendo aplicada.", de: "Die letzte Zugriffsänderung wird noch angewendet.", fr: "La dernière modification de l'accès est encore en cours d'application.", ar: "ما زال آخر تغيير في الوصول قيد التطبيق.", zh_hans: "上一次访问权限更改仍在应用中。", ja: "前回のアクセス変更をまだ適用しています。" },
+    Row { key: Key::BotsRoutineErrPageRights, en: "You can't give access to a page you can't edit.", es: "No puedes dar acceso a una página que no puedes editar.", pt_br: "Você não pode dar acesso a uma página que não pode editar.", de: "Du kannst keinen Zugriff auf eine Seite geben, die du nicht bearbeiten kannst.", fr: "Vous ne pouvez pas donner accès à une page que vous ne pouvez pas modifier.", ar: "لا يمكنك منح الوصول إلى صفحة لا يمكنك تعديلها.", zh_hans: "你无法授予自己不能编辑的页面的访问权限。", ja: "自分が編集できないページへのアクセスは付与できません。" },
+    Row { key: Key::BotsRoutineHistoryTitle, en: "History", es: "Historial", pt_br: "Histórico", de: "Verlauf", fr: "Historique", ar: "السجل", zh_hans: "历史记录", ja: "履歴" },
+    Row { key: Key::BotsRoutineRan, en: "{} · Ran", es: "{} · Ejecutada", pt_br: "{} · Executada", de: "{} · Ausgeführt", fr: "{} · Exécutée", ar: "\u{2068}{}\u{2069} · نُفّذت", zh_hans: "{} · 已运行", ja: "{} · 実行済み" },
+    Row { key: Key::BotsRoutineMissed, en: "{} · Missed", es: "{} · Omitida", pt_br: "{} · Perdida", de: "{} · Verpasst", fr: "{} · Manquée", ar: "\u{2068}{}\u{2069} · فائتة", zh_hans: "{} · 已错过", ja: "{} · 未実行" },
+    Row { key: Key::BotsRoutineSkippedBusy, en: "{} · Skipped, Bot was busy", es: "{} · Omitida, el bot estaba ocupado", pt_br: "{} · Ignorada, o bot estava ocupado", de: "{} · Übersprungen, Bot war beschäftigt", fr: "{} · Ignorée, le bot était occupé", ar: "\u{2068}{}\u{2069} · تم تخطيها، كان البوت مشغولًا", zh_hans: "{} · 已跳过，机器人正忙", ja: "{} · スキップ（Bot が処理中）" },
+    Row { key: Key::BotsRoutineTestRan, en: "{} · Test", es: "{} · Prueba", pt_br: "{} · Teste", de: "{} · Test", fr: "{} · Test", ar: "\u{2068}{}\u{2069} · اختبار", zh_hans: "{} · 测试", ja: "{} · テスト" },
+    Row { key: Key::BotsRoutineTestMissed, en: "{} · Test · Missed", es: "{} · Prueba · Omitida", pt_br: "{} · Teste · Perdido", de: "{} · Test · Verpasst", fr: "{} · Test · Manqué", ar: "\u{2068}{}\u{2069} · اختبار · فائت", zh_hans: "{} · 测试 · 已错过", ja: "{} · テスト · 未実行" },
+    Row { key: Key::BotsRoutineTestSkippedBusy, en: "{} · Test · Skipped, Bot was busy", es: "{} · Prueba · Omitida, el bot estaba ocupado", pt_br: "{} · Teste · Ignorado, o bot estava ocupado", de: "{} · Test · Übersprungen, Bot war beschäftigt", fr: "{} · Test · Ignoré, le bot était occupé", ar: "\u{2068}{}\u{2069} · اختبار · تم تخطيه، كان البوت مشغولًا", zh_hans: "{} · 测试 · 已跳过，机器人正忙", ja: "{} · テスト · スキップ（Bot が処理中）" },
+    Row { key: Key::BotsRoutineNothingRan, en: "Nothing has run yet.", es: "Aún no se ha ejecutado nada.", pt_br: "Nada foi executado ainda.", de: "Bisher wurde nichts ausgeführt.", fr: "Rien ne s'est encore exécuté.", ar: "لم يُنفَّذ شيء بعد.", zh_hans: "尚未运行过。", ja: "まだ何も実行されていません。" },
+    Row { key: Key::BotsRoutineHistoryOlder, en: "Older history", es: "Historial anterior", pt_br: "Histórico anterior", de: "Älterer Verlauf", fr: "Historique plus ancien", ar: "سجل أقدم", zh_hans: "更早的历史记录", ja: "以前の履歴" },
+    Row { key: Key::BotsRoutineZone, en: "Time zone: {}", es: "Zona horaria: {}", pt_br: "Fuso horário: {}", de: "Zeitzone: {}", fr: "Fuseau horaire : {}", ar: "المنطقة الزمنية: \u{2068}{}\u{2069}", zh_hans: "时区：{}", ja: "タイムゾーン：{}" },
+    Row { key: Key::BotsRoutineZoneThisComputer, en: "{}, this computer", es: "{}, este ordenador", pt_br: "{}, este computador", de: "{}, dieser Computer", fr: "{}, cet ordinateur", ar: "\u{2068}{}\u{2069}، هذا الحاسوب", zh_hans: "{}，这台电脑", ja: "{}（このコンピューター）" },
+    Row { key: Key::BotsRoutineZoneOwnerLocal, en: "Owner local", es: "Hora local del propietario", pt_br: "Hora local do proprietário", de: "Ortszeit des Besitzers", fr: "Heure locale du propriétaire", ar: "التوقيت المحلي للمالك", zh_hans: "所有者本地时间", ja: "所有者のローカル時刻" },
+    Row { key: Key::BotsRoutineNeedsYou, en: "Needs you: a run is waiting for your decision.", es: "Te necesita: una ejecución espera tu decisión.", pt_br: "Precisa de você: uma execução aguarda sua decisão.", de: "Braucht dich: Ein Durchlauf wartet auf deine Entscheidung.", fr: "Vous attend : une exécution attend votre décision.", ar: "بانتظارك: تشغيل ينتظر قرارك.", zh_hans: "需要你处理：有一次运行在等待你的决定。", ja: "あなたの対応が必要です：実行があなたの判断を待っています。" },
+    Row { key: Key::BotsRoutineOpenDecision, en: "Open to decide", es: "Abrir para decidir", pt_br: "Abrir para decidir", de: "Zum Entscheiden öffnen", fr: "Ouvrir pour décider", ar: "افتح لاتخاذ القرار", zh_hans: "打开并决定", ja: "開いて判断する" },
+    Row { key: Key::BotsRoutinesNeedYou, en: "A Routine of this Bot needs you.", es: "Una rutina de este bot te necesita.", pt_br: "Uma rotina deste bot precisa de você.", de: "Eine Routine dieses Bots braucht dich.", fr: "Une routine de ce bot vous attend.", ar: "إحدى المهام الدورية لهذا البوت بانتظارك.", zh_hans: "此机器人的一个例行任务需要你处理。", ja: "この Bot のルーティンがあなたの対応を待っています。" },
+    Row { key: Key::BotsRoutinesWillPauseOne, en: "Its Routine will be paused.", es: "Su rutina se pausará.", pt_br: "A rotina dele será pausada.", de: "Seine Routine wird pausiert.", fr: "Sa routine sera mise en pause.", ar: "ستتوقف مهمته الدورية مؤقتًا.", zh_hans: "它的例行任务将被暂停。", ja: "この Bot のルーティンは一時停止されます。" },
+    Row { key: Key::BotsRoutinesWillPauseMany, en: "Its {} Routines will be paused.", es: "Sus {} rutinas se pausarán.", pt_br: "As {} rotinas dele serão pausadas.", de: "Seine {} Routinen werden pausiert.", fr: "Ses {} routines seront mises en pause.", ar: "ستتوقف مهامه الدورية وعددها \u{2068}{}\u{2069} مؤقتًا.", zh_hans: "它的 {} 个例行任务将被暂停。", ja: "この Bot の {} 件のルーティンは一時停止されます。" },
+    Row { key: Key::BotsRoutinesWillPauseAny, en: "Any Routines it has will be paused.", es: "Las rutinas que tenga se pausarán.", pt_br: "As rotinas que ele tiver serão pausadas.", de: "Seine Routinen werden pausiert, falls er welche hat.", fr: "Ses routines, s'il en a, seront mises en pause.", ar: "ستتوقف مؤقتًا أي مهام دورية لديه.", zh_hans: "它的所有例行任务都将被暂停。", ja: "この Bot にルーティンがあれば一時停止されます。" },
+    Row { key: Key::BotsRoutinesPausingForLifecycle, en: "Pausing its Routines…", es: "Pausando sus rutinas…", pt_br: "Pausando as rotinas dele…", de: "Seine Routinen werden pausiert…", fr: "Mise en pause de ses routines…", ar: "جارٍ إيقاف مهامه الدورية مؤقتًا…", zh_hans: "正在暂停它的例行任务…", ja: "この Bot のルーティンを一時停止しています…" },
+    Row { key: Key::BotsRoutinesStayPaused, en: "Routines stay paused until you turn them on.", es: "Las rutinas siguen en pausa hasta que las actives.", pt_br: "As rotinas ficam pausadas até você ativá-las.", de: "Routinen bleiben pausiert, bis du sie einschaltest.", fr: "Les routines restent en pause jusqu'à ce que vous les activiez.", ar: "تبقى المهام الدورية متوقفة مؤقتًا إلى أن تشغّلها.", zh_hans: "例行任务会保持暂停，直到你将其开启。", ja: "ルーティンは、オンにするまで一時停止のままです。" },
+    Row { key: Key::BotsRoutineChooseAccessAgain, en: "Choose access again", es: "Elige el acceso de nuevo", pt_br: "Escolha o acesso novamente", de: "Zugriff erneut wählen", fr: "Choisissez à nouveau l'accès", ar: "اختر الوصول مجددًا", zh_hans: "请重新选择访问权限", ja: "アクセスを選び直してください" },
+    Row { key: Key::BotsRoutinesMayStillBeOn, en: "These Routines may still be on: {}", es: "Estas rutinas pueden seguir activadas: {}", pt_br: "Estas rotinas ainda podem estar ativadas: {}", de: "Diese Routinen sind möglicherweise noch eingeschaltet: {}", fr: "Ces routines sont peut-être encore activées : {}", ar: "قد تكون هذه المهام الدورية ما زالت تعمل: \u{2068}{}\u{2069}", zh_hans: "这些例行任务可能仍处于开启状态：{}", ja: "次のルーティンはまだオンの可能性があります：{}" },
+    Row { key: Key::BotsRestoredCheckRoutines, en: "Restored and paused. Check its Routines before you resume it.", es: "Restaurado y en pausa. Revisa sus rutinas antes de reanudarlo.", pt_br: "Restaurado e pausado. Confira as rotinas antes de retomá-lo.", de: "Wiederhergestellt und pausiert. Prüfe seine Routinen, bevor du ihn fortsetzt.", fr: "Restauré et en pause. Vérifiez ses routines avant de le reprendre.", ar: "تمت الاستعادة وهو متوقف مؤقتًا. راجع مهامه الدورية قبل استئنافه.", zh_hans: "已恢复并暂停。恢复运行前请检查它的例行任务。", ja: "復元され、一時停止中です。再開する前にルーティンを確認してください。" },
 ];

@@ -7,6 +7,7 @@ use koru_ai_core::{
 };
 use koru_i18n::Key as Words;
 use std::rc::Rc;
+pub(crate) mod control;
 pub(crate) mod detail;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +50,8 @@ pub(crate) fn listed(reply: Result<BotResponse, Said>) -> Result<BotRoutineListP
 #[derive(Default)]
 pub(crate) struct Routines {
     pub detail: detail::Detail,
+    /// The owner controls of the Routines shown (P4.3 piece 4).
+    pub(crate) controls: control::Controls,
     bot: Option<BotId>,
     pub held: Option<Rc<BotRoutineListPage>>,
     pub notice: Option<Words>,
@@ -73,6 +76,8 @@ impl Routines {
             let detail = self.detail.retired();
             *self = Self {
                 detail,
+                // Another Bot: no control, note or Restore list of the last.
+                controls: self.controls.retired(false),
                 bot,
                 revision: self.revision.wrapping_add(1),
                 seq: self.seq,
@@ -85,6 +90,10 @@ impl Routines {
             return false;
         }
         self.visible = visible;
+        // **Hidden is cancelled**: what was pending is dropped, its answer
+        // is ignored, and nothing waits on a clock. Shown again, the list is
+        // read and says what is true.
+        self.controls = self.controls.retired(true);
         self.detail.select(self.bot, self.expanded, visible);
         self.epoch = self.epoch.wrapping_add(1);
         self.stale = self.held.is_some();
@@ -99,6 +108,7 @@ impl Routines {
     }
     pub fn invalidate(&mut self) {
         self.detail = self.detail.retired();
+        self.controls = self.controls.retired(true);
         self.held = None;
         self.expanded = None;
         self.opening = None;
@@ -147,6 +157,8 @@ impl Routines {
         self.owed = true;
         self.expanded = None;
         self.detail = self.detail.retired();
+        self.controls.refreshed();
+        self.controls.close_forms();
         self.stale = self.held.is_some();
         self.notice = None;
         self.opening = None;
@@ -169,8 +181,19 @@ impl Routines {
         }
         self.opening = None;
         self.opened = None;
-        self.expanded = None;
-        self.detail = self.detail.retired();
+        self.controls.listed();
+        // A read the pane asked for by itself (after a control, a lost
+        // answer or a Restore) keeps the Routine a person has open.
+        let own = self.controls.take_keep_open();
+        let keep = self.expanded.filter(|open| {
+            own && matches!(&result, Ok(page) if page.bot_id == bot
+                    && page.items.iter().any(|item| item.schedule_id == *open))
+        });
+        if keep.is_none() {
+            self.expanded = None;
+            self.detail = self.detail.retired();
+            self.controls.close_forms();
+        }
         match result {
             Ok(page) if page.bot_id == bot => {
                 self.held = Some(Rc::new(page));
@@ -213,7 +236,13 @@ impl Routines {
         true
     }
     pub fn can_open(&self, chat: ChatId) -> bool {
-        self.visible && self.expanded.is_some() && self.detail.can_open(chat)
+        self.visible
+            && ((self.expanded.is_some() && self.detail.can_open(chat))
+                // A row's *Open to decide*: the fresh list read names it.
+                || (self.controls.deciding == Some(chat)
+                    && !self.stale
+                    && !self.loading()
+                    && self.row_holds(chat)))
     }
     pub fn detail_answer(
         &mut self,
@@ -225,6 +254,7 @@ impl Routines {
         if !self.detail.answer(seq, bot, schedule, result) {
             return false;
         }
+        self.settle_test(self.detail.held.is_some());
         self.opening = None;
         self.opened = None;
         self.changed();
@@ -233,6 +263,9 @@ impl Routines {
     pub fn detail_refresh(&mut self, next: bool) -> bool {
         if !self.detail.refresh(next) {
             return false;
+        }
+        if !next {
+            self.controls.refreshed();
         }
         self.opening = None;
         self.opened = None;
@@ -289,6 +322,18 @@ impl Routines {
     }
     pub fn take_open(&mut self) -> Option<(BotId, ChatId)> {
         let chat = self.opened.take()?;
-        self.can_open(chat).then(|| (self.bot.unwrap(), chat))
+        let open = self.can_open(chat).then(|| (self.bot.unwrap(), chat));
+        self.controls.deciding = None;
+        open
+    }
+    /// The older page of the selected Routine's history.
+    pub fn history_older(&mut self) -> bool {
+        if !self.detail.older() {
+            return false;
+        }
+        self.opening = None;
+        self.opened = None;
+        self.changed();
+        true
     }
 }

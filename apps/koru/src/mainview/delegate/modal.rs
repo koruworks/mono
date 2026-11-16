@@ -136,6 +136,15 @@ pub(crate) enum Outcome {
     /// window opens it through `MainView::open_run_tab`, the one door every
     /// other gesture that opens a run already goes through.
     ViewRun(RunId),
+    /// **Save a Bot Routine's timing and name** (P4.3). The surface holds no
+    /// Bot link: the window hands the three values to the Bot's tab, which
+    /// sends one command and answers through
+    /// [`Delegation::routine_answered`].
+    SaveRoutineTiming {
+        schedule: ScheduleId,
+        name: koru_delegate_schedule::ScheduleName,
+        recurrence: koru_recurrence::RecurrenceRule,
+    },
     /// Pin the context and create the run, off the window thread.
     ///
     /// Boxed: every keystroke in the surface returns an `Outcome`, and the one
@@ -171,6 +180,21 @@ pub(crate) struct EditSeed {
     pub(crate) expected_name: koru_delegate_schedule::ScheduleName,
     pub(crate) requested_by: koru_delegate_core::ActorRef,
     pub(crate) grants: std::collections::BTreeSet<WorkspaceId>,
+}
+
+/// **A Bot Routine's timing and name, edited in this surface** (P4.3,
+/// D8). Only the name and the recurrence picker are shown: the task, the
+/// agent, the folder and the access are not this dialog's to change.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub(crate) struct RoutineTiming {
+    pub(crate) bot: koru_ai_core::bots::BotId,
+    /// The tab that asked: its Bot link sends the command.
+    pub(crate) tab: u64,
+    pub(crate) schedule: ScheduleId,
+    /// The Routine is on: the new time applies right away, and says so.
+    pub(crate) on: bool,
+    /// The time zone line, already in the reader's language.
+    pub(crate) zone: String,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -277,6 +301,8 @@ pub(crate) struct Delegation {
     pub(crate) grant: bool,
     pub(crate) kind: repeat::Kind,
     pub(crate) edit: Option<EditSeed>,
+    /// Set when the surface edits one Bot Routine's timing and name.
+    pub(crate) routine: Option<RoutineTiming>,
     other_grants: std::collections::BTreeSet<WorkspaceId>,
     pub(crate) repeat: repeat::RepeatEditor,
     pub(crate) focus: usize,
@@ -360,6 +386,7 @@ impl Delegation {
             grant: world.grant,
             kind: repeat::Kind::RunOnce,
             edit: None,
+            routine: None,
             other_grants: std::collections::BTreeSet::new(),
             repeat,
             schedule_name,
@@ -418,6 +445,69 @@ impl Delegation {
         modal.edit = Some(seed);
         modal.focus_on(Hit::Objective);
         modal
+    }
+
+    /// **The timing and name of one Bot Routine**: the same name field and
+    /// recurrence picker as a Repeat, and nothing else. Opening it reads
+    /// nothing; `name` and `recurrence` are what the Bot's pane last read.
+    pub(crate) fn open_routine_timing(
+        engine: &mut TextEngine,
+        world: World,
+        locale: koru_i18n::time::LocaleFormat,
+        current_zone: &str,
+        timing: RoutineTiming,
+        name: &koru_delegate_schedule::ScheduleName,
+        recurrence: &koru_recurrence::RecurrenceRule,
+    ) -> Self {
+        let mut modal = Self::open_with_environment(engine, world, locale, current_zone);
+        modal.kind = repeat::Kind::Repeat;
+        modal.schedule_name.set_text(engine, name.as_str());
+        modal.schedule_name_seeded = true;
+        modal.repeat.set_rule(engine, recurrence);
+        modal.routine = Some(timing);
+        modal.focus_on(Hit::ScheduleName);
+        modal
+    }
+
+    /// **The Bot's tab answered a Save**, or could not send it: the form
+    /// comes back with what the person typed and the sentence for why. A
+    /// Save that was applied closes the surface instead (the window does).
+    pub(crate) fn routine_answered(&mut self, problem: I18nKey) {
+        if self.routine.is_none() {
+            return;
+        }
+        self.phase = Phase::Editing {
+            problem: Some(problem),
+        };
+        self.focus_on(Hit::ScheduleName);
+    }
+
+    /// The recurrence picker's controls, in the order they are drawn.
+    fn schedule_controls(&self, controls: &mut Vec<Hit>) {
+        controls.extend([
+            Hit::ScheduleHourly,
+            Hit::ScheduleDaily,
+            Hit::ScheduleWeekly,
+            Hit::ScheduleMonthly,
+        ]);
+        if self.repeat.frequency == koru_recurrence::RuleShape::Weekly {
+            controls.extend(
+                koru_recurrence::Weekday::ALL
+                    .into_iter()
+                    .map(Hit::ScheduleWeekday),
+            );
+        }
+        if self.repeat.frequency != koru_recurrence::RuleShape::Hourly {
+            controls.push(Hit::ScheduleTime);
+        }
+        if self.repeat.frequency == koru_recurrence::RuleShape::Monthly {
+            controls.push(Hit::ScheduleDay);
+        }
+        controls.push(Hit::ScheduleAdvanced);
+        controls.extend([Hit::ScheduleFloating, Hit::ScheduleZoned]);
+        if self.repeat.basis == repeat::TimeBasis::Zoned {
+            controls.push(Hit::ScheduleZone);
+        }
     }
 
     /// Accepted host changes update the open picker without discarding its draft.
@@ -544,6 +634,12 @@ impl Delegation {
     /// empty only when this machine has none, and the modal says so in its own
     /// sentence rather than by dimming a button with no explanation.
     pub(crate) fn ready(&self) -> bool {
+        // A Routine's timing needs a valid name and a valid time, and
+        // nothing of a run's.
+        if self.routine.is_some() {
+            return self.repeat.rule().is_some()
+                && koru_delegate_schedule::ScheduleName::new(self.schedule_name.value()).is_ok();
+        }
         self.execution_choices_ready()
             && !self.objective.value().trim().is_empty()
             && (self.kind == repeat::Kind::RunOnce || self.repeat.rule().is_some())
@@ -558,6 +654,15 @@ impl Delegation {
     /// shape onboarding uses, and for the same reason.
     pub(crate) fn controls(&self) -> Vec<Hit> {
         match self.phase {
+            Phase::Editing { .. } if self.routine.is_some() => {
+                let mut controls = vec![Hit::ScheduleName];
+                self.schedule_controls(&mut controls);
+                if self.ready() {
+                    controls.push(Hit::Submit);
+                }
+                controls.push(Hit::Cancel);
+                controls
+            }
             Phase::Editing { .. } => {
                 let mut controls = Vec::new();
                 if self.edit.is_none() {
@@ -594,30 +699,7 @@ impl Delegation {
                     controls.push(Hit::GrantRemove);
                 }
                 if self.kind == repeat::Kind::Repeat {
-                    controls.extend([
-                        Hit::ScheduleHourly,
-                        Hit::ScheduleDaily,
-                        Hit::ScheduleWeekly,
-                        Hit::ScheduleMonthly,
-                    ]);
-                    if self.repeat.frequency == koru_recurrence::RuleShape::Weekly {
-                        controls.extend(
-                            koru_recurrence::Weekday::ALL
-                                .into_iter()
-                                .map(Hit::ScheduleWeekday),
-                        );
-                    }
-                    if self.repeat.frequency != koru_recurrence::RuleShape::Hourly {
-                        controls.push(Hit::ScheduleTime);
-                    }
-                    if self.repeat.frequency == koru_recurrence::RuleShape::Monthly {
-                        controls.push(Hit::ScheduleDay);
-                    }
-                    controls.push(Hit::ScheduleAdvanced);
-                    controls.extend([Hit::ScheduleFloating, Hit::ScheduleZoned]);
-                    if self.repeat.basis == repeat::TimeBasis::Zoned {
-                        controls.push(Hit::ScheduleZone);
-                    }
+                    self.schedule_controls(&mut controls);
                 }
                 if self.ready() {
                     controls.push(Hit::Submit);
@@ -1020,6 +1102,29 @@ impl Delegation {
     fn submit(&mut self) -> Outcome {
         if !matches!(self.phase, Phase::Editing { .. }) {
             return Outcome::Ignored;
+        }
+        // **A Routine's timing: one Save is one command**, with the name
+        // and the time together. Nothing of a run is read or sent.
+        if let Some(routine) = &self.routine {
+            let Ok(name) = koru_delegate_schedule::ScheduleName::new(self.schedule_name.value())
+            else {
+                self.focus_on(Hit::ScheduleName);
+                return Outcome::Keep;
+            };
+            let Some(recurrence) = self.repeat.rule() else {
+                self.phase = Phase::Editing {
+                    problem: Some(I18nKey::BotsRoutineInvalidTime),
+                };
+                return Outcome::Keep;
+            };
+            let schedule = routine.schedule;
+            self.phase = Phase::Scheduling;
+            self.focus = 0;
+            return Outcome::SaveRoutineTiming {
+                schedule,
+                name,
+                recurrence,
+            };
         }
         let objective = self.objective.value();
         if objective.trim().is_empty() {

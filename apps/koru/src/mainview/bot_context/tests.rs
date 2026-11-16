@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+mod controls;
 mod routines;
 use crate::bots::view::context_library::{BODY, MANAGE, RELOAD, SURFACE};
 use crate::bots::{

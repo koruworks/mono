@@ -22,9 +22,26 @@ impl MainView {
                 if self.context_view.section() == Section::Routines {
                     let mut data = view.context_subject(tab.id)?;
                     data.section = Section::Routines;
-                    data.routines = Some(crate::bots::view::context_routines::Data::from_state(
-                        &view.routines,
-                    ));
+                    // What the window already knows of the Bot's work now:
+                    // the roster's activity read. Nothing is asked for it.
+                    let mut activity = crate::bots::view::context_routines::Activity::default();
+                    for entry in self.explore.bots().activity() {
+                        if entry.bot_id != data.bot {
+                            continue;
+                        }
+                        match entry.state {
+                            koru_ai_core::bots::BotActivityState::NeedsYou => {
+                                activity.needs_you.push(entry.chat_id.as_uuid())
+                            }
+                            koru_ai_core::bots::BotActivityState::Running => {
+                                activity.running.push(entry.chat_id.as_uuid())
+                            }
+                        }
+                    }
+                    data.routines = Some(
+                        crate::bots::view::context_routines::Data::from_state(&view.routines)
+                            .knowing(activity, view.home_name()),
+                    );
                     Some(data)
                 } else {
                     view.context_library_data(tab.id)
@@ -277,6 +294,17 @@ impl MainView {
             },
             _ => false,
         };
+        // *Edit timing* asked for its dialog: the window opens it, seeded
+        // from what the pane last read. The pane keeps the keyboard's place,
+        // so it is where the keyboard returns when the dialog closes.
+        let tab = self.tabs().active_tab().id;
+        let timing = match self.active_view() {
+            TabView::Bot(view) => view.take_routine_timing_request().zip(view.bot()),
+            _ => None,
+        };
+        if let Some((seed, bot)) = timing {
+            self.begin_routine_timing(bot, tab, seed);
+        }
         if changed {
             self.sync_bot_context();
         }
@@ -453,11 +481,25 @@ impl MainView {
                                 koru_i18n::t(data.lang, *words).into()
                             }
                         };
-                        let mut control =
-                            SemanticNode::new(self.context_occurrence(cx, key)?, Role::Button)
-                                .with_label(label)
-                                .disabled(node.disabled);
-                        if let Some(selected) = node.selected {
+                        // A Routine's switch is a switch: on or off as the
+                        // owner last confirmed, never by color alone.
+                        let switch = data
+                            .routines
+                            .as_ref()
+                            .and_then(|routines| routines.switch_state(key));
+                        let mut control = SemanticNode::new(
+                            self.context_occurrence(cx, key)?,
+                            if switch.is_some() {
+                                Role::Switch
+                            } else {
+                                Role::Button
+                            },
+                        )
+                        .with_label(label)
+                        .disabled(node.disabled);
+                        if let Some(on) = switch {
+                            control = control.with_toggled(on);
+                        } else if let Some(selected) = node.selected {
                             control = control.with_selected(selected);
                         }
                         if let Some(bounds) = node

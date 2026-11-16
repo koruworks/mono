@@ -10,13 +10,13 @@ use koru_ai_core::bots::routines::*;
 use koru_delegate_core::{DeviceId, RunId, ScheduleId};
 use koru_delegate_schedule::{ScheduleName, ScheduleState};
 
-fn held(v: &mut MainView) -> &mut BotView {
+pub(super) fn held(v: &mut MainView) -> &mut BotView {
     match v.active_view() {
         TabView::Bot(view) => view,
         _ => panic!("expected Bot tab"),
     }
 }
-fn item() -> BotRoutineListItem {
+pub(super) fn item() -> BotRoutineListItem {
     BotRoutineListItem {
         schedule_id: ScheduleId::mint(),
         creation: BotRoutineCreationObservation {
@@ -51,7 +51,7 @@ fn item() -> BotRoutineListItem {
         },
     }
 }
-fn page(bot: &Bot) -> BotRoutineListPage {
+pub(super) fn page(bot: &Bot) -> BotRoutineListPage {
     BotRoutineListPage {
         bot_id: bot.id,
         bot_revision: bot.revision,
@@ -63,7 +63,7 @@ fn page(bot: &Bot) -> BotRoutineListPage {
         next_schedule: None,
     }
 }
-fn request(v: &mut MainView, commands: &Receiver<Command>) -> u64 {
+pub(super) fn request(v: &mut MainView, commands: &Receiver<Command>) -> u64 {
     held(v).shown_pass(None);
     commands
         .try_iter()
@@ -73,7 +73,7 @@ fn request(v: &mut MainView, commands: &Receiver<Command>) -> u64 {
         })
         .expect("routine read")
 }
-fn answer(
+pub(super) fn answer(
     v: &mut MainView,
     tx: &SyncSender<Answer>,
     bot: &Bot,
@@ -89,7 +89,7 @@ fn answer(
     held(v).shown_pass(None);
     v.sync_bot_context();
 }
-fn setup(
+pub(super) fn setup(
     v: &mut MainView,
     bot: &Bot,
     page: BotRoutineListPage,
@@ -100,7 +100,7 @@ fn setup(
     answer(v, &tx, bot, seq, Ok(page));
     (commands, tx)
 }
-fn lines(v: &MainView) -> String {
+pub(super) fn lines(v: &MainView) -> String {
     v.bot_context
         .with_frame(|frame| {
             frame
@@ -125,7 +125,11 @@ fn chat(page: &BotRoutineListPage) -> koru_ai_core::ChatId {
     koru_ai_core::ChatId::parse(&items[0].chat_id.to_string()).unwrap()
 }
 
-fn detail_page(bot: &Bot, page: &BotRoutineListPage, id: ScheduleId) -> BotRoutineDetail {
+pub(super) fn detail_page(
+    bot: &Bot,
+    page: &BotRoutineListPage,
+    id: ScheduleId,
+) -> BotRoutineDetail {
     let item = page
         .items
         .iter()
@@ -174,7 +178,7 @@ fn detail_page(bot: &Bot, page: &BotRoutineListPage, id: ScheduleId) -> BotRouti
         occurrences: RoutineOccurrenceHistoryObservation::Unavailable {},
     }
 }
-fn detail_request(
+pub(super) fn detail_request(
     v: &mut MainView,
     commands: &Receiver<Command>,
 ) -> (u64, ScheduleId, Option<i64>) {
@@ -192,7 +196,7 @@ fn detail_request(
         })
         .expect("selected detail read")
 }
-fn detail_answer(
+pub(super) fn detail_answer(
     v: &mut MainView,
     tx: &SyncSender<Answer>,
     bot: &Bot,
@@ -210,7 +214,7 @@ fn detail_answer(
     held(v).shown_pass(None);
     v.sync_bot_context();
 }
-fn select_detail(
+pub(super) fn select_detail(
     v: &mut MainView,
     commands: &Receiver<Command>,
     tx: &SyncSender<Answer>,
