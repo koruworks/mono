@@ -3322,13 +3322,17 @@ pub enum Key {
     MiniAppPreviousResults,
     MiniAppNextResults,
     TaskCommandsPending,
+
+    // ------ the UI Lab (`koru --ui`): its own window's words. A component's
+    // source name and catalog ID are technical identifiers and are not here.
+    UiLabTitle,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2352] = [
+    pub const ALL: [Key; 2353] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5681,6 +5685,7 @@ impl Key {
         Key::MiniAppPreviousResults,
         Key::MiniAppNextResults,
         Key::TaskCommandsPending,
+        Key::UiLabTitle,
     ];
 }
 
@@ -17201,4 +17206,6 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::MiniAppPreviousResults, en: "Previous results", es: "Resultados anteriores", pt_br: "Resultados anteriores", de: "Vorherige Ergebnisse", fr: "Résultats précédents", ar: "النتائج السابقة", zh_hans: "上一页结果", ja: "前の結果" },
     Row { key: Key::MiniAppNextResults, en: "More results", es: "Más resultados", pt_br: "Mais resultados", de: "Weitere Ergebnisse", fr: "Résultats suivants", ar: "المزيد من النتائج", zh_hans: "更多结果", ja: "次の結果" },
     Row { key: Key::TaskCommandsPending, en: "Task changes are still being processed. Try again when they finish.", es: "Los cambios de las tareas aún se están procesando. Inténtalo de nuevo cuando terminen.", pt_br: "As alterações das tarefas ainda estão sendo processadas. Tente novamente quando terminarem.", de: "Aufgabenänderungen werden noch verarbeitet. Versuche es danach erneut.", fr: "Les modifications des tâches sont en cours de traitement. Réessayez ensuite.", ar: "لا تزال تغييرات المهام قيد المعالجة. حاول مجددًا بعد اكتمالها.", zh_hans: "任务更改仍在处理中。请在完成后重试。", ja: "タスクの変更を処理中です。完了してからもう一度お試しください。" },
+    // ----------------------------------------------------------- the UI Lab
+    Row { key: Key::UiLabTitle, en: "Koru UI Lab", es: "Laboratorio de interfaz de Koru", pt_br: "Laboratório de interface do Koru", de: "Koru UI-Labor", fr: "Laboratoire d’interface Koru", ar: "مختبر واجهة Koru", zh_hans: "Koru 界面实验室", ja: "Koru UI ラボ" },
 ];

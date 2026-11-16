@@ -62,9 +62,6 @@ mod tasks;
 mod tasks_view;
 mod terminal_prefs;
 mod trash;
-// Nothing consumes the registry until the Lab's window lands; its records are
-// already checked against the production source by their own tests.
-#[allow(dead_code)]
 mod ui_lab;
 mod website;
 mod welcome;
@@ -681,9 +678,34 @@ fn main() {
     // happen first, and a startup measurement that began after them would be
     // reporting a launch nobody has.
     koru_core::timing::start();
+    // Parse once, strictly, before anything this process does that another
+    // process, a file or the taskbar could notice. Two answers are settled
+    // right here, ahead of all of it:
+    //
+    // - **A command line that is not understood is not run.** It is reported
+    //   and the process exits 2 now, rather than being carried through the
+    //   rest of startup as "not a run" to be reported at the far end.
+    // - **`--ui` is not a kind of ordinary launch.** The UI Lab has no profile,
+    //   Store or Agent, so it is dispatched before the reopen claim, the file
+    //   log, the taskbar hand-off, the Jump List, the app-menu repair, the
+    //   Agent link, the Store, persisted search and the workspace host below.
+    //   `ui_lab/tests.rs` reads this function to keep it first.
+    let command = match koru_workspace_host::cli::parse(std::env::args()) {
+        Ok(koru_workspace_host::cli::Command::Ui(ui)) => {
+            ui_lab::run(ui);
+            return;
+        }
+        Ok(command) => command,
+        Err(bad) => {
+            bad.report(&koru_workspace_host::cli::program_name());
+            std::process::exit(2);
+        }
+    };
     // The element layer's fixture theme, in a build that has it: chosen here,
     // before the host resolves the preference, and pinned so neither the
-    // preference nor the OS replaces it. Nothing is written anywhere.
+    // preference nor the OS replaces it. Nothing is written anywhere. After
+    // the dispatch above on purpose: the UI Lab draws in its own defaults and
+    // a variable left set in the shell must not decide its theme for it.
     #[cfg(feature = "fixture-theme")]
     if koru_env::switch(koru_env::name::KORU_FIXTURE_THEME) {
         use koru_draw::theme::{Contrast, themes};
@@ -694,13 +716,10 @@ fn main() {
         };
         themes::pin(&themes::FIXTURE_THEME, contrast);
     }
-    // Parse once before touching the Windows activation channel. A malformed
-    // command line must still reach the shell's strict error path rather than
-    // being mistaken for a taskbar activation and silently handed off.
-    let run = matches!(
-        koru_workspace_host::cli::parse(std::env::args()),
-        Ok(koru_workspace_host::cli::Command::Run)
-    );
+    // Only a real application run touches the Windows activation channel, the
+    // log and the Agent. `--help`, `--version` and the other one-shot commands
+    // skip all of it and are answered by `koru_workspace_host::run` below.
+    let run = command == koru_workspace_host::cli::Command::Run;
     // A replayed update launch carries one durable claim. Claim it before any
     // activation or Store work: two post-crash replays may race, and exactly
     // one is allowed to continue far enough to open a window.

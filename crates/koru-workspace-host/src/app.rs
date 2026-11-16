@@ -19635,6 +19635,15 @@ pub fn run_with_args<H: Host, I: IntoIterator<Item = String>>(host: H, name: &st
             print!("{}", koru_env::table());
             return;
         }
+        Ok(cli::Command::Ui(_)) => {
+            // The UI Lab is not a workspace window, so this function has
+            // nothing to open for it. The binary that hosts the Lab takes
+            // `--ui` before it gets here; any other binary on this parser is
+            // refusing a flag it cannot honour, exactly as it would a typo,
+            // rather than opening its ordinary window as if nothing was said.
+            cli::Rejected::ui_unsupported().report(&program);
+            std::process::exit(2);
+        }
         Err(bad) => {
             bad.report(&program);
             // 2 for a usage error, the same code `koru.sh` exits with for an
