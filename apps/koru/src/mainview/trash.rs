@@ -66,7 +66,14 @@ pub(super) enum ConfirmSubject {
     /// and why it is worth asking. It is here rather than in a dialog of its own
     /// for [`RemoveFromTasks`](Self::RemoveFromTasks)'s reason: one confirm
     /// machinery, one answer to what Escape means.
-    DeleteList(koru_core::ids::ListId),
+    ///
+    /// `inside` is exactly the lists the dialog counted inside it
+    /// (nested-lists D4): those go too, and a list a peer nests in while the
+    /// question is up does not.
+    DeleteList {
+        id: koru_core::ids::ListId,
+        inside: Vec<koru_core::ids::ListId>,
+    },
     /// **The voice consent step.** It carries nothing: what is being agreed to
     /// is the offer the shell is already holding, and a copy of the terms here
     /// would be a second thing that could be out of date by the time somebody
@@ -768,10 +775,10 @@ impl MainView {
             // Queued on *yes* and nowhere else, for that same reason — and
             // through `apply_tasks_rail`, so a list's deletion travels the one
             // vocabulary every other list gesture does.
-            ConfirmSubject::DeleteList(id) => {
-                self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::DeleteList(
-                    id,
-                ));
+            ConfirmSubject::DeleteList { id, inside } => {
+                self.apply_tasks_rail(
+                    crate::panes::explore::rail::TasksRailRequest::DeleteList { id, inside },
+                );
             }
             // The whole gesture was agreed to, so every one of them queues —
             // and none asks again, because the question was about the set.

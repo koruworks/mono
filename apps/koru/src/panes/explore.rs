@@ -619,9 +619,10 @@ struct RowDrag {
     item_count: usize,
     /// The last drop zone applied, so a relocate only happens when it changes.
     last: Option<DropTarget>,
-    /// A collapsed node the pointer is resting on as a Nest target, and when
-    /// the rest began — held past [`SPRING_OPEN_SECS`] it springs open.
-    spring: Option<(NodeId, Instant)>,
+    /// A collapsed node the pointer is resting on as a Nest target: held past
+    /// [`SPRING_OPEN_SECS`] it springs open. The wait is the shared one
+    /// (`koru_ui::tree_drag`), the tasks rail's too.
+    spring: koru_ui::tree_drag::SpringOpen<NodeId>,
 }
 
 /// The part of `F6`'s focus the column draws a ring for: an apps-row chip
@@ -5396,7 +5397,7 @@ impl ExploreView {
                     carried_order: Vec::new(),
                     item_count: 1,
                     last: None,
-                    spring: None,
+                    spring: Default::default(),
                 });
                 return Outcome::Consumed;
             }
@@ -5443,7 +5444,7 @@ impl ExploreView {
                 carried_order: Vec::new(),
                 item_count: 1,
                 last: None,
-                spring: None,
+                spring: Default::default(),
             });
             return Outcome::Consumed;
         }
@@ -6135,19 +6136,17 @@ impl ExploreView {
         // not the Trash footer. `scroll_by` is `scroll -= dy`, so positive dy
         // reveals content above (same sign the wheel uses).
         let bottom = self.rows_bottom(area);
-        let band = theme::AUTO_SCROLL_BAND;
-        let speed = theme::AUTO_SCROLL_MAX_SPEED;
-        let mut dy = 0.0_f32;
         // Only inside the rows' own region: a grab held in the header above, or
         // over the pinned Trash footer below, must not keep the list crawling —
         // the band is the last few library rows at each end, nothing past them.
-        if y >= top && y - top < band {
-            let strength = ((band - (y - top)) / band).clamp(0.0, 1.0);
-            dy += strength * speed * dt;
-        } else if y < bottom && bottom - y < band {
-            let strength = ((band - (bottom - y)) / band).clamp(0.0, 1.0);
-            dy -= strength * speed * dt;
-        }
+        let dy = koru_ui::tree_drag::edge_scroll(
+            y,
+            top,
+            bottom,
+            theme::AUTO_SCROLL_BAND,
+            theme::AUTO_SCROLL_MAX_SPEED,
+            dt,
+        );
         if dy != 0.0 {
             self.scroll_by(area, dy);
             // The list moved under the pointer, so the drop zone may have too.
@@ -6156,21 +6155,14 @@ impl ExploreView {
         }
         // Spring-open: a collapsed Nest target held past the threshold opens in
         // place, so the drag can descend into it.
-        let spring = match self.drag.as_ref().and_then(|d| d.spring) {
-            Some((node, since))
-                if now.duration_since(since).as_secs_f32() >= SPRING_OPEN_SECS
-                    && self.collapsed.contains(&node) =>
-            {
-                Some(node)
-            }
-            _ => None,
-        };
+        let spring = self
+            .drag
+            .as_mut()
+            .and_then(|d| d.spring.due(now, SPRING_OPEN_SECS))
+            .filter(|node| self.collapsed.contains(node));
         if let Some(node) = spring {
             self.collapsed.remove(&node);
             self.rebuild_during_drag(ws, now);
-            if let Some(d) = self.drag.as_mut() {
-                d.spring = None;
-            }
             moved = true;
         }
         moved
@@ -6320,7 +6312,7 @@ impl ExploreView {
                     node,
                     zone: DropZone::Nest,
                 });
-                d.spring = None;
+                d.spring.clear();
             }
             return;
         }
@@ -6332,7 +6324,7 @@ impl ExploreView {
             // spring-open candidate so a later valid one starts fresh.
             if let Some(d) = self.drag.as_mut() {
                 d.last = None;
-                d.spring = None;
+                d.spring.clear();
             }
             return;
         };
@@ -6350,13 +6342,14 @@ impl ExploreView {
             // A Nest target that is collapsed is a spring-open candidate: rest
             // on it past `SPRING_OPEN_SECS` and it opens in place. Anything else
             // cancels the wait.
-            d.spring = match target {
+            let candidate = match target {
                 DropTarget::Row {
                     node,
                     zone: DropZone::Nest,
-                } if self.collapsed.contains(&node) => Some((node, now)),
+                } if self.collapsed.contains(&node) => Some(node),
                 _ => None,
             };
+            d.spring.rest_on(candidate, now);
         }
     }
 
@@ -6378,59 +6371,30 @@ impl ExploreView {
         }
         let top = self.rows_top(area);
         let centre = y - grab_dy + theme::NAV_ROW_H * 0.5;
-        // Dropping past the end of the list appends at the top level (the
-        // library root), however deep the last visible row is — so a tree whose
-        // last node is open still lets a drag land after it at depth 0 rather
-        // than nesting inside the open branch.
-        let last_bottom = top + self.rows.len() as f32 * theme::NAV_ROW_H - self.scroll;
-        if centre > last_bottom {
-            for r in self.rows.iter().rev() {
-                if r.depth == 0 && !carried.contains(&r.node) {
-                    return Some(DropTarget::Row {
-                        node: r.node,
-                        zone: DropZone::After,
-                    });
-                }
-            }
+        // The arithmetic is the shared one (`koru_ui::tree_drag`); what is
+        // this tree's own is which rows may take a child — a document, and
+        // nothing else.
+        let rows: Vec<koru_ui::tree_drag::Row> = self
+            .rows
+            .iter()
+            .map(|r| koru_ui::tree_drag::Row {
+                depth: usize::from(r.depth),
+                carried: carried.contains(&r.node),
+                can_nest: r.kind == Kind::Document,
+            })
+            .collect();
+        use koru_ui::tree_drag::{Target, Zone};
+        match koru_ui::tree_drag::drop_target(&rows, theme::NAV_ROW_H, top - self.scroll, centre)? {
+            Target::Root => Some(DropTarget::Library),
+            Target::Row { index, zone } => Some(DropTarget::Row {
+                node: self.rows[index].node,
+                zone: match zone {
+                    Zone::Before => DropZone::Before,
+                    Zone::After => DropZone::After,
+                    Zone::Nest => DropZone::Nest,
+                },
+            }),
         }
-        // The non-carried row whose slot centre is nearest the grab's centre.
-        // The carried block follows the pointer, so the pointer is always over
-        // one of its own rows; the meaningful question is which *other* row the
-        // block has reached.
-        let mut best: Option<(usize, f32)> = None;
-        for (i, r) in self.rows.iter().enumerate() {
-            if carried.contains(&r.node) {
-                continue;
-            }
-            let slot_c = top + i as f32 * theme::NAV_ROW_H - self.scroll + theme::NAV_ROW_H * 0.5;
-            let dist = (centre - slot_c).abs();
-            match best {
-                Some((_, d)) if dist >= d => {}
-                _ => best = Some((i, dist)),
-            }
-        }
-        let Some((i, _)) = best else {
-            return (!carried.is_empty()).then_some(DropTarget::Library);
-        };
-        let slot_y = top + i as f32 * theme::NAV_ROW_H - self.scroll;
-        let rel = ((centre - slot_y) / theme::NAV_ROW_H).clamp(0.0, 1.0);
-        let zone = if rel < 0.25 {
-            DropZone::Before
-        } else if rel > 0.75 {
-            DropZone::After
-        } else if self.rows[i].kind == Kind::Document {
-            DropZone::Nest
-        } else if rel < 0.5 {
-            // A non-document row cannot take a child, so the middle band falls
-            // back to the nearer edge rather than refusing the drop.
-            DropZone::Before
-        } else {
-            DropZone::After
-        };
-        Some(DropTarget::Row {
-            node: self.rows[i].node,
-            zone,
-        })
     }
 
     /// The project group an Agents drag is resting on: the group row itself,

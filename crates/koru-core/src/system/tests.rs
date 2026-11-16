@@ -3,6 +3,8 @@
 use super::*;
 use crate::attributes::{KEY_DUE, system_definition};
 
+mod list_tree;
+
 // ------------------------------------------------------------ definitions
 
 #[test]
@@ -387,13 +389,13 @@ fn an_alias_tombstone_does_not_claim_its_old_name() {
 #[test]
 fn a_list_is_created_renamed_recolored_and_reordered_by_id() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Wedding", Some("pink"), 1234).unwrap();
+    let list = sys.create_list_under(None, "Wedding", Some("pink"), 1234).unwrap().id();
 
     let entry = sys.list_entry(list).unwrap();
     assert_eq!(entry.name, "Wedding");
     assert_eq!(entry.color.as_deref(), Some("pink"));
     assert_eq!(entry.created_ms, Some(1234));
-    assert_eq!(entry.order, None);
+    assert_eq!(entry.order, Some(0), "ranked first among its siblings");
     assert_eq!(entry.deleted_ms, None);
 
     assert!(sys.rename_list(list, "Wedding day").unwrap());
@@ -429,8 +431,8 @@ fn an_unknown_list_answers_false_rather_than_erroring() {
 #[test]
 fn a_deleted_list_leaves_the_rail_and_cannot_be_written_again() {
     let mut sys = SystemDoc::create().unwrap();
-    let wedding = sys.create_list("Wedding", None, 1).unwrap();
-    let bike = sys.create_list("Bike Project", None, 2).unwrap();
+    let wedding = sys.create_list_under(None, "Wedding", None, 1).unwrap().id();
+    let bike = sys.create_list_under(None, "Bike Project", None, 2).unwrap().id();
 
     assert!(sys.delete_list(wedding, 3).unwrap());
     let listed: Vec<ListId> = sys.lists().into_iter().map(|l| l.id).collect();
@@ -452,9 +454,9 @@ fn a_deleted_list_leaves_the_rail_and_cannot_be_written_again() {
 #[test]
 fn a_deleted_lists_name_can_be_used_again_as_a_new_list() {
     let mut sys = SystemDoc::create().unwrap();
-    let first = sys.create_list("Reading", None, 1).unwrap();
+    let first = sys.create_list_under(None, "Reading", None, 1).unwrap().id();
     sys.delete_list(first, 2).unwrap();
-    let second = sys.create_list("Reading", None, 3).unwrap();
+    let second = sys.create_list_under(None, "Reading", None, 3).unwrap().id();
     assert_ne!(second, first, "a new list, not a resurrection");
     assert_eq!(sys.lists().len(), 1);
 }
@@ -464,9 +466,9 @@ fn a_deleted_lists_name_can_be_used_again_as_a_new_list() {
 #[test]
 fn a_recased_list_name_reuses_the_live_record() {
     let mut sys = SystemDoc::create().unwrap();
-    let wedding = sys.create_list("Wedding", Some("pink"), 1).unwrap();
+    let wedding = sys.create_list_under(None, "Wedding", Some("pink"), 1).unwrap().id();
     assert_eq!(
-        sys.create_list("WEDDING", Some("blue"), 2).unwrap(),
+        sys.create_list_under(None, "WEDDING", Some("blue"), 2).unwrap().id(),
         wedding
     );
     assert_eq!(
@@ -481,11 +483,13 @@ fn a_recased_list_name_reuses_the_live_record() {
 #[test]
 fn lists_come_back_in_rail_order() {
     let mut sys = SystemDoc::create().unwrap();
-    let reading = sys.create_list("Reading", None, 1).unwrap();
-    let wedding = sys.create_list("Wedding", None, 2).unwrap();
-    let bike = sys.create_list("Bike Project", None, 3).unwrap();
+    let reading = sys.create_list_under(None, "Reading", None, 1).unwrap().id();
+    let wedding = sys.create_list_under(None, "Wedding", None, 2).unwrap().id();
+    let bike = sys.create_list_under(None, "Bike Project", None, 3).unwrap().id();
     sys.set_list_order(wedding, Some(0)).unwrap();
     sys.set_list_order(bike, Some(1)).unwrap();
+    // A list a build before nested lists made carries no rank at all.
+    sys.set_list_order(reading, None).unwrap();
 
     let order: Vec<ListId> = sys.lists().into_iter().map(|l| l.id).collect();
     assert_eq!(order, vec![wedding, bike, reading], "unranked sorts last");
@@ -498,8 +502,8 @@ fn lists_come_back_in_rail_order() {
 fn two_peers_creating_lists_offline_converge_on_both() {
     let mut a = SystemDoc::create().unwrap();
     let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
-    let from_a = a.create_list("Wedding", Some("pink"), 1).unwrap();
-    let from_b = b.create_list("Bike Project", Some("blue"), 2).unwrap();
+    let from_a = a.create_list_under(None, "Wedding", Some("pink"), 1).unwrap().id();
+    let from_b = b.create_list_under(None, "Bike Project", Some("blue"), 2).unwrap().id();
     assert_ne!(from_a, from_b, "two v4 ids, minted with no coordination");
 
     let a_updates = a.export_all_updates().unwrap();
@@ -523,7 +527,7 @@ fn two_peers_creating_lists_offline_converge_on_both() {
 #[test]
 fn a_delete_and_a_rename_made_apart_converge() {
     let mut a = SystemDoc::create().unwrap();
-    let list = a.create_list("Wedding", None, 1).unwrap();
+    let list = a.create_list_under(None, "Wedding", None, 1).unwrap().id();
     let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
 
     a.delete_list(list, 2).unwrap();
@@ -634,7 +638,7 @@ fn open_or_create_opens_what_exists_and_creates_otherwise() {
 #[test]
 fn a_lists_page_generations_grow_and_the_current_one_is_the_numeric_maximum() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Bike", None, 1).unwrap();
+    let list = sys.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     assert_eq!(sys.page_generations(page), Vec::<u64>::new());
     assert_eq!(sys.current_page_generation(page), None);
@@ -660,7 +664,7 @@ fn a_lists_page_generations_grow_and_the_current_one_is_the_numeric_maximum() {
 #[test]
 fn a_deleted_list_still_has_its_page_and_an_unknown_list_has_none() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Bike", None, 1).unwrap();
+    let list = sys.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     assert!(sys.add_page_generation(page, 0).unwrap());
     assert!(sys.delete_list(list, 2).unwrap());
@@ -692,7 +696,7 @@ fn a_buckets_page_record_is_its_own() {
 #[test]
 fn two_peers_adding_generations_offline_converge_on_the_union() {
     let mut a = SystemDoc::create().unwrap();
-    let list = a.create_list("Bike", None, 1).unwrap();
+    let list = a.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     a.add_page_generation(page, 0).unwrap();
     let mut b = SystemDoc::from_snapshot(&a.export_snapshot().unwrap()).unwrap();
@@ -724,7 +728,7 @@ fn sync(a: &mut SystemDoc, b: &mut SystemDoc) {
 #[test]
 fn a_lists_note_follows_the_list_until_renamed_directly_and_again_after() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Bike", None, 1).unwrap();
+    let list = sys.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     sys.add_page_generation(page, 0).unwrap();
     assert_eq!(sys.page_title(page, 0), PageTitle::Text("Bike".into()));
@@ -765,7 +769,7 @@ fn a_lists_note_follows_the_list_until_renamed_directly_and_again_after() {
 #[test]
 fn a_replacement_freezes_the_old_notes_name_and_a_concurrent_list_rename_moves_only_the_new() {
     let mut a = SystemDoc::create().unwrap();
-    let list = a.create_list("Bike", None, 1).unwrap();
+    let list = a.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     a.add_page_generation(page, 0).unwrap();
     a.set_page_override(page, 0, Some("Old research")).unwrap();
@@ -887,7 +891,7 @@ fn the_deletion_protocol_round_trips_through_the_page_record() {
     }
 
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Bike", None, 1).unwrap();
+    let list = sys.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     sys.add_page_generation(page, 0).unwrap();
 
@@ -933,7 +937,7 @@ fn the_deletion_protocol_round_trips_through_the_page_record() {
 
     // Converges across replicas whatever order the keys arrived in.
     let mut a = SystemDoc::create().unwrap();
-    let la = a.create_list("X", None, 1).unwrap();
+    let la = a.create_list_under(None, "X", None, 1).unwrap().id();
     let pa = PageKey::List(la);
     a.add_page_generation(pa, 0).unwrap();
     let e = EventId::new();
@@ -966,7 +970,7 @@ fn the_deletion_protocol_round_trips_through_the_page_record() {
 #[test]
 fn a_pages_note_is_shown_once_it_has_a_document_and_otherwise_by_hand() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Bike", None, 1).unwrap();
+    let list = sys.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     assert!(!sys.page_note_shown(page), "nothing written: no band");
     sys.add_page_generation(page, 0).unwrap();
@@ -998,7 +1002,7 @@ fn a_pages_note_is_shown_once_it_has_a_document_and_otherwise_by_hand() {
 #[test]
 fn a_pages_attachments_are_references_in_attached_order() {
     let mut sys = SystemDoc::create().unwrap();
-    let list = sys.create_list("Bike", None, 1).unwrap();
+    let list = sys.create_list_under(None, "Bike", None, 1).unwrap().id();
     let page = PageKey::List(list);
     let (a, b, c) = (DocumentId::new(), DocumentId::new(), DocumentId::new());
     assert!(sys.page_attachments(page).is_empty());

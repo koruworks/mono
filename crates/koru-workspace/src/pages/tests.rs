@@ -262,7 +262,7 @@ fn a_notes_title_is_resolved_from_the_list_and_a_direct_rename_overrides_it() {
     let id = WorkspaceId::new();
     let mut ws = workspace_at(root.path(), id);
     ws.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
-    let list = ws.create_list("Bike", None).expect("a list");
+    let list = ws.create_list_under(None, "Bike", None).expect("a list").id();
     let page = PageKey::List(list);
     let state = ws.ensure_page(page).unwrap();
     let document = state.document;
@@ -319,7 +319,7 @@ fn a_permanent_delete_is_a_recoverable_tombstone_and_a_concurrent_write_is_a_con
     let id = WorkspaceId::new();
     let mut ws = workspace_at(root.path(), id);
     ws.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
-    let list = ws.create_list("Bike", None).expect("a list");
+    let list = ws.create_list_under(None, "Bike", None).expect("a list").id();
     let page = PageKey::List(list);
 
     // Write something, so the page has a document generation 0.
@@ -390,7 +390,7 @@ fn a_pages_note_and_attachments_ride_on_its_state() {
     let id = WorkspaceId::new();
     let mut ws = workspace_at(root.path(), id);
     ws.system_store_for_tests = Some(Arc::new(FakeStore::new([])) as Arc<dyn SystemStore>);
-    let list = ws.create_list("Bike", None).expect("a list");
+    let list = ws.create_list_under(None, "Bike", None).expect("a list").id();
     let page = PageKey::List(list);
 
     let state = ws.ensure_page(page).unwrap();

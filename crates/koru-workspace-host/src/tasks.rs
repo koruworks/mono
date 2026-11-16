@@ -851,6 +851,18 @@ fn still_a_task(doc: &WorkspaceDoc, node: koru_core::NodeId) -> bool {
     })
 }
 
+/// A list to make: the rail's inline field, committed.
+///
+/// `parent` is the list the field was opened under — the heading's `+` asks
+/// for the top level, a row's hover `+` for a child. The colour is an
+/// `AccentColor` token from the shared swatch set, never an RGB value.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ListCreate {
+    pub parent: Option<koru_core::ids::ListId>,
+    pub name: String,
+    pub color: Option<String>,
+}
+
 /// **A change to the list *registry*** a view asked for and cannot make.
 ///
 /// [`TaskCommand`]'s sibling, one document along: a list lives in the
@@ -867,6 +879,15 @@ fn still_a_task(doc: &WorkspaceDoc, node: koru_core::NodeId) -> bool {
 /// [`View::take_wants_create_list`]: crate::View::take_wants_create_list
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum ListEdit {
+    /// Put a list under `parent` (`None` is the top level), immediately
+    /// before the sibling `before` (`None` is last). Nesting, un-nesting and
+    /// reordering are this one edit: the destination's siblings are ranked
+    /// densely, and **no task moves** — nesting arranges the lists.
+    Move {
+        id: koru_core::ids::ListId,
+        parent: Option<koru_core::ids::ListId>,
+        before: Option<koru_core::ids::ListId>,
+    },
     Rename {
         id: koru_core::ids::ListId,
         name: String,
@@ -879,16 +900,15 @@ pub enum ListEdit {
         id: koru_core::ids::ListId,
         color: Option<String>,
     },
-    /// Tombstone the registry record and clear the memberships. **No task is
-    /// deleted** (SPEC §8) — which is what the confirmation that raises this
-    /// says in as many words, and what `serve_list_edit` keeps true.
-    Delete(koru_core::ids::ListId),
-    /// The Lists section, in the order a drag left it. **Every list, ranked
-    /// densely from zero**, rather than one row's new number: a rank is only
-    /// meaningful against its neighbours', and writing one of them leaves the
-    /// others to be guessed at — including the unranked ones a peer made,
-    /// which sort last until somebody orders them.
-    Reorder(Vec<koru_core::ids::ListId>),
+    /// Tombstone a list **and exactly the lists the confirmation counted
+    /// inside it**, then clear the memberships. **No task is deleted and no
+    /// page note** (SPEC §8) — which is what the confirmation that raises
+    /// this says in as many words, and what `serve_list_edit` keeps true. A
+    /// list a peer nested in meanwhile is not in `inside` and survives.
+    DeleteTree {
+        id: koru_core::ids::ListId,
+        inside: Vec<koru_core::ids::ListId>,
+    },
     /// Show or hide a page's note inline — the page's `+` menu's *Inline
     /// description*. On the page's record, so every device agrees.
     NoteShown {
@@ -927,19 +947,18 @@ pub fn serve_list_edit(workspace: &mut koru_workspace::Workspace, edit: &ListEdi
             workspace.set_list_color(*id, color.as_deref());
             false
         }
-        ListEdit::Reorder(order) => {
-            for (rank, id) in order.iter().enumerate() {
-                workspace.set_list_order(*id, Some(rank as i64));
-            }
+        ListEdit::Move { id, parent, before } => {
+            workspace.move_list(*id, *parent, *before);
             false
         }
-        ListEdit::Delete(id) => {
-            // The registry first: the row leaves the rail on every peer whether
-            // or not this window happens to hold a task that was in it.
-            if !workspace.delete_list(*id) {
-                return false;
+        ListEdit::DeleteTree { id, inside } => {
+            // The registry first: the rows leave the rail on every peer
+            // whether or not this window happens to hold a task that was in
+            // one of them. Only what was actually tombstoned is swept.
+            let mut cleared = 0;
+            for gone in workspace.delete_list_tree(*id, inside) {
+                cleared += workspace.ws.clear_list_membership(gone).unwrap_or(0);
             }
-            let cleared = workspace.ws.clear_list_membership(*id).unwrap_or(0);
             if cleared > 0 {
                 workspace.touched();
             }

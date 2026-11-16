@@ -83,6 +83,7 @@ pub mod text_title;
 pub mod toast;
 pub mod toggle;
 pub mod tooltip;
+pub mod tree_drag;
 mod typography;
 pub mod welcome;
 

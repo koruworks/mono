@@ -187,7 +187,7 @@ pub struct BuiltInDocument {
     /// The workspace list table, kept for the same compare in
     /// `set_list_table`. A document reads it for one thing: a task's due
     /// chip wears its list's colour, so the accent has to resolve here.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// The **Remove from Tasks** question, and the node it is about.
     ///
     /// The node is carried rather than re-derived when the answer comes back:

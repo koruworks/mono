@@ -1596,7 +1596,7 @@ pub trait View {
     /// lives in the system document (ADR-176), a view cannot see one, and the
     /// name has already been typed by the time this is asked. The colour is an
     /// `AccentColor` token from the shared swatch set, never an RGB value.
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<tasks::ListCreate> {
         None
     }
 
@@ -1761,11 +1761,14 @@ pub trait View {
         false
     }
 
-    /// The workspace list table, pushed whenever it changes — a list made
-    /// here, or a peer's arriving through the system document's room. Answers
-    /// whether anything on screen changed. Default no-op: only a view that
-    /// draws the tasks rail cares.
-    fn set_list_table(&mut self, _lists: &[koru_core::system::ListEntry]) -> bool {
+    /// The workspace's lists **as the repaired tree**
+    /// ([`SystemDoc::list_tree`](koru_core::system::SystemDoc::list_tree)),
+    /// depth first, pushed whenever the table changes — a list made here, or
+    /// a peer's arriving through the system document's room. One tree for
+    /// every surface, so the rail, the picker and the chip cannot place a
+    /// list differently. Answers whether anything on screen changed. Default
+    /// no-op: only a view that draws lists cares.
+    fn set_list_table(&mut self, _lists: &[koru_core::system::ListNode]) -> bool {
         false
     }
 

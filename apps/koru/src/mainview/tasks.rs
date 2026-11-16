@@ -786,7 +786,7 @@ impl MainView {
         if !koru_features::tasks() {
             return false;
         }
-        if !self.list_table.iter().any(|entry| entry.id == list) {
+        if !self.list_table.iter().any(|node| node.entry.id == list) {
             return false;
         }
         // A jump: the queue this was pressed on is where Back comes back to.
@@ -1118,8 +1118,8 @@ impl MainView {
         let (message, target) = match list.and_then(|id| {
             self.list_table
                 .iter()
-                .find(|entry| entry.id == id)
-                .map(|entry| (id, entry.name.clone()))
+                .find(|node| node.entry.id == id)
+                .map(|node| (id, node.entry.name.clone()))
         }) {
             Some((id, name)) => (format!("Added to {name}"), RailTarget::List(id)),
             None => (
@@ -1465,10 +1465,10 @@ impl MainView {
         let lists: Vec<crate::tasks_view::ListFace> = self
             .list_table
             .iter()
-            .map(|entry| crate::tasks_view::ListFace {
-                id: entry.id,
-                name: entry.name.clone(),
-                color: entry.color.clone(),
+            .map(|node| crate::tasks_view::ListFace {
+                id: node.entry.id,
+                name: node.entry.name.clone(),
+                color: node.entry.color.clone(),
             })
             .collect();
         let mut changed = false;
