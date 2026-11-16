@@ -201,13 +201,20 @@ fn shift_on_task_lists_the_pages_to_write_it_on() {
     use crate::panes::explore::rail::{Bucket, RailTarget};
     let (mut v, mut w) = container();
     let groceries = koru_core::ids::ListId::new();
-    v.list_table = vec![koru_core::system::ListEntry {
-        id: groceries,
-        name: "Groceries".into(),
-        color: None,
-        order: None,
-        created_ms: None,
-        deleted_ms: None,
+    v.list_table = vec![koru_core::system::ListNode {
+        entry: koru_core::system::ListEntry {
+            id: groceries,
+            name: "Groceries".into(),
+            parent: None,
+            color: None,
+            order: None,
+            created_ms: None,
+            deleted_ms: None,
+        },
+        parent: None,
+        depth: 0,
+        ordinal: 0,
+        has_children: false,
     }];
     v.open_launcher();
     assert!(letter(&mut v, &mut w, "T", ModifiersState::SHIFT));

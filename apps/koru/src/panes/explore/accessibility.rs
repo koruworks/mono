@@ -151,6 +151,7 @@ impl ExploreView {
             children.push(self.home_nav.semantics(cx, self.rows_top(cx.area)));
         } else if self.showing_tasks() {
             children.push(self.rail.queue_semantics(cx, self.rows_top(cx.area)));
+            children.push(self.rail.lists_semantics(cx, self.rows_top(cx.area)));
         } else if self.showing_chats() {
             // The Chats view replaces the tree, on the rail's model: a list
             // of rows that are chats, each with Open and Delete.

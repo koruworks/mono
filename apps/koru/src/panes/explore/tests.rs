@@ -3017,7 +3017,7 @@ fn relocate_moves_a_root_before_the_target() {
         carried_order: vec![ids[2]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Before, &carried, Instant::now());
     let order: Vec<NodeId> = v.rows.iter().map(|r| r.node).collect();
@@ -3086,7 +3086,7 @@ fn relocate_nests_and_rebases_depth() {
         carried_order: vec![a_id],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Nest, &carried, Instant::now());
     let order: Vec<(NodeId, u16)> = v.rows.iter().map(|r| (r.node, r.depth)).collect();
@@ -3424,7 +3424,7 @@ fn drag_auto_scroll_moves_toward_the_edge_the_pointer_is_in() {
             carried_order: vec![ids[0]],
             item_count: 1,
             last: None,
-            spring: None,
+            spring: Default::default(),
         });
         v.drag_tick = None;
     };
@@ -3479,7 +3479,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
         carried_order: vec![ids[1]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.update_drop(Instant::now());
     let d = v.drag.as_ref().unwrap();
@@ -3490,7 +3490,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
             zone: DropZone::Nest
         })
     );
-    assert_eq!(d.spring.map(|(n, _)| n), Some(ids[0]));
+    assert_eq!(d.spring.pending(), Some(ids[0]));
 }
 
 /// Dropping past the end of the list lands at the top level, however deep the
@@ -4326,13 +4326,8 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
     let mut view = ExploreView::new();
     view.show_tasks();
     let list = koru_core::ids::ListId::new();
-    view.rail_mut().set_lists(vec![rail::RailList {
-        id: list,
-        name: "Bike".to_owned(),
-        color: None,
-        count: 0,
-        overdue: 0,
-    }]);
+    view.rail_mut()
+        .set_lists(vec![rail::RailList::flat(list, "Bike", None, 0, 0)]);
     let a = area();
     let top = view.rail_top(a);
     let alt = PressMods {
@@ -4377,10 +4372,20 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
         }),
         "Ctrl's press"
     );
-    let (x, y) = at(rail::RailRow::NewList);
+    // The heading's `+` names no page, so Alt on it keeps its meaning.
+    let (_, heading) = rows
+        .iter()
+        .find(|(row, _)| *row == rail::RailRow::ListsHeading)
+        .copied()
+        .expect("the rail has the Lists heading");
+    let (x, y) = view
+        .rail()
+        .row_parts(rail::RailRow::ListsHeading, heading)
+        .trailing
+        .centre();
     assert_eq!(
         view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
-        Outcome::Tasks(rail::TasksRailRequest::BeginNewList),
+        Outcome::Tasks(rail::TasksRailRequest::BeginNewList { parent: None }),
         "a row that names no page keeps its meaning"
     );
 }
@@ -4407,31 +4412,25 @@ fn drawing_the_rail_leaves_the_scene_balanced() {
         completed: 122,
     });
     v.rail_mut().set_lists(vec![
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Wedding".into(),
-            color: Some("pink".into()),
-            count: 14,
-            overdue: 0,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Bike Project".into(),
-            color: Some("blue".into()),
-            count: 6,
-            overdue: 1,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "A list with no colour at all".into(),
-            color: None,
-            count: 0,
-            overdue: 0,
-        },
+        rail::RailList::flat(koru_core::ids::ListId::new(), "Wedding", Some("pink"), 14, 0),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Bike Project",
+            Some("blue"),
+            6,
+            1,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "A list with no colour at all",
+            None,
+            0,
+            0,
+        ),
     ]);
     let a = area();
     draw_once(&mut v, a);
-    v.rail_mut().begin_new_list();
+    v.rail_mut().begin_new_list(None);
     draw_once(&mut v, a);
     // A collapsed column draws nothing and must not panic doing it.
     draw_once(&mut v, Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0));

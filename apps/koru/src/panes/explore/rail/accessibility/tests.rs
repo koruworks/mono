@@ -107,12 +107,8 @@ fn offscreen_completed_queue_can_be_focused_and_revealed_without_pointer() {
     let mut rail = TasksRail::default();
     rail.set_lists(
         (0..40)
-            .map(|n| super::super::RailList {
-                id: ListId::new(),
-                name: format!("fixture {n}"),
-                color: None,
-                count: 0,
-                overdue: 0,
+            .map(|n| {
+                super::super::RailList::flat(ListId::new(), &format!("fixture {n}"), None, 0, 0)
             })
             .collect(),
     );

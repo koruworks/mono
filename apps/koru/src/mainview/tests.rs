@@ -8817,33 +8817,47 @@ fn every_caption_tooltip_takes_its_chord_from_the_registry() {
     }
 }
 
-/// **A list dragged on the rail writes the whole section's order.** The rows
-/// are already where the drag left them, so what the container owes the table
-/// is every id in that order — one rank per list, dense from zero, rather
-/// than one row's new number with the rest left to be guessed at.
+/// **A list dragged on the rail writes the move it made.** The rows are
+/// already where the drag left them, so what the container owes the table is
+/// the one move — which list, under which parent, before which sibling —
+/// passed through as the edit the system document applies.
 #[test]
-fn dragging_a_list_on_the_rail_writes_the_sections_order() {
+fn dragging_a_list_on_the_rail_writes_the_move() {
     use crate::panes::explore::rail::{RailList, TasksRailRequest};
     let (mut v, _w) = on_tasks();
     let ids: Vec<koru_core::ids::ListId> = (0..3).map(|_| koru_core::ids::ListId::new()).collect();
     v.explore.rail_mut().set_lists(
         ids.iter()
             .enumerate()
-            .map(|(i, id)| RailList {
-                id: *id,
-                name: format!("list {i}"),
-                color: None,
-                count: 0,
-                overdue: 0,
-            })
+            .map(|(i, id)| RailList::flat(*id, &format!("list {i}"), None, 0, 0))
             .collect(),
     );
-    assert!(v.apply_tasks_rail(TasksRailRequest::ReorderList { id: ids[0], to: 2 }));
+    assert!(v.apply_tasks_rail(TasksRailRequest::MoveList {
+        id: ids[0],
+        parent: None,
+        before: None
+    }));
+    assert!(v.apply_tasks_rail(TasksRailRequest::MoveList {
+        id: ids[2],
+        parent: Some(ids[1]),
+        before: None
+    }));
     let edits = View::take_wants_list_edits(&mut v);
     assert_eq!(
         edits,
-        vec![koru_workspace_host::tasks::ListEdit::Reorder(ids.clone())],
-        "the rail's own order, every id in it"
+        vec![
+            koru_workspace_host::tasks::ListEdit::Move {
+                id: ids[0],
+                parent: None,
+                before: None
+            },
+            koru_workspace_host::tasks::ListEdit::Move {
+                id: ids[2],
+                parent: Some(ids[1]),
+                before: None
+            },
+        ],
+        "the rail's own move, as it was made"
     );
 }
 
@@ -10279,6 +10293,22 @@ fn the_tasks_tab_is_named_for_its_target() {
     }
 }
 
+/// A list table with nothing nested: every entry a top-level leaf, in order —
+/// what `SystemDoc::list_tree` makes of a table nobody has nested in.
+fn flat_table(entries: &[koru_core::system::ListEntry]) -> Vec<koru_core::system::ListNode> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(ordinal, entry)| koru_core::system::ListNode {
+            entry: entry.clone(),
+            parent: None,
+            depth: 0,
+            ordinal,
+            has_children: false,
+        })
+        .collect()
+}
+
 /// **A list's tab wears the list's name, and follows a rename.**
 ///
 /// The label is a cache and the view is the authority, which is the contract a
@@ -10294,12 +10324,13 @@ fn a_list_tab_follows_the_lists_name() {
     let entry = |name: &str, color: &str| koru_core::system::ListEntry {
         id,
         name: name.to_owned(),
+        parent: None,
         color: Some(color.to_owned()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
     };
-    View::set_list_table(&mut v, &[entry("Wedding", "pink")]);
+    View::set_list_table(&mut v, &flat_table(&[entry("Wedding", "pink")]));
     // The tab first: the push is a push, and it has nowhere to land until a
     // Tasks tab exists — which is also why the label it opens with is the
     // fallback, before the table has told it the list's name.
@@ -10313,7 +10344,7 @@ fn a_list_tab_follows_the_lists_name() {
     assert_eq!(v.tabs().active_tab().label, "Wedding");
 
     // Renamed and recoloured underneath it, with nothing pressed.
-    View::set_list_table(&mut v, &[entry("Honeymoon", "teal")]);
+    View::set_list_table(&mut v, &flat_table(&[entry("Honeymoon", "teal")]));
     assert!(v.refresh_tasks_context(&w));
     assert_eq!(
         v.tabs().active_tab().label,
@@ -10730,12 +10761,14 @@ fn the_list_table_reaches_the_rail_with_its_names_and_swatches() {
     let entry = koru_core::system::ListEntry {
         id,
         name: "Bike Project".into(),
+        parent: None,
         color: Some("blue".into()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
     };
-    assert!(View::set_list_table(&mut v, std::slice::from_ref(&entry)));
+    let table = flat_table(std::slice::from_ref(&entry));
+    assert!(View::set_list_table(&mut v, &table));
     let lists = v.explore.rail().lists();
     assert_eq!(lists.len(), 1);
     assert_eq!(lists[0].id, id);
@@ -10747,7 +10780,7 @@ fn the_list_table_reaches_the_rail_with_its_names_and_swatches() {
         "no group row is a zero, not an unknown"
     );
     assert!(
-        !View::set_list_table(&mut v, std::slice::from_ref(&entry)),
+        !View::set_list_table(&mut v, &table),
         "and the same table again changes nothing"
     );
 }
@@ -10769,7 +10802,11 @@ fn a_list_is_made_inline_and_handed_to_the_shell() {
     };
     let (x, y) = plus.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.rail().composing(), "the row is reserved");
+    assert_eq!(
+        v.explore.rail().composing(),
+        Some(None),
+        "the row is reserved"
+    );
 
     for ch in "Wedding".chars() {
         let text = ch.to_string();
@@ -10791,20 +10828,30 @@ fn a_list_is_made_inline_and_handed_to_the_shell() {
         None,
         NONE,
     );
-    let (name, color) = View::take_wants_create_list(&mut v).expect("the list");
-    assert_eq!(name, "Wedding");
-    assert!(color.is_some(), "with a swatch off the shared set");
-    assert!(!v.explore.rail().composing(), "and the field is gone");
+    let create = View::take_wants_create_list(&mut v).expect("the list");
+    assert_eq!(create.name, "Wedding");
+    assert_eq!(create.parent, None, "at the top level");
+    assert!(create.color.is_some(), "with a swatch off the shared set");
+    assert_eq!(
+        v.explore.rail().composing(),
+        None,
+        "and the field is gone"
+    );
 }
 
 /// Escape takes the field away and makes nothing.
 #[test]
 fn escape_cancels_the_inline_list_field() {
     let (mut v, mut w) = on_tasks();
-    let row = rail_row(&v, crate::panes::explore::rail::RailRow::NewList);
+    let heading = rail_row(&v, crate::panes::explore::rail::RailRow::ListsHeading);
+    let row = v
+        .explore
+        .rail()
+        .row_parts(crate::panes::explore::rail::RailRow::ListsHeading, heading)
+        .trailing;
     let (x, y) = row.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.rail().composing());
+    assert_eq!(v.explore.rail().composing(), Some(None));
     for ch in "Reading".chars() {
         let text = ch.to_string();
         v.key(
@@ -10820,7 +10867,7 @@ fn escape_cancels_the_inline_list_field() {
         None,
         NONE,
     );
-    assert!(!v.explore.rail().composing());
+    assert_eq!(v.explore.rail().composing(), None);
     assert_eq!(View::take_wants_create_list(&mut v), None);
 }
 
@@ -11529,14 +11576,15 @@ fn go_to_list_moves_the_page_to_the_list() {
     };
     assert_eq!(page.target(), RailTarget::Bucket(Bucket::Today));
 
-    v.set_list_table(&[koru_core::system::ListEntry {
+    v.set_list_table(&flat_table(&[koru_core::system::ListEntry {
         id: birthday,
         name: "Birthday Tasks".to_owned(),
+        parent: None,
         color: Some("pink".to_owned()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
-    }]);
+    }]));
     assert!(v.run_menu_action_for_test(
         MenuSubject::Task { document, node },
         MenuAction::TaskGoToList
@@ -11662,14 +11710,15 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
         panic!("container")
     };
     let (birthday, _) = a_list("Birthday Tasks", "pink");
-    v.set_list_table(&[koru_core::system::ListEntry {
+    v.set_list_table(&flat_table(&[koru_core::system::ListEntry {
         id: birthday,
         name: "Birthday Tasks".to_owned(),
+        parent: None,
         color: Some("pink".to_owned()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
-    }]);
+    }]));
     v.open_tasks_tab(RailTarget::Bucket(Bucket::Today), false);
     v.queue_task_command(
         TaskCommand::Create {
@@ -11828,14 +11877,15 @@ fn the_list_table_reaches_the_tasks_tab() {
     let id = koru_core::ids::ListId::new();
     View::set_list_table(
         &mut v,
-        &[koru_core::system::ListEntry {
+        &flat_table(&[koru_core::system::ListEntry {
             id,
             name: "Bike Project".to_owned(),
+            parent: None,
             color: Some("blue".to_owned()),
             order: None,
             created_ms: Some(1),
             deleted_ms: None,
-        }],
+        }]),
     );
     assert!(v.refresh_tasks_context(&w));
     let TabView::Tasks(tab) = &v.tabs().active_tab().view else {
@@ -12112,14 +12162,15 @@ fn on_a_list() -> (MainView, Workspace, koru_core::ids::ListId) {
     let id = koru_core::ids::ListId::new();
     View::set_list_table(
         &mut v,
-        &[koru_core::system::ListEntry {
+        &flat_table(&[koru_core::system::ListEntry {
             id,
             name: "Wedding".into(),
+            parent: None,
             color: Some("blue".into()),
             order: None,
             created_ms: Some(1),
             deleted_ms: None,
-        }],
+        }]),
     );
     (v, w, id)
 }
@@ -12144,11 +12195,14 @@ fn right_clicking_a_list_opens_its_menu() {
         &[
             MenuAction::RailOpenInNewTab,
             MenuAction::Divider,
+            MenuAction::ListNewInside,
+            MenuAction::Divider,
             MenuAction::ListRename,
             MenuAction::ListColor,
             MenuAction::Divider,
             MenuAction::ListDelete,
-        ]
+        ],
+        "a top-level list has no Move to top"
     );
     assert!(
         MenuAction::ListDelete.destructive(),
@@ -12161,7 +12215,7 @@ fn right_clicking_a_list_opens_its_menu() {
         &mut v.engine,
         MenuSubject::List(koru_core::ids::ListId::new()),
         (0.0, 0.0),
-        context_menu::list_items(),
+        context_menu::list_items(false),
     );
     assert!(
         v.enabled_items(&stale).iter().all(|on| !on),
@@ -12374,7 +12428,7 @@ fn right_clicking_a_bucket_offers_the_one_thing_you_can_do_to_it() {
 
         // And the furniture still opens nothing, rather than falling through to the
         // library menu the other two modes raise.
-        let (x, y) = rail_row(&v, RailRow::NewList).centre();
+        let (x, y) = rail_row(&v, RailRow::ListsHeading).centre();
         v.menu = None;
         View::context_menu(&mut v, &mut w.ws, x, y);
         assert!(v.menu.is_none());
@@ -12532,18 +12586,19 @@ fn recoloring_a_list_moves_the_row_and_the_chip() {
     // tab's `ListFace` both read it.
     View::set_list_table(
         &mut v,
-        &[koru_core::system::ListEntry {
+        &flat_table(&[koru_core::system::ListEntry {
             id,
             name: "Wedding".into(),
+            parent: None,
             color: Some("teal".into()),
             order: None,
             created_ms: Some(1),
             deleted_ms: None,
-        }],
+        }]),
     );
     assert_eq!(v.explore.rail().lists()[0].color.as_deref(), Some("teal"));
     assert_eq!(
-        v.list_table[0].color.as_deref(),
+        v.list_table[0].entry.color.as_deref(),
         Some("teal"),
         "and the chip's own source with it"
     );
@@ -12579,7 +12634,10 @@ fn deleting_a_list_goes_through_the_confirm() {
     v.settle_confirm(true);
     assert_eq!(
         View::take_wants_list_edits(&mut v),
-        vec![koru_workspace_host::tasks::ListEdit::Delete(id)]
+        vec![koru_workspace_host::tasks::ListEdit::DeleteTree {
+            id,
+            inside: Vec::new()
+        }]
     );
 }
 

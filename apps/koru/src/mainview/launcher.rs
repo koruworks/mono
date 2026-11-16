@@ -249,8 +249,7 @@ impl MainView {
         context_menu::set_task_list_names(
             self.list_table
                 .iter()
-                .filter(|entry| entry.deleted_ms.is_none())
-                .map(|entry| (entry.id, entry.name.clone()))
+                .map(|node| (node.entry.id, node.entry.name.clone()))
                 .collect(),
         );
         let mut menu = ContextMenu::aligned(

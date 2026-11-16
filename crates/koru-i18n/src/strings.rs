@@ -3492,13 +3492,46 @@ pub enum Key {
     ImportNoticeViewFile,
     ImportContentFailedTitle,
     ImportContentFailedBody,
+    // ---- nested task lists, and lists and tasks in search
+    /// The Lists section of the tasks rail: its heading, and the name a screen reader gives the tree of lists.
+    TaskListsHeading,
+    /// The `+` beside *Lists*: what it is called, to a screen reader and in a hint.
+    TaskListNew,
+    /// The placeholder in the field a list is named in.
+    TaskListNameHint,
+    /// Shown beside that field when a list beside this one already has the name.
+    TaskListNameTaken,
+    /// A list row's menu, and its hover `+`: make a list inside this one.
+    TaskListNewInside,
+    /// A nested list row's menu: take it out of the list it is inside.
+    TaskListMoveToTop,
+    /// The question before deleting a list with exactly one list inside it. `{}` is the list's name.
+    TaskListDeleteNestedOne,
+    /// The same question for two or more. `{}` is the list's name, then how many lists are inside it, already written as a number.
+    TaskListDeleteNestedMany,
+    /// Under that question: what is not lost.
+    TaskListDeleteNestedBody,
+    /// The button that agrees to it.
+    TaskListDeleteNestedConfirm,
+    /// Between the names of a list's path, where a list is shown outside the tree: *Top 3 / Backlog*. Spaces included.
+    TaskListPathSeparator,
+    /// Said briefly when a search result named a list that has since been deleted.
+    TaskListGone,
+    /// The first part of a list result's path in search: *Tasks / Top 3 / Backlog*.
+    SearchTasksCrumb,
+    /// The band at the top of a Tasks page holding a task opened from search that the page would not otherwise show.
+    TasksFromSearch,
+    /// That band's close control.
+    TasksFromSearchDismiss,
+    /// A task result's menu: open the document the task is written in, at its line.
+    SearchOpenInDocument,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2457] = [
+    pub const ALL: [Key; 2473] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5956,6 +5989,22 @@ impl Key {
         Key::ImportNoticeViewFile,
         Key::ImportContentFailedTitle,
         Key::ImportContentFailedBody,
+        Key::TaskListsHeading,
+        Key::TaskListNew,
+        Key::TaskListNameHint,
+        Key::TaskListNameTaken,
+        Key::TaskListNewInside,
+        Key::TaskListMoveToTop,
+        Key::TaskListDeleteNestedOne,
+        Key::TaskListDeleteNestedMany,
+        Key::TaskListDeleteNestedBody,
+        Key::TaskListDeleteNestedConfirm,
+        Key::TaskListPathSeparator,
+        Key::TaskListGone,
+        Key::SearchTasksCrumb,
+        Key::TasksFromSearch,
+        Key::TasksFromSearchDismiss,
+        Key::SearchOpenInDocument,
     ];
 }
 
@@ -17590,4 +17639,20 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ImportNoticeViewFile, en: "View file", es: "Ver archivo", pt_br: "Ver arquivo", de: "Datei anzeigen", fr: "Voir le fichier", ar: "عرض الملف", zh_hans: "查看文件", ja: "ファイルを表示" },
     Row { key: Key::ImportContentFailedTitle, en: "The content could not be imported", es: "No se pudo importar el contenido", pt_br: "Não foi possível importar o conteúdo", de: "Der Inhalt konnte nicht importiert werden", fr: "Le contenu n’a pas pu être importé", ar: "تعذّر استيراد المحتوى", zh_hans: "无法导入内容", ja: "内容をインポートできませんでした" },
     Row { key: Key::ImportContentFailedBody, en: "No empty documents were left behind.", es: "No quedaron documentos vacíos.", pt_br: "Nenhum documento vazio foi deixado para trás.", de: "Es wurden keine leeren Dokumente zurückgelassen.", fr: "Aucun document vide n’a été laissé.", ar: "لم تُترك أي مستندات فارغة.", zh_hans: "没有留下空文档。", ja: "空のドキュメントは残っていません。" },
+    Row { key: Key::TaskListsHeading, en: "Lists", es: "Listas", pt_br: "Listas", de: "Listen", fr: "Listes", ar: "القوائم", zh_hans: "列表", ja: "リスト" },
+    Row { key: Key::TaskListNew, en: "New list", es: "Nueva lista", pt_br: "Nova lista", de: "Neue Liste", fr: "Nouvelle liste", ar: "قائمة جديدة", zh_hans: "新建列表", ja: "新規リスト" },
+    Row { key: Key::TaskListNameHint, en: "List name", es: "Nombre de la lista", pt_br: "Nome da lista", de: "Listenname", fr: "Nom de la liste", ar: "اسم القائمة", zh_hans: "列表名称", ja: "リスト名" },
+    Row { key: Key::TaskListNameTaken, en: "There is already a list with that name here", es: "Ya hay una lista con ese nombre aquí", pt_br: "Já existe uma lista com esse nome aqui", de: "Hier gibt es bereits eine Liste mit diesem Namen", fr: "Une liste porte déjà ce nom ici", ar: "توجد قائمة بهذا الاسم هنا", zh_hans: "此处已有同名列表", ja: "ここには同じ名前のリストがあります" },
+    Row { key: Key::TaskListNewInside, en: "New list inside", es: "Nueva lista dentro", pt_br: "Nova lista dentro", de: "Neue Liste darin", fr: "Nouvelle liste à l’intérieur", ar: "قائمة جديدة بالداخل", zh_hans: "在其中新建列表", ja: "中に新規リスト" },
+    Row { key: Key::TaskListMoveToTop, en: "Move to top level", es: "Mover al nivel superior", pt_br: "Mover para o nível superior", de: "Auf oberste Ebene verschieben", fr: "Déplacer au premier niveau", ar: "نقل إلى المستوى الأعلى", zh_hans: "移至顶层", ja: "最上位へ移動" },
+    Row { key: Key::TaskListDeleteNestedOne, en: "Delete “{}” and the list inside it?", es: "¿Eliminar “{}” y la lista que contiene?", pt_br: "Excluir “{}” e a lista dentro dela?", de: "„{}“ und die Liste darin löschen?", fr: "Supprimer « {} » et la liste qu’elle contient ?", ar: "حذف “{}” والقائمة التي بداخلها؟", zh_hans: "删除“{}”及其中的列表？", ja: "「{}」とその中のリストを削除しますか？" },
+    Row { key: Key::TaskListDeleteNestedMany, en: "Delete “{}” and the {} lists inside it?", es: "¿Eliminar “{}” y las {} listas que contiene?", pt_br: "Excluir “{}” e as {} listas dentro dela?", de: "„{}“ und die {} Listen darin löschen?", fr: "Supprimer « {} » et les {} listes qu’elle contient ?", ar: "حذف “{}” والقوائم الـ{} التي بداخلها؟", zh_hans: "删除“{}”及其中的 {} 个列表？", ja: "「{}」とその中の {} 件のリストを削除しますか？" },
+    Row { key: Key::TaskListDeleteNestedBody, en: "Their tasks are kept.", es: "Sus tareas se conservan.", pt_br: "As tarefas delas são mantidas.", de: "Ihre Aufgaben bleiben erhalten.", fr: "Leurs tâches sont conservées.", ar: "يتم الاحتفاظ بمهامها.", zh_hans: "其中的任务会保留。", ja: "タスクは残ります。" },
+    Row { key: Key::TaskListDeleteNestedConfirm, en: "Delete lists", es: "Eliminar listas", pt_br: "Excluir listas", de: "Listen löschen", fr: "Supprimer les listes", ar: "حذف القوائم", zh_hans: "删除列表", ja: "リストを削除" },
+    Row { key: Key::TaskListPathSeparator, en: " / ", es: " / ", pt_br: " / ", de: " / ", fr: " / ", ar: " / ", zh_hans: " / ", ja: " / " },
+    Row { key: Key::TaskListGone, en: "That list was deleted", es: "Esa lista se eliminó", pt_br: "Essa lista foi excluída", de: "Diese Liste wurde gelöscht", fr: "Cette liste a été supprimée", ar: "تم حذف تلك القائمة", zh_hans: "该列表已被删除", ja: "そのリストは削除されました" },
+    Row { key: Key::SearchTasksCrumb, en: "Tasks", es: "Tareas", pt_br: "Tarefas", de: "Aufgaben", fr: "Tâches", ar: "المهام", zh_hans: "任务", ja: "タスク" },
+    Row { key: Key::TasksFromSearch, en: "From search", es: "Desde la búsqueda", pt_br: "Da busca", de: "Aus der Suche", fr: "Depuis la recherche", ar: "من البحث", zh_hans: "来自搜索", ja: "検索から" },
+    Row { key: Key::TasksFromSearchDismiss, en: "Dismiss", es: "Descartar", pt_br: "Dispensar", de: "Ausblenden", fr: "Ignorer", ar: "تجاهل", zh_hans: "关闭", ja: "閉じる" },
+    Row { key: Key::SearchOpenInDocument, en: "Open in document", es: "Abrir en el documento", pt_br: "Abrir no documento", de: "Im Dokument öffnen", fr: "Ouvrir dans le document", ar: "فتح في المستند", zh_hans: "在文档中打开", ja: "ドキュメントで開く" },
 ];

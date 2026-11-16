@@ -597,7 +597,7 @@ impl View for BuiltInDocument {
     /// accent crosses this seam. A list with no colour, and one this table has
     /// never heard of, both resolve to `None`: the chip draws neutral, the same
     /// answer a forgotten tag gets and for the same reason.
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         if self.list_table == lists {
             return false;
         }
@@ -605,7 +605,7 @@ impl View for BuiltInDocument {
         self.editor.view.lists.replace_named(
             lists
                 .iter()
-                .map(|l| (l.id, l.name.clone(), l.color.clone())),
+                .map(|l| (l.entry.id, l.entry.name.clone(), l.entry.color.clone())),
         );
         // A recoloured list is the same rows with a new face — repaint, no
         // reflow. The accent changes no width; that is why it may be pushed

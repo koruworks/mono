@@ -66,6 +66,13 @@ impl MainView {
             .map(|id| settings.collapsed_in(id).to_vec())
             .unwrap_or_default();
         self.explore.set_collapsed(collapsed);
+        // The task lists shut in the rail, the same way and for the same
+        // reason: per workspace, per device, before the first draw.
+        let shut = settings
+            .workspace
+            .map(|id| settings.collapsed_lists_in(id).to_vec())
+            .unwrap_or_default();
+        self.explore.rail_mut().set_collapsed(shut);
 
         // Rebuild the list, dropping anything whose node has gone. Every tab is
         // rebuilt now: there is no permanent one to keep alive across the swap.
@@ -187,6 +194,7 @@ impl MainView {
         // a tree come back expanded after a switch.
         if let Some(id) = settings.workspace {
             settings.set_collapsed_in(id, self.explore.collapsed());
+            settings.set_collapsed_lists_in(id, self.explore.rail().collapsed());
         }
         // ...and a workspace that no longer exists stops being remembered. The
         // pane knows the list because the shell hands it one; before it has,

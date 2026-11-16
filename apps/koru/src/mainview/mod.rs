@@ -763,7 +763,11 @@ pub struct MainView {
     /// A list the rail asked for, waiting for the shell to create it in the
     /// workspace system document. The tag chooser's `wants_create_tag` seam,
     /// one for one.
-    wants_create_list: Option<(String, Option<String>)>,
+    wants_create_list: Option<koru_workspace_host::tasks::ListCreate>,
+    /// Where the keyboard was in the rail when the inline list field opened,
+    /// so closing the field hands it back (nested-lists §6). `None` when the
+    /// field was opened with the pointer.
+    list_field_origin: Option<crate::panes::explore::rail::RailFocus>,
     /// Renames, recolours and deletions of lists that already exist, waiting for
     /// the same sweep. A `Vec` rather than a second `Option` because two of them
     /// can happen between two turns — and because a **delete only ever arrives
@@ -774,7 +778,7 @@ pub struct MainView {
     wants_page_attachment: Vec<koru_core::ids::PageKey>,
     /// The workspace list table as the shell last pushed it. The rail's names,
     /// swatches and order come from here; only the counts come off the wire.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// Store-backed reminder behavior and cached semantic state. The final
     /// surface geometry/navigation is intentionally not represented here.
     reminders: reminders::Controller,
@@ -1927,6 +1931,7 @@ impl MainView {
             context_tasks_doc: None,
             new_list: None,
             wants_create_list: None,
+            list_field_origin: None,
             list_edits: Vec::new(),
             wants_page_attachment: Vec::new(),
             list_table: Vec::new(),
@@ -4616,10 +4621,12 @@ impl MainView {
             // for a list that no longer exists is a page that would draw
             // "Nothing in this list yet." for ever.
             MenuSubject::List(id) => {
-                self.list_table.iter().any(|entry| entry.id == *id)
+                self.list_table.iter().any(|node| node.entry.id == *id)
                     && matches!(
                         action,
                         MenuAction::RailOpenInNewTab
+                            | MenuAction::ListNewInside
+                            | MenuAction::ListMoveToTop
                             | MenuAction::ListRename
                             | MenuAction::ListColor
                             | MenuAction::ListSwatch(_)
@@ -5288,6 +5295,20 @@ impl MainView {
                     self.open_tasks_tab(crate::panes::explore::rail::RailTarget::List(id), true)
                 }
                 MenuAction::ListRename => self.begin_list_rename(id),
+                MenuAction::ListNewInside => self.apply_tasks_rail(
+                    crate::panes::explore::rail::TasksRailRequest::BeginNewList {
+                        parent: Some(id),
+                    },
+                ),
+                // Out to the top level, last: the menu's reading of dragging
+                // the row between the top-level rows.
+                MenuAction::ListMoveToTop => self.apply_tasks_rail(
+                    crate::panes::explore::rail::TasksRailRequest::MoveList {
+                        id,
+                        parent: None,
+                        before: None,
+                    },
+                ),
                 MenuAction::ListSwatch(token) => self.apply_tasks_rail(
                     crate::panes::explore::rail::TasksRailRequest::RecolorList {
                         id,
@@ -8980,18 +9001,56 @@ impl MainView {
         let lists: Vec<crate::panes::explore::rail::RailList> = self
             .list_table
             .iter()
-            .map(|entry| {
-                let (count, overdue) = self.task_counts.group(entry.id);
+            .map(|node| {
+                let (count, overdue) = self.task_counts.group(node.entry.id);
                 crate::panes::explore::rail::RailList {
-                    id: entry.id,
-                    name: entry.name.clone(),
-                    color: entry.color.clone(),
+                    id: node.entry.id,
+                    name: node.entry.name.clone(),
+                    color: node.entry.color.clone(),
                     count,
                     overdue,
+                    parent: node.parent,
+                    depth: node.depth,
+                    has_children: node.has_children,
                 }
             })
             .collect();
         self.explore.rail_mut().set_lists(lists)
+    }
+
+    /// The lists drawn inside `id`, depth first, as the table stands: what a
+    /// delete confirmation counts, and exactly what it then deletes.
+    fn lists_inside(&self, id: koru_core::ids::ListId) -> Vec<koru_core::ids::ListId> {
+        let Some(at) = self.list_table.iter().position(|node| node.entry.id == id) else {
+            return Vec::new();
+        };
+        let depth = self.list_table[at].depth;
+        self.list_table[at + 1..]
+            .iter()
+            .take_while(|node| node.depth > depth)
+            .map(|node| node.entry.id)
+            .collect()
+    }
+
+    /// The live list beside the others under `parent` that already carries
+    /// `name`, folded the way the model folds it — the lowest id, the model's
+    /// own tie-break. `except` leaves one list out: the one being renamed.
+    fn sibling_named(
+        &self,
+        parent: Option<koru_core::ids::ListId>,
+        name: &str,
+        except: Option<koru_core::ids::ListId>,
+    ) -> Option<koru_core::ids::ListId> {
+        let key = koru_core::tags::fold_key(name);
+        if key.is_empty() {
+            return None;
+        }
+        self.list_table
+            .iter()
+            .filter(|node| node.parent == parent && Some(node.entry.id) != except)
+            .filter(|node| node.entry.fold_key() == key)
+            .map(|node| node.entry.id)
+            .min()
     }
 
     /// A press the rail reported.
@@ -9029,25 +9088,65 @@ impl MainView {
                 self.close_list_field();
                 self.open_place_chooser(place_chooser::PlaceTarget::TasksPage(target), at)
             }
-            Request::BeginNewList => {
+            // The field opens **where the list will be** — first under the
+            // heading, or first under its parent — and that row is scrolled
+            // into view. It used to hang off a row at the foot of the section,
+            // which a long rail scrolls out of sight: the field held the
+            // keyboard and drew nothing, and the `+` looked dead.
+            Request::BeginNewList { parent } => {
                 let color = self.explore.rail().suggested_color().to_owned();
+                let origin = self.explore.rail().focus();
                 self.close_list_field();
-                self.explore.rail_mut().begin_new_list();
-                self.new_list = Some(new_list::NewList::new(&mut self.engine, &color));
+                self.list_field_origin = origin;
+                self.explore.rail_mut().begin_new_list(parent);
+                self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
+                let area = self.explore_area();
+                let top = self.explore.rail_top(area);
+                self.explore.rail_mut().reveal_new_list(area, top);
                 true
             }
-            Request::NewList { name, color } => {
-                self.wants_create_list = Some((name, color));
+            Request::NewList {
+                parent,
+                name,
+                color,
+            } => {
+                // **A sibling already has the name: that list is selected and
+                // nothing is made** (nested-lists §3, D8) — no record, no
+                // rank, no parent. The model keeps the same rule; asking here
+                // is what lets the row be shown.
+                if let Some(existing) = self.sibling_named(parent, &name, None) {
+                    let area = self.explore_area();
+                    let top = self.explore.rail_top(area);
+                    let rail = self.explore.rail_mut();
+                    rail.set_selected(Some(crate::panes::explore::rail::RailTarget::List(
+                        existing,
+                    )));
+                    rail.reveal_list(area, top, existing);
+                    return self.open_tasks_tab(
+                        crate::panes::explore::rail::RailTarget::List(existing),
+                        false,
+                    );
+                }
+                self.wants_create_list = Some(koru_workspace_host::tasks::ListCreate {
+                    parent,
+                    name,
+                    color,
+                });
                 true
             }
-            // The order the rows are already in on the rail, written to the
-            // table so every window and every peer agrees with it.
-            Request::ReorderList { id, to } => {
-                let _ = (id, to);
-                let order: Vec<koru_core::ids::ListId> =
-                    self.explore.rail().list_order().into_iter().collect();
+            // Where the row already is on the rail, written to the table so
+            // every window and every peer agrees with it. No task moves.
+            Request::MoveList { id, parent, before } => {
+                crate::tasks::debug_line(format_args!(
+                    "list move nested={} before={}",
+                    parent.is_some(),
+                    before.is_some()
+                ));
                 self.list_edits
-                    .push(koru_workspace_host::tasks::ListEdit::Reorder(order));
+                    .push(koru_workspace_host::tasks::ListEdit::Move { id, parent, before });
+                // A parent's shut row shows what is inside it, so a move
+                // changes numbers the table push alone would not redraw.
+                self.refresh_rail_lists();
                 true
             }
             Request::RowMenu { target, at } => self.open_rail_menu(target, at),
@@ -9064,9 +9163,17 @@ impl MainView {
                     });
                 true
             }
-            Request::DeleteList(id) => {
+            Request::DeleteList { id, inside } => {
+                // The keyboard goes to the row above the one that is leaving
+                // (nested-lists §6), if the keyboard was in the rail at all.
+                if self.explore.rail().focus().is_some() {
+                    let area = self.explore_area();
+                    let top = self.explore.rail_top(area);
+                    let above = self.explore.rail().focus_above(id);
+                    self.explore.rail_mut().set_focus(area, top, above);
+                }
                 self.list_edits
-                    .push(koru_workspace_host::tasks::ListEdit::Delete(id));
+                    .push(koru_workspace_host::tasks::ListEdit::DeleteTree { id, inside });
                 // The counts are about to be wrong in two ways — a list's row
                 // goes, and the tasks that were in it move — so the standing
                 // invalidation is asked rather than waiting for the coarse tick.
@@ -9117,11 +9224,15 @@ impl MainView {
         // A field left open under a menu about the same row would take the
         // keystrokes the menu's own arrows are for.
         self.close_list_field();
+        let nested = self
+            .list_table
+            .iter()
+            .any(|node| node.entry.id == id && node.parent.is_some());
         let mut m = ContextMenu::new(
             &mut self.engine,
             MenuSubject::List(id),
             at,
-            context_menu::list_items(),
+            context_menu::list_items(nested),
         );
         let enabled = self.enabled_items(&m);
         m.step(&enabled, 1);
@@ -9137,11 +9248,13 @@ impl MainView {
     /// keyboard and the duplicate check are the container's, exactly as they are
     /// for the `+` row — see [`new_list`].
     fn begin_list_rename(&mut self, id: koru_core::ids::ListId) -> bool {
-        let Some(entry) = self.list_table.iter().find(|entry| entry.id == id) else {
+        let Some(node) = self.list_table.iter().find(|node| node.entry.id == id) else {
             return false;
         };
-        let (name, color) = (entry.name.clone(), entry.color.clone());
+        let (name, color) = (node.entry.name.clone(), node.entry.color.clone());
+        let origin = self.explore.rail().focus();
         self.close_list_field();
+        self.list_field_origin = origin;
         self.explore.rail_mut().begin_rename(id);
         self.new_list = Some(new_list::NewList::renaming(
             &mut self.engine,
@@ -9149,6 +9262,12 @@ impl MainView {
             &name,
             color.as_deref(),
         ));
+        // The row being renamed can be anywhere in a rail longer than the
+        // column, or under a shut parent: bring it into view, as a new list's
+        // row is.
+        let area = self.explore_area();
+        let top = self.explore.rail_top(area);
+        self.explore.rail_mut().reveal_list(area, top, id);
         true
     }
 
@@ -9161,21 +9280,45 @@ impl MainView {
     /// losing the work in it, and the answer is that they do not. The list is
     /// what goes.
     fn ask_delete_list(&mut self, id: koru_core::ids::ListId) -> bool {
-        let Some(entry) = self.list_table.iter().find(|entry| entry.id == id) else {
+        let Some(node) = self.list_table.iter().find(|node| node.entry.id == id) else {
             return false;
         };
-        self.confirm = Some((
+        let name = node.entry.name.clone();
+        // **What the question counts is what the answer deletes**
+        // (nested-lists D4): the lists inside this one as the table stands
+        // now. One a peer nests in while the dialog is up is not among them
+        // and is not deleted.
+        let inside = self.lists_inside(id);
+        let dialog = if inside.is_empty() {
             koru_ui::Confirm::new(
                 "Delete this list?",
                 format!(
-                    "\u{201C}{}\u{201D} will be removed from the sidebar. Tasks in it are not \
-                     deleted \u{2014} they just leave the list.",
-                    entry.name
+                    "\u{201C}{name}\u{201D} will be removed from the sidebar. Tasks in it are not \
+                     deleted \u{2014} they just leave the list."
                 ),
                 "Delete list",
-            ),
-            trash::ConfirmSubject::DeleteList(id),
-        ));
+            )
+        } else {
+            let lang = crate::format::lang();
+            let count = koru_i18n::number::decimal(lang, inside.len() as u64);
+            let title = if inside.len() == 1 {
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedOne),
+                    &[&name],
+                )
+            } else {
+                koru_i18n::fill(
+                    koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedMany),
+                    &[&name, &count],
+                )
+            };
+            koru_ui::Confirm::new(
+                title,
+                koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedBody),
+                koru_i18n::t(lang, koru_i18n::Key::TaskListDeleteNestedConfirm),
+            )
+        };
+        self.confirm = Some((dialog, trash::ConfirmSubject::DeleteList { id, inside }));
         true
     }
 
@@ -9191,24 +9334,39 @@ impl MainView {
         self.new_list = None;
         self.explore.rail_mut().end_new_list();
         self.explore.rail_mut().end_rename();
+        // The keyboard goes back to the row the field was opened from.
+        if let Some(origin) = self.list_field_origin.take() {
+            let area = self.explore_area();
+            let top = self.explore.rail_top(area);
+            self.explore.rail_mut().set_focus(area, top, origin);
+        }
         had
     }
 
-    /// Every live list's name, so the field can refuse a duplicate without
-    /// learning what a workspace is.
+    /// The names the open field may not take, so it can refuse a duplicate
+    /// without learning what a workspace is.
     ///
-    /// **A rename does not clash with itself**: the list being renamed is left
-    /// out, or pressing Enter on a name you have not changed would be refused as
-    /// a duplicate of the row you are standing on.
+    /// **Only a rename is refused, and only among siblings** (nested-lists
+    /// D8): a name is unique under one parent, not across the workspace. A
+    /// new list refuses nothing — a sibling's name there selects that list.
+    /// A rename does not clash with itself: the list being renamed is left
+    /// out, or pressing Enter on a name you have not changed would be refused
+    /// as a duplicate of the row you are standing on.
     fn list_names(&self) -> Vec<String> {
-        let mine = match self.new_list.as_ref().map(|field| field.target()) {
-            Some(new_list::Target::Existing(id)) => Some(id),
-            _ => None,
+        let Some(new_list::Target::Existing(mine)) =
+            self.new_list.as_ref().map(|field| field.target())
+        else {
+            return Vec::new();
         };
+        let parent = self
+            .list_table
+            .iter()
+            .find(|node| node.entry.id == mine)
+            .and_then(|node| node.parent);
         self.list_table
             .iter()
-            .filter(|entry| Some(entry.id) != mine)
-            .map(|entry| entry.name.clone())
+            .filter(|node| node.parent == parent && node.entry.id != mine)
+            .map(|node| node.entry.name.clone())
             .collect()
     }
 
@@ -9222,7 +9380,7 @@ impl MainView {
         let area = self.explore_area();
         let top = self.explore.rail_top(area);
         match self.new_list.as_ref()?.target() {
-            new_list::Target::New => self.explore.rail().new_list_field_rect(area, top),
+            new_list::Target::New(_) => self.explore.rail().new_list_field_rect(area, top),
             new_list::Target::Existing(id) => self.explore.rail().list_field_rect(area, top, id),
         }
     }
@@ -9246,7 +9404,14 @@ impl MainView {
                     Some(new_list::Target::Existing(id)) => {
                         crate::panes::explore::rail::TasksRailRequest::RenameList { id, name }
                     }
-                    _ => crate::panes::explore::rail::TasksRailRequest::NewList { name, color },
+                    Some(new_list::Target::New(parent)) => {
+                        crate::panes::explore::rail::TasksRailRequest::NewList {
+                            parent,
+                            name,
+                            color,
+                        }
+                    }
+                    None => return true,
                 };
                 self.apply_tasks_rail(request)
             }
@@ -14437,7 +14602,7 @@ impl View for MainView {
     /// every push for the reason [`set_tag_table`](Self::set_tag_table) gives
     /// — a tab opened since the last change still has to be told, and a leaf
     /// that already has the table answers the compare and no work.
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         let moved = self.list_table != lists;
         if moved {
             self.list_table = lists.to_vec();
@@ -14460,7 +14625,7 @@ impl View for MainView {
 
     /// The rail's "+ New list", on its way to the workspace's system document.
     /// Taken rather than read, the tag request's contract exactly.
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<koru_workspace_host::tasks::ListCreate> {
         self.wants_create_list.take()
     }
 
@@ -15218,6 +15383,11 @@ impl View for MainView {
             .map(|id| settings.collapsed_in(id).to_vec())
             .unwrap_or_default();
         self.explore.set_collapsed(collapsed);
+        let shut = settings
+            .workspace
+            .map(|id| settings.collapsed_lists_in(id).to_vec())
+            .unwrap_or_default();
+        self.explore.rail_mut().set_collapsed(shut);
         self.explore_stale = true;
         self.entries = None;
         // Reseat each open leaf against its document room when it is still

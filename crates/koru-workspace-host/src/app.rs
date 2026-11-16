@@ -2883,7 +2883,7 @@ struct App<H: Host> {
     /// the same rule — the tasks rail resolves a `koru.list` value to a name
     /// and a swatch without ever reaching the store, because names are the
     /// workspace's and only counts come off the wire.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// When [`poll_pane_context`] last requested the Store catalog. `None` until
     /// the first poll, so a window shows its cached switcher rows immediately.
     ///
@@ -6786,7 +6786,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .filter_map(|(_, pane)| pane.view.take_wants_join_new_list())
             .collect();
         for (nodes, name, color) in joins {
-            let Some(list) = self.runtime.workspace.create_list(&name, color.as_deref()) else {
+            // At the top level, first (nested-lists D8, Q17): the picker has
+            // no parent chooser. A top-level list that already has the name
+            // answers, and the rows join that one.
+            let Some(list) = self
+                .runtime
+                .workspace
+                .create_list_under(None, &name, color.as_deref())
+                .map(koru_core::system::ListCreation::id)
+            else {
                 continue;
             };
             let mut host = crate::tasks::TaskHost::default();
@@ -6816,13 +6824,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The rail's "+ New list", committed. Nothing is applied to a node:
         // a list is a filter, so creating one only adds a row to the table,
         // and membership is set later on a task like any other attribute.
-        let wanted: Vec<(String, Option<String>)> = self
+        let wanted: Vec<crate::tasks::ListCreate> = self
             .panes
             .iter_mut()
             .filter_map(|(_, pane)| pane.view.take_wants_create_list())
             .collect();
-        for (name, color) in wanted {
-            self.runtime.workspace.create_list(&name, color.as_deref());
+        for list in wanted {
+            self.runtime.workspace.create_list_under(
+                list.parent,
+                &list.name,
+                list.color.as_deref(),
+            );
         }
         // ...and the rail's management of the lists that already exist. Renames
         // and recolours touch the registry alone; a delete tombstones the record
@@ -6995,7 +7007,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             crate::spelling::set_workspace_words(self.runtime.workspace.workspace_dictionary());
         }
         if self.runtime.workspace.take_lists_changed() {
-            self.list_table = self.runtime.workspace.lists_snapshot();
+            self.list_table = self.runtime.workspace.list_tree_snapshot().nodes().to_vec();
         }
         // Pushed every turn, compared inside the view: a pane or tab opened
         // since the last change still has to be given the table, and the

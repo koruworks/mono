@@ -554,6 +554,12 @@ pub enum MenuAction {
     // Borrowing the row would print a shortcut that does something else.
     /// Rename the list, in a field over the row it is already on.
     ListRename,
+    /// Make a list inside this one: the row's hover `+`, reachable without a
+    /// pointer.
+    ListNewInside,
+    /// Take a nested list out to the top level. Only on a list that is
+    /// inside another.
+    ListMoveToTop,
     /// Parent of the swatch submenu. No ellipsis: it opens rows rather than a
     /// picker, which is the difference `ExportAs` already draws.
     ListColor,
@@ -1053,6 +1059,8 @@ impl MenuAction {
             | Self::TaskList
             | Self::TaskRemove
             | Self::ListRename
+            | Self::ListNewInside
+            | Self::ListMoveToTop
             | Self::ListColor
             | Self::ListSwatch(_)
             | Self::ListDelete
@@ -1406,6 +1414,12 @@ impl MenuAction {
             MenuAction::TaskDue => "Due",
             MenuAction::TaskPriority => "Priority",
             MenuAction::TaskList => "List",
+            MenuAction::ListNewInside => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListNewInside)
+            }
+            MenuAction::ListMoveToTop => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListMoveToTop)
+            }
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
             MenuAction::PageDescription { shown: false } => {
@@ -1607,6 +1621,8 @@ impl MenuAction {
             MenuAction::TaskGoToList => Some(koru_draw::icons::LIST),
             MenuAction::TaskCreateDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
+            MenuAction::ListNewInside => Some(koru_draw::icons::PLUS),
+            MenuAction::ListMoveToTop => Some(koru_draw::icons::ARROW_UP),
             MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
             MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
             MenuAction::PageAddExisting => Some(koru_draw::icons::LINK),
@@ -2481,15 +2497,24 @@ pub fn document_items() -> Vec<MenuAction> {
 /// gesture when it grows one, and *Open* is what the row already does on a plain
 /// click. The divider is what keeps the red row from sitting flush against the
 /// two that change a label.
-pub fn list_items() -> Vec<MenuAction> {
-    vec![
+pub fn list_items(nested: bool) -> Vec<MenuAction> {
+    let mut items = vec![
         MenuAction::RailOpenInNewTab,
+        MenuAction::Divider,
+        MenuAction::ListNewInside,
+    ];
+    // Only a list that is inside another has somewhere to be moved out to.
+    if nested {
+        items.push(MenuAction::ListMoveToTop);
+    }
+    items.extend([
         MenuAction::Divider,
         MenuAction::ListRename,
         MenuAction::ListColor,
         MenuAction::Divider,
         MenuAction::ListDelete,
-    ]
+    ]);
+    items
 }
 
 /// A queue row's menu: one row, because a computed queue has nothing to rename,
