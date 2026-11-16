@@ -17,7 +17,9 @@ mod appearance;
 mod artifacts;
 mod canvas;
 mod chats;
+mod runs;
 mod shell_chrome;
+mod socials;
 mod voice;
 
 pub(super) const AGENTS: &[Entry] = agents::RECORDS;
@@ -25,7 +27,9 @@ pub(super) const APPEARANCE: &[Entry] = appearance::RECORDS;
 pub(super) const ARTIFACTS: &[Entry] = artifacts::RECORDS;
 pub(super) const CANVAS: &[Entry] = canvas::RECORDS;
 pub(super) const CHATS: &[Entry] = chats::RECORDS;
+pub(super) const RUNS: &[Entry] = runs::RECORDS;
 pub(super) const SHELL_CHROME: &[Entry] = shell_chrome::RECORDS;
+pub(super) const SOCIALS: &[Entry] = socials::RECORDS;
 pub(super) const VOICE: &[Entry] = voice::RECORDS;
 
 const fn source(owner: &'static str, module: &'static str, file: &'static str) -> Source {

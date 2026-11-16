@@ -3692,13 +3692,21 @@ pub enum Key {
     UiLabChatsListPurpose,
     UiLabChatStatusName,
     UiLabChatStatusPurpose,
+    UiLabRunsSurfaceName,
+    UiLabRunsSurfacePurpose,
+    UiLabRunsSummaryName,
+    UiLabRunsSummaryPurpose,
+    UiLabSocialsSurfaceName,
+    UiLabSocialsSurfacePurpose,
+    UiLabSocialsNavigatorName,
+    UiLabSocialsNavigatorPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2719] = [
+    pub const ALL: [Key; 2727] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6418,6 +6426,14 @@ impl Key {
         Key::UiLabChatsListPurpose,
         Key::UiLabChatStatusName,
         Key::UiLabChatStatusPurpose,
+        Key::UiLabRunsSurfaceName,
+        Key::UiLabRunsSurfacePurpose,
+        Key::UiLabRunsSummaryName,
+        Key::UiLabRunsSummaryPurpose,
+        Key::UiLabSocialsSurfaceName,
+        Key::UiLabSocialsSurfacePurpose,
+        Key::UiLabSocialsNavigatorName,
+        Key::UiLabSocialsNavigatorPurpose,
     ];
 }
 
@@ -18306,4 +18322,12 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabChatsListPurpose, en: "Every AI chat, newest first, with who answered it and when, opening a chat as a tab.", es: "Todos los chats de IA, del más reciente al más antiguo, con quién respondió y cuándo; cada uno se abre en una pestaña.", pt_br: "Todos os chats de IA, do mais recente ao mais antigo, com quem respondeu e quando; cada um abre como uma aba.", de: "Alle KI-Chats, die neuesten zuerst, mit wer und wann geantwortet hat; ein Chat öffnet sich als Tab.", fr: "Toutes les discussions avec l’IA, les plus récentes d’abord, avec qui a répondu et quand ; chacune s’ouvre dans un onglet.", ar: "كل محادثات الذكاء الاصطناعي، الأحدث أولًا، مع من أجاب ومتى، وتُفتح كل محادثة في تبويب.", zh_hans: "所有 AI 聊天，最新的在前，显示由谁回答及时间，点开后以标签页打开。", ja: "すべての AI チャットを新しい順に、誰がいつ答えたかと共に並べ、タブとして開きます。" },
     Row { key: Key::UiLabChatStatusName, en: "Chat status", es: "Estado del chat", pt_br: "Status do chat", de: "Chatstatus", fr: "État de la discussion", ar: "حالة المحادثة", zh_hans: "聊天状态", ja: "チャットの状態" },
     Row { key: Key::UiLabChatStatusPurpose, en: "Decides in one place whether a chat is working, needs the person, or holds something unread.", es: "Decide en un solo lugar si un chat está trabajando, necesita a la persona o tiene algo sin leer.", pt_br: "Decide em um só lugar se um chat está trabalhando, precisa da pessoa ou tem algo não lido.", de: "Entscheidet an einer Stelle, ob ein Chat arbeitet, die Person braucht oder Ungelesenes enthält.", fr: "Décide en un seul endroit si une discussion travaille, attend la personne ou contient du non-lu.", ar: "تقرر في مكان واحد إن كانت المحادثة تعمل، أو تحتاج الشخص، أو تحمل شيئًا غير مقروء.", zh_hans: "在同一处判定聊天是在工作、需要用户处理，还是有未读内容。", ja: "チャットが作業中か、人の対応待ちか、未読があるかを一か所で決めます。" },
+    Row { key: Key::UiLabRunsSurfaceName, en: "Run views", es: "Vistas de la ejecución", pt_br: "Visualizações da execução", de: "Laufansichten", fr: "Vues du travail", ar: "عروض التشغيل", zh_hans: "运行视图", ja: "実行ビュー" },
+    Row { key: Key::UiLabRunsSurfacePurpose, en: "Shows one delegated run’s overview, activity, results and agent instructions, with the controls to take over, rate, re-run or end it.", es: "Muestra el resumen, la actividad, los resultados y las instrucciones del agente de una ejecución delegada, con los controles para tomar el control, valorarla, repetirla o finalizarla.", pt_br: "Mostra a visão geral, a atividade, os resultados e as instruções do agente de uma execução delegada, com os controles para assumir, avaliar, executar de novo ou encerrar.", de: "Zeigt Übersicht, Aktivität, Ergebnisse und Agentenanweisungen eines delegierten Laufs, mit den Steuerelementen zum Übernehmen, Bewerten, erneuten Ausführen oder Beenden.", fr: "Affiche la vue d’ensemble, l’activité, les résultats et les instructions de l’agent d’un travail délégué, avec les commandes pour en prendre le contrôle, l’évaluer, le relancer ou l’arrêter.", ar: "يعرض نظرة عامة على تشغيل مفوَّض ونشاطه ونتائجه وتعليمات الوكيل، مع عناصر التحكم لتولّي القيادة أو التقييم أو إعادة التشغيل أو الإنهاء.", zh_hans: "显示一次委派运行的概览、活动、结果和代理指令，并提供接管、评分、重新运行或结束它的控件。", ja: "委任した実行の概要、アクティビティ、結果、エージェントへの指示を表示し、引き継ぎ、評価、再実行、終了の操作を備えます。" },
+    Row { key: Key::UiLabRunsSummaryName, en: "Run summary", es: "Resumen de la ejecución", pt_br: "Resumo da execução", de: "Laufzusammenfassung", fr: "Résumé du travail", ar: "ملخص التشغيل", zh_hans: "运行摘要", ja: "実行の要約" },
+    Row { key: Key::UiLabRunsSummaryPurpose, en: "Puts a run’s status, newest step, working time and failure cause into the few words a small run mark has room for.", es: "Resume el estado de una ejecución, su paso más reciente, su tiempo de trabajo y la causa de un fallo en las pocas palabras que caben en una marca pequeña.", pt_br: "Resume o estado de uma execução, a etapa mais recente, o tempo de trabalho e a causa de uma falha nas poucas palavras que cabem em uma marca pequena.", de: "Fasst Status, neuesten Schritt, Arbeitszeit und Fehlerursache eines Laufs in die wenigen Worte, für die eine kleine Laufmarke Platz hat.", fr: "Résume l’état d’un travail, sa dernière étape, son temps de travail et la cause d’un échec en quelques mots, assez courts pour une petite marque.", ar: "يختصر حالة التشغيل وأحدث خطوة ووقت العمل وسبب الفشل في الكلمات القليلة التي تتسع لها علامة تشغيل صغيرة.", zh_hans: "把一次运行的状态、最新步骤、工作时长和失败原因压缩成小型运行标记容得下的几个词。", ja: "実行の状態、最新のステップ、作業時間、失敗の原因を、小さな実行マークに収まる短い言葉にまとめます。" },
+    Row { key: Key::UiLabSocialsSurfaceName, en: "Social post planner", es: "Planificador de publicaciones sociales", pt_br: "Planejador de publicações sociais", de: "Planer für Social-Media-Beiträge", fr: "Planificateur de publications sociales", ar: "مخطط المنشورات الاجتماعية", zh_hans: "社交帖子规划器", ja: "ソーシャル投稿プランナー" },
+    Row { key: Key::UiLabSocialsSurfacePurpose, en: "Writes, schedules and follows posts for connected social accounts, with a week calendar, drafts, history, per-account versions and account connection.", es: "Redacta, programa y sigue publicaciones para cuentas sociales conectadas, con un calendario semanal, borradores, historial, versiones por cuenta y conexión de cuentas.", pt_br: "Escreve, agenda e acompanha publicações para contas sociais conectadas, com calendário semanal, rascunhos, histórico, versões por conta e conexão de contas.", de: "Schreibt, plant und verfolgt Beiträge für verbundene Social-Media-Konten, mit Wochenkalender, Entwürfen, Verlauf, Fassungen pro Konto und Kontoverbindung.", fr: "Rédige, planifie et suit des publications pour des comptes sociaux connectés, avec un calendrier hebdomadaire, des brouillons, un historique, des versions par compte et la connexion des comptes.", ar: "يكتب المنشورات ويجدولها ويتابعها للحسابات الاجتماعية المتصلة، مع تقويم أسبوعي ومسودات وسجل ونسخ لكل حساب وربط الحسابات.", zh_hans: "为已连接的社交账号撰写、排期和跟踪帖子，包含周历、草稿、历史记录、按账号的版本和账号连接。", ja: "週間カレンダー、下書き、履歴、アカウント別の版、アカウント接続を使って、接続したソーシャルアカウント向けの投稿を作成、予約、追跡します。" },
+    Row { key: Key::UiLabSocialsNavigatorName, en: "Socials navigator", es: "Navegación de redes sociales", pt_br: "Navegação de redes sociais", de: "Social-Media-Navigation", fr: "Navigation des réseaux sociaux", ar: "تنقل التواصل الاجتماعي", zh_hans: "社交媒体导航", ja: "ソーシャルのナビゲーション" },
+    Row { key: Key::UiLabSocialsNavigatorPurpose, en: "Lists scheduled and draft posts and each connected channel in the side column, with counts, and opens the matching page.", es: "Enumera en la columna lateral las publicaciones programadas, los borradores y cada canal conectado, con recuentos, y abre la página correspondiente.", pt_br: "Lista na coluna lateral as publicações agendadas, os rascunhos e cada canal conectado, com contagens, e abre a página correspondente.", de: "Listet in der Seitenspalte geplante Beiträge, Entwürfe und jeden verbundenen Kanal mit Zählern auf und öffnet die passende Seite.", fr: "Liste dans la colonne latérale les publications planifiées, les brouillons et chaque canal connecté, avec leurs nombres, et ouvre la page correspondante.", ar: "يعرض في العمود الجانبي المنشورات المجدولة والمسودات وكل قناة متصلة مع أعدادها، ويفتح الصفحة المطابقة.", zh_hans: "在侧栏列出已排期的帖子、草稿和每个已连接的频道及其数量，并打开相应页面。", ja: "サイドの列に予約済みの投稿、下書き、接続済みの各チャンネルを件数付きで並べ、対応するページを開きます。" },
 ];
