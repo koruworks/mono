@@ -360,22 +360,55 @@ impl ScopeRoots for FixtureRoots {
 /// store keeps it. The endpoint is a loopback address nothing listens on.
 pub(super) struct RecordingMcp {
     workspaces: HashMap<RunId, PathBuf>,
-    /// The last decision wait published per Run (O147).
-    waits: HashMap<
-        RunId,
-        (
-            koru_delegate_core::decisions::DecisionId,
-            koru_delegate_core::decisions::DecisionPhase,
-        ),
-    >,
+    /// The last decision wait published per Run (O147), shared with the test.
+    waits: PublishedWaits,
 }
 
 impl RecordingMcp {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(waits: PublishedWaits) -> Self {
         Self {
             workspaces: HashMap::new(),
-            waits: HashMap::new(),
+            waits,
         }
+    }
+}
+
+type PublishedWait = (
+    koru_delegate_core::decisions::DecisionId,
+    koru_delegate_core::decisions::DecisionPhase,
+);
+
+/// The test's view of the decision waits the orchestrator published for each
+/// Run's tool classification (O147), exactly as the host's projection would
+/// receive them: `Some` while a Run classifies as waiting, absent once a read
+/// proved no wait open (or before anything was published).
+#[derive(Clone, Default)]
+pub struct PublishedWaits(Arc<Mutex<HashMap<RunId, PublishedWait>>>);
+
+impl std::fmt::Debug for PublishedWaits {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("PublishedWaits")
+            .field(&self.0.lock().map(|waits| waits.len()).unwrap_or(0))
+            .finish()
+    }
+}
+
+impl PublishedWaits {
+    /// The wait last published for `run`, if its classification is waiting.
+    pub fn get(&self, run: RunId) -> Option<PublishedWait> {
+        self.0
+            .lock()
+            .expect("the published waits are not poisoned")
+            .get(&run)
+            .copied()
+    }
+
+    /// Forget everything published, as a new process's projection starts.
+    pub fn clear(&self) {
+        self.0
+            .lock()
+            .expect("the published waits are not poisoned")
+            .clear();
     }
 }
 
@@ -397,12 +430,17 @@ impl McpEndpoints for RecordingMcp {
             koru_delegate_core::decisions::DecisionPhase,
         )>,
     ) -> PortResult<()> {
+        let mut waits = self
+            .waits
+            .0
+            .lock()
+            .expect("the published waits are not poisoned");
         match wait {
             Some(wait) => {
-                self.waits.insert(run, wait);
+                waits.insert(run, wait);
             }
             None => {
-                self.waits.remove(&run);
+                waits.remove(&run);
             }
         }
         Ok(())
