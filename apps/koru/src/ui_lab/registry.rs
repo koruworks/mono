@@ -42,6 +42,7 @@
 
 use koru_ui::button::{ActionStyle, ButtonRole};
 
+mod app;
 mod compositions;
 mod controls;
 mod domain;
@@ -91,10 +92,6 @@ pub(crate) enum Kind {
     /// A surface owned by one domain crate (search, settings, chats, …).
     DomainComposition,
     /// A control or painter private to one application.
-    #[expect(
-        dead_code,
-        reason = "the app-local batch registers these; the expectation fails once one does"
-    )]
     AppLocal,
     /// A platform's own control standing in for a shared one.
     #[expect(
@@ -610,6 +607,9 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     domain::WEBVIEW,
     domain::WINDOW,
     domain::WORKSPACE_HOST,
+    app::MINI_APP,
+    app::TASKS_VIEW,
+    app::LEAF,
 ];
 
 /// Every record, flattened.

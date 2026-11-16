@@ -16,6 +16,19 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     ("ui_lab.rs", include_str!("../ui_lab.rs")),
     ("ui_lab/placement.rs", include_str!("placement.rs")),
     ("ui_lab/registry.rs", include_str!("registry.rs")),
+    ("ui_lab/registry/app.rs", include_str!("registry/app.rs")),
+    (
+        "ui_lab/registry/app/leaf.rs",
+        include_str!("registry/app/leaf.rs"),
+    ),
+    (
+        "ui_lab/registry/app/mini_app.rs",
+        include_str!("registry/app/mini_app.rs"),
+    ),
+    (
+        "ui_lab/registry/app/tasks_view.rs",
+        include_str!("registry/app/tasks_view.rs"),
+    ),
     (
         "ui_lab/registry/compositions.rs",
         include_str!("registry/compositions.rs"),
@@ -274,6 +287,10 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
 /// Every other Lab file — the shell, the story, the registry's own module
 /// with the Button and the shell-facing functions — is scanned whole.
 const RECORD_FILES: &[&str] = &[
+    "ui_lab/registry/app.rs",
+    "ui_lab/registry/app/leaf.rs",
+    "ui_lab/registry/app/mini_app.rs",
+    "ui_lab/registry/app/tasks_view.rs",
     "ui_lab/registry/compositions.rs",
     "ui_lab/registry/controls.rs",
     "ui_lab/registry/domain.rs",

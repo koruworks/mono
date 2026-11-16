@@ -108,35 +108,42 @@ fail until this table says what they compute.
 | domain crate lib.rs modules | 247 |
 | domain crate lib.rs public modules | 121 |
 | domain crate modules excluded | 73 |
-| records | 233 |
+| app crates baselined | 1 |
+| app source files | 22 |
+| app files baselined | 3 |
+| app modules classified | 20 |
+| app modules excluded | 5 |
+| records: app crates | 7 |
+| records | 240 |
 | records: foundations | 59 |
-| records: controls | 66 |
-| records: application compositions | 108 |
+| records: controls | 68 |
+| records: application compositions | 113 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 66 |
+| kind: support | 67 |
 | kind: domain composition | 57 |
+| kind: app-local | 6 |
 | token values listed | 174 |
-| symbols | 1855 |
+| symbols | 1940 |
 | symbols with typed recipes | 2 |
 | inspector identities | 54 |
 | inspector identity registration sites | 57 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 155 |
+| disposition: no story yet | 162 |
 | disposition: nonvisual | 60 |
 | disposition: platform-only | 0 |
 | disposition: boundary | 17 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 333 |
-| symbol story: nonvisual | 1372 |
+| symbol story: no story yet | 346 |
+| symbol story: nonvisual | 1444 |
 | symbol story: boundary | 149 |
-| A2UI: component | 6 |
+| A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
-| A2UI: host only | 16 |
-| A2UI: not supported | 1823 |
+| A2UI: host only | 31 |
+| A2UI: not supported | 1888 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -996,7 +1003,140 @@ excluded modules go with the module: `koru_workspace_host::parse_markdown`
   methods (the declaration scan reads `pub fn` only, so `View`'s and
   `Surface`'s methods are not listed as symbols), and anything in `apps/`.
 
-## Batch 3 — app-local controls and compositions (not started)
+## Batch 3 — app-local controls and compositions
+
+Reviewed at `81f287d6` (branch `ui-lab/l1b`), 16 November 2026: the UI the
+app crates under `apps/` draw for themselves. The records are in `app/`, a
+file per area (`app.rs` holds what they share and reuses `domain.rs`'s
+helpers); the drift checks are `tests/drift/app.rs`. Landed a folder at a
+time; each part below says what is recorded and what is still owed.
+
+### Method and how deeply each folder was read
+
+"Read in full", "declarations" and "searched" mean what batch 2b says
+they mean. Most of the app was read by delegated readers working to one
+brief (every non-test file, a block each: what it draws, the exact names
+that draw it with their visibility, every inspector scope, option enums,
+English a person reads, platform splits, docs that disagree); their
+reports were then checked against the source for every name a record
+uses, and the drift checks below hold each recorded name to a
+declaration. The `mini_app` folder, `leaf.rs` and the module root of
+`tasks_view` were read by the batch's author directly.
+
+### How app symbols are written and checked
+
+App items are mostly `pub(crate)` or private, and the workspace app is a
+binary crate, so a record writes an item by its module path with `koru::`
+standing for the `crate::` a caller in the app writes
+(`koru::mini_app::chrome::Chrome::open_selector`), and `koru_document::` /
+`koru_agent::` for the other two. The path names where the item is
+declared, not a promise that anything outside the app can reach it. The
+checks in `tests/drift/app.rs` resolve the longest module prefix that is a
+compiled-in file and read the declaration **whatever its visibility**
+(`struct`, `enum`, `fn`, `const`, a `pub use`), and an app enum's members
+the same way; the crates' checks still require `pub`. The records stay
+string literals in record files on `RECORD_FILES`, so the Lab still names
+nothing in the app it could call.
+
+### Drift checks added
+
+- `tests/drift/app.rs` compiles in the non-test files of each app folder
+  recorded so far (the `SOURCES` list grows a folder per commit), so the
+  symbol, option and identity checks cover them; `all_sources` reads them.
+- `every_app_module_is_classified`: each baselined app file's `mod` list,
+  whatever its visibility (test modules named as such left out), against
+  its classification; every app record reached from one, of kind
+  `AppLocal` or `Support`, with an app file as its source.
+- `the_fixed_catalog_is_served_by_the_app_host`: the fixed catalog's five
+  components each claimed by exactly one app symbol, still required by
+  the parser under their IDs, and still built the way the record says
+  (the host source lines are named in the test).
+- `the_a2ui_components_are_the_composition_catalogs` now expects the
+  composition catalog's node kinds and the fixed catalog's components,
+  `DocumentHost` once for both; `only_the_catalogs_symbols_claim_a2ui_support`
+  lists the app's host symbols beside the crates'.
+- New count rows: app crates baselined, app source files, app files
+  baselined, app modules classified and excluded, records owned by an app
+  crate, and `kind: app-local` (`Kind::AppLocal`'s `#[expect(dead_code)]`
+  is removed now that records use it).
+
+Like the crates' checks they do not discover a painter that registers no
+identity, or a new item inside a module already classified.
+
+### A2UI: the catalogs and the app surfaces that back them
+
+| Catalog component | Record | Symbol (A2UI field) | What the host does |
+| --- | --- | --- | --- |
+| Fixed `TaskDocument` (`root`) | `C-MINI-APP`* | `koru::mini_app::MiniApp` (`Component`) | the tab: header with Save and Pin, the two regions, narrow switch |
+| Fixed `TaskListSelector` (`selector`) | `C-TASK-LIST-SELECTOR`* | `koru::mini_app::chrome::Chrome::open_selector` | `koru_ui::Dropdown` over a paged `koru_ui::Menu` of buckets and lists |
+| Fixed `TaskCollection` (`tasks`) | `C-TASKS-VIEW`* | `koru::tasks_view::TasksView::collection_only` | the production Tasks view without capture or creation |
+| Fixed `DocumentSearch` (`search`) | `C-DOCUMENT-SEARCH`* | `koru::mini_app::chrome::Chrome::changed_query` | `koru_ui::TextInput` (`InputStyle::search`) and a floating `Menu`, reading through `H-ENTITY-SEARCH` |
+| Fixed and composition `DocumentHost` | `C-DOCUMENT-HOST`* | `koru::mini_app::MiniApp::land` | the landed document becomes the retained `Leaf` (`H-APP-LEAF`), which embeds `C-DOCUMENT-EDITOR` |
+| Composition `Row`, `Column`, `Box`, `Text`, `Spacer`, `Divider` | `P-ROW` … `P-DIVIDER` (batch 1) | `koru_draw::el::*` (`Component`) | built by `C-COMPOSITION-HOST`* |
+| Composition `Button` | `C-BUTTON` (batch 1) | `koru_ui::button::ActionButton` (`HostStyled`) | Primary when selected, Secondary otherwise, Save and Pin Ghost |
+
+Host-only app symbols, each the adapter's and never a declaration's:
+`MiniApp::from_declaration`, `fixture`, `refine`, `draw_surface`,
+`draw_composition`, `set_lists`, `Chrome::poll`, `composition::Surface`
+and its `layout`, the four token mappings (`spacing`, `text_role`,
+`ink_role`, `radius_role`), `TasksView` and `Leaf`. Platforms for the
+five catalog records follow PLATFORMS.md: Windows existing, macOS and
+Linux the shared source unverified, Android and iOS **unavailable** ("no
+generated-host integration", "unavailable for this catalog").
+
+### Part 1 — `mini_app`, `tasks_view`, `leaf.rs`
+
+| Folder | Non-test files | Read in full | Declarations | Searched | Records | Identities |
+| --- | --- | --- | --- | --- | --- | --- |
+| `apps/koru/src/mini_app` (+ `mini_app.rs`) | 7 | 7 | 0 | 0 | 5 | — |
+| `apps/koru/src/leaf.rs` | 1 | 0 | 1 | 0 | 1 | — |
+| `apps/koru/src/tasks_view` | 14 (+ `perf.rs`, test-only) | 1 (`mod.rs`) | 13 | 0 | 1 | — |
+
+`leaf.rs` by declarations: every item, the module and type documentation,
+`Leaf::document` and the title-row methods (1–270), the reminder and
+entity drains (519–578), the `Editing` and `View` impls (750–910).
+`tasks_view` by declarations: every top-level item of every file, the
+module documentation of `mod.rs`, `TasksView::new`, `collection_only` and
+its `impl View` (view.rs 3519), and the inspector scopes of `draw.rs`
+(`row::LIST` = "Task list", kind container, line 284; "Drop indicator",
+part, line 349), with the delegated reader's report for the bodies.
+
+Records (* minted here, `C-` and the thing's name):
+
+- `C-MINI-APP`* (`MiniApp`) — the tab both catalogs open in; Save and Pin
+  labels and requests (`artifact.rs`, `pin.rs`) and the refinement swap
+  (`refinement.rs`) are recorded on it; the region enum `Region`
+  (Tasks, Document) is its option set, labelled with the app's own words.
+- `C-TASK-LIST-SELECTOR`*, `C-DOCUMENT-SEARCH`*, `C-DOCUMENT-HOST`*,
+  `C-COMPOSITION-HOST`* — above.
+- `C-TASKS-VIEW`* (`TasksView`) — the whole Tasks page: heading
+  (`heading::tree`, an element tree), chips and overflow menu, capture row,
+  rows on `koru_ui::table` with `C-ROW-ATTRIBUTE-CHIPS` and the editor's
+  picker tables (`pickers.rs`).
+- `H-APP-LEAF`* (`Leaf`) — support: the app's `impl Editing for Leaf` and
+  `impl View for Leaf` over `koru_document::BuiltInDocument`, which embeds
+  `koru_editor::Editor`; every draw call is delegated, so it paints nothing
+  of its own. It passes the editor's reminder, entity-search and delegate
+  requests up (`take_reminder_request` …, `H-EDITOR-REMINDERS`); the
+  container drains them.
+
+Excluded modules: `mini_app::declaration` (data), `tasks_view::{echo,
+rank}` (data), `tasks_view::query` (io: the store query the container
+runs) and `tasks_view::perf` (test-only).
+
+Defects found here: the capture row's placeholder is English
+(`tasks_view/capture.rs:36`, "Add a task…  /due  /priority  /list"), so is
+the empty state's "Checking your workspaces…" (`tasks_view/states.rs:37`);
+the artifact worker's failures are English sentences
+(`mini_app/artifact.rs` 292, 355, 369) and `MiniApp::refine` refuses with
+English `&'static str` reasons (`refinement.rs` 131, 143); the mini app's
+header paints its own focus ring with `scene::stroke` rather than through
+the controls it outlines (`chrome.rs` 1019); no part of the mini app
+registers a component identity — its F12 ancestry is the element frame's
+node names ("Task document surface", "Composition"), which are inspector
+names, not translated text.
+
+### What batches 2a and 2b left for this batch
 
 | Owner | Non-test `.rs` files | Identity sites |
 | --- | --- | --- |

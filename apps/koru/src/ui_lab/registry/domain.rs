@@ -52,7 +52,14 @@ pub(super) const WEBVIEW: &[Entry] = webview::RECORDS;
 pub(super) const WINDOW: &[Entry] = window::RECORDS;
 pub(super) const WORKSPACE_HOST: &[Entry] = workspace_host::RECORDS;
 
-const fn source(owner: &'static str, module: &'static str, file: &'static str) -> Source {
+// The helpers below are shared with the apps' records (`super::app`), which
+// are written the same way.
+
+pub(super) const fn source(
+    owner: &'static str,
+    module: &'static str,
+    file: &'static str,
+) -> Source {
     Source {
         owner,
         module,
@@ -61,7 +68,7 @@ const fn source(owner: &'static str, module: &'static str, file: &'static str) -
 }
 
 #[allow(clippy::too_many_arguments)]
-const fn record(
+pub(super) const fn record(
     catalog_id: &'static str,
     public_name: &'static str,
     name: Key,
@@ -91,38 +98,38 @@ const fn record(
 }
 
 /// A symbol that paints and has no story yet.
-const fn painter(symbol: &'static str) -> Api {
+pub(super) const fn painter(symbol: &'static str) -> Api {
     plain(symbol, Story::NoStoryYet)
 }
 
 /// A painting symbol whose production values are listed.
-const fn painter_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
+pub(super) const fn painter_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
     plain_with(symbol, options, Story::NoStoryYet)
 }
 
 /// Geometry, input, outcomes, state or constants beside a surface.
-const fn support(symbol: &'static str) -> Api {
+pub(super) const fn support(symbol: &'static str) -> Api {
     plain(symbol, Story::Nonvisual)
 }
 
 /// Nonvisual, with the production values it carries.
-const fn support_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
+pub(super) const fn support_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
     plain_with(symbol, options, Story::Nonvisual)
 }
 
 /// Content a surface draws as its own — canvas objects, a document — shown
 /// through that surface rather than as a gallery story.
-const fn boundary(symbol: &'static str) -> Api {
+pub(super) const fn boundary(symbol: &'static str) -> Api {
     plain(symbol, Story::Boundary)
 }
 
 /// Content, with the kinds of it the source declares.
-const fn boundary_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
+pub(super) const fn boundary_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
     plain_with(symbol, options, Story::Boundary)
 }
 
 /// Nonvisual code the A2UI host uses to serve a fixed-catalog component; a
 /// declaration never names it.
-const fn host_only(symbol: &'static str) -> Api {
+pub(super) const fn host_only(symbol: &'static str) -> Api {
     api(symbol, &[], A2ui::HostOnly, Story::Nonvisual)
 }

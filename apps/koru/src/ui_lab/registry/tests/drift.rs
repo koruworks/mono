@@ -397,9 +397,10 @@ const COMPOSITION_MODEL: &str =
 /// keeps true.
 const MANIFEST: &str = include_str!("../MANIFEST.md");
 
-/// Every compiled-in source: the shared crates' and the domain crates'.
+/// Every compiled-in source: the shared crates', the domain crates' and the
+/// apps'.
 fn all_sources() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
-    SOURCES.iter().chain(domain::SOURCES)
+    SOURCES.iter().chain(domain::SOURCES).chain(app::SOURCES)
 }
 
 fn source(path: &str) -> &'static str {
@@ -830,6 +831,32 @@ fn every_option_set_is_its_source_declaration() {
         let text = source(set.file);
         let own = set.source.rsplit("::").next().unwrap();
         let idents: Vec<&str> = set.members.iter().map(|m| m.ident).collect();
+        // An app's types are rarely `pub`: read them whatever their visibility.
+        if app::is_app_file(set.file) {
+            match set.declared {
+                Declared::Enum => assert_eq!(
+                    idents,
+                    app::enum_members(text, own),
+                    "{} in {}",
+                    set.source,
+                    set.file
+                ),
+                Declared::Table => continue,
+                declared => {
+                    for ident in &idents {
+                        assert!(
+                            app::declares_value(text, ident, declared),
+                            "{}: no {ident} in {}",
+                            set.source,
+                            set.file
+                        );
+                    }
+                }
+            }
+            assert!(!idents.is_empty(), "{} lists nothing", set.source);
+            checked += 1;
+            continue;
+        }
         match set.declared {
             Declared::Enum => assert_eq!(
                 idents,
@@ -959,7 +986,17 @@ fn declares(text: &str, item: &str) -> bool {
 #[test]
 fn every_symbol_is_declared_under_its_path() {
     for entry in catalog() {
-        for (symbol, _, _) in symbols(entry) {
+        // An app's symbols are read whatever their visibility.
+        if app::owns(entry.source.owner) {
+            for (symbol, _, _) in symbols(entry) {
+                assert!(
+                    app::declared(symbol),
+                    "{}: {symbol} is not declared",
+                    entry.catalog_id
+                );
+            }
+        }
+        for (symbol, _, _) in symbols(entry).filter(|_| !app::owns(entry.source.owner)) {
             if symbol == entry.source.module && symbol.matches("::").count() == 1 {
                 // The record is the module's constants as a whole.
                 assert!(!files_of(&format!("{symbol}::_")).is_empty(), "{symbol}");
@@ -1087,10 +1124,12 @@ const NODE_KINDS: [&str; 8] = [
     "DocumentHost",
 ];
 
-/// Each A2UI component this batch's records stand behind is a catalog node
-/// kind, named once, and drawn by the host with the symbol the record names.
-/// `DocumentHost` is the app's retained editor: the app-local batch records
-/// it.
+/// Each A2UI component a record stands behind is a node kind of the
+/// composition catalog or a component of the fixed catalog, named once, and
+/// drawn by the host with the symbol the record names. `DocumentHost` is in
+/// both catalogs and is one thing — the app's retained editor — so it is
+/// claimed once; the app's records hold the fixed catalog's five to the host
+/// in `app::the_fixed_catalog_is_served_by_the_app_host`.
 #[test]
 fn the_a2ui_components_are_the_composition_catalogs() {
     let _ = node_name;
@@ -1107,9 +1146,10 @@ fn the_a2ui_components_are_the_composition_catalogs() {
     assert_eq!(claimed.len(), count, "an A2UI component is claimed twice");
     let mut expected: Vec<&str> = NODE_KINDS
         .into_iter()
-        .filter(|kind| *kind != "DocumentHost")
+        .chain(app::fixed_catalog_names())
         .collect();
     expected.sort_unstable();
+    expected.dedup();
     assert_eq!(claimed, expected);
     for kind in NODE_KINDS {
         assert!(
@@ -1349,6 +1389,26 @@ fn only_the_catalogs_symbols_claim_a2ui_support() {
     assert_eq!(
         supported,
         [
+            "koru::leaf::Leaf",
+            "koru::mini_app::MiniApp",
+            "koru::mini_app::MiniApp::draw_composition",
+            "koru::mini_app::MiniApp::draw_surface",
+            "koru::mini_app::MiniApp::fixture",
+            "koru::mini_app::MiniApp::from_declaration",
+            "koru::mini_app::MiniApp::land",
+            "koru::mini_app::MiniApp::refine",
+            "koru::mini_app::MiniApp::set_lists",
+            "koru::mini_app::chrome::Chrome::changed_query",
+            "koru::mini_app::chrome::Chrome::open_selector",
+            "koru::mini_app::chrome::Chrome::poll",
+            "koru::mini_app::composition::Surface",
+            "koru::mini_app::composition::Surface::layout",
+            "koru::mini_app::composition::ink_role",
+            "koru::mini_app::composition::radius_role",
+            "koru::mini_app::composition::spacing",
+            "koru::mini_app::composition::text_role",
+            "koru::tasks_view::TasksView",
+            "koru::tasks_view::TasksView::collection_only",
             "koru_draw::el::Align",
             "koru_draw::el::El::fill",
             "koru_draw::el::El::hug_h",
@@ -1594,7 +1654,7 @@ fn counts() -> Vec<(&'static str, usize)> {
     identities.dedup();
     let story = |s: fn(&Story) -> bool| all_symbols.iter().filter(|(_, _, st)| s(st)).count();
     let a2ui = |a: fn(&A2ui) -> bool| all_symbols.iter().filter(|(_, x, _)| a(x)).count();
-    vec![
+    let mut rows = vec![
         (
             "koru-ui public modules",
             ui.iter().filter(|(_, p)| *p).count(),
@@ -1619,6 +1679,9 @@ fn counts() -> Vec<(&'static str, usize)> {
             domain_modules.iter().filter(|(_, p)| *p).count(),
         ),
         ("domain crate modules excluded", domain_excluded),
+    ];
+    rows.extend(app::counts());
+    rows.extend([
         ("records", entries.len()),
         (
             "records: foundations",
@@ -1641,6 +1704,7 @@ fn counts() -> Vec<(&'static str, usize)> {
             "kind: domain composition",
             count(&|e| e.kind == Kind::DomainComposition),
         ),
+        ("kind: app-local", count(&|e| e.kind == Kind::AppLocal)),
         ("token values listed", option_members(Kind::Token)),
         ("symbols", all_symbols.len()),
         (
@@ -1690,7 +1754,8 @@ fn counts() -> Vec<(&'static str, usize)> {
         ),
         ("A2UI: host only", a2ui(|a| *a == A2ui::HostOnly)),
         ("A2UI: not supported", a2ui(|a| *a == A2ui::NotSupported)),
-    ]
+    ]);
+    rows
 }
 
 /// The manifest's counts table is the registration's: a record added,
@@ -1725,4 +1790,5 @@ fn the_manifests_counts_are_the_registrations() {
     );
 }
 
+mod app;
 mod domain;
