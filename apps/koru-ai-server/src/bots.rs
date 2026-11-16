@@ -81,6 +81,25 @@ impl BotAuthority for BotAuthorityAdapter {
     ) -> Result<RoutineOverviewObservation, BotError> {
         routine::overview::read(self, owner, reader, identity, cancellation)
     }
+    fn read_routine_detail_page(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        _observed_at_ms: i64,
+        before: Option<i64>,
+        limit: u8,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<(RoutineDetailObservation, RoutineFiringsObservation), BotError> {
+        routine::overview::read_detail_page(
+            self,
+            owner,
+            reader,
+            identity,
+            Some((before, limit)),
+            cancellation,
+        )
+    }
     fn verify_routine_definition(
         &self,
         owner: BotOwner,
@@ -97,6 +116,27 @@ impl BotAuthority for BotAuthorityAdapter {
             identity,
             definition,
             owner_handoff,
+            koru_delegate_document::RoutineOccurrenceLifecycle::Active,
+            cancellation,
+        )
+    }
+    fn verify_routine_test_definition(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        definition: &koru_ai_core::bots::RoutineScheduleDefinition,
+        owner_handoff: Option<koru_delegate_core::HandoffId>,
+        cancellation: &koru_ai_core::Cancellation,
+    ) -> Result<(), BotError> {
+        routine::verify_definition(
+            self,
+            owner,
+            reader,
+            identity,
+            definition,
+            owner_handoff,
+            koru_delegate_document::RoutineOccurrenceLifecycle::TestPausedManual,
             cancellation,
         )
     }

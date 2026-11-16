@@ -11,6 +11,7 @@ use koru_delegate_schedule::{
 use serde::{Deserialize, Serialize};
 
 mod access;
+mod control;
 mod creation;
 mod detail;
 mod listing;
@@ -19,6 +20,7 @@ mod overview;
 mod owner;
 mod preparation;
 pub use access::*;
+pub use control::*;
 pub use creation::*;
 pub use detail::*;
 /// Existing recurrence owner, reused without adding an adapter dependency edge.
@@ -28,6 +30,8 @@ pub use koru_delegate_schedule::ScheduleContextPointer as RoutineScheduleContext
 pub use koru_delegate_schedule::ScheduleDefinition as RoutineScheduleDefinition;
 /// Existing name owner, reused by trusted in-process setup arguments.
 pub use koru_delegate_schedule::ScheduleName as RoutineScheduleName;
+/// Existing state owner, reused by the owner controls' replies.
+pub use koru_delegate_schedule::ScheduleState as RoutineScheduleState;
 use koru_delegate_schedule::routine_wire as strict;
 pub use listing::*;
 pub use occurrence::*;

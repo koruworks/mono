@@ -504,7 +504,13 @@ impl WorkerState {
                     | BotCommand::ListBotChats { .. }
                     | BotCommand::ReadRun { .. }
                     | BotCommand::ReadTaskAnswer { .. }
-                    | BotCommand::StopTask { .. } => {}
+                    | BotCommand::StopTask { .. }
+                    // Owner and home metadata only; a control's own job
+                    // proves its pages and reads its Schedule.
+                    | BotCommand::SetRoutineLifecycle { .. }
+                    | BotCommand::TestRoutine { .. }
+                    | BotCommand::EditRoutine { .. }
+                    | BotCommand::UpdateRoutineAccess { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -688,10 +694,14 @@ impl WorkerState {
             }
             _ => false,
         };
+        // An owner control of a Routine is the same again: it reads the Bot
+        // and the Routine's creation row at dispatch, checks the Schedule's
+        // own revision at its owner, and reads both again before it answers.
         let read = routine_replay
             || matches!(&command, WorkerCommand::Bots { request, .. }
             if super::lifecycle::bot_read_command(request)
-                || matches!(request, BotCommand::StopTask { .. }));
+                || matches!(request, BotCommand::StopTask { .. })
+                || request.routine_control().is_some());
         for (id, chat, revision, policy) in &proof.chats {
             let owner = self.repository.bot_for_chat(*chat).ok().flatten();
             match super::lifecycle::provable_bot(&self.repository, *id, &command) {
@@ -764,6 +774,12 @@ pub(super) fn bot_targets(
             | BotCommand::ListMemory { bot_id, .. }
             | BotCommand::ReadRoutines { bot_id, .. }
             | BotCommand::ReadRoutineDetail { bot_id, .. }
+            // An owner control of a Routine proves its Bot's owner and home;
+            // the pages of an access edit are proved fresh by its own job.
+            | BotCommand::SetRoutineLifecycle { bot_id, .. }
+            | BotCommand::TestRoutine { bot_id, .. }
+            | BotCommand::EditRoutine { bot_id, .. }
+            | BotCommand::UpdateRoutineAccess { bot_id, .. }
             | BotCommand::ReadMemoryFact { bot_id, .. }
             | BotCommand::Update { bot_id, .. }
             | BotCommand::UpdateAccess { bot_id, .. }

@@ -14,11 +14,14 @@ pub(in crate::bots) fn read(
             name,
             definition_revision,
             state,
-            ..
+            effective_at_ms,
+            recurrence,
         } => RoutineOverviewObservation::Current {
             name,
             definition_revision,
             state,
+            effective_at_ms,
+            recurrence,
         },
         RoutineDetailObservation::NotLive => RoutineOverviewObservation::NotLive,
         RoutineDetailObservation::Unavailable => RoutineOverviewObservation::Unavailable,
@@ -32,6 +35,25 @@ pub(in crate::bots) fn read_detail(
     identity: &BotRoutineCreationIdentity,
     cancel: &Cancellation,
 ) -> Result<RoutineDetailObservation, BotError> {
+    read_detail_page(adapter, owner, reader, identity, None, cancel)
+        .map(|(observation, _)| observation)
+}
+
+/// The same observation, with one page of the Schedule's own firings when
+/// `history` asks for one. `firings()` decodes the whole list (its order is
+/// merge order, not time order, so no tail read exists), sorts it and takes
+/// the newest entries below the cursor: linear in every firing the Routine
+/// ever had, off both writers, on a document whose import is bounded. Only
+/// the selected detail asks; a list row never does. A firing list that does
+/// not decode leaves the rest of the observation intact.
+pub(in crate::bots) fn read_detail_page(
+    adapter: &BotAuthorityAdapter,
+    owner: BotOwner,
+    reader: ProfileId,
+    identity: &BotRoutineCreationIdentity,
+    history: Option<(Option<i64>, u8)>,
+    cancel: &Cancellation,
+) -> Result<(RoutineDetailObservation, RoutineFiringsObservation), BotError> {
     identity.validate_digests()?;
     if identity.owner.user_scope != owner.user_scope
         || identity.owner.device != owner.device
@@ -79,7 +101,10 @@ pub(in crate::bots) fn read_detail(
         })
         .map_err(|_| BotError::Unavailable);
     let result = match read {
-        Ok(Ok(None)) => Ok(RoutineDetailObservation::NotLive),
+        Ok(Ok(None)) => Ok((
+            RoutineDetailObservation::NotLive,
+            RoutineFiringsObservation::Unavailable,
+        )),
         Ok(Ok(Some((fork, origin)))) => {
             let projected = (|| {
                 cancelled(cancel)?;
@@ -104,18 +129,45 @@ pub(in crate::bots) fn read_detail(
                 {
                     return Err(BotError::Invalid);
                 }
-                Ok(RoutineDetailObservation::Current {
-                    name: current.name,
-                    definition_revision: current.definition_revision,
-                    state: current.state,
-                    effective_at_ms: projected.effective_at_ms,
-                    recurrence: projected.recurrence,
-                })
+                let firings = match history {
+                    Some((before, limit)) => {
+                        cancelled(cancel)?;
+                        match doc.firings() {
+                            Ok(firings) => RoutineFiringsObservation::page(
+                                firings.into_iter().map(|firing| RoutineFiringLine {
+                                    occurrence_ms: firing.occurrence_ms,
+                                    outcome: firing.outcome.into(),
+                                    recorded_at_ms: firing.at,
+                                }),
+                                before,
+                                limit,
+                            ),
+                            Err(_) => RoutineFiringsObservation::Unavailable,
+                        }
+                    }
+                    None => RoutineFiringsObservation::Unavailable,
+                };
+                Ok((
+                    RoutineDetailObservation::Current {
+                        name: current.name,
+                        definition_revision: current.definition_revision,
+                        state: current.state,
+                        effective_at_ms: projected.effective_at_ms,
+                        recurrence: projected.recurrence,
+                    },
+                    firings,
+                ))
             })();
-            Ok(projected.unwrap_or(RoutineDetailObservation::Unavailable))
+            Ok(projected.unwrap_or((
+                RoutineDetailObservation::Unavailable,
+                RoutineFiringsObservation::Unavailable,
+            )))
         }
         Ok(Err(BotError::Forbidden)) => Err(BotError::Forbidden),
-        _ => Ok(RoutineDetailObservation::Unavailable),
+        _ => Ok((
+            RoutineDetailObservation::Unavailable,
+            RoutineFiringsObservation::Unavailable,
+        )),
     };
     finish(adapter, owner, reader, identity.home, cancel, result)
 }

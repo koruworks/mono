@@ -60,6 +60,9 @@ pub struct BotRoutineCreationSource {
     pub policy_revision: u64,
     pub model: crate::ModelSelection,
     pub folder: String,
+    /// The Bot's own access now. A new Routine does not start from it
+    /// (D4a): it is kept only so a creation prepared before that change,
+    /// which copied it, is still recognized while it finishes.
     pub policy: CapturedBotPolicy,
 }
 impl std::fmt::Debug for BotRoutineCreationSource {
@@ -119,11 +122,28 @@ impl BotRoutineCreationSource {
                 .collect(),
         })
     }
+    /// The grant a new Routine starts from (D4a): the approved default
+    /// access, with no selected pages, in the Bot's home. It is not a copy
+    /// of the Bot's access; only the Bot policy revision observed at
+    /// creation is recorded. The model cannot supply a grant.
     fn grant(&self) -> Result<BotRoutineGrant, BotError> {
+        self.grant_of(CapturedBotPolicy {
+            workspace: self.home,
+            destination: self.home,
+            access: BotAccess::Default,
+            selected_pages: Default::default(),
+        })
+    }
+    /// The grant a creation prepared before D4a froze: a copy of the Bot's
+    /// access. Never given to a new Routine.
+    fn copied_grant(&self) -> Result<BotRoutineGrant, BotError> {
+        self.grant_of(self.policy.clone())
+    }
+    fn grant_of(&self, policy: CapturedBotPolicy) -> Result<BotRoutineGrant, BotError> {
         let mut grant = BotRoutineGrant {
             source_bot_policy_revision: self.policy_revision,
             grant_revision: 1,
-            policy: self.policy.clone(),
+            policy,
             digest: RoutineDigest32::from_bytes([0; 32]),
         };
         grant.validate(self.home)?;
@@ -268,7 +288,9 @@ impl BotRoutineCreationIdentity {
             && self.bot == source.bot
             && self.home == source.home
             && self.expected_bot_revision == source.revision
-            && self.grant == source.grant()?
+            // A Routine keeps the grant it was given: the default, or the
+            // copy of the Bot's access a creation froze before D4a.
+            && (self.grant == source.grant()? || self.grant == source.copied_grant()?)
             && self.seed.header.definition.template == source.template(&command)?)
     }
 }

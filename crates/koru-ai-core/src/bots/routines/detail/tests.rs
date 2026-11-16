@@ -52,6 +52,10 @@ fn detail() -> BotRoutineDetail {
             items: vec![],
             next_before_occurrence_ms: None,
         },
+        occurrences: RoutineOccurrenceHistoryObservation::Available {
+            items: vec![],
+            next_before_occurrence_ms: None,
+        },
     }
 }
 #[test]

@@ -48,9 +48,9 @@ impl ListingProgress {
     }
     pub(in crate::worker::bots::routine) fn observe(
         &mut self,
-        observation: RoutineOverviewObservation,
+        observation: BotRoutineLiveObservation,
     ) -> ApiResult<()> {
-        self.items.last_mut().ok_or_else(unavailable_failure)?.live = observation.into();
+        self.items.last_mut().ok_or_else(unavailable_failure)?.live = observation;
         Ok(())
     }
     pub(in crate::worker::bots::routine) fn finish(

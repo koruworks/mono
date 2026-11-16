@@ -5,7 +5,7 @@
 use super::*;
 use koru_ai_core::bots::{
     BotRoutineCreation, BotRoutineCreationIdentity, BotRoutineCreationState,
-    BotRoutineStoredPreparation,
+    BotRoutineCurrentGrant, BotRoutineStoredPreparation,
 };
 use koru_delegate_core::{RoutineClaimObservation, RoutineLinkState, RoutinePolicyBarrier};
 
@@ -13,22 +13,33 @@ use koru_delegate_core::{RoutineClaimObservation, RoutineLinkState, RoutinePolic
 pub(in crate::worker) struct RoutineLookup {
     occurrence: BotRoutineStoredPreparation,
     creation: BotRoutineCreation,
+    /// The grant the Routine runs under now, from the one reader.
+    current: BotRoutineCurrentGrant,
 }
 
-/// Initial independent grant tuple, shared by Linked-native proof and preclaim.
-/// Callers validate the complete retained Bound identity and current authority.
-pub(in crate::worker) fn initial_barrier(
+/// The Routine's independent policy barrier, built from the grant it runs
+/// under now: the one function shared by Linked-native proof, preclaim and the
+/// access edit. `current` comes from the one reader
+/// (`Repository::routine_current_grant`), never from today's Bot settings.
+///
+/// For revision 1 the request is the creation request, so no barrier
+/// installed before an access edit existed changes. For an edited grant it is
+/// the edit's own request; the ledger allows one request per grant revision
+/// and refuses a lower revision. Callers validate the complete retained Bound
+/// identity and current authority.
+pub(in crate::worker) fn current_barrier(
     identity: &BotRoutineCreationIdentity,
+    current: &BotRoutineCurrentGrant,
 ) -> RoutinePolicyBarrier {
     RoutinePolicyBarrier {
         owner: identity.owner,
         bot: identity.bot,
         schedule: identity.schedule,
-        request: identity.creation_request.into(),
-        grant_revision: identity.grant.grant_revision,
-        policy: identity.grant.policy.clone(),
-        // O86 freezes the initial independent grant. Global lifecycle fencing
-        // remains separate; Schedule Pause does not stop an admitted Run.
+        request: current.request.into(),
+        grant_revision: current.grant.grant_revision,
+        policy: current.grant.policy.clone(),
+        // Global lifecycle fencing remains separate; Schedule Pause does not
+        // stop an admitted Run.
         effects_allowed: true,
     }
 }
@@ -47,7 +58,7 @@ impl RoutineLookup {
         }
     }
     pub(in crate::worker::bots) fn barrier(&self) -> RoutinePolicyBarrier {
-        super::initial_routine_barrier(&self.creation.identity)
+        current_barrier(&self.creation.identity, &self.current)
     }
 
     pub(in crate::worker::bots) fn verify_delegate(
@@ -122,6 +133,13 @@ pub(in crate::worker::bots) fn snapshot(
         .bot_routine_creation(owner(bot), bot.id, subject.schedule)
         .map_err(bot_failure)?
         .ok_or_else(not_found)?;
+    // There is no grant history: only the current grant can be read. An
+    // access edit is refused while a Run of the Routine is unsettled, so a
+    // live Run's capture always equals it. A capture at any other revision
+    // is refused.
+    let current = repository
+        .routine_current_grant(owner(bot), bot.id, subject.schedule)
+        .map_err(bot_failure)?;
     let prepared = &occurrence.prepared;
     if creation.state != BotRoutineCreationState::Bound
         || creation.identity.home != bot.home_workspace
@@ -129,15 +147,15 @@ pub(in crate::worker::bots) fn snapshot(
         || prepared.submission.policy != request.captured
         || prepared.ids.run != request.run
         || occurrence.capture.creation != creation.identity.route()
-        || occurrence.capture.grant != creation.identity.grant
-        || creation.identity.grant.grant_revision != 1
-        || subject.grant_revision != 1
+        || occurrence.capture.grant != current.grant
+        || subject.grant_revision != current.grant.grant_revision
     {
         return Err(bot_failure(BotError::Forbidden));
     }
     Ok(Some(Box::new(RoutineLookup {
         occurrence,
         creation,
+        current,
     })))
 }
 

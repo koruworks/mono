@@ -9,6 +9,7 @@ use std::{
     sync::{Mutex, atomic::AtomicUsize},
     task::{Context, Poll, Wake, Waker},
 };
+mod access;
 mod cases;
 mod preclaim;
 use crate::fixtures::catalog::Catalog;
@@ -89,6 +90,9 @@ struct Delegate {
     terminal_on_ack: Mutex<Option<RoutineTerminalReason>>,
     read_gate: Mutex<Option<Gate>>,
     ack_gate: Mutex<Option<Gate>>,
+    /// The scripted schedule coordinator, for the cases that drive an owner
+    /// control of the Routine (P4.3). Absent, a control is unexpected here.
+    routines: Mutex<Option<Arc<crate::worker::bots::routine::control::tests::Coordinator>>>,
 }
 impl Delegate {
     fn new(owner: koru_delegate_core::BotOwner) -> Self {
@@ -104,6 +108,7 @@ impl Delegate {
             terminal_on_ack: Default::default(),
             read_gate: Default::default(),
             ack_gate: Default::default(),
+            routines: Default::default(),
         }
     }
 }
@@ -163,6 +168,17 @@ impl BotDelegatePort for Delegate {
         command: DelegateCommand,
         within: Duration,
     ) -> Result<BotReply, koru_delegate_api::Failure> {
+        let routines = self.routines.lock().unwrap().clone();
+        if let Some(routines) = routines
+            && matches!(
+                command,
+                DelegateCommand::ControlRoutine { .. }
+                    | DelegateCommand::TestRoutine { .. }
+                    | DelegateCommand::UnsettledWork { .. }
+            )
+        {
+            return routines.execute_within(command, within);
+        }
         if let Some(answer) = self.preclaim.answer(&command, within) {
             return answer;
         }
@@ -314,6 +330,43 @@ impl BotAuthority for Authority {
         self.adapter
             .verify_routine_definition(owner, profile, identity, definition, handoff, cancel)
     }
+    fn verify_routine_test_definition(
+        &self,
+        owner: BotOwner,
+        profile: koru_ai_core::ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        definition: &RoutineScheduleDefinition,
+        handoff: Option<koru_delegate_core::HandoffId>,
+        cancel: &Cancellation,
+    ) -> Result<(), BotError> {
+        self.verifies.fetch_add(1, Ordering::AcqRel);
+        self.adapter
+            .verify_routine_test_definition(owner, profile, identity, definition, handoff, cancel)
+    }
+    fn read_routine_detail(
+        &self,
+        owner: BotOwner,
+        profile: koru_ai_core::ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        at: i64,
+        cancel: &Cancellation,
+    ) -> Result<RoutineDetailObservation, BotError> {
+        self.adapter
+            .read_routine_detail(owner, profile, identity, at, cancel)
+    }
+    fn read_routine_detail_page(
+        &self,
+        owner: BotOwner,
+        profile: koru_ai_core::ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        at: i64,
+        before: Option<i64>,
+        limit: u8,
+        cancel: &Cancellation,
+    ) -> Result<(RoutineDetailObservation, RoutineFiringsObservation), BotError> {
+        self.adapter
+            .read_routine_detail_page(owner, profile, identity, at, before, limit, cancel)
+    }
     fn capture(
         &self,
         owner: BotOwner,
@@ -373,6 +426,10 @@ impl Harness {
         .with_session_host(catalog.endpoint.clone());
         config.test_repository = Some(repository);
         config.test_repository_return = Some(returning);
+        // The owner controls read a fixed clock, five seconds into the
+        // minute this harness prepares: an owner Test names that minute.
+        let minute = request.slot.occurrence_ms;
+        config.test_routine_clock = Some(Arc::new(move || minute + 5_000));
         let worker = AiWorker::new(config).spawn().unwrap();
         let h = Self {
             fixture,
@@ -451,6 +508,8 @@ impl Harness {
         .with_session_host(self.catalog.endpoint.clone());
         config.test_repository = Some(repository);
         config.test_repository_return = Some(send);
+        let minute = self.request.slot.occurrence_ms;
+        config.test_routine_clock = Some(Arc::new(move || minute + 5_000));
         self.returned = returned;
         self.worker = Some(AiWorker::new(config).spawn().unwrap());
     }

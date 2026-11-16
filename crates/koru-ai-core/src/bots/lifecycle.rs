@@ -318,6 +318,17 @@ pub struct BotLifecycleProgress {
     /// record in this version. Omitted when empty: Archive, Restore.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub left_in_place: Vec<BotLeftInPlace>,
+    /// After a Restore: the Bot's Routines whose access can no longer be
+    /// read. Each stays paused, and turning it on is refused, until its
+    /// access is chosen again. Wire-only; never stored. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routines_needing_access: Vec<koru_delegate_core::ScheduleId>,
+    /// After the Restore of an Archive or Trash that stopped before it
+    /// finished: the Bot's Routines that were not confirmed paused, and so
+    /// may still be on. The Bot returns paused, so none of them runs until
+    /// it is resumed. Wire-only; never stored. Omitted when empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub routines_still_on: Vec<koru_delegate_core::ScheduleId>,
 }
 
 /// Something a lifecycle operation leaves in place rather than moving to

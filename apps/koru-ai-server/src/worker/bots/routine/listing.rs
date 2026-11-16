@@ -120,7 +120,7 @@ enum Phase {
 enum Evidence {
     Owner(BotOwner),
     Authority,
-    Item(RoutineOverviewObservation),
+    Item(BotRoutineLiveObservation),
     Finished,
 }
 pub(in crate::worker) struct ListingJob {
@@ -135,6 +135,9 @@ pub(in crate::worker) struct ListingJob {
     reply: SyncSender<ApiResult<BotResponse>>,
     phase: Phase,
     progress: Option<ListingProgress>,
+    observed_at_ms: i64,
+    /// This computer's time zone, read for each row, never cached.
+    zone: Option<control::ZoneSource>,
 }
 pub(in crate::worker) struct ListingResult {
     job: ListingJob,
@@ -196,7 +199,14 @@ impl ListingJob {
                     );
                     // Even an item refusal must not hide a shared human change.
                     self.current()?;
-                    Evidence::Item(value.map_err(bot_failure)?)
+                    // The next time, computed as the detail computes it. A
+                    // row reads no history.
+                    let this = control::this_computer(self.zone.as_ref(), s.metadata.owner.device);
+                    Evidence::Item(BotRoutineLiveObservation::observed(
+                        value.map_err(bot_failure)?,
+                        self.observed_at_ms,
+                        this.as_ref(),
+                    ))
                 }
                 Phase::Finish => {
                     self.current()?;
@@ -254,6 +264,8 @@ impl WorkerState {
                 reply: reply.clone(),
                 phase: Phase::Owner,
                 progress: None,
+                observed_at_ms: Timestamp::now().millis(),
+                zone: self.routine_controls.zone(),
             })
         })();
         match prepared {

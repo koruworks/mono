@@ -612,6 +612,8 @@ fn listing_prepared_run_read_and_stop_lanes_are_independent_of_held_store_phase(
             checkpoints: vec![checkpoint],
             items: vec![item],
         }),
+        observed_at_ms: 0,
+        zone: None,
     };
     let (output, completion) = sync_channel(8);
     let mut pool =

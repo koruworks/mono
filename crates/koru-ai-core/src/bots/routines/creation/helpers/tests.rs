@@ -58,7 +58,7 @@ fn frozen() -> BotRoutineCreationIdentity {
 #[test]
 fn creation_seed_and_grant_have_digest_free_golden_bytes() {
     let frozen = frozen();
-    let grant = r#"{"version":1,"source_bot_policy_revision":3,"grant_revision":1,"policy":{"workspace":"00000000-0000-4000-8000-000000000003","access":"default","selected_pages":["00000000-0000-4000-8000-000000000009","00000000-0000-4000-8000-00000000000a"],"destination":"00000000-0000-4000-8000-000000000003"}}"#;
+    let grant = r#"{"version":1,"source_bot_policy_revision":3,"grant_revision":1,"policy":{"workspace":"00000000-0000-4000-8000-000000000003","access":"default","selected_pages":[],"destination":"00000000-0000-4000-8000-000000000003"}}"#;
     assert_eq!(
         String::from_utf8(frozen.grant.canonical_bytes().unwrap()).unwrap(),
         grant
@@ -68,7 +68,7 @@ fn creation_seed_and_grant_have_digest_free_golden_bytes() {
     assert_eq!(actual, seed.replace("FOLDER", &fixture().1.folder));
     assert_eq!(
         String::from(frozen.grant.canonical_digest().unwrap()),
-        "3216545206e20bd147a806109d66a11379c695962ed4eb90fe42584ca07d8b6e"
+        "e77bdbb88a8a93ba34e9ae8eb61a9ef26f168a8dcee20f80c1a74447ad6a0c6e"
     );
     assert_eq!(
         String::from(frozen.seed.canonical_digest().unwrap()),
@@ -85,6 +85,50 @@ fn creation_seed_and_grant_have_digest_free_golden_bytes() {
     changed = frozen.clone();
     changed.seed.header.created_at_ms = 1;
     assert!(changed.validate_digests().is_err());
+}
+
+/// D4a: a new Routine starts from the approved default access (default, no
+/// selected pages, the Bot's home as workspace and destination), whatever the
+/// Bot's own access is. Only the Bot policy revision observed is recorded.
+#[test]
+fn creation_grant_is_the_default_access_and_never_a_copy_of_the_bots() {
+    let (command, mut source) = fixture();
+    let home = source.home;
+    // The Bot itself may edit any page of the workspace, and has pages.
+    source.policy.access = BotAccess::Workspace;
+    assert_eq!(source.policy.selected_pages.len(), 2);
+    let frozen = command
+        .freeze(
+            &source,
+            ScheduleId::from_uuid(id(5)),
+            id(7),
+            RoutineDigest32::from_bytes([11; 32]),
+            0,
+        )
+        .unwrap();
+    assert_eq!(frozen.grant.policy.access, BotAccess::Default);
+    assert!(frozen.grant.policy.selected_pages.is_empty());
+    assert_eq!(frozen.grant.policy.workspace, home);
+    assert_eq!(frozen.grant.policy.destination, home);
+    assert_eq!(frozen.grant.grant_revision, 1);
+    assert_eq!(frozen.grant.source_bot_policy_revision, 3);
+    frozen.validate_digests().unwrap();
+    assert!(frozen.matches_source(&source).unwrap());
+    // A change of the Bot's access after creation changes the policy
+    // revision, so an unfinished creation is still recognized as changed.
+    source.policy_revision = 4;
+    assert!(!frozen.matches_source(&source).unwrap());
+    // A creation prepared before the change froze a copy of the Bot's
+    // access. It keeps that grant and is still recognized while it finishes.
+    source.policy_revision = 3;
+    let mut copied = frozen.clone();
+    copied.grant.policy = source.policy.clone();
+    copied.grant.digest = copied.grant.canonical_digest().unwrap();
+    assert!(copied.matches_source(&source).unwrap());
+    // Any other grant is not this source's.
+    copied.grant.policy.selected_pages.pop_first();
+    copied.grant.digest = copied.grant.canonical_digest().unwrap();
+    assert!(!copied.matches_source(&source).unwrap());
 }
 
 #[test]

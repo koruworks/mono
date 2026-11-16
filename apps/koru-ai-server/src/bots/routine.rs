@@ -2,7 +2,7 @@
 //! Exact retained Schedule creation on the existing private Store owner.
 use super::*;
 use koru_ai_core::Cancellation;
-use koru_delegate_document::{SCHEDULE_KIND, ScheduleDocument};
+use koru_delegate_document::{RoutineOccurrenceLifecycle, SCHEDULE_KIND, ScheduleDocument};
 use koru_store_core::ports::{CreationOrigin, CreationOriginLookup};
 use koru_store_server::WorkerStore;
 pub(super) mod overview;
@@ -22,6 +22,7 @@ pub(super) fn verify_definition(
     identity: &BotRoutineCreationIdentity,
     definition: &RoutineScheduleDefinition,
     epoch: Option<koru_delegate_core::HandoffId>,
+    expected: RoutineOccurrenceLifecycle,
     cancel: &Cancellation,
 ) -> Result<(), BotError> {
     identity.validate_digests()?;
@@ -91,12 +92,15 @@ pub(super) fn verify_definition(
     let snapshot = document
         .export_snapshot()
         .map_err(|_| BotError::Unavailable)?;
-    ScheduleDocument::verify_routine_occurrence_snapshot(
+    // The caller states the lifecycle it expects; Active is every scheduled
+    // occurrence, and only an owner Test states exactly Paused(Manual).
+    ScheduleDocument::verify_routine_occurrence_snapshot_expecting(
         &snapshot,
         route.schedule,
         definition,
         owner.device,
         epoch,
+        expected,
     )
     .map_err(|_| BotError::Conflict)?;
     let owned = route.clone();

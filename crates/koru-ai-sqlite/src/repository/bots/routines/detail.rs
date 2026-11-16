@@ -26,10 +26,25 @@ impl std::fmt::Debug for RoutineDetailSnapshot {
     }
 }
 impl RoutineDetailSnapshot {
+    /// The detail with no firing list read: `occurrences` is unavailable.
     pub fn response(
         &self,
         observed_at_ms: i64,
         live: RoutineDetailLive,
+    ) -> Result<BotRoutineDetail, BotError> {
+        self.response_with(
+            observed_at_ms,
+            live,
+            &RoutineFiringsObservation::Unavailable,
+        )
+    }
+    /// The detail with one page of the Schedule's own firings, joined by
+    /// minute with this computer's linked conversations.
+    pub fn response_with(
+        &self,
+        observed_at_ms: i64,
+        live: RoutineDetailLive,
+        firings: &RoutineFiringsObservation,
     ) -> Result<BotRoutineDetail, BotError> {
         let c = &self.creation;
         Ok(BotRoutineDetail {
@@ -60,6 +75,13 @@ impl RoutineDetailSnapshot {
                 .ok()
                 .and_then(|h| h.history(self.limit).ok())
                 .unwrap_or(RoutineLocalHistoryObservation::Unavailable {}),
+            occurrences: match &self.history {
+                Ok(local) => firings.history(&local.occurrences()),
+                // A firing from another computer needs no local row, but a
+                // local read that failed must not show a Test as an ordinary
+                // minute.
+                Err(_) => RoutineOccurrenceHistoryObservation::Unavailable {},
+            },
         })
     }
 }

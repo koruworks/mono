@@ -12,7 +12,17 @@
 //!    coordination, then the effects-off policy barrier is installed. Trash
 //!    of an archived Bot has neither (it is already paused and settled) and
 //!    goes straight to `settling`, which still asks the delegate.
-//! 2. `settling`: work the owner had not admitted when the operation was
+//! 2. `settling` starts by pausing the Bot's Routines (P4.3), on every
+//!    whole-Bot path. Each captured Routine is paused by the delegate's
+//!    schedule coordinator, with the revision last read, and its member is
+//!    acknowledged only on the coordinator's own answer, never from this
+//!    driver's read of the Schedule. The Bot's admission barrier is already
+//!    paused when this starts, and the coordinator refuses Enable while it
+//!    is, so no Routine is on inside a completed Archive or Trash: an Enable
+//!    that raced either landed before this Pause, which turns it off, or is
+//!    handled after it and is refused. A Routine another computer owns, or
+//!    one whose owner does not answer, parks the operation.
+//!    Then work the owner had not admitted when the operation was
 //!    captured is refused, never admitted: each attempt not yet ended is
 //!    stopped as the person's Stop and its receipt resolved through the
 //!    refusal fence, which may move the Bot's revision (the completion
@@ -53,10 +63,14 @@
 //! the same request, or one naming only its id, resumes it. Unarchive, the
 //! Restore of a Trash and the Restore of a conversation's Trash are each
 //! applied in one transaction with no owner call; the Bot comes back paused
-//! and nothing starts. Purge refuses until its slice.
+//! and nothing starts. Its Routines keep the state they have: a Restore
+//! turns none on and pauses none, and its answer names each Routine whose
+//! access no longer reads and, for an operation that had parked, each one
+//! not confirmed paused. Purge refuses until its slice.
 use super::*;
 use koru_ai_sqlite::{
-    BotHold, LifecycleCapture, LifecycleMemberDraft, LifecycleOperation, ParkedCursor,
+    BotHold, LifecycleCapture, LifecycleMemberDraft, LifecycleOperation, LifecycleRoutineAnswer,
+    ParkedCursor,
 };
 use koru_ai_wire::bot_lifecycle_codes;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
@@ -182,6 +196,9 @@ pub(in crate::worker) struct LifecycleJob {
 enum Step {
     /// Install (idempotently) the effects-off policy barrier.
     Policy(BotPolicyBarrier),
+    /// Ask the schedule coordinator to pause each of these Routines, with the
+    /// definition revision last read.
+    PauseRoutines(Vec<BotRoutineCreationIdentity>),
     /// Ask the delegate what of the Bot it has not settled, then stop, as
     /// the person's Stop, each of those that is not a live conversation task
     /// of this writer (`live`), which stops through its own lane.
@@ -208,6 +225,8 @@ pub(in crate::worker) struct LifecycleResult {
 }
 enum Outcome {
     Policy(Result<BotPolicyBarrierState, koru_delegate_api::Failure>),
+    /// The coordinator's answer for each Routine asked.
+    Routines(Vec<(koru_delegate_core::ScheduleId, RoutinePause)>),
     Settle(Result<Unsettled, koru_delegate_api::Failure>),
     ChatRead(Result<ChatWork, koru_delegate_api::Failure>),
     /// The Stops went out; their answers are read again next round.
@@ -215,6 +234,78 @@ enum Outcome {
     /// The owner of a parked operation answered (or not).
     Probe(Probed),
 }
+/// The schedule coordinator's answer to one Routine's Pause. Only this
+/// settles a Routine member.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RoutinePause {
+    /// It paused the Routine, or found it already paused.
+    Paused,
+    /// No live Schedule: it was deleted or retired.
+    Gone,
+    /// Another computer owns it, or a handoff is pending: asking again here
+    /// will not pause it.
+    Elsewhere,
+    /// No answer, or none this driver can act on.
+    NoAnswer,
+}
+/// The most times one Routine's Pause is sent again after its revision moved.
+const ROUTINE_PAUSE_ATTEMPTS: usize = 3;
+/// The longest one Routine's Pause waits on the coordinator.
+const ROUTINE_PAUSE_WITHIN: Duration = Duration::from_secs(15);
+
+/// Pause one Routine through its coordinator. The Schedule is read only to
+/// learn the revision to name; what it reads never settles the member.
+fn pause_routine(
+    authority: &dyn BotAuthority,
+    delegate: &dyn BotDelegatePort,
+    owner: BotOwner,
+    profile: koru_ai_core::ProfileId,
+    identity: &BotRoutineCreationIdentity,
+) -> RoutinePause {
+    let cancellation = Cancellation::default();
+    let route = identity.route();
+    // Unknown until read. A wrong guess is answered as a revision conflict,
+    // or as not found, by the coordinator: never acted on here.
+    let mut revision = 1;
+    for _ in 0..ROUTINE_PAUSE_ATTEMPTS {
+        if let Ok(RoutineOverviewObservation::Current {
+            definition_revision,
+            ..
+        }) = authority.read_routine_overview(owner, profile, identity, &cancellation)
+        {
+            revision = definition_revision;
+        }
+        let answer = delegate.execute_within(
+            DelegateCommand::ControlRoutine {
+                route: route.clone(),
+                expected_revision: revision,
+                action: koru_delegate_api::bots::RoutineControlAction::Pause {},
+            },
+            ROUTINE_PAUSE_WITHIN,
+        );
+        match answer {
+            Ok(BotReply::RoutineControlled {
+                route: echoed,
+                lifecycle: koru_delegate_core::RoutineControlLifecycle::Paused,
+                ..
+            }) if echoed == route => return RoutinePause::Paused,
+            Ok(_) => return RoutinePause::NoAnswer,
+            Err(error) => match error.code.as_str() {
+                // The coordinator found it already paused.
+                "schedule_state_conflict" => return RoutinePause::Paused,
+                // Its revision moved: read it again and send again.
+                "schedule_revision_conflict" => {}
+                "schedule_not_found" | "schedule_retired" => return RoutinePause::Gone,
+                "schedule_not_owner" | "schedule_handoff_pending" => {
+                    return RoutinePause::Elsewhere;
+                }
+                _ => return RoutinePause::NoAnswer,
+            },
+        }
+    }
+    RoutinePause::NoAnswer
+}
+
 /// What one probe of a parked operation's owner found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Probed {
@@ -256,6 +347,12 @@ impl LifecycleJob {
         let key = self.key;
         let failed = match &self.step {
             Step::Policy(_) => Outcome::Policy(Err(unavailable())),
+            Step::PauseRoutines(routines) => Outcome::Routines(
+                routines
+                    .iter()
+                    .map(|identity| (identity.schedule, RoutinePause::NoAnswer))
+                    .collect(),
+            ),
             Step::Settle { .. } => Outcome::Settle(Err(unavailable())),
             Step::ChatRead { .. } => Outcome::ChatRead(Err(unavailable())),
             Step::Stop { .. } => Outcome::Stopped,
@@ -274,6 +371,39 @@ impl LifecycleJob {
                 checked.owner == self.owner && checked.workspace(self.workspace).is_ok()
             });
         match self.step {
+            Step::PauseRoutines(routines) => {
+                // The person who holds the home now is the reader of each
+                // Schedule; without the owner's authority nothing is asked.
+                let profile = checked
+                    .as_ref()
+                    .and_then(|checked| checked.workspace(self.workspace).ok());
+                // One silent coordinator is not asked again this round for
+                // the Routines after it: each call may wait its whole bound.
+                let mut silent = false;
+                let mut answers = Vec::with_capacity(routines.len());
+                for identity in &routines {
+                    let answer = match profile {
+                        Some(profile)
+                            if !silent
+                                && identity.owner.user_scope == self.owner.user_scope
+                                && identity.owner.device == self.owner.device
+                                && identity.home == self.workspace =>
+                        {
+                            pause_routine(
+                                self.authority.as_ref(),
+                                self.delegate.as_ref(),
+                                self.owner,
+                                profile,
+                                identity,
+                            )
+                        }
+                        _ => RoutinePause::NoAnswer,
+                    };
+                    silent |= answer == RoutinePause::NoAnswer;
+                    answers.push((identity.schedule, answer));
+                }
+                Outcome::Routines(answers)
+            }
             Step::Policy(barrier) => {
                 Outcome::Policy(checked.ok_or_else(unavailable).and_then(|_| {
                     match self.delegate.execute(DelegateCommand::SynchronizePolicy {
@@ -1147,6 +1277,33 @@ impl WorkerState {
                             retained: trashed.then_some(BotLifecycleRetained::AlreadyTrashed),
                         }),
                 )
+                // One member per Routine of the Bot, in the same transaction
+                // (P4.3). For a Routine `hide` means paused: its Schedule
+                // document is not moved to the Store's Trash (O41). One whose
+                // creation never finished has no Schedule to pause and is
+                // kept as it is.
+                .chain(
+                    self.repository
+                        .lifecycle_bot_routines(*bot_id)
+                        .map_err(bot_failure)?
+                        .into_iter()
+                        .map(|(schedule, workspace_id, bound)| LifecycleMemberDraft {
+                            subject: BotLifecycleSubject::Routine {
+                                workspace_id,
+                                document_id: koru_ai_core::DocumentId::from_uuid(
+                                    schedule.as_uuid(),
+                                ),
+                            },
+                            reason: BotLifecycleReason::OwnedRoutine,
+                            prior_state: BotLifecyclePriorState::Live,
+                            intended: if bound {
+                                BotLifecycleIntended::Hide
+                            } else {
+                                BotLifecycleIntended::Retain
+                            },
+                            retained: (!bound).then_some(BotLifecycleRetained::OwnershipUnproven),
+                        }),
+                )
                 .collect();
                 self.repository
                     .capture_bot_lifecycle(&LifecycleCapture {
@@ -1264,9 +1421,72 @@ impl WorkerState {
         {
             self.queue_bot_receipt(&active, receipt, None);
         }
+        // An access edit left `prepared` while the Bot was in Trash is owed
+        // its barrier install again.
+        self.routine_controls.access_owed();
+        let mut progress = operation.progress();
+        (progress.routines_needing_access, progress.routines_still_on) =
+            self.restored_routines(owner, *bot_id, &source);
         Ok(BotResponse::Lifecycle {
-            operation: operation.progress(),
+            operation: progress,
         })
+    }
+
+    /// What a Restore tells the person about the Bot's Routines, read from
+    /// the journal and the permission records on the writer, with no owner
+    /// call and nothing stored. The Restore re-enables nothing and pauses
+    /// nothing: every Routine keeps the state it has.
+    ///
+    /// `still on`: each captured Routine the source operation did not confirm
+    /// paused. A completed Archive or Trash has none (it completes only once
+    /// every one is acknowledged or kept); a parked one may. It means "not
+    /// confirmed paused".
+    ///
+    /// `needing access`: each captured Routine whose permission records no
+    /// longer read: its creation row bound, its original grant's digest
+    /// valid, and its edited grant, if any, valid. Such a Routine stays
+    /// paused and Enable refuses it until its access is chosen again.
+    fn restored_routines(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        source: &LifecycleOperation,
+    ) -> (
+        Vec<koru_delegate_core::ScheduleId>,
+        Vec<koru_delegate_core::ScheduleId>,
+    ) {
+        let mut needing_access = Vec::new();
+        let mut still_on = Vec::new();
+        for member in &source.members {
+            let BotLifecycleSubject::Routine { document_id, .. } = &member.subject else {
+                continue;
+            };
+            let schedule = koru_delegate_core::ScheduleId::from_uuid(document_id.as_uuid());
+            // A Routine captured without a finished creation was never
+            // asked to pause and has no access to choose.
+            if member.intended != BotLifecycleIntended::Hide {
+                continue;
+            }
+            if !matches!(
+                member.stage,
+                BotLifecycleMemberStage::Acknowledged | BotLifecycleMemberStage::Retained
+            ) {
+                still_on.push(schedule);
+            }
+            let readable = matches!(
+                self.repository.bot_routine_creation(owner, bot, schedule),
+                Ok(Some(creation))
+                    if creation.state == BotRoutineCreationState::Bound
+                        && creation.identity.validate_digests().is_ok()
+            ) && self
+                .repository
+                .routine_current_grant(owner, bot, schedule)
+                .is_ok();
+            if !readable {
+                needing_access.push(schedule);
+            }
+        }
+        (needing_access, still_on)
     }
 
     /// Trash of one conversation: capture only it, or answer a repeat with
@@ -1790,6 +2010,15 @@ impl WorkerState {
         if self.bot_chat_recovery.is_some() {
             return self.defer_bot_lifecycle(key);
         }
+        // The Bot's Routines first, on every path: each one not yet settled
+        // by the coordinator's answer is asked to pause, this round.
+        match self.unsettled_lifecycle_routines(op) {
+            Ok(routines) if routines.is_empty() => {}
+            Ok(routines) => {
+                return self.submit_bot_lifecycle(key, op, bot, Step::PauseRoutines(routines));
+            }
+            Err(_) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable),
+        }
         match self.refuse_unadmitted(op, bot, None) {
             Some(true) => return self.wait_bot_lifecycle(key, BotLifecycleRefusal::WorkRunning),
             Some(false) => {
@@ -1799,6 +2028,82 @@ impl WorkerState {
         }
         let live = self.live_bot_tasks(op.bot).into_keys().collect();
         self.submit_bot_lifecycle(key, op, bot, Step::Settle { bot: op.bot, live });
+    }
+
+    /// The captured Routines of an Archive or Trash that the coordinator has
+    /// not yet answered for: each `pending` one, and each `unavailable` one
+    /// (asked again after a park and a resume). Their retained creation
+    /// identities name the route to pause.
+    fn unsettled_lifecycle_routines(
+        &self,
+        op: &LifecycleOperation,
+    ) -> Result<Vec<BotRoutineCreationIdentity>, BotError> {
+        let mut routines = Vec::new();
+        for member in &op.members {
+            let BotLifecycleSubject::Routine { document_id, .. } = &member.subject else {
+                continue;
+            };
+            if !matches!(
+                member.stage,
+                BotLifecycleMemberStage::Pending | BotLifecycleMemberStage::Unavailable
+            ) {
+                continue;
+            }
+            let schedule = koru_delegate_core::ScheduleId::from_uuid(document_id.as_uuid());
+            let creation = self
+                .repository
+                .bot_routine_creation(op.owner, op.bot, schedule)?
+                .ok_or(BotError::Storage)?;
+            routines.push(creation.identity);
+        }
+        Ok(routines)
+    }
+
+    /// The coordinator's answers, recorded. A member is acknowledged here and
+    /// nowhere else. One the coordinator could not pause from this computer
+    /// parks the operation at once; one with no answer waits and is asked
+    /// again, and parks the operation when waiting stops helping.
+    fn settle_lifecycle_routines(
+        &mut self,
+        key: OperationKey,
+        answers: Vec<(koru_delegate_core::ScheduleId, RoutinePause)>,
+    ) {
+        let now = Timestamp::now().millis();
+        let (mut elsewhere, mut unanswered) = (false, false);
+        for (schedule, answer) in answers {
+            let recorded = match answer {
+                RoutinePause::Paused => LifecycleRoutineAnswer::Paused,
+                RoutinePause::Gone => LifecycleRoutineAnswer::Gone,
+                RoutinePause::Elsewhere => {
+                    elsewhere = true;
+                    LifecycleRoutineAnswer::Unavailable
+                }
+                RoutinePause::NoAnswer => {
+                    unanswered = true;
+                    LifecycleRoutineAnswer::Unavailable
+                }
+            };
+            if self
+                .repository
+                .settle_bot_lifecycle_routine(
+                    key.0,
+                    key.1,
+                    koru_ai_core::DocumentId::from_uuid(schedule.as_uuid()),
+                    recorded,
+                    now,
+                )
+                .is_err()
+            {
+                unanswered = true;
+            }
+        }
+        if elsewhere {
+            self.park_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable)
+        } else if unanswered {
+            self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable)
+        } else {
+            self.progressed_bot_lifecycle(key)
+        }
     }
 
     /// The delegate's account of the Bot's unsettled work, applied.
@@ -1949,6 +2254,7 @@ impl WorkerState {
             Outcome::Policy(Err(_)) | Outcome::Settle(Err(_)) | Outcome::ChatRead(Err(_)) => {
                 self.wait_bot_lifecycle(key, BotLifecycleRefusal::OwnerUnavailable)
             }
+            Outcome::Routines(answers) => self.settle_lifecycle_routines(key, answers),
             Outcome::Settle(Ok(unsettled)) => self.settle_bot_archive(key, &op, unsettled),
             Outcome::ChatRead(Ok(work)) => self.settle_bot_chat_trash(key, &op, work),
             // The round was already counted when its read was applied; the

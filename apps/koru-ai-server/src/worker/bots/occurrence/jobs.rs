@@ -3,6 +3,11 @@ use super::*;
 
 pub(super) struct Fresh {
     pub bot: Bot,
+    /// The grant the Routine runs under now, from the one reader: what this
+    /// occurrence captures, so a Routine still fires after an access edit.
+    pub grant: BotRoutineGrant,
+    /// Stated only for the owner Test this worker itself expects.
+    pub lifecycle: BotRoutineCaptureLifecycle,
     pub creation: BotRoutineCreationIdentity,
     pub canonical: BotRoutineCanonical,
     pub profile: koru_ai_core::ProfileId,
@@ -192,16 +197,29 @@ impl OccurrenceJob {
         validate_model_evidence(agents, &fresh.canonical.config, false)
             .map_err(|_| RoutineBridgeRefusal::Unavailable)?;
         self.live()?;
-        self.authority
-            .verify_routine_definition(
+        // The live definition must be the offered one, in the lifecycle the
+        // writer expected: Active, or exactly Paused(Manual) for a Test.
+        match fresh.lifecycle {
+            BotRoutineCaptureLifecycle::Active => self.authority.verify_routine_definition(
                 ai_owner(request.slot),
                 proof.profile,
                 &fresh.creation,
                 &request.schedule_definition,
                 request.owner_handoff,
                 &self.operation.context.cancellation,
-            )
-            .map_err(refusal)?;
+            ),
+            BotRoutineCaptureLifecycle::TestPausedManual => {
+                self.authority.verify_routine_test_definition(
+                    ai_owner(request.slot),
+                    proof.profile,
+                    &fresh.creation,
+                    &request.schedule_definition,
+                    request.owner_handoff,
+                    &self.operation.context.cancellation,
+                )
+            }
+        }
+        .map_err(refusal)?;
         self.live()?;
         let pins = self
             .authority
@@ -280,7 +298,7 @@ impl OccurrenceJob {
             creation: fresh.creation.route(),
             canonical: fresh.canonical.clone(),
             profile: proof.profile,
-            grant: fresh.creation.grant.clone(),
+            grant: fresh.grant.clone(),
             role: pin(&fresh.library.role)?,
             knowledge: fresh
                 .library

@@ -3009,7 +3009,7 @@
           },
           {
             "additionalProperties": false,
-            "description": "Vouched owner creation only: always Paused, with canonical inherited\nruntime/scope and an independent frozen copy of current Bot access.",
+            "description": "Vouched owner creation only: always Paused, with canonical inherited\nruntime/scope. The Routine starts from the default access, not a copy\nof the Bot's; `update_routine_access` changes it while it is paused.",
             "properties": {
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -3103,6 +3103,158 @@
               "bot_id",
               "original_request_id",
               "observed_token"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Turn one Routine on, or pause it. One revision-checked commit by the\nSchedule's owner; it runs nothing now and catches up nothing. Enable\nis refused while the Bot is paused, archived or being moved; Pause\ndoes not stop a Run that is already claimed. Answered\n`routine_control`. A retry with the same revision is safe.",
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/BotRoutineLifecycleAction"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "set_routine_lifecycle"
+                ],
+                "type": "string"
+              },
+              "expected_definition_revision": {
+                "format": "uint32",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "schedule_id": {
+                "$ref": "#/components/schemas/ScheduleId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "schedule_id",
+              "expected_definition_revision",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Start one Run of a paused Routine now, under the Routine's own\naccess, without turning it on. Answered `routine_test` once the\nSchedule's owner accepted the current minute; the Routine's history\nsays what the minute became.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "test_routine"
+                ],
+                "type": "string"
+              },
+              "expected_definition_revision": {
+                "format": "uint32",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "schedule_id": {
+                "$ref": "#/components/schemas/ScheduleId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "schedule_id",
+              "expected_definition_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Replace one Routine's name and timing in one revision-checked commit,\nwhile it is on or paused. Its task, context and access are not\nchanged. Answered `routine_control`.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "edit_routine"
+                ],
+                "type": "string"
+              },
+              "expected_definition_revision": {
+                "format": "uint32",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "expected_name": {
+                "$ref": "#/components/schemas/ScheduleName"
+              },
+              "name": {
+                "$ref": "#/components/schemas/ScheduleName"
+              },
+              "recurrence": {
+                "$ref": "#/components/schemas/RecurrenceRule"
+              },
+              "schedule_id": {
+                "$ref": "#/components/schemas/ScheduleId"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "schedule_id",
+              "expected_definition_revision",
+              "expected_name",
+              "name",
+              "recurrence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Replace one paused Routine's own access. Refused while the Routine is\non and while a Run of it has not finished. The access it was set up\nwith stays recorded. Answered `routine_access`; the same request\nreturns its retained answer.",
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/BotAccess"
+              },
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "command": {
+                "enum": [
+                  "update_routine_access"
+                ],
+                "type": "string"
+              },
+              "expected_grant_revision": {
+                "format": "uint64",
+                "minimum": 1,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              },
+              "schedule_id": {
+                "$ref": "#/components/schemas/ScheduleId"
+              },
+              "selected_pages": {
+                "items": {
+                  "$ref": "#/components/schemas/BotPage"
+                },
+                "maxItems": 1024,
+                "type": "array"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "bot_id",
+              "schedule_id",
+              "expected_grant_revision",
+              "access",
+              "selected_pages"
             ],
             "type": "object"
           },
@@ -5170,6 +5322,20 @@
           "request_id": {
             "$ref": "#/components/schemas/BotRequestId"
           },
+          "routines_needing_access": {
+            "description": "After a Restore: the Bot's Routines whose access can no longer be\nread. Each stays paused, and turning it on is refused, until its\naccess is chosen again. Wire-only; never stored. Omitted when empty.",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleId"
+            },
+            "type": "array"
+          },
+          "routines_still_on": {
+            "description": "After the Restore of an Archive or Trash that stopped before it\nfinished: the Bot's Routines that were not confirmed paused, and so\nmay still be on. The Bot returns paused, so none of them runs until\nit is resumed. Wire-only; never stored. Omitted when empty.",
+            "items": {
+              "$ref": "#/components/schemas/ScheduleId"
+            },
+            "type": "array"
+          },
           "source_request_id": {
             "anyOf": [
               {
@@ -6105,6 +6271,60 @@
           },
           {
             "properties": {
+              "control": {
+                "$ref": "#/components/schemas/BotRoutineControl"
+              },
+              "result": {
+                "enum": [
+                  "routine_control"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "control"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "result": {
+                "enum": [
+                  "routine_test"
+                ],
+                "type": "string"
+              },
+              "test": {
+                "$ref": "#/components/schemas/BotRoutineTest"
+              }
+            },
+            "required": [
+              "result",
+              "test"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/BotRoutineAccess"
+              },
+              "result": {
+                "enum": [
+                  "routine_access"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "access"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
               "result": {
                 "enum": [
                   "memory_status"
@@ -6507,6 +6727,80 @@
           }
         ]
       },
+      "BotRoutineAccess": {
+        "additionalProperties": false,
+        "description": "The Routine's access after an edit. There is no pending state: the edit\nis answered only once its policy barrier is installed.",
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/BotAccess"
+          },
+          "grant_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          },
+          "selected_page_count": {
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schedule_id",
+          "grant_revision",
+          "access",
+          "selected_page_count"
+        ],
+        "type": "object"
+      },
+      "BotRoutineControl": {
+        "additionalProperties": false,
+        "description": "The Routine after one enable, pause or edit. `applied` is answered only\nafter the coordinator's commit was acknowledged; `already_applied` is the\nexact replay of that commit, after a lost reply.",
+        "properties": {
+          "action": {
+            "$ref": "#/components/schemas/BotRoutineControlAction"
+          },
+          "definition_revision": {
+            "format": "uint32",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "next": {
+            "$ref": "#/components/schemas/RoutineNextObservation"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RoutineControlOutcome"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          },
+          "state": {
+            "$ref": "#/components/schemas/StrictState"
+          }
+        },
+        "required": [
+          "schedule_id",
+          "action",
+          "outcome",
+          "definition_revision",
+          "state",
+          "next"
+        ],
+        "type": "object"
+      },
+      "BotRoutineControlAction": {
+        "description": "The control a `routine_control` reply answers.",
+        "enum": [
+          "enable",
+          "pause",
+          "edit"
+        ],
+        "type": "string"
+      },
       "BotRoutineConversationVisibility": {
         "enum": [
           "available",
@@ -6723,6 +7017,14 @@
             "format": "int64",
             "type": "integer"
           },
+          "occurrences": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/RoutineOccurrenceHistoryObservation"
+              }
+            ],
+            "description": "What each past minute became, newest first: it ran, it was missed, or\nit was skipped because the Bot was busy. Read from the Schedule\ndocument for this Routine only. Nothing is caught up."
+          },
           "readiness": {
             "$ref": "#/components/schemas/RoutineReadinessObservation"
           },
@@ -6742,7 +7044,8 @@
           "destination",
           "live",
           "readiness",
-          "local_history"
+          "local_history",
+          "occurrences"
         ],
         "type": "object"
       },
@@ -6776,6 +7079,14 @@
           "selected_page_count"
         ],
         "type": "object"
+      },
+      "BotRoutineLifecycleAction": {
+        "description": "What `set_routine_lifecycle` asks for. Pause is not Stop: a Run that is\nalready claimed finishes.",
+        "enum": [
+          "enable",
+          "pause"
+        ],
+        "type": "string"
       },
       "BotRoutineListItem": {
         "additionalProperties": false,
@@ -6861,6 +7172,14 @@
               "name": {
                 "$ref": "#/components/schemas/ScheduleName"
               },
+              "next": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/RoutineNextObservation"
+                  }
+                ],
+                "description": "The next time the Routine is due, computed as the detail computes\nit. `inactive` while it is paused."
+              },
               "observation": {
                 "enum": [
                   "current"
@@ -6875,7 +7194,8 @@
               "observation",
               "name",
               "definition_revision",
-              "state"
+              "state",
+              "next"
             ],
             "type": "object"
           },
@@ -7031,6 +7351,24 @@
             "type": "object"
           }
         ]
+      },
+      "BotRoutineTest": {
+        "additionalProperties": false,
+        "description": "A Test was accepted for this minute. It is not a claim and not a result:\nthe Routine's history says what the minute became.",
+        "properties": {
+          "occurrence_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "schedule_id": {
+            "$ref": "#/components/schemas/ScheduleId"
+          }
+        },
+        "required": [
+          "schedule_id",
+          "occurrence_ms"
+        ],
+        "type": "object"
       },
       "BotSummary": {
         "properties": {
@@ -16577,6 +16915,14 @@
         ],
         "type": "object"
       },
+      "RoutineControlOutcome": {
+        "description": "Whether one revision-checked definition commit wrote, or was the exact\nreplay of the commit a lost reply already made.",
+        "enum": [
+          "applied",
+          "already_applied"
+        ],
+        "type": "string"
+      },
       "RoutineDefinitionIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -16850,6 +17196,102 @@
           }
         ]
       },
+      "RoutineOccurrenceHistoryObservation": {
+        "description": "One page of a Routine's past minutes, newest first.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/RoutineOccurrenceLine"
+                },
+                "maxItems": 16,
+                "type": "array"
+              },
+              "next_before_occurrence_ms": {
+                "format": "int64",
+                "nullable": true,
+                "type": "integer"
+              },
+              "observation": {
+                "enum": [
+                  "available"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation",
+              "items"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "observation": {
+                "enum": [
+                  "unavailable"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "observation"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "RoutineOccurrenceLine": {
+        "additionalProperties": false,
+        "description": "One past minute of a Routine. `ran` means its first turn was\nacknowledged, not that a result was saved. `test` marks a minute a person\nstarted with Test. `conversation` is present when this computer holds the\nconversation of that minute.",
+        "properties": {
+          "conversation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotRoutineLocalConversation"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "occurrence_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/RoutineOccurrenceOutcome"
+          },
+          "recorded_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "test": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "occurrence_ms",
+          "outcome",
+          "test",
+          "recorded_at_ms"
+        ],
+        "type": "object"
+      },
+      "RoutineOccurrenceOutcome": {
+        "enum": [
+          "ran",
+          "missed",
+          "skipped_busy"
+        ],
+        "type": "string"
+      },
       "RoutineOwnerZoneObservation": {
         "oneOf": [
           {
@@ -16883,6 +17325,26 @@
             },
             "required": [
               "zone"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A floating rule whose owner is this computer: the time zone this\ncomputer is in now. Never a viewer's zone for a Routine owned\nelsewhere.",
+            "properties": {
+              "iana": {
+                "type": "string"
+              },
+              "zone": {
+                "enum": [
+                  "this_computer"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "zone",
+              "iana"
             ],
             "type": "object"
           }

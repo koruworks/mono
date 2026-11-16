@@ -100,6 +100,9 @@ impl LifecycleOperation {
                 })
                 .collect(),
             left_in_place: BotLeftInPlace::of(self.kind),
+            // Filled in by the Restore that answers; never stored.
+            routines_needing_access: Vec::new(),
+            routines_still_on: Vec::new(),
         }
     }
 }

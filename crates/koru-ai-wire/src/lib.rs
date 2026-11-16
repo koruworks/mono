@@ -76,6 +76,67 @@ pub mod bot_lifecycle_codes {
     pub const ARCHIVED: &str = "bot_archived";
 }
 
+/// Refusals of an owner control of one Bot Routine (P4.3): enable, pause,
+/// edit, Test and the access edit. Each is answered before anything is
+/// written on the AI side. A client shows its own localized sentence for a
+/// code and never the message. The existing Bot codes (`not_found`,
+/// `wrong_owner`, `workspace_unavailable`, `revision_conflict`,
+/// `request_conflict`, `bot_operation_pending`) and the lifecycle codes
+/// (`bot_trashed`, `bot_archived`, `bot_lifecycle_pending`) are answered for
+/// these commands too.
+pub mod bot_routine_codes {
+    /// The Routine's creation is not finished (`bound`).
+    pub const NOT_BOUND: &str = "routine_not_bound";
+    /// The Routine's Schedule was deleted or is in Trash.
+    pub const NOT_LIVE: &str = "routine_not_live";
+    /// Another computer owns the Routine, or a handoff is pending: change
+    /// it there.
+    pub const OWNER_ELSEWHERE: &str = "routine_owner_elsewhere";
+    /// Another control of this Routine is not resolved yet. Retryable.
+    pub const CONTROL_PENDING: &str = "routine_control_pending";
+    /// The Schedule's owner did not answer in time: the control may or may
+    /// not have been applied. Read the Routine again. Retryable; a retry
+    /// with the same revision is safe.
+    pub const CONTROL_UNKNOWN: &str = "routine_control_unknown";
+    /// The Routine is already in the requested state.
+    pub const STATE_CONFLICT: &str = "routine_state_conflict";
+    /// The Schedule's owner is unreachable or cannot serve Routines now.
+    /// Retryable.
+    pub const UNAVAILABLE: &str = "routine_unavailable";
+    /// Enable or Test: the Routine cannot run now. `details.reasons` lists
+    /// why, in order, from [`super::bot_routine_not_ready_reasons`].
+    pub const NOT_READY: &str = "routine_not_ready";
+    /// Test and the access edit need the Routine paused; it is on.
+    pub const MUST_BE_PAUSED: &str = "routine_must_be_paused";
+    /// Test: under ten seconds are left of the current minute. Retryable at
+    /// the start of the next minute.
+    pub const TEST_MINUTE_ENDING: &str = "routine_test_minute_ending";
+    /// Test: the Routine changed within this minute. Retryable at the start
+    /// of the next minute.
+    pub const TEST_TOO_SOON: &str = "routine_test_too_soon";
+    /// Test: this minute already ran or was skipped.
+    pub const TEST_MINUTE_TAKEN: &str = "routine_test_minute_taken";
+    /// Test: another Test is starting on this computer. Retryable.
+    pub const TEST_BUSY: &str = "routine_test_busy";
+    /// Access edit: a Run of this Routine has not finished. Retryable.
+    pub const RUN_IN_PROGRESS: &str = "routine_run_in_progress";
+    /// Access edit: an earlier edit of this Routine is still being applied.
+    /// Retryable.
+    pub const ACCESS_PENDING: &str = "routine_access_pending";
+}
+
+/// The reasons `routine_not_ready` lists in `details.reasons`, in this order.
+pub mod bot_routine_not_ready_reasons {
+    /// The Bot is paused: resume the Bot first.
+    pub const BOT_PAUSED: &str = "bot_paused";
+    pub const BOT_ARCHIVED: &str = "bot_archived";
+    pub const CREATION_NOT_BOUND: &str = "creation_not_bound";
+    /// The Routine's access cannot be read: choose its access again.
+    pub const ACCESS_UNAVAILABLE: &str = "access_unavailable";
+    /// An access change is still being applied.
+    pub const ACCESS_PENDING: &str = "access_pending";
+}
+
 /// Refusals of a Bot creation's request with a stable code of their own,
 /// beside the reasons a recorded creation carries (P1.8). Each is answered
 /// before anything is recorded, never retryable.

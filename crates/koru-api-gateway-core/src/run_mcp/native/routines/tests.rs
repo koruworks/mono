@@ -131,3 +131,59 @@ fn routine_tools_async_guard_cancels_without_owning_physical_completion() {
 
 #[cfg(windows)]
 mod composition;
+
+/// P4.3: no owner control of a Routine is a model tool. A Run can set a
+/// Routine up and list Routines; it can never turn one on, pause it, test
+/// it, edit it or change its access, under any spelling, and no tool takes
+/// an argument that would.
+#[test]
+fn routine_tools_offer_no_owner_control_of_a_routine() {
+    for name in [
+        "set_routine_lifecycle",
+        "enable_routine",
+        "pause_routine",
+        "resume_routine",
+        "test_routine",
+        "run_routine",
+        "edit_routine",
+        "rename_routine",
+        "update_routine_access",
+        "read_routine_detail",
+        "delete_routine",
+        "archive",
+        "trash",
+        "restore",
+    ] {
+        assert!(!recognizes(name), "{name}");
+        assert!(parse(name, json!({})).is_err(), "{name}");
+        assert!(definitions().iter().all(|tool| tool.name != name), "{name}");
+    }
+    // The four tools that do exist cannot be steered into a control.
+    for (name, args) in [("create_routine", create()), ("list_routines", json!({}))] {
+        for field in [
+            "action",
+            "lifecycle",
+            "state",
+            "expected_definition_revision",
+            "expected_grant_revision",
+            "access",
+            "selected_pages",
+            "schedule_id",
+            "occurrence_ms",
+        ] {
+            let mut altered = args.clone();
+            altered[field] = json!("enable");
+            assert!(parse(name, altered).is_err(), "{name}/{field}");
+        }
+    }
+    // Every owner control is a Bot command of the vouched owner route only.
+    for command in [
+        "set_routine_lifecycle",
+        "test_routine",
+        "edit_routine",
+        "update_routine_access",
+    ] {
+        let schema = serde_json::to_value(schemars::schema_for!(koru_ai_wire::BotCommand)).unwrap();
+        assert!(schema.to_string().contains(command), "{command}");
+    }
+}

@@ -129,6 +129,7 @@ impl WorkerState {
         {
             return Err(RoutineBridgeRefusal::Capacity);
         }
+        let lifecycle = self.occurrence_lifecycle(request)?;
         let (creation, canonical, profile) = self
             .repository
             .routine_occurrence_source(&request.slot)
@@ -136,6 +137,17 @@ impl WorkerState {
         if canonical.home != request.workspace {
             return Err(RoutineBridgeRefusal::Forbidden);
         }
+        // The grant this occurrence captures is the one the Routine runs
+        // under now, from the one reader, never the creation grant by habit.
+        let grant = self
+            .repository
+            .routine_current_grant(
+                ai_owner(request.slot),
+                request.slot.bot,
+                request.slot.schedule,
+            )
+            .map_err(refusal)?
+            .grant;
         let bot = self
             .repository
             .bot(request.slot.bot)
@@ -167,11 +179,38 @@ impl WorkerState {
             .map_err(|_| RoutineBridgeRefusal::Forbidden)?;
         Ok(Phase::Capture(Box::new(Fresh {
             bot,
+            grant,
+            lifecycle,
             creation,
             canonical,
             profile,
             library,
         })))
+    }
+
+    /// The lifecycle a fresh preparation is expected to capture. A scheduled
+    /// occurrence is Active. A paused definition is admitted for exactly one
+    /// thing: the owner Test this worker itself asked for, for this Routine,
+    /// minute and definition revision, while that minute lasts. The
+    /// expectation is in memory only, so a restart refuses it and nothing
+    /// fires unattended.
+    fn occurrence_lifecycle(
+        &self,
+        request: &PrepareOccurrence,
+    ) -> Result<BotRoutineCaptureLifecycle, RoutineBridgeRefusal> {
+        match BotRoutineCaptureLifecycle::of(&request.schedule_definition.lifecycle) {
+            Some(BotRoutineCaptureLifecycle::Active) => Ok(BotRoutineCaptureLifecycle::Active),
+            Some(BotRoutineCaptureLifecycle::TestPausedManual)
+                if self.routine_controls.expects_test(
+                    request.slot.schedule,
+                    request.slot.occurrence_ms,
+                    request.schedule_definition.revision,
+                ) =>
+            {
+                Ok(BotRoutineCaptureLifecycle::TestPausedManual)
+            }
+            _ => Err(RoutineBridgeRefusal::Conflict),
+        }
     }
 
     pub(super) fn queue_occurrence(&mut self, mut operation: Operation, phase: Phase) {
@@ -283,10 +322,24 @@ impl WorkerState {
                     self.refuse_occurrence(operation, RoutineBridgeRefusal::Conflict);
                     return;
                 }
-                match self
-                    .repository
-                    .prepare_routine_occurrence(&captured, Timestamp::now().millis())
-                {
+                // Stated again at the write: a Test whose minute ended while
+                // its sources were captured is no longer expected.
+                let lifecycle = match &operation.request {
+                    Request::Prepare(request) => self.occurrence_lifecycle(request),
+                    _ => Err(RoutineBridgeRefusal::Conflict),
+                };
+                let lifecycle = match lifecycle {
+                    Ok(lifecycle) => lifecycle,
+                    Err(error) => {
+                        self.refuse_occurrence(operation, error);
+                        return;
+                    }
+                };
+                match self.repository.prepare_routine_occurrence_expecting(
+                    &captured,
+                    lifecycle,
+                    Timestamp::now().millis(),
+                ) {
                     Ok(BotRoutinePreparationAdmission::Ready(row)) => {
                         self.occurrences.recovery.wake();
                         match self.observation_phase(&operation, Some(&row)) {
@@ -399,7 +452,13 @@ impl WorkerState {
             PROMPT_TEMPLATE_VERSION,
             Timestamp::now().millis(),
         ) {
-            Ok(BotRoutinePreparationAdmission::Ready(row)) => row,
+            Ok(BotRoutinePreparationAdmission::Ready(row)) => {
+                // The claim of this minute is observed: a Test of it is no
+                // longer outstanding.
+                self.routine_controls
+                    .test_claimed(row.prepared.slot.schedule, row.prepared.slot.occurrence_ms);
+                row
+            }
             Ok(BotRoutinePreparationAdmission::Capacity) => {
                 self.refuse_occurrence(operation, RoutineBridgeRefusal::Capacity);
                 return;

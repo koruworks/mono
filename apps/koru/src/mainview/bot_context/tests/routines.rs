@@ -37,6 +37,7 @@ fn item() -> BotRoutineListItem {
             state: ScheduleState::Active {
                 owner: DeviceId::new(),
             },
+            next: RoutineNextObservation::OwnerLocal {},
         },
         local_conversations: BotRoutineLocalConversations::Available {
             items: vec![BotRoutineLocalConversation {
@@ -135,6 +136,7 @@ fn detail_page(bot: &Bot, page: &BotRoutineListPage, id: ScheduleId) -> BotRouti
             name,
             definition_revision,
             state,
+            ..
         } => RoutineDetailObservation::Current {
             name: name.clone(),
             definition_revision: *definition_revision,
@@ -169,6 +171,7 @@ fn detail_page(bot: &Bot, page: &BotRoutineListPage, id: ScheduleId) -> BotRouti
             }
             _ => RoutineLocalHistoryObservation::Unavailable {},
         },
+        occurrences: RoutineOccurrenceHistoryObservation::Unavailable {},
     }
 }
 fn detail_request(
@@ -332,6 +335,7 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
             owner: DeviceId::new(),
             reason: koru_delegate_core::SchedulePauseReason::Manual,
         },
+        next: RoutineNextObservation::Inactive {},
     };
     mixed.items[2].live = BotRoutineLiveObservation::Current {
         name: ScheduleName::new("Owner transfer").unwrap(),
@@ -340,11 +344,13 @@ fn routine_context_partial_states_do_not_invent_names_or_history() {
             owner: DeviceId::new(),
             requests: vec![],
         },
+        next: RoutineNextObservation::Inactive {},
     };
     mixed.items[3].live = BotRoutineLiveObservation::Current {
         name: ScheduleName::new("Retired").unwrap(),
         definition_revision: 2,
         state: ScheduleState::Retired,
+        next: RoutineNextObservation::Inactive {},
     };
     mixed.items[4].live = BotRoutineLiveObservation::NotLive {};
     mixed.items[5].live = BotRoutineLiveObservation::Unavailable {};

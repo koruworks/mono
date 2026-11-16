@@ -378,6 +378,8 @@ fn a_restore_from_the_trash_tells_every_tab_of_the_bot() {
                     refusal: None,
                     members: Vec::new(),
                     left_in_place: Vec::new(),
+                    routines_needing_access: Vec::new(),
+                    routines_still_on: Vec::new(),
                 },
             }),
         })

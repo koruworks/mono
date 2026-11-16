@@ -252,6 +252,40 @@ pub trait BotAuthority: Send + Sync {
         Err(BotError::Unavailable)
     }
 
+    /// The same proof for an owner Test only: the live definition must be
+    /// the offered one and exactly Paused(Manual). The caller has matched its
+    /// own expectation of that Test first; a paused definition is never
+    /// accepted because it merely arrived.
+    fn verify_routine_test_definition(
+        &self,
+        _owner: BotOwner,
+        _reader: ProfileId,
+        _identity: &BotRoutineCreationIdentity,
+        _definition: &koru_delegate_schedule::ScheduleDefinition,
+        _owner_handoff: Option<koru_delegate_core::HandoffId>,
+        _cancellation: &crate::Cancellation,
+    ) -> Result<(), BotError> {
+        Err(BotError::Unavailable)
+    }
+
+    /// The selected Routine's observation with one page of its Schedule's
+    /// own firings: those below `before`, the newest `limit`. The default
+    /// reads no firings.
+    #[allow(clippy::too_many_arguments)]
+    fn read_routine_detail_page(
+        &self,
+        owner: BotOwner,
+        reader: ProfileId,
+        identity: &BotRoutineCreationIdentity,
+        observed_at_ms: i64,
+        _before: Option<i64>,
+        _limit: u8,
+        cancellation: &crate::Cancellation,
+    ) -> Result<(RoutineDetailObservation, RoutineFiringsObservation), BotError> {
+        self.read_routine_detail(owner, reader, identity, observed_at_ms, cancellation)
+            .map(|observation| (observation, RoutineFiringsObservation::Unavailable))
+    }
+
     /// Private off-writer creation/reconciliation after the delegate has
     /// acknowledged the exact deny-only route. Never launch authority.
     fn prepare_routine_document(
@@ -344,7 +378,8 @@ pub enum BotCommand {
         limit: u8,
     },
     /// Vouched owner creation only: always Paused, with canonical inherited
-    /// runtime/scope and an independent frozen copy of current Bot access.
+    /// runtime/scope. The Routine starts from the default access, not a copy
+    /// of the Bot's; `update_routine_access` changes it while it is paused.
     CreateRoutine {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -362,6 +397,54 @@ pub enum BotCommand {
         bot_id: BotId,
         original_request_id: BotRequestId,
         observed_token: BotRoutineCreationObserved,
+    },
+    /// Turn one Routine on, or pause it. One revision-checked commit by the
+    /// Schedule's owner; it runs nothing now and catches up nothing. Enable
+    /// is refused while the Bot is paused, archived or being moved; Pause
+    /// does not stop a Run that is already claimed. Answered
+    /// `routine_control`. A retry with the same revision is safe.
+    SetRoutineLifecycle {
+        bot_id: BotId,
+        schedule_id: koru_delegate_core::ScheduleId,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+        expected_definition_revision: u32,
+        action: BotRoutineLifecycleAction,
+    },
+    /// Start one Run of a paused Routine now, under the Routine's own
+    /// access, without turning it on. Answered `routine_test` once the
+    /// Schedule's owner accepted the current minute; the Routine's history
+    /// says what the minute became.
+    TestRoutine {
+        bot_id: BotId,
+        schedule_id: koru_delegate_core::ScheduleId,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+        expected_definition_revision: u32,
+    },
+    /// Replace one Routine's name and timing in one revision-checked commit,
+    /// while it is on or paused. Its task, context and access are not
+    /// changed. Answered `routine_control`.
+    EditRoutine {
+        bot_id: BotId,
+        schedule_id: koru_delegate_core::ScheduleId,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+        expected_definition_revision: u32,
+        expected_name: ScheduleName,
+        name: ScheduleName,
+        recurrence: RecurrenceRule,
+    },
+    /// Replace one paused Routine's own access. Refused while the Routine is
+    /// on and while a Run of it has not finished. The access it was set up
+    /// with stays recorded. Answered `routine_access`; the same request
+    /// returns its retained answer.
+    UpdateRoutineAccess {
+        request_id: BotRequestId,
+        bot_id: BotId,
+        schedule_id: koru_delegate_core::ScheduleId,
+        #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
+        expected_grant_revision: u64,
+        access: BotAccess,
+        #[cfg_attr(feature = "schema", schemars(length(max = 1024)))]
+        selected_pages: Vec<BotPage>,
     },
     /// Staged Memory status contract; unavailable until complete Memory integration.
     ReadMemory {
@@ -658,6 +741,33 @@ impl BotCommand {
         )
     }
 
+    /// An owner control of one Routine (P4.3): its Bot and its Schedule.
+    pub fn routine_control(&self) -> Option<(BotId, koru_delegate_core::ScheduleId)> {
+        match self {
+            Self::SetRoutineLifecycle {
+                bot_id,
+                schedule_id,
+                ..
+            }
+            | Self::TestRoutine {
+                bot_id,
+                schedule_id,
+                ..
+            }
+            | Self::EditRoutine {
+                bot_id,
+                schedule_id,
+                ..
+            }
+            | Self::UpdateRoutineAccess {
+                bot_id,
+                schedule_id,
+                ..
+            } => Some((*bot_id, *schedule_id)),
+            _ => None,
+        }
+    }
+
     /// The lifecycle operation a command asks for, if it is one.
     pub fn lifecycle_kind(&self) -> Option<BotLifecycleKind> {
         Some(match self {
@@ -689,6 +799,15 @@ pub enum BotResponse {
     },
     RoutineCreation {
         creation: BotRoutineCreationStatus,
+    },
+    RoutineControl {
+        control: BotRoutineControl,
+    },
+    RoutineTest {
+        test: BotRoutineTest,
+    },
+    RoutineAccess {
+        access: BotRoutineAccess,
     },
     MemoryStatus {
         status: BotMemoryStatus,

@@ -11,6 +11,9 @@ use koru_delegate_core::{
 pub(super) struct Snapshot {
     row: BotRoutineStoredPreparation,
     creation: BotRoutineCreation,
+    /// The grant the Routine runs under now, from the one reader. Part of
+    /// the snapshot, so an access edit between two reads is a conflict.
+    current: BotRoutineCurrentGrant,
     metadata: BotPolicyMetadata,
 }
 impl Snapshot {
@@ -44,10 +47,15 @@ pub(super) fn snapshot(
         .routine_preclaim_snapshot(&request.slot, request.semantic_hash)
         .map_err(refusal)?
         .ok_or(RoutineBridgeRefusal::Stale)?;
+    // The one reader, on the creation this lookup-only snapshot already
+    // holds: preclaim does not depend on the Bot's current execution fields.
+    let current = repository
+        .routine_current_grant_of(&creation)
+        .map_err(refusal)?;
     if row.prepared.slot != request.slot
         || row.prepared.preparation_hash != request.preparation_hash
         || row.capture.creation != creation.identity.route()
-        || row.capture.grant != creation.identity.grant
+        || row.capture.grant != current.grant
     {
         return Err(RoutineBridgeRefusal::Conflict);
     }
@@ -66,6 +74,7 @@ pub(super) fn snapshot(
     let snapshot = Snapshot {
         row,
         creation,
+        current,
         metadata,
     };
     snapshot.profile()?;
@@ -220,7 +229,10 @@ impl WorkerState {
                 metadata.policy(),
             )
             .map_err(|_| RoutineBridgeRefusal::Unavailable)?;
-            let routine = policy::initial_routine_barrier(&observed.snapshot.creation.identity);
+            let routine = policy::current_routine_barrier(
+                &observed.snapshot.creation.identity,
+                &observed.snapshot.current,
+            );
             Ok(Install {
                 observed,
                 admission,

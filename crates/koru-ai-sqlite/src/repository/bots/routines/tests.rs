@@ -576,3 +576,51 @@ fn summary_rejects_regressed_timestamp_without_loading_seed_payload() {
         Err(BotError::Storage)
     );
 }
+
+/// D4a: a new Routine starts from the approved default access, whatever the
+/// Bot's own access is when it is created: default, no selected pages, the
+/// Bot's home as workspace and destination. Only the Bot policy revision
+/// observed at creation is recorded.
+#[test]
+fn routine_creation_starts_from_the_default_access_not_a_copy_of_the_bots() {
+    let (mut repo, bot, owner, command) = fixture();
+    // The Bot itself may edit any page of its workspace, and was given one.
+    repo.connection
+        .execute(
+            "UPDATE bots SET access='workspace' WHERE bot_id=?1",
+            [bot.id.to_storage()],
+        )
+        .unwrap();
+    repo.connection
+        .execute(
+            "INSERT INTO bot_selected_pages(bot_id,workspace_id,document_id,selected_at_ms) VALUES(?1,?2,?3,1)",
+            params![
+                bot.id.to_storage(),
+                bot.home_workspace.to_storage(),
+                DocumentId::new().to_storage()
+            ],
+        )
+        .unwrap();
+    let creation = prepared(&mut repo, owner, &command);
+    let grant = &creation.identity.grant;
+    assert_eq!(grant.policy.access, koru_delegate_core::BotAccess::Default);
+    assert!(grant.policy.selected_pages.is_empty());
+    assert_eq!(grant.policy.workspace, bot.home_workspace);
+    assert_eq!(grant.policy.destination, bot.home_workspace);
+    assert_eq!(grant.grant_revision, 1);
+    assert_eq!(grant.source_bot_policy_revision, bot.policy_revision);
+    creation.identity.validate_digests().unwrap();
+    // It is the grant the Routine runs under, and what its row shows.
+    let current = repo
+        .routine_current_grant(owner, bot.id, creation.identity.schedule)
+        .unwrap();
+    assert_eq!(current.grant, *grant);
+    assert!(!current.is_edited());
+    let summary = grant.summary().unwrap();
+    assert_eq!(
+        (summary.access, summary.selected_page_count),
+        (koru_ai_core::bots::BotAccess::Default, 0)
+    );
+    // The same request again is its retained creation, not a second grant.
+    assert_eq!(prepared(&mut repo, owner, &command), creation);
+}

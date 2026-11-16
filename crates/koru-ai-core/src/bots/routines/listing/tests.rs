@@ -30,6 +30,7 @@ fn page() -> BotRoutineListPage {
                     owner: DeviceId::new(),
                     reason: SchedulePauseReason::Manual,
                 },
+                next: RoutineNextObservation::Inactive {},
             },
             local_conversations: BotRoutineLocalConversations::Available {
                 items: vec![],
@@ -181,6 +182,7 @@ fn listing_maximum_legitimate_page_roundtrips_without_payload_or_firing_fields()
             owner: DeviceId::new(),
             requests: (0..256).map(|_| HandoffId::mint()).collect(),
         },
+        next: RoutineNextObservation::Inactive {},
     };
     item.local_conversations = BotRoutineLocalConversations::Available {
         items: (0..4)

@@ -14,7 +14,7 @@ enum Phase {
 enum Evidence {
     Owner(BotOwner),
     Authority,
-    Detail(RoutineDetailLive),
+    Detail(RoutineDetailLive, RoutineFiringsObservation),
     Finished,
 }
 pub(in crate::worker) struct DetailJob {
@@ -33,6 +33,10 @@ pub(in crate::worker) struct DetailJob {
     subject: Option<RoutineReadSubject>,
     snapshot: Option<RoutineDetailSnapshot>,
     live: RoutineDetailLive,
+    /// One page of the Schedule's own firings, read with the observation.
+    firings: RoutineFiringsObservation,
+    /// This computer's time zone, read on every detail read, never cached.
+    zone: Option<control::ZoneSource>,
     missing: bool,
 }
 pub(in crate::worker) struct DetailResult {
@@ -82,15 +86,27 @@ impl DetailJob {
                     // another pair around that same Store operation.
                     self.live()?;
                     let snapshot = self.snapshot.as_ref().ok_or_else(unavailable_failure)?;
-                    let value = self.authority.read_routine_detail(
+                    let value = self.authority.read_routine_detail_page(
                         snapshot.subject.metadata.owner,
                         snapshot.subject.profile,
                         &snapshot.creation.identity,
                         self.observed_at_ms,
+                        self.before,
+                        self.limit,
                         &self.cancellation,
                     );
                     self.live()?;
-                    Evidence::Detail(value.map_err(bot_failure)?.live(self.observed_at_ms))
+                    let (observation, firings) = value.map_err(bot_failure)?;
+                    // A floating rule this computer owns is shown in this
+                    // computer's zone; any other stays "owner local".
+                    let this = control::this_computer(
+                        self.zone.as_ref(),
+                        snapshot.subject.metadata.owner.device,
+                    );
+                    Evidence::Detail(
+                        observation.live_on(self.observed_at_ms, this.as_ref()),
+                        firings,
+                    )
                 }
                 Phase::Finish => {
                     self.current()?;
@@ -153,6 +169,8 @@ impl WorkerState {
                 subject: None,
                 snapshot: None,
                 live: RoutineDetailLive::Unavailable {},
+                firings: RoutineFiringsObservation::Unavailable,
+                zone: self.routine_controls.zone(),
                 missing: false,
             })
         })();
@@ -224,8 +242,9 @@ impl WorkerState {
                     };
                     job.snapshot = Some(snapshot);
                 }
-                (Phase::Detail, Evidence::Detail(live)) => {
+                (Phase::Detail, Evidence::Detail(live, firings)) => {
                     job.live = live;
+                    job.firings = firings;
                     job.phase = Phase::Finish;
                 }
                 (Phase::Finish, Evidence::Finished) => {
@@ -257,7 +276,7 @@ impl WorkerState {
                     let response = BotResponse::RoutineDetail {
                         reply: BotRoutineDetailEnvelope {
                             detail: snapshot
-                                .response(job.observed_at_ms, job.live.clone())
+                                .response_with(job.observed_at_ms, job.live.clone(), &job.firings)
                                 .map_err(bot_failure)?,
                         },
                     };

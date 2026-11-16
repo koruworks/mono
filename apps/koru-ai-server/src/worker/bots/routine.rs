@@ -5,6 +5,7 @@ use koru_ai_core::ProfileId;
 use koru_delegate_api::bots::{BotCommand as DelegateCommand, BotDelegatePort, BotReply};
 use std::collections::VecDeque;
 mod commands;
+pub(in crate::worker) mod control;
 pub(in crate::worker) mod detail;
 pub(in crate::worker) mod listing;
 pub(crate) mod model;

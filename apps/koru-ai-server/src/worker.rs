@@ -127,6 +127,14 @@ pub struct WorkerConfig {
     /// tests that need an operation to park in a second instead of minutes.
     #[cfg(test)]
     test_lifecycle_unit: Option<Duration>,
+    /// This computer's current time zone name, for a floating Routine this
+    /// computer owns (P4.3, D5). Called on every read and never cached. No
+    /// composition installs one yet, so such a Routine reads `owner_local`.
+    owner_zone: Option<bots::routine::control::ZoneSource>,
+    /// The wall clock the Routine controls read, for tests of the Test
+    /// minute.
+    #[cfg(test)]
+    test_routine_clock: Option<Arc<dyn Fn() -> i64 + Send + Sync>>,
 }
 
 impl WorkerConfig {
@@ -159,6 +167,13 @@ impl WorkerConfig {
         delegate: Arc<dyn bots::decision_wait::DecisionWaitDelegate>,
     ) -> Self {
         self.decision_wait_delegate = Some(delegate);
+        self
+    }
+    /// How this computer's current time zone name is read. The composition
+    /// that links the zone database supplies its system detection; without
+    /// one a floating Routine's zone stays `owner_local`.
+    pub fn with_owner_zone(mut self, zone: Arc<dyn Fn() -> Option<String> + Send + Sync>) -> Self {
+        self.owner_zone = Some(zone);
         self
     }
     /// The Store's data root, so a Bot's selected folder is never it.
@@ -195,6 +210,9 @@ impl WorkerConfig {
             test_bot_runtime_ready: false,
             #[cfg(test)]
             test_lifecycle_unit: None,
+            owner_zone: None,
+            #[cfg(test)]
+            test_routine_clock: None,
         }
     }
 
@@ -229,6 +247,9 @@ impl WorkerConfig {
             test_bot_runtime_ready: false,
             #[cfg(test)]
             test_lifecycle_unit: None,
+            owner_zone: None,
+            #[cfg(test)]
+            test_routine_clock: None,
         })
     }
 
@@ -268,6 +289,9 @@ impl WorkerConfig {
             test_bot_runtime_ready: false,
             #[cfg(test)]
             test_lifecycle_unit: None,
+            owner_zone: None,
+            #[cfg(test)]
+            test_routine_clock: None,
         })
     }
 
@@ -1269,6 +1293,7 @@ enum Envelope {
         deadline: Instant,
     },
     RoutineDetailCompleted(bots::routine::detail::DetailResult),
+    RoutineControlCompleted(Box<bots::routine::control::ControlResult>),
     RoutineListing {
         command: WorkerCommand,
         cancellation: Cancellation,
@@ -1745,6 +1770,7 @@ struct WorkerState {
     memory_recovery: bots::memory::recovery::MemoryRecovery,
     routine_recovery: bots::routine::RoutineRecovery,
     routine_listings: bots::routine::listing::Listings,
+    routine_controls: bots::routine::control::RoutineControls,
     memory_reads: bots::memory::read::MemoryReads,
     memory_writes: bots::memory::write::MemoryWrites,
     /// Refused Bot tasks owed their automatic re-send as files (O30).
@@ -2029,6 +2055,7 @@ fn run_worker(
         memory_recovery: Default::default(),
         routine_recovery: Default::default(),
         routine_listings: Default::default(),
+        routine_controls: bots::routine::control::RoutineControls::new(config.owner_zone.take()),
         occurrences: bots::occurrence::OccurrenceDriver::new(routine_calls),
         decision_waits: bots::decision_wait::DecisionWaitDriver::new(
             config.decision_wait_delegate.take(),
@@ -2080,6 +2107,10 @@ fn run_worker(
         removed: HashSet::new(),
     };
     #[cfg(test)]
+    if let Some(clock) = config.test_routine_clock.take() {
+        state.routine_controls.set_clock(clock);
+    }
+    #[cfg(test)]
     if let Some(unit) = config.test_lifecycle_unit {
         state.bot_lifecycle = bots::LifecycleDriver::with_unit(unit);
     }
@@ -2109,6 +2140,7 @@ fn run_worker(
         state.schedule_bot_chat_step();
         state.schedule_bot_resends();
         state.schedule_bot_lifecycle();
+        state.schedule_routine_access_recovery();
         state.schedule_creation_lanes();
         state.schedule_occurrence_recovery();
         match receiver.recv_timeout(LOOP_INTERVAL) {
@@ -2170,6 +2202,9 @@ fn run_worker(
                 deadline,
             }) => state.start_routine_listing(command, cancellation, deadline),
             Ok(Envelope::RoutineListingCompleted(result)) => state.complete_routine_listing(result),
+            Ok(Envelope::RoutineControlCompleted(result)) => {
+                state.complete_routine_control(*result)
+            }
             Ok(Envelope::RunRoutine { request, reply }) => state.start_run_routine(request, reply),
             Ok(Envelope::RunRoutineCompleted(result)) => state.complete_run_routine(result),
             Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
@@ -2432,6 +2467,15 @@ impl WorkerState {
                 request: request @ koru_ai_wire::BotCommand::StopTask { .. },
                 reply,
             } => self.stop_bot_task(context, request, reply),
+            // One owner control of a Routine (P4.3): answered once the
+            // Schedule's owner has, never by the writer alone.
+            WorkerCommand::Bots {
+                context,
+                request,
+                reply,
+            } if request.routine_control().is_some() => {
+                self.start_routine_control(context, request, reply)
+            }
             WorkerCommand::Bots {
                 context,
                 request,
@@ -6026,6 +6070,14 @@ enum ProviderAdminJob {
     BotMemoryRead(bots::memory::read::MemoryReadJob),
     BotRoutineListing(bots::routine::listing::ListingJob),
     BotRoutineDetail(bots::routine::detail::DetailJob),
+    /// One owner control of a Routine (P4.3). It waits on the Schedule's
+    /// owner, so it runs on the interactive owner-call lane with a person's
+    /// approvals and steers, never on preparation's lane, which every other
+    /// Bot command needs.
+    BotRoutineControl(Box<bots::routine::control::ControlJob>),
+    /// A restart's repeat of an access edit's barrier install: background
+    /// administration, never a lane that answers a person.
+    BotRoutineAccessRecovery(Box<bots::routine::control::ControlJob>),
     BotRoutineModel(Box<bots::routine::model::RunRoutineJob>),
     BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
@@ -6252,6 +6304,7 @@ impl ProviderAdminPool {
                         ProviderAdminJob::BotChatControl(_)
                         | ProviderAdminJob::BotInteraction(_)
                         | ProviderAdminJob::BotSteer(_)
+                        | ProviderAdminJob::BotRoutineControl(_)
                         | ProviderAdminJob::BotTaskStop(_) => {
                             unreachable!("control lane dispatch")
                         }
@@ -6259,6 +6312,13 @@ impl ProviderAdminPool {
                             send_admin_envelope(
                                 &output,
                                 Envelope::BotLifecycleStep(job.run()),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotRoutineAccessRecovery(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::RoutineControlCompleted(Box::new(job.run())),
                                 &thread_shutdown,
                             );
                         }
@@ -6506,6 +6566,9 @@ impl ProviderAdminPool {
                                 Envelope::BotInteraction(job.run())
                             }
                             ProviderAdminJob::BotSteer(job) => Envelope::BotSteer(job.run()),
+                            ProviderAdminJob::BotRoutineControl(job) => {
+                                Envelope::RoutineControlCompleted(Box::new(job.run()))
+                            }
                             _ => unreachable!("interactive queue dispatch"),
                         };
                         send_admin_envelope(&control_output, event, &control_shutdown);
@@ -6675,7 +6738,9 @@ impl ProviderAdminPool {
         }
         if matches!(
             &job,
-            ProviderAdminJob::BotInteraction(_) | ProviderAdminJob::BotSteer(_)
+            ProviderAdminJob::BotInteraction(_)
+                | ProviderAdminJob::BotSteer(_)
+                | ProviderAdminJob::BotRoutineControl(_)
         ) {
             let Some(sender) = &self.interactive_sender else {
                 return Err(AdminSubmitError {

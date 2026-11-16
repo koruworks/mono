@@ -271,7 +271,13 @@ impl WorkerState {
                     job.progress
                         .as_mut()
                         .ok_or_else(unavailable_failure)?
-                        .observe(observation)?;
+                        // The same row a person's list shows, without this
+                        // computer's zone: a floating rule stays owner local.
+                        .observe(BotRoutineLiveObservation::observed(
+                            observation,
+                            Timestamp::now().millis(),
+                            None,
+                        ))?;
                 }
                 (Phase::Reply, Evidence::Reply) => {
                     if let Some(progress) = &mut job.progress {

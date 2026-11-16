@@ -12,7 +12,7 @@ fn fixture() -> (Repository, SynchronizeRoutinePreclaim, Install) {
     let m = &snapshot.metadata;
     let global =
         policy::global_barrier(m.owner, m.id, m.revision, m.policy_revision, m.policy()).unwrap();
-    let routine = policy::initial_routine_barrier(&snapshot.creation.identity);
+    let routine = policy::current_routine_barrier(&snapshot.creation.identity, &snapshot.current);
     (
         repo,
         request,

@@ -34,6 +34,10 @@ pub struct BotRoutineDetail {
     pub live: RoutineDetailLive,
     pub readiness: RoutineReadinessObservation,
     pub local_history: RoutineLocalHistoryObservation,
+    /// What each past minute became, newest first: it ran, it was missed, or
+    /// it was skipped because the Bot was busy. Read from the Schedule
+    /// document for this Routine only. Nothing is caught up.
+    pub occurrences: RoutineOccurrenceHistoryObservation,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +81,13 @@ pub enum RoutineOwnerZoneObservation {
         iana: String,
     },
     OwnerLocal {},
+    /// A floating rule whose owner is this computer: the time zone this
+    /// computer is in now. Never a viewer's zone for a Routine owned
+    /// elsewhere.
+    ThisComputer {
+        #[serde(deserialize_with = "iana")]
+        iana: String,
+    },
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -121,6 +132,150 @@ pub enum RoutineLocalHistoryObservation {
         next_before_occurrence_ms: Option<i64>,
     },
     Unavailable {},
+}
+
+/// One page of a Routine's past minutes, newest first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "observation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RoutineOccurrenceHistoryObservation {
+    Available {
+        #[serde(deserialize_with = "occurrence_lines")]
+        #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
+        items: Vec<RoutineOccurrenceLine>,
+        next_before_occurrence_ms: Option<i64>,
+    },
+    Unavailable {},
+}
+/// One past minute of a Routine. `ran` means its first turn was
+/// acknowledged, not that a result was saved. `test` marks a minute a person
+/// started with Test. `conversation` is present when this computer holds the
+/// conversation of that minute.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(deny_unknown_fields)]
+pub struct RoutineOccurrenceLine {
+    pub occurrence_ms: i64,
+    pub outcome: RoutineOccurrenceOutcome,
+    pub test: bool,
+    pub recorded_at_ms: i64,
+    pub conversation: Option<BotRoutineLocalConversation>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum RoutineOccurrenceOutcome {
+    Ran,
+    Missed,
+    SkippedBusy,
+}
+impl From<ScheduleFiringOutcome> for RoutineOccurrenceOutcome {
+    fn from(outcome: ScheduleFiringOutcome) -> Self {
+        match outcome {
+            ScheduleFiringOutcome::Fired => Self::Ran,
+            ScheduleFiringOutcome::SkippedMissed => Self::Missed,
+            ScheduleFiringOutcome::SkippedBusy => Self::SkippedBusy,
+        }
+    }
+}
+
+/// The most history lines one detail read returns.
+pub const BOT_ROUTINE_HISTORY_LIMIT: usize = 16;
+
+/// Trusted in-process page of a Routine's firings, read from its Schedule
+/// document off the writer; no serde/token constructor. The lines are newest
+/// first, at most the requested limit, all below the requested cursor.
+#[derive(Clone, PartialEq, Eq)]
+pub enum RoutineFiringsObservation {
+    Available {
+        lines: Vec<RoutineFiringLine>,
+        next_before_occurrence_ms: Option<i64>,
+    },
+    /// The firing list did not decode, or was not read.
+    Unavailable,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RoutineFiringLine {
+    pub occurrence_ms: i64,
+    pub outcome: RoutineOccurrenceOutcome,
+    pub recorded_at_ms: i64,
+}
+impl RoutineFiringsObservation {
+    /// One page of a decoded firing list: the entries below `before`, the
+    /// newest `limit` of them, and the cursor of the next page. The cost is
+    /// linear in the list; nothing bounds the list itself.
+    pub fn page<I>(firings: I, before: Option<i64>, limit: u8) -> Self
+    where
+        I: IntoIterator<Item = RoutineFiringLine>,
+    {
+        let limit = usize::from(limit).clamp(1, BOT_ROUTINE_HISTORY_LIMIT);
+        let mut lines: Vec<RoutineFiringLine> = firings
+            .into_iter()
+            .filter(|line| before.is_none_or(|before| line.occurrence_ms < before))
+            .collect();
+        lines.sort_by_key(|line| std::cmp::Reverse(line.occurrence_ms));
+        let more = lines.len() > limit;
+        lines.truncate(limit);
+        Self::Available {
+            next_before_occurrence_ms: more
+                .then(|| lines.last().map(|line| line.occurrence_ms))
+                .flatten(),
+            lines,
+        }
+    }
+    /// The public history: each line joined, by its minute, with the local
+    /// conversation of that minute and whether that minute was a Test. A
+    /// firing from another computer has no local row and no link.
+    pub fn history(
+        &self,
+        local: &[(BotRoutineLocalConversation, bool)],
+    ) -> RoutineOccurrenceHistoryObservation {
+        let Self::Available {
+            lines,
+            next_before_occurrence_ms,
+        } = self
+        else {
+            return RoutineOccurrenceHistoryObservation::Unavailable {};
+        };
+        if lines.len() > BOT_ROUTINE_HISTORY_LIMIT {
+            return RoutineOccurrenceHistoryObservation::Unavailable {};
+        }
+        RoutineOccurrenceHistoryObservation::Available {
+            items: lines
+                .iter()
+                .map(|line| {
+                    let row = local
+                        .iter()
+                        .find(|(row, _)| row.occurrence_ms == line.occurrence_ms);
+                    RoutineOccurrenceLine {
+                        occurrence_ms: line.occurrence_ms,
+                        outcome: line.outcome,
+                        test: row.is_some_and(|(_, test)| *test),
+                        recorded_at_ms: line.recorded_at_ms,
+                        // Only a minute that ran has a conversation to open.
+                        conversation: row
+                            .filter(|_| line.outcome == RoutineOccurrenceOutcome::Ran)
+                            .map(|(row, _)| row.clone()),
+                    }
+                })
+                .collect(),
+            next_before_occurrence_ms: *next_before_occurrence_ms,
+        }
+    }
+}
+impl std::fmt::Debug for RoutineFiringsObservation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RoutineFiringsObservation([REDACTED])")
+    }
+}
+
+/// This computer, as the owner of a floating rule: its device and the time
+/// zone it is in now. Detected by the caller on every read and never cached,
+/// so a system zone change is seen by the next read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RoutineThisComputer {
+    pub device: DeviceId,
+    pub zone: koru_delegate_schedule::CanonicalZone,
 }
 
 /// A strict flattened envelope closes only this new BotResponse variant. The
@@ -176,7 +331,21 @@ pub enum RoutineDetailObservation {
     Unavailable,
 }
 impl RoutineDetailObservation {
+    /// The public observation with no knowledge of this computer's zone: a
+    /// floating rule answers `owner_local`.
     pub fn live(self, observed_at_ms: i64) -> RoutineDetailLive {
+        self.live_on(observed_at_ms, None)
+    }
+    /// The same, on the computer `this` describes. A floating rule whose
+    /// current owner is this computer is evaluated in this computer's zone,
+    /// for display only: the delegate's own evaluation decides when a
+    /// Routine fires. Every other floating case stays `owner_local`; the
+    /// viewer's zone is never substituted for an owner elsewhere.
+    pub fn live_on(
+        self,
+        observed_at_ms: i64,
+        this: Option<&RoutineThisComputer>,
+    ) -> RoutineDetailLive {
         match self {
             Self::NotLive => RoutineDetailLive::NotLive {},
             Self::Unavailable => RoutineDetailLive::Unavailable {},
@@ -187,30 +356,13 @@ impl RoutineDetailObservation {
                 recurrence,
                 state,
             } => {
-                let owner_zone = match recurrence.zone_name() {
-                    Some(iana) => RoutineOwnerZoneObservation::Fixed { iana: iana.into() },
-                    None => RoutineOwnerZoneObservation::OwnerLocal {},
-                };
-                let next = if !matches!(state, ScheduleState::Active { .. }) {
-                    RoutineNextObservation::Inactive {}
-                } else {
-                    match &recurrence {
-                        RecurrenceRule::Floating { .. } => RoutineNextObservation::OwnerLocal {},
-                        RecurrenceRule::Zoned { cron, zone } => {
-                            match koru_delegate_schedule::next_zoned_after_at_least(
-                                cron,
-                                zone,
-                                observed_at_ms,
-                                effective_at_ms,
-                            ) {
-                                Ok(Some(next)) => RoutineNextObservation::Exact {
-                                    at_ms: next.instant_ms(),
-                                },
-                                _ => RoutineNextObservation::Unavailable {},
-                            }
-                        }
-                    }
-                };
+                let (owner_zone, next) = routine_zone_and_next(
+                    &recurrence,
+                    &state,
+                    effective_at_ms,
+                    observed_at_ms,
+                    this,
+                );
                 RoutineDetailLive::Current {
                     name,
                     definition_revision,
@@ -223,6 +375,53 @@ impl RoutineDetailObservation {
             }
         }
     }
+}
+/// The zone a rule is evaluated in and its next time, from one observation.
+/// No clock and no system zone is read here.
+pub fn routine_zone_and_next(
+    recurrence: &RecurrenceRule,
+    state: &ScheduleState,
+    effective_at_ms: i64,
+    observed_at_ms: i64,
+    this: Option<&RoutineThisComputer>,
+) -> (RoutineOwnerZoneObservation, RoutineNextObservation) {
+    // The document's current owner, after handoff reduction. A pending
+    // handoff or a retired Schedule has no owner this computer may speak for.
+    let owner = match state {
+        ScheduleState::Active { owner } | ScheduleState::Paused { owner, .. } => Some(*owner),
+        ScheduleState::HandoffPending { .. } | ScheduleState::Retired => None,
+    };
+    let here = this.filter(|this| owner == Some(this.device));
+    let zone = match recurrence {
+        RecurrenceRule::Zoned { zone, .. } => Some(zone),
+        RecurrenceRule::Floating { .. } => here.map(|this| &this.zone),
+    };
+    let owner_zone = match (recurrence.zone_name(), here) {
+        (Some(iana), _) => RoutineOwnerZoneObservation::Fixed { iana: iana.into() },
+        (None, Some(this)) => RoutineOwnerZoneObservation::ThisComputer {
+            iana: this.zone.as_str().into(),
+        },
+        (None, None) => RoutineOwnerZoneObservation::OwnerLocal {},
+    };
+    let next = if !matches!(state, ScheduleState::Active { .. }) {
+        RoutineNextObservation::Inactive {}
+    } else {
+        match zone {
+            None => RoutineNextObservation::OwnerLocal {},
+            Some(zone) => match koru_delegate_schedule::next_zoned_after_at_least(
+                recurrence.cron(),
+                zone,
+                observed_at_ms,
+                effective_at_ms,
+            ) {
+                Ok(Some(next)) => RoutineNextObservation::Exact {
+                    at_ms: next.instant_ms(),
+                },
+                _ => RoutineNextObservation::Unavailable {},
+            },
+        }
+    };
+    (owner_zone, next)
 }
 pub fn routine_readiness(
     paused: bool,
@@ -288,6 +487,11 @@ fn history<'de, D: serde::Deserializer<'de>>(
     d: D,
 ) -> Result<Vec<BotRoutineLocalConversation>, D::Error> {
     limited(d, 16)
+}
+fn occurrence_lines<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<Vec<RoutineOccurrenceLine>, D::Error> {
+    limited(d, BOT_ROUTINE_HISTORY_LIMIT)
 }
 fn reasons<'de, D: serde::Deserializer<'de>>(
     d: D,

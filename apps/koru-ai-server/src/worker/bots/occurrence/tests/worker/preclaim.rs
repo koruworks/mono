@@ -6,7 +6,7 @@ use koru_delegate_core::{BotBootAdmission, BotPolicyBarrierReceipt, BotPolicyBar
 
 #[derive(Default)]
 pub(super) struct Peer {
-    enabled: AtomicBool,
+    pub(super) enabled: AtomicBool,
     calls: Mutex<Vec<&'static str>>,
     fail: Mutex<Option<&'static str>>,
     held: Mutex<Option<(&'static str, Gate)>>,
@@ -249,7 +249,10 @@ fn preclaim_worker_installs_exact_admission_global_and_routine_in_order() {
     assert_eq!(proof.global.policy, bot_native_policy(&h.fixture.bot));
     assert_eq!(
         proof.routine.unwrap(),
-        policy::initial_routine_barrier(&h.fixture.creation.identity)
+        policy::current_routine_barrier(
+            &h.fixture.creation.identity,
+            &BotRoutineCurrentGrant::original(&h.fixture.creation.identity)
+        )
     );
     assert_eq!(calls(&h), ["hint", "admission", "global", "routine"]);
     let repo = h.finish();

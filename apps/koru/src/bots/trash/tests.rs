@@ -287,6 +287,8 @@ fn a_bots_restore_names_its_trash_and_is_said_when_done() {
                     refusal: None,
                     members: Vec::new(),
                     left_in_place: Vec::new(),
+                    routines_needing_access: Vec::new(),
+                    routines_still_on: Vec::new(),
                 },
             }),
         })
@@ -436,6 +438,8 @@ fn a_second_restore_press_sends_nothing_while_the_first_is_on_its_way() {
                     refusal: None,
                     members: Vec::new(),
                     left_in_place: Vec::new(),
+                    routines_needing_access: Vec::new(),
+                    routines_still_on: Vec::new(),
                 },
             }),
         })
@@ -586,6 +590,8 @@ fn restore_completed(bot: &Bot, request: BotRequestId, source: BotRequestId) -> 
                 refusal: None,
                 members: Vec::new(),
                 left_in_place: Vec::new(),
+                routines_needing_access: Vec::new(),
+                routines_still_on: Vec::new(),
             },
         }),
     }

@@ -344,6 +344,10 @@ fn execute_bot_command(
         BotCommand::CreateChat { .. }
         | BotCommand::ReadRoutines { .. }
         | BotCommand::ReadRoutineDetail { .. }
+        | BotCommand::SetRoutineLifecycle { .. }
+        | BotCommand::TestRoutine { .. }
+        | BotCommand::EditRoutine { .. }
+        | BotCommand::UpdateRoutineAccess { .. }
         | BotCommand::CreateRoutine { .. }
         | BotCommand::ReadRoutineCreation { .. }
         | BotCommand::RetryRoutineCreation { .. }

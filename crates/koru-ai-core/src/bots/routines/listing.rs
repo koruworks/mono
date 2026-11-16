@@ -93,22 +93,42 @@ pub enum BotRoutineLiveObservation {
         #[serde(with = "state")]
         #[cfg_attr(feature = "schema", schemars(with = "state::StrictState"))]
         state: ScheduleState,
+        /// The next time the Routine is due, computed as the detail computes
+        /// it. `inactive` while it is paused.
+        next: RoutineNextObservation,
     },
     NotLive {},
     Unavailable {},
 }
-impl From<RoutineOverviewObservation> for BotRoutineLiveObservation {
-    fn from(value: RoutineOverviewObservation) -> Self {
+impl BotRoutineLiveObservation {
+    /// One row's observation. No history is read for a row.
+    pub fn observed(
+        value: RoutineOverviewObservation,
+        observed_at_ms: i64,
+        this: Option<&RoutineThisComputer>,
+    ) -> Self {
         match value {
             RoutineOverviewObservation::Current {
                 name,
                 definition_revision,
                 state,
-            } => Self::Current {
-                name,
-                definition_revision,
-                state,
-            },
+                effective_at_ms,
+                recurrence,
+            } => {
+                let (_, next) = routine_zone_and_next(
+                    &recurrence,
+                    &state,
+                    effective_at_ms,
+                    observed_at_ms,
+                    this,
+                );
+                Self::Current {
+                    name,
+                    definition_revision,
+                    state,
+                    next,
+                }
+            }
             RoutineOverviewObservation::NotLive => Self::NotLive {},
             RoutineOverviewObservation::Unavailable => Self::Unavailable {},
         }

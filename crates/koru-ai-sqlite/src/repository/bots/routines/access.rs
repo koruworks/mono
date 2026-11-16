@@ -194,6 +194,17 @@ impl Repository {
         current_on(&self.connection, &creation)
     }
 
+    /// The same one reader, for a caller that already holds `creation` from
+    /// a reader that proved its Bot's owner and home: preclaim, which reads
+    /// bounded metadata on purpose and must not depend on the Bot's current
+    /// execution fields. It grants nothing by itself.
+    pub fn routine_current_grant_of(
+        &self,
+        creation: &BotRoutineCreation,
+    ) -> Result<BotRoutineCurrentGrant, BotError> {
+        current_on(&self.connection, creation)
+    }
+
     /// The access edit of this Routine that is still `prepared`, if any.
     pub fn routine_access_pending(
         &self,

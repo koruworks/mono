@@ -261,6 +261,8 @@ fn lifecycle_progress_is_strict_and_carries_no_owner_correlation() {
             retained: Some(BotLifecycleRetained::OwnershipUnproven),
         }],
         left_in_place: BotLeftInPlace::of(BotLifecycleKind::TrashChat),
+        routines_needing_access: Vec::new(),
+        routines_still_on: Vec::new(),
     };
     let mut json = serde_json::to_value(&progress).unwrap();
     assert_eq!(
@@ -353,6 +355,8 @@ fn only_trash_says_what_it_left_in_place_and_archive_serializes_as_before() {
         refusal: None,
         members: vec![],
         left_in_place: BotLeftInPlace::of(Archive),
+        routines_needing_access: Vec::new(),
+        routines_still_on: Vec::new(),
     };
     let json = serde_json::to_value(&archive).unwrap();
     assert!(json.get("left_in_place").is_none());

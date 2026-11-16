@@ -914,6 +914,8 @@ fn the_archived_filter_lists_opens_and_unarchives() {
                     refusal: None,
                     members: Vec::new(),
                     left_in_place: Vec::new(),
+                    routines_needing_access: Vec::new(),
+                    routines_still_on: Vec::new(),
                 },
             }),
         })
@@ -1515,6 +1517,8 @@ fn an_unarchive_that_answered_leaves_the_archived_filter_at_once() {
                     refusal: None,
                     members: Vec::new(),
                     left_in_place: Vec::new(),
+                    routines_needing_access: Vec::new(),
+                    routines_still_on: Vec::new(),
                 },
             }),
         })

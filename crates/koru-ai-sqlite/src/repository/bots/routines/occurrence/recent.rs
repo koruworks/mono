@@ -17,6 +17,9 @@ struct Candidate {
     grant: u64,
     created: i64,
     updated: i64,
+    /// The occurrence was captured under a paused definition, which only an
+    /// owner Test does. Read for the selected detail's history alone.
+    test: bool,
 }
 #[derive(Clone, PartialEq, Eq)]
 struct Reference {
@@ -56,6 +59,25 @@ impl RecentSnapshot {
                 .then(|| self.0[limit - 1].candidate.occurrence),
         })
     }
+    /// Each local conversation of the page with whether its minute was a
+    /// Test, for the join with the Schedule's own firings.
+    pub(in super::super) fn occurrences(&self) -> Vec<(BotRoutineLocalConversation, bool)> {
+        self.0
+            .iter()
+            .map(|r| {
+                (
+                    BotRoutineLocalConversation {
+                        occurrence_ms: r.candidate.occurrence,
+                        run_id: r.candidate.ids.run,
+                        chat_id: r.candidate.ids.chat,
+                        attempt_id: r.candidate.ids.attempt,
+                        conversation: r.visibility,
+                    },
+                    r.candidate.test,
+                )
+            })
+            .collect()
+    }
     pub(in super::super) fn observation(&self) -> BotRoutineLocalConversations {
         BotRoutineLocalConversations::Available {
             more: self.0.len() == 5,
@@ -89,16 +111,22 @@ fn digest(column: &str) -> String {
     format!("CASE WHEN typeof({column})='blob' AND length({column})=32 THEN {column} END")
 }
 pub(super) fn candidates_sql() -> String {
-    candidates_select(" ORDER BY occurrence_ms DESC LIMIT 5")
+    // A list row shows no history line, so its captures are not opened.
+    candidates_select("0", " ORDER BY occurrence_ms DESC LIMIT 5")
 }
 pub(super) fn history_candidates_sql(cursor: bool) -> String {
-    candidates_select(if cursor {
-        " AND occurrence_ms<?5 ORDER BY occurrence_ms DESC LIMIT ?6"
-    } else {
-        " ORDER BY occurrence_ms DESC LIMIT ?5"
-    })
+    // The captured definition's lifecycle is the text `active`, or an object
+    // for a paused one. Anything else is not a capture this build wrote.
+    candidates_select(
+        "CASE json_type(capture_json,'$.schedule_definition.lifecycle') WHEN 'text' THEN 0 WHEN 'object' THEN 1 END",
+        if cursor {
+            " AND occurrence_ms<?5 ORDER BY occurrence_ms DESC LIMIT ?6"
+        } else {
+            " ORDER BY occurrence_ms DESC LIMIT ?5"
+        },
+    )
 }
-fn candidates_select(suffix: &str) -> String {
+fn candidates_select(test: &str, suffix: &str) -> String {
     let columns = [
         integer("occurrence_ms", i64::MIN), integer("definition_revision", 1), digest("definition_digest"),
         "CASE WHEN owner_handoff IS NULL OR (typeof(owner_handoff)='text' AND length(CAST(owner_handoff AS BLOB))=36) THEN owner_handoff ELSE 1 END".into(),
@@ -108,6 +136,7 @@ fn candidates_select(suffix: &str) -> String {
         integer("config_revision",1), integer("policy_revision",1), integer("grant_revision",1),
         text("linked_request_id",36),text("linked_chat_id",36), "close_reason IS NULL".into(),
         integer("created_at_ms",i64::MIN),integer("updated_at_ms",i64::MIN),
+        test.into(),
     ];
     format!(
         "SELECT {} FROM bot_routine_preparations INDEXED BY bot_routine_conversations WHERE user_scope_id=?1 AND owner_device_id=?2 AND bot_id=?3 AND schedule_id=?4 AND stage='linked'{suffix}",
@@ -233,6 +262,7 @@ fn read_selected(
             grant: r.get(14).map_err(bad)?,
             created: r.get(18).map_err(bad)?,
             updated: r.get(19).map_err(bad)?,
+            test: r.get(20).map_err(bad)?,
         };
         if !c.ids.valid()
             || c.updated < c.created
