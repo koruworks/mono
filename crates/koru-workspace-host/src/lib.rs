@@ -44,6 +44,11 @@ pub mod formats;
 mod image_import;
 pub mod images;
 mod inspector;
+/// The F12 inspector for a host that is not [`app`]'s: the same inspector,
+/// handed window events and answering with what the host should do, with its
+/// panel's placement kept in memory only. The inspector itself stays private
+/// to this crate; this facade is the whole of what another host can reach.
+pub use inspector::hosted as hosted_inspector;
 /// What the window actually received, on demand — `KORU_INPUT_DEBUG=1`.
 ///
 /// **Lives in `koru-ui`** as `keys::debug`, beside the `ctrl_letter` whose

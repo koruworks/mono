@@ -44,6 +44,54 @@ impl Placement {
         }
     }
 
+    /// A placement that lives in this value and nowhere else.
+    ///
+    /// **No path is resolved, no row is read and no writer thread is
+    /// started**, which is the whole difference from [`open`](Self::open):
+    /// passing `root = None` there is not the same thing, because it resolves
+    /// the machine-local `windows.conf` and starts a writer for it. A host
+    /// that must leave the working app's remembered geometry exactly as it
+    /// found it, and write nothing of its own, uses this.
+    ///
+    /// `remembered` is what the same host recorded earlier in this process;
+    /// with none, the panel opens at its default size wherever the OS puts
+    /// it. What is recorded afterwards is forgotten when the value is
+    /// dropped.
+    pub fn in_memory(remembered: Option<Geometry>) -> Self {
+        Self {
+            geometry: remembered.unwrap_or_default(),
+            // The default writer has no worker: `write_if_changed` then only
+            // remembers the row it was handed.
+            writer: WindowRowWriter::default(),
+        }
+    }
+
+    /// Record where the panel was from values a host already has, for one
+    /// that is never handed the `Window` [`remember`](Self::remember) reads.
+    ///
+    /// `size` is the client size in logical pixels. A maximised panel keeps
+    /// its last restored position and size and only its pin is updated, as
+    /// `remember` does; so does one whose position the OS would not give.
+    pub fn record(
+        &mut self,
+        position: Option<(i32, i32)>,
+        size: (f32, f32),
+        maximised: bool,
+        pinned: bool,
+    ) {
+        match position {
+            Some(position) if !maximised && size.0 > 0.0 && size.1 > 0.0 => {
+                self.geometry = Geometry {
+                    position: Some(position),
+                    size,
+                    pinned,
+                };
+            }
+            _ => self.geometry.pinned = pinned,
+        }
+        self.write();
+    }
+
     pub fn remember(&mut self, window: &winit::window::Window, pinned: bool) {
         if window.is_minimized() == Some(true) || window.is_maximized() {
             self.geometry.pinned = pinned;
