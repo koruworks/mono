@@ -39,8 +39,10 @@ use super::*;
 use koru_i18n::Key;
 
 mod android;
+mod ios;
 
 pub(super) const ANDROID: &[Entry] = android::RECORDS;
+pub(super) const IOS: &[Entry] = ios::RECORDS;
 
 /// A Compose screen or a SwiftUI view: drawn only on its own platform.
 const fn view(symbol: &'static str) -> Api {
@@ -84,4 +86,22 @@ const ANDROID_SYSTEM: [(Platform, Availability); 5] = [
     (Platform::Linux, Availability::NotApplicable),
     (Platform::Android, Availability::NativeOwned),
     (Platform::Ios, Availability::NotApplicable),
+];
+
+/// A native adapter that ships in the iOS app or its share extension.
+const IOS_APP: [(Platform, Availability); 5] = [
+    (Platform::Windows, Availability::NotApplicable),
+    (Platform::MacOs, Availability::NotApplicable),
+    (Platform::Linux, Availability::NotApplicable),
+    (Platform::Android, Availability::NotApplicable),
+    (Platform::Ios, Availability::Existing),
+];
+
+/// A surface iOS draws for the iOS app.
+const IOS_SYSTEM: [(Platform, Availability); 5] = [
+    (Platform::Windows, Availability::NotApplicable),
+    (Platform::MacOs, Availability::NotApplicable),
+    (Platform::Linux, Availability::NotApplicable),
+    (Platform::Android, Availability::NotApplicable),
+    (Platform::Ios, Availability::NativeOwned),
 ];

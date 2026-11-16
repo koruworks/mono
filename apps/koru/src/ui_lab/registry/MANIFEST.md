@@ -115,16 +115,16 @@ fail until this table says what they compute.
 | app modules excluded | 117 |
 | records: app crates | 60 |
 | native files: Android | 24 |
-| native files: iOS | 0 |
+| native files: iOS | 10 |
 | native files: macOS | 0 |
 | native composables | 89 |
-| native views | 0 |
-| native entry points baselined | 19 |
-| records: native platforms | 19 |
-| records | 312 |
-| records: foundations | 60 |
-| records: controls | 82 |
-| records: application compositions | 170 |
+| native views | 29 |
+| native entry points baselined | 28 |
+| records: native platforms | 34 |
+| records | 327 |
+| records: foundations | 61 |
+| records: controls | 88 |
+| records: application compositions | 178 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
@@ -132,37 +132,37 @@ fail until this table says what they compute.
 | kind: support | 71 |
 | kind: domain composition | 57 |
 | kind: app-local | 55 |
-| kind: native adapter | 19 |
+| kind: native adapter | 34 |
 | token values listed | 174 |
-| symbols | 2307 |
+| symbols | 2354 |
 | symbols with typed recipes | 2 |
 | inspector identities | 60 |
 | inspector identity registration sites | 63 |
 | disposition: story exists | 1 |
 | disposition: no story yet | 211 |
 | disposition: nonvisual | 62 |
-| disposition: platform-only | 18 |
-| disposition: boundary | 20 |
+| disposition: platform-only | 32 |
+| disposition: boundary | 21 |
 | symbol story: available | 1 |
 | symbol story: no story yet | 451 |
-| symbol story: nonvisual | 1632 |
-| symbol story: platform-only | 67 |
-| symbol story: boundary | 156 |
+| symbol story: nonvisual | 1648 |
+| symbol story: platform-only | 97 |
+| symbol story: boundary | 157 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2255 |
+| A2UI: not supported | 2302 |
 <!-- counts:end -->
 
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 19 | 7 | 0 |
-| macOS | 0 | 0 | 285 | 0 | 1 | 1 | 19 | 6 | 0 |
-| Linux | 0 | 0 | 285 | 0 | 0 | 4 | 19 | 3 | 1 |
-| Android | 0 | 18 | 0 | 0 | 13 | 17 | 1 | 1 | 262 |
-| iOS | 0 | 0 | 0 | 1 | 13 | 17 | 20 | 0 | 261 |
+| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 34 | 7 | 0 |
+| macOS | 0 | 0 | 285 | 0 | 1 | 1 | 34 | 6 | 0 |
+| Linux | 0 | 0 | 285 | 0 | 0 | 4 | 34 | 3 | 1 |
+| Android | 0 | 18 | 0 | 0 | 13 | 17 | 16 | 1 | 262 |
+| iOS | 0 | 14 | 0 | 1 | 13 | 17 | 20 | 1 | 261 |
 <!-- cells:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1617,6 +1617,82 @@ Defects found here (not fixed):
   accessibility section says "Android draws its own reminder surfaces",
   while its *Reminders* row says neither phone schedules or delivers
   reminders and the Android source has no reminder UI.
+
+### iOS (`apps/ios`)
+
+20 non-test Swift files: `KoruMobile` 18, `KoruShare` 1, `KoruShared` 1
+(the reconnaissance's 32 counted the 12 test files too). The 10 that
+import SwiftUI or UIKit are compiled into the checks and were **read in
+full**: `KoruMobileApp`, `Theme`, `Views` (753 lines), `DevicesScreen`,
+`DocumentRendering`, `NativeRichTextEditor`, `SettingsScreen`,
+`ShareDestinationScreen`, `OpenSourceLicensesScreen` and
+`KoruShare/ShareViewController`. The other 10 draw nothing and were
+**searched** (for SwiftUI, UIKit, `UIApplication`, alerts, notifications,
+widgets and pickers — none) and read where a record's claim depended on
+them: `AppModel` (444 lines; 150–194, the creation and editing entry
+points, read), `KoruStoreServices` (1,305; the creation, upload and edit
+refusals at 901–976, 1067 and 1260 read), `ContractMapper`, `Domain`,
+`KoruSecretVault`, `MockServices`, `Native/KoruApiNative`,
+`Native/KoruNative`, `Services` (the model, the store adapter over the C
+shim and its mocks) and `KoruShared/ShareInbox` (the inbox format both
+extensions and the app compile; its declarations read). The project has
+three targets — the app, its unit tests and the share extension — and no
+widget, notification-service or other extension.
+
+29 views are declared in the compiled-in files (24 `View` structs, two of
+them generic, which is why the reconnaissance's `struct … : View` count was
+22; the `App`, a `ViewModifier`, two representables and the extension's
+view controller).
+
+| Record | Draws | Desktop records it stands beside |
+| --- | --- | --- |
+| `T-IOS-THEME`* | `KoruSpace` (the same five steps as Android), `KoruColor`, `KoruType`, `KoruEntityColor` | `T-SPACE`, `T-SURFACE`, `T-INK`, `T-ACCENT`, `T-TEXT-ROLES`, `T-NAMED-COLORS` |
+| `C-IOS-PRIMARY-BUTTON`* | `KoruPrimaryButton` (catalog family `C-BUTTON`) | `C-BUTTON` |
+| `C-IOS-EMPTY-STATE`* | `KoruEmptyState` | none: PLATFORMS.md's *KoruEmptyState (native name)* row, desktop not audited |
+| `C-IOS-ROW`* | `KoruRow` | none: PLATFORMS.md's *KoruRow (native name)* row, desktop not audited |
+| `C-IOS-APP`* | the `App`, the root stack and profiles list, creation sheet, error alert, share prompt | `H-MAIN-VIEW`, `H-MANAGER-VIEW`, `C-MANAGE` |
+| `C-IOS-ENTITY-LIST`* | the list every list screen uses | none |
+| `C-IOS-WORKSPACES`* | workspaces, filters, the details sheet | `C-MANAGE-WORKSPACES` |
+| `C-IOS-DOCUMENTS`* | documents and files behind a segmented picker | `C-EXPLORE` |
+| `C-IOS-DOCUMENT-VIEW`* | blocks, the desktop's heading ramp (ADR-412), markers, tables, pictures, the add-block bar | `C-DOCUMENT-EDITOR`, `C-DOCUMENT-TEXT`, `C-DOCUMENT-IMAGE`, `C-DOCUMENT-TABLE`, `T-DOCUMENT-TYPE` |
+| `C-IOS-RICH-TEXT`* | the TextKit 2 block view with tappable pills | `C-DOCUMENT-EDITOR`, `C-IME-COMPOSITION` |
+| `C-IOS-DEVICES`* | this device, relay, link by code or QR, pairing offer, linked devices, history | `C-LINK-DEVICE-PANEL`, `C-MANAGE-DEVICES` |
+| `C-IOS-QR-SCANNER`* | VisionKit's `DataScannerViewController`, narrowed to QR (`NativeOwned`) | none: the desktop shows a code, it does not scan one |
+| `C-IOS-SETTINGS`* | appearance, the system language link, licenses, diagnostics | `C-SETTINGS-SURFACE` |
+| `C-IOS-SHARE-DESTINATION`* | where a staged share lands, in the app | none (Android's is `C-ANDROID-SHARE`) |
+| `C-IOS-SHARE-EXTENSION`* | the `KoruShare` target's UIKit picker and staging | `C-MACOS-SHARE-EXTENSION` (one inbox format) |
+
+Option sets, each held to its Swift enum: `RootView.Creator`,
+`SettingsScreen.Appearance`, `OpenSourceLicenses.Document`.
+Dispositions: 14 platform-only, 1 boundary (`C-IOS-QR-SCANNER`). The
+drift checks hold the project's targets and the root's six routes (each
+still opened by the navigation destination) to baselines.
+
+Defects found here (not fixed):
+
+- **Hard-coded English a person reads**: the device history rows build
+  every sentence in English — "Untitled", "Updated “…”", "op"/"ops",
+  "Reconciled …" and eight event names (`DevicesScreen.swift` 420–446),
+  where Android's twin uses resources; the workspace details sheet's
+  "yes"/"no" (`Views.swift` 223, 229); the developer screen's "iOS" and
+  "koru.v1" (731–733); fixed `" — "` and `" · "` separators and `"-"`
+  fallbacks (`DevicesScreen.swift` 145–147, 155, 445; `Views.swift` 713).
+- **Controls that always fail**: the iOS screens offer Create on every
+  list, add-paragraph/task/list/image, indent, outdent, delete, task
+  toggles and typing, while the shipping store services refuse each one
+  with `unsupported` (`KoruStoreServices.swift` 902, 922, 976, 1067, 1261)
+  and the error alert is the only answer; Add image inserts a fixed 1×1
+  PNG (`AppModel.swift` 179–186), a prototype path left in production UI.
+- **Local values beside the theme**: presence and link failure use the
+  system's raw green and red (`DevicesScreen.swift` 156, 187) beside
+  `KoruColor`.
+- **Docs and source disagree**: mobile CATCHUP says profile and workspace
+  creation is desktop-only and "no phone UI offers them", and the mobile
+  README says "the iOS editor foundation remains disabled" — the iOS UI
+  offers both, and they fail (above); the README says Compose and SwiftUI
+  use "equivalent Koru semantic tokens", but iOS's accent is a green
+  (`KoruColor.accent`, `Theme.swift` 14) and Android's primary a blue
+  (`Theme.kt` 123).
 
 ## Notes for later batches
 

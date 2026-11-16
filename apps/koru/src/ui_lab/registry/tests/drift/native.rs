@@ -165,6 +165,46 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
             "../../../../../../../apps/android/app/src/main/java/app/koru/mobile/ui/theme/Theme.kt"
         ),
     ),
+    (
+        "apps/ios/KoruMobile/DevicesScreen.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/DevicesScreen.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/DocumentRendering.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/DocumentRendering.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/KoruMobileApp.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/KoruMobileApp.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/NativeRichTextEditor.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/NativeRichTextEditor.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/OpenSourceLicensesScreen.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/OpenSourceLicensesScreen.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/SettingsScreen.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/SettingsScreen.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/ShareDestinationScreen.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/ShareDestinationScreen.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/Theme.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/Theme.swift"),
+    ),
+    (
+        "apps/ios/KoruMobile/Views.swift",
+        include_str!("../../../../../../../apps/ios/KoruMobile/Views.swift"),
+    ),
+    (
+        "apps/ios/KoruShare/ShareViewController.swift",
+        include_str!("../../../../../../../apps/ios/KoruShare/ShareViewController.swift"),
+    ),
 ];
 
 /// The Android app's manifest: every component a launcher, a share sheet, a
@@ -176,6 +216,11 @@ const ANDROID_MANIFEST: &str =
 const ANDROID_SETTINGS: &str =
     include_str!("../../../../../../../apps/android/settings.gradle.kts");
 
+/// The iOS project: its native targets, each a product a person can open
+/// (the app, an extension) or a test bundle.
+const IOS_PROJECT: &str =
+    include_str!("../../../../../../../apps/ios/KoruMobile.xcodeproj/project.pbxproj");
+
 /// The language a native owner is written in.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum Language {
@@ -185,11 +230,15 @@ enum Language {
 
 /// The native owners: the name a record writes before `::`, its language,
 /// and the folder its symbols resolve in.
-const OWNERS: &[(&str, Language, &str)] = &[(
-    "app.koru.mobile",
-    Language::Kotlin,
-    "apps/android/app/src/main/java/app/koru/mobile/",
-)];
+const OWNERS: &[(&str, Language, &str)] = &[
+    (
+        "app.koru.mobile",
+        Language::Kotlin,
+        "apps/android/app/src/main/java/app/koru/mobile/",
+    ),
+    ("ios/KoruMobile", Language::Swift, "apps/ios/KoruMobile/"),
+    ("ios/KoruShare", Language::Swift, "apps/ios/KoruShare/"),
+];
 
 /// Whether a record's owner is a native platform's.
 pub(super) fn owns(owner: &str) -> bool {
@@ -735,6 +784,57 @@ fn the_android_entry_points_are_classified() {
     check_entry_points("the Android Gradle modules", declared, ANDROID_MODULES);
 }
 
+/// The iOS project's native targets, by name.
+const IOS_TARGETS: &[(&str, Module)] = &[
+    ("KoruMobile", Module::Records(&["C-IOS-APP"])),
+    (
+        "KoruMobileTests",
+        Module::Excluded("the app's unit-test bundle; draws nothing a person sees"),
+    ),
+    ("KoruShare", Module::Records(&["C-IOS-SHARE-EXTENSION"])),
+];
+
+/// The iOS root's navigation routes, by the case `Route` declares, and the
+/// records each opens.
+const IOS_ROUTES: &[(&str, Module)] = &[
+    ("workspaces", Module::Records(&["C-IOS-WORKSPACES"])),
+    ("documents", Module::Records(&["C-IOS-DOCUMENTS"])),
+    ("document", Module::Records(&["C-IOS-DOCUMENT-VIEW"])),
+    ("devices", Module::Records(&["C-IOS-DEVICES"])),
+    ("settings", Module::Records(&["C-IOS-SETTINGS"])),
+    ("diagnostics", Module::Records(&["C-IOS-SETTINGS"])),
+];
+
+/// Every door into the Apple UI — an Xcode target (an app, an extension, a
+/// widget, a notification service would each be one) and a route of the
+/// iOS root's navigation stack — is classified.
+#[test]
+fn the_apple_entry_points_are_classified() {
+    let section = IOS_PROJECT
+        .split("/* Begin PBXNativeTarget section */")
+        .nth(1)
+        .and_then(|rest| rest.split("/* End PBXNativeTarget section */").next())
+        .expect("the iOS project lists its native targets");
+    let targets: Vec<String> = section
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("name = "))
+        .filter_map(|rest| rest.strip_suffix(';'))
+        .map(str::to_owned)
+        .collect();
+    check_entry_points("the iOS project's targets", targets, IOS_TARGETS);
+
+    let routes = enum_members("apps/ios/KoruMobile/Views.swift", "Route");
+    check_entry_points("the iOS routes", routes, IOS_ROUTES);
+    let views = native_source("apps/ios/KoruMobile/Views.swift");
+    for (name, _) in IOS_ROUTES {
+        assert!(
+            views.contains(&format!("case .{name}:"))
+                || views.contains(&format!("case let .{name}(")),
+            "the root's navigation destination no longer opens Route.{name}"
+        );
+    }
+}
+
 /// What the native counts add up to, for the manifest's table.
 pub(super) fn counts() -> Vec<(&'static str, usize)> {
     let files = |prefix: &str| {
@@ -758,7 +858,11 @@ pub(super) fn counts() -> Vec<(&'static str, usize)> {
         ("native views", declarations(Language::Swift)),
         (
             "native entry points baselined",
-            ANDROID_COMPONENTS.len() + ANDROID_ROUTES.len() + ANDROID_MODULES.len(),
+            ANDROID_COMPONENTS.len()
+                + ANDROID_ROUTES.len()
+                + ANDROID_MODULES.len()
+                + IOS_TARGETS.len()
+                + IOS_ROUTES.len(),
         ),
         ("records: native platforms", native_records().count()),
     ]
