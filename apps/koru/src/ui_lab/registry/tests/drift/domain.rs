@@ -743,6 +743,66 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "crates/koru-session-view/src/surface.rs",
         include_str!("../../../../../../../crates/koru-session-view/src/surface.rs"),
     ),
+    (
+        "crates/koru-app-shell/src/banner_state.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/banner_state.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/chrome.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/chrome.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/command.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/command.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/element.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/element.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/host.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/host.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/keys.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/keys.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/lib.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/panel.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/panel.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/popover.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/popover.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/state.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/state.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/surface.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/surface.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/tabset.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/tabset.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/tabslide.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/tabslide.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/tabstrip.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/tabstrip.rs"),
+    ),
+    (
+        "crates/koru-app-shell/src/zoom_label.rs",
+        include_str!("../../../../../../../crates/koru-app-shell/src/zoom_label.rs"),
+    ),
 ];
 
 /// One domain crate's root: its records declared in `lib.rs` itself, and
@@ -1158,6 +1218,30 @@ pub(super) const CRATES: &[Crate] = &[
             ("selection", Module::Records(&["C-TERMINAL-VIEW"])),
             ("style", Module::Records(&["H-TERMINAL-STYLE"])),
             ("surface", Module::Records(&["H-SESSION-INTERACTION"])),
+        ],
+    },
+    Crate {
+        owner: "koru-app-shell",
+        lib: "crates/koru-app-shell/src/lib.rs",
+        root: &[],
+        modules: &[
+            ("banner_state", Module::Records(&["H-SHELL-BANNER-STATE"])),
+            ("chrome", Module::Records(&["C-SHELL-CAPTION"])),
+            ("command", Module::Records(&["H-SHELL-HOST"])),
+            ("element", Module::Records(&["H-SHELL-TABS"])),
+            (
+                "host",
+                Module::Records(&["H-SHELL-HOST", "C-SHELL-CAPTION"]),
+            ),
+            ("keys", Module::Records(&["H-SHELL-HOST"])),
+            ("panel", Module::Records(&["H-SHELL-PANEL"])),
+            ("popover", Module::Records(&["C-SHELL-POPOVER"])),
+            ("state", Module::Records(&["H-SHELL-HOST"])),
+            ("surface", Module::Records(&["H-SHELL-SURFACE"])),
+            ("tabset", Module::Records(&["H-SHELL-TABS"])),
+            ("tabslide", Module::Records(&["H-SHELL-TABS"])),
+            ("tabstrip", Module::Records(&["H-SHELL-TABS"])),
+            ("zoom_label", Module::Records(&["C-SHELL-ZOOM-LABEL"])),
         ],
     },
 ];

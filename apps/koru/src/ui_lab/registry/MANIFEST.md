@@ -103,40 +103,40 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 15 |
-| domain crate source files | 182 |
-| domain crate lib.rs modules | 131 |
-| domain crate lib.rs public modules | 26 |
+| domain crates | 16 |
+| domain crate source files | 197 |
+| domain crate lib.rs modules | 145 |
+| domain crate lib.rs public modules | 40 |
 | domain crate modules excluded | 29 |
-| records | 175 |
+| records | 183 |
 | records: foundations | 59 |
-| records: controls | 62 |
-| records: application compositions | 54 |
-| records: domain crates | 55 |
+| records: controls | 63 |
+| records: application compositions | 61 |
+| records: domain crates | 63 |
 | kind: token | 25 |
 | kind: primitive | 24 |
-| kind: widget | 57 |
-| kind: support | 34 |
-| kind: domain composition | 35 |
+| kind: widget | 58 |
+| kind: support | 39 |
+| kind: domain composition | 37 |
 | token values listed | 174 |
-| symbols | 1060 |
+| symbols | 1198 |
 | symbols with typed recipes | 2 |
 | inspector identities | 41 |
 | inspector identity registration sites | 43 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 132 |
-| disposition: nonvisual | 34 |
+| disposition: no story yet | 135 |
+| disposition: nonvisual | 39 |
 | disposition: platform-only | 0 |
 | disposition: boundary | 8 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 270 |
-| symbol story: nonvisual | 731 |
+| symbol story: no story yet | 279 |
+| symbol story: nonvisual | 860 |
 | symbol story: boundary | 58 |
 | A2UI: component | 6 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 9 |
-| A2UI: not supported | 1035 |
+| A2UI: not supported | 1173 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -541,6 +541,7 @@ reached only through the bounded searches below.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `koru-markdown-view` | 4 | 4 | 0 | 0 | 3 | 0 | 2 | 49 | — |
 | `koru-session-view` | 22 | 4 | 18 | 0 | 13 | 0 | 7 | 199 | — |
+| `koru-app-shell` | 15 | 1 | 14 | 0 | 14 | 0 | 8 | 138 | — |
 
 ### Records
 
@@ -565,6 +566,27 @@ IDs marked * are minted here in batch 1's style.
   `C-MANAGED-TRANSCRIPT`* (the messages, tool steps and approvals a provider
   sent). Every module is private and `lib.rs` re-exports the API, so every
   symbol is written at the crate root.
+- `koru-app-shell` (read in full: `lib.rs`; the rest by declarations, with
+  `chrome.rs` read through its carriers and the band and pane-header
+  painters, and `zoom_label.rs`, `popover.rs`, `host.rs` and
+  `banner_state.rs` through their enums and draw entry points): the chrome
+  it paints — `C-SHELL-CAPTION`* (the caption band's pane toggle, identity
+  chips and Settings slot, and the pane header band), `C-SHELL-POPOVER`*,
+  `C-SHELL-ZOOM-LABEL`* (a `Widget`: one small painter) — and the
+  machinery and contracts around them: `H-SHELL-PANEL`*, `H-SHELL-TABS`*,
+  `H-SHELL-BANNER-STATE`*, `H-SHELL-HOST`* (`ShellState`, the
+  `MultiWindowApp` a host drives, with `ShellHost` and the command
+  vocabulary) and `H-SHELL-SURFACE`* (what a hosted view implements).
+  **Only `TabStrip`, `TabSlides`, `Panel` and `TabElement` have a
+  production consumer** (`apps/koru/src/mainview`, `panes/explore.rs`):
+  `ShellState`, the caption and pane-header painters, `Popover`,
+  `BannerState` and `ZoomLabel` are exercised only by the crate's own tests
+  and `apps/koru/src/mainview/shell_conformance.rs`, which is
+  `#[cfg(test)]` (ADR-262's seam, kept compiled until `MainView` becomes
+  the shell's surface). The app draws its own zoom flash
+  (`apps/koru/src/mainview/zoomlabel.rs`). Their availability stays the
+  shared desktop default because the source ships in the linked crate; the
+  missing consumer is recorded here rather than as a platform status.
 
 ### Private parts
 
@@ -598,6 +620,14 @@ them:
   intent, so a story needs no session, process or IPC; the pending input
   view never opens the clipboard or a file itself, it asks through an
   intent). `TerminalView::new` builds its own in-memory `SessionStats`.
+  `koru-app-shell`'s painters, `Popover`, `ZoomLabel`, `Panel`, the tab
+  collections and `BannerState` (geometry and in-memory state; every word
+  arrives from the host already localized, and the crate has no
+  `koru-i18n` dependency by design).
+- **Needs a host, starts nothing itself** — `ShellState::new(host)` takes
+  the application's `ShellHost`; it holds windows only once
+  `koru_window::run_windows` opens them, and the crate cannot name a
+  document, profile, workspace or store (its `Cargo.toml` is the fence).
 
 ### Defects found (not fixed)
 
@@ -613,6 +643,11 @@ them:
   host drawing the defaults. No view in the crate opens an inspector scope,
   so three reusable surfaces have no identity. The managed session's
   buttons and the pending input's squares are local painters (above).
+- `koru-app-shell`: `TabKey::for_test` is a public `#[doc(hidden)]` test
+  constructor (`keys.rs` 73) with no cfg gate; the crate's painters open no
+  inspector scope; `ZoomLabel` duplicates the app's own
+  `mainview/zoomlabel.rs`, and the shell's caption painters have no
+  production caller (above).
 
 ### Reconnaissance
 

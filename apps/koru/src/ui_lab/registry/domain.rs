@@ -14,6 +14,7 @@ use koru_i18n::Key;
 
 mod agents;
 mod ai;
+mod app_shell;
 mod appearance;
 mod artifacts;
 mod canvas;
@@ -29,6 +30,7 @@ mod voice;
 
 pub(super) const AGENTS: &[Entry] = agents::RECORDS;
 pub(super) const AI: &[Entry] = ai::RECORDS;
+pub(super) const APP_SHELL: &[Entry] = app_shell::RECORDS;
 pub(super) const APPEARANCE: &[Entry] = appearance::RECORDS;
 pub(super) const ARTIFACTS: &[Entry] = artifacts::RECORDS;
 pub(super) const CANVAS: &[Entry] = canvas::RECORDS;
