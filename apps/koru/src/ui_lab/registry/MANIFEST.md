@@ -103,40 +103,40 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 14 |
-| domain crate source files | 160 |
-| domain crate lib.rs modules | 118 |
+| domain crates | 15 |
+| domain crate source files | 182 |
+| domain crate lib.rs modules | 131 |
 | domain crate lib.rs public modules | 26 |
 | domain crate modules excluded | 29 |
-| records | 168 |
+| records | 175 |
 | records: foundations | 59 |
 | records: controls | 62 |
-| records: application compositions | 47 |
-| records: domain crates | 48 |
+| records: application compositions | 54 |
+| records: domain crates | 55 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 57 |
-| kind: support | 32 |
-| kind: domain composition | 30 |
+| kind: support | 34 |
+| kind: domain composition | 35 |
 | token values listed | 174 |
-| symbols | 861 |
+| symbols | 1060 |
 | symbols with typed recipes | 2 |
 | inspector identities | 41 |
 | inspector identity registration sites | 43 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 129 |
-| disposition: nonvisual | 32 |
+| disposition: no story yet | 132 |
+| disposition: nonvisual | 34 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 6 |
+| disposition: boundary | 8 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 260 |
-| symbol story: nonvisual | 562 |
-| symbol story: boundary | 38 |
+| symbol story: no story yet | 270 |
+| symbol story: nonvisual | 731 |
+| symbol story: boundary | 58 |
 | A2UI: component | 6 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 9 |
-| A2UI: not supported | 836 |
+| A2UI: not supported | 1035 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -540,6 +540,7 @@ reached only through the bounded searches below.
 | Crate | Non-test files | Read in full | Declarations | Searched | `lib.rs` modules | Excluded | Records | Symbols | Component identities |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `koru-markdown-view` | 4 | 4 | 0 | 0 | 3 | 0 | 2 | 49 | — |
+| `koru-session-view` | 22 | 4 | 18 | 0 | 13 | 0 | 7 | 199 | — |
 
 ### Records
 
@@ -552,6 +553,37 @@ IDs marked * are minted here in batch 1's style.
   a control). The AI chat's reply bodies are not this crate's: they are
   `koru-ai-ui`'s own `live_markdown` over `koru-markdown`, recorded on
   `C-AI-CONVERSATION`; batch 2a's note pointing them here was wrong.
+- `koru-session-view` (read in full: `lib.rs`, `surface.rs`,
+  `interaction.rs`, `pending_input/interaction.rs`; the rest by
+  declarations, with `render.rs`, `managed/mod.rs` and
+  `pending_input/mod.rs` read through their constructors, `Default` copies
+  and draw entry points): the three views `C-SESSION-SURFACE` hosts —
+  `C-TERMINAL-VIEW`*, `C-MANAGED-SESSION-VIEW`*, `C-PENDING-INPUT-VIEW`* —
+  their look `H-TERMINAL-STYLE`*, the channel they share
+  `H-SESSION-INTERACTION`*, and two content boundaries: `C-TERMINAL-CONTENT`*
+  (the rows a program wrote, as a session's snapshot carries them) and
+  `C-MANAGED-TRANSCRIPT`* (the messages, tool steps and approvals a provider
+  sent). Every module is private and `lib.rs` re-exports the API, so every
+  symbol is written at the crate root.
+
+### Private parts
+
+Visible parts with no public symbol, listed under the record that paints
+them:
+
+- `C-TERMINAL-VIEW`: the shaped row cache and its box-drawing and
+  replacement-glyph painting (`row.rs`), the cursor block/beam/underline and
+  the selection fill (`render.rs`), text extraction for a selection
+  (`selection.rs`).
+- `C-MANAGED-SESSION-VIEW`: the approval card with its Approve, Reject and
+  remembered-choice buttons and the dynamic-choice form (`managed/render.rs`
+  `draw_approval`, `draw_dynamic_approval`), the Cancel turn button, and the
+  item rows; its buttons are a local `draw_button` (`managed/render.rs`
+  741), the local implementation COMPONENTS.md lists as UI-011.
+- `C-PENDING-INPUT-VIEW`: the draft line with its placeholder, the
+  attachment chips with their status and remove control, and the attach and
+  send/retry squares, drawn by a local `draw_icon_button`
+  (`pending_input/render.rs` 375) rather than `KoruIconButton`.
 
 ### What building each surface needs
 
@@ -560,6 +592,12 @@ IDs marked * are minted here in batch 1's style.
   `MarkdownDocument::of`/`of_document` (import and export in memory, in a
   workspace nobody owns, with a blob source that holds nothing; the cost is
   the file's, so a host calls it on its own worker).
+  `TerminalView::new`, `ManagedSessionView::new` and `PendingInputView::new`
+  (in-memory models and render caches; each takes a
+  `SessionSurfaceInteraction`, and `()` implements it by dropping every
+  intent, so a story needs no session, process or IPC; the pending input
+  view never opens the clipboard or a file itself, it asks through an
+  intent). `TerminalView::new` builds its own in-memory `SessionStats`.
 
 ### Defects found (not fixed)
 
@@ -567,6 +605,14 @@ IDs marked * are minted here in batch 1's style.
   to their values with a fixed `": "` (`view.rs` 364, 367, 373);
   `MarkdownView::lines` is public and its own doc calls it "what a test
   reads a document out of"; the surface opens no inspector scope.
+- `koru-session-view`: `ManagedSessionCopy::default` and
+  `PendingInputCopy::default` are public English copy (`managed/mod.rs`
+  86–141, `pending_input/mod.rs` 53–80), with an English-ordered
+  `"{label}: {value}"` usage line and a fixed `" · "` list separator; the
+  one host (`koru-agents-ui`) supplies translated copy, but nothing stops a
+  host drawing the defaults. No view in the crate opens an inspector scope,
+  so three reusable surfaces have no identity. The managed session's
+  buttons and the pending input's squares are local painters (above).
 
 ### Reconnaissance
 

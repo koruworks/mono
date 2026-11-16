@@ -604,6 +604,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     domain::MARKDOWN_VIEW,
     domain::RUNS,
     domain::SEARCH,
+    domain::SESSION_VIEW,
     domain::SETTINGS,
     domain::SHELL_CHROME,
     domain::SOCIALS,

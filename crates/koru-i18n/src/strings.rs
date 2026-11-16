@@ -3753,13 +3753,27 @@ pub enum Key {
     UiLabOptionNotMarkdown,
     UiLabOptionElsewhere,
     UiLabOptionUnreadable,
+    UiLabTerminalViewName,
+    UiLabTerminalViewPurpose,
+    UiLabTerminalStyleName,
+    UiLabTerminalStylePurpose,
+    UiLabTerminalContentName,
+    UiLabTerminalContentPurpose,
+    UiLabManagedSessionViewName,
+    UiLabManagedSessionViewPurpose,
+    UiLabManagedTranscriptName,
+    UiLabManagedTranscriptPurpose,
+    UiLabPendingInputViewName,
+    UiLabPendingInputViewPurpose,
+    UiLabSessionInteractionName,
+    UiLabSessionInteractionPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2780] = [
+    pub const ALL: [Key; 2794] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6540,6 +6554,20 @@ impl Key {
         Key::UiLabOptionNotMarkdown,
         Key::UiLabOptionElsewhere,
         Key::UiLabOptionUnreadable,
+        Key::UiLabTerminalViewName,
+        Key::UiLabTerminalViewPurpose,
+        Key::UiLabTerminalStyleName,
+        Key::UiLabTerminalStylePurpose,
+        Key::UiLabTerminalContentName,
+        Key::UiLabTerminalContentPurpose,
+        Key::UiLabManagedSessionViewName,
+        Key::UiLabManagedSessionViewPurpose,
+        Key::UiLabManagedTranscriptName,
+        Key::UiLabManagedTranscriptPurpose,
+        Key::UiLabPendingInputViewName,
+        Key::UiLabPendingInputViewPurpose,
+        Key::UiLabSessionInteractionName,
+        Key::UiLabSessionInteractionPurpose,
     ];
 }
 
@@ -18489,4 +18517,18 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabOptionNotMarkdown, en: "Not Markdown", es: "No es Markdown", pt_br: "Não é Markdown", de: "Kein Markdown", fr: "Pas du Markdown", ar: "ليس Markdown", zh_hans: "不是 Markdown", ja: "Markdown ではない" },
     Row { key: Key::UiLabOptionElsewhere, en: "On another device", es: "En otro dispositivo", pt_br: "Em outro dispositivo", de: "Auf einem anderen Gerät", fr: "Sur un autre appareil", ar: "على جهاز آخر", zh_hans: "在另一台设备上", ja: "別のデバイスにある" },
     Row { key: Key::UiLabOptionUnreadable, en: "Unreadable", es: "Ilegible", pt_br: "Ilegível", de: "Nicht lesbar", fr: "Illisible", ar: "غير قابل للقراءة", zh_hans: "无法读取", ja: "読み取れない" },
+    Row { key: Key::UiLabTerminalViewName, en: "Terminal grid", es: "Cuadrícula del terminal", pt_br: "Grade do terminal", de: "Terminalraster", fr: "Grille du terminal", ar: "شبكة الطرفية", zh_hans: "终端网格", ja: "ターミナルのグリッド" },
+    Row { key: Key::UiLabTerminalViewPurpose, en: "Draws a session’s terminal screen as a fixed grid of cells with its cursor, selection and scrollback, and turns keys and the pointer into input.", es: "Dibuja la pantalla del terminal de una sesión como una cuadrícula fija de celdas, con su cursor, selección e historial, y convierte las teclas y el puntero en entrada.", pt_br: "Desenha a tela do terminal de uma sessão como uma grade fixa de células, com cursor, seleção e histórico, e transforma teclas e ponteiro em entrada.", de: "Zeichnet den Terminalbildschirm einer Sitzung als festes Zellenraster mit Cursor, Auswahl und Verlauf und macht aus Tasten und Zeiger Eingaben.", fr: "Dessine l’écran du terminal d’une session en grille fixe de cellules, avec son curseur, sa sélection et son historique, et transforme touches et pointeur en saisie.", ar: "يرسم شاشة الطرفية لجلسة كشبكة ثابتة من الخلايا مع المؤشر والتحديد وسجل التمرير، ويحوّل المفاتيح والمؤشر إلى إدخال.", zh_hans: "将会话的终端屏幕绘制为固定的单元格网格，带光标、选区和回滚历史，并把按键和指针转换为输入。", ja: "セッションのターミナル画面を、カーソル・選択・スクロールバック付きの固定セルのグリッドとして描き、キーとポインターを入力に変えます。" },
+    Row { key: Key::UiLabTerminalStyleName, en: "Terminal look", es: "Aspecto del terminal", pt_br: "Aparência do terminal", de: "Terminaldarstellung", fr: "Apparence du terminal", ar: "مظهر الطرفية", zh_hans: "终端外观", ja: "ターミナルの見た目" },
+    Row { key: Key::UiLabTerminalStylePurpose, en: "Works out the terminal’s colors, type faces, and cursor shape and blink from the theme and the person’s preferences.", es: "Calcula los colores, los estilos de letra y la forma y el parpadeo del cursor del terminal a partir del tema y las preferencias de la persona.", pt_br: "Define as cores, os estilos de fonte e a forma e o piscar do cursor do terminal a partir do tema e das preferências da pessoa.", de: "Ermittelt Farben, Schriftschnitte sowie Form und Blinken des Cursors im Terminal aus dem Design und den Vorlieben der Person.", fr: "Détermine les couleurs, les styles de police ainsi que la forme et le clignotement du curseur du terminal d’après le thème et les préférences de la personne.", ar: "يحدد ألوان الطرفية وأنماط الخط وشكل المؤشر ووميضه من السمة وتفضيلات الشخص.", zh_hans: "根据主题和用户偏好确定终端的颜色、字形以及光标的形状和闪烁。", ja: "テーマと本人の設定から、ターミナルの色、書体、カーソルの形と点滅を決めます。" },
+    Row { key: Key::UiLabTerminalContentName, en: "Terminal screen content", es: "Contenido de la pantalla del terminal", pt_br: "Conteúdo da tela do terminal", de: "Inhalt des Terminalbildschirms", fr: "Contenu de l’écran du terminal", ar: "محتوى شاشة الطرفية", zh_hans: "终端屏幕内容", ja: "ターミナル画面の内容" },
+    Row { key: Key::UiLabTerminalContentPurpose, en: "The rows a running program wrote, as the session’s snapshot and updates carry them, drawn as content rather than as a control.", es: "Las filas que escribió un programa en ejecución, tal como las traen la instantánea y las actualizaciones de la sesión, dibujadas como contenido y no como control.", pt_br: "As linhas que um programa em execução escreveu, como o instantâneo e as atualizações da sessão as trazem, desenhadas como conteúdo e não como controle.", de: "Die Zeilen, die ein laufendes Programm geschrieben hat, wie Momentaufnahme und Aktualisierungen der Sitzung sie liefern; als Inhalt gezeichnet, nicht als Steuerelement.", fr: "Les lignes écrites par un programme en cours, telles que les portent l’instantané et les mises à jour de la session, dessinées comme contenu et non comme contrôle.", ar: "الأسطر التي كتبها برنامج قيد التشغيل كما تحملها لقطة الجلسة وتحديثاتها، وتُرسم كمحتوى لا كعنصر تحكم.", zh_hans: "正在运行的程序写出的行，按会话快照和更新传来的样子，作为内容而非控件绘制。", ja: "実行中のプログラムが書いた行を、セッションのスナップショットと更新が運ぶとおりに、操作部品ではなく内容として描きます。" },
+    Row { key: Key::UiLabManagedSessionViewName, en: "Agent session transcript", es: "Transcripción de la sesión del agente", pt_br: "Transcrição da sessão do agente", de: "Protokoll der Agentensitzung", fr: "Transcription de la session d’agent", ar: "سجل جلسة الوكيل", zh_hans: "智能体会话记录", ja: "エージェントセッションの記録" },
+    Row { key: Key::UiLabManagedSessionViewPurpose, en: "Shows a managed agent session’s messages, tool steps and usage, with the card that asks for approval and the control to cancel a turn.", es: "Muestra los mensajes, los pasos de herramientas y el uso de una sesión de agente gestionada, con la tarjeta que pide aprobación y el control para cancelar un turno.", pt_br: "Mostra as mensagens, as etapas de ferramentas e o uso de uma sessão de agente gerenciada, com o cartão que pede aprovação e o controle para cancelar um turno.", de: "Zeigt Nachrichten, Werkzeugschritte und Verbrauch einer verwalteten Agentensitzung, mit der Karte, die um Freigabe bittet, und dem Steuerelement zum Abbrechen eines Durchgangs.", fr: "Affiche les messages, les étapes d’outils et l’utilisation d’une session d’agent gérée, avec la carte qui demande une approbation et la commande pour annuler un tour.", ar: "يعرض رسائل جلسة وكيل مُدارة وخطوات أدواتها واستهلاكها، مع البطاقة التي تطلب الموافقة وعنصر إلغاء الدور.", zh_hans: "显示托管智能体会话的消息、工具步骤和用量，并带有请求批准的卡片和取消本轮的控件。", ja: "管理されたエージェントセッションのメッセージ、ツールの手順、使用量を、承認を求めるカードとターンを取り消す操作とともに表示します。" },
+    Row { key: Key::UiLabManagedTranscriptName, en: "Agent transcript items", es: "Elementos de la transcripción del agente", pt_br: "Itens da transcrição do agente", de: "Einträge im Agentenprotokoll", fr: "Éléments de la transcription d’agent", ar: "عناصر سجل الوكيل", zh_hans: "智能体记录条目", ja: "エージェント記録の項目" },
+    Row { key: Key::UiLabManagedTranscriptPurpose, en: "The messages, tool steps, approvals and states a provider sent, held and drawn as content rather than as controls.", es: "Los mensajes, pasos de herramientas, aprobaciones y estados que envió un proveedor, guardados y dibujados como contenido y no como controles.", pt_br: "As mensagens, etapas de ferramentas, aprovações e estados que um provedor enviou, guardados e desenhados como conteúdo e não como controles.", de: "Die Nachrichten, Werkzeugschritte, Freigaben und Zustände, die ein Anbieter gesendet hat, gehalten und als Inhalt statt als Steuerelemente gezeichnet.", fr: "Les messages, étapes d’outils, approbations et états envoyés par un fournisseur, conservés et dessinés comme contenu et non comme contrôles.", ar: "الرسائل وخطوات الأدوات والموافقات والحالات التي أرسلها المزود، محفوظة ومرسومة كمحتوى لا كعناصر تحكم.", zh_hans: "提供方发来的消息、工具步骤、审批和状态，作为内容而非控件保存和绘制。", ja: "プロバイダーが送ったメッセージ、ツールの手順、承認、状態を、操作部品ではなく内容として保持し描きます。" },
+    Row { key: Key::UiLabPendingInputViewName, en: "Session message box", es: "Cuadro de mensaje de la sesión", pt_br: "Caixa de mensagem da sessão", de: "Nachrichtenfeld der Sitzung", fr: "Zone de message de la session", ar: "مربع رسالة الجلسة", zh_hans: "会话消息框", ja: "セッションのメッセージ欄" },
+    Row { key: Key::UiLabPendingInputViewPurpose, en: "Writes the next message to a terminal session, with images to attach, how each will be delivered, and send and retry.", es: "Escribe el siguiente mensaje para una sesión de terminal, con imágenes que adjuntar, cómo se entregará cada una, y enviar y reintentar.", pt_br: "Escreve a próxima mensagem para uma sessão de terminal, com imagens para anexar, como cada uma será entregue, e enviar e tentar de novo.", de: "Schreibt die nächste Nachricht an eine Terminalsitzung, mit anzuhängenden Bildern, wie jedes zugestellt wird, sowie Senden und Wiederholen.", fr: "Écrit le prochain message d’une session de terminal, avec les images à joindre, la façon dont chacune sera livrée, l’envoi et la nouvelle tentative.", ar: "يكتب الرسالة التالية إلى جلسة طرفية، مع صور لإرفاقها وكيفية تسليم كل منها، والإرسال وإعادة المحاولة.", zh_hans: "为终端会话撰写下一条消息，可附加图片并显示每张图片的发送方式，以及发送和重试。", ja: "ターミナルセッションへの次のメッセージを書きます。添付する画像、それぞれの届け方、送信と再試行があります。" },
+    Row { key: Key::UiLabSessionInteractionName, en: "Session view commands", es: "Órdenes de las vistas de sesión", pt_br: "Comandos das visualizações de sessão", de: "Befehle der Sitzungsansichten", fr: "Commandes des vues de session", ar: "أوامر عروض الجلسة", zh_hans: "会话视图命令", ja: "セッションビューのコマンド" },
+    Row { key: Key::UiLabSessionInteractionPurpose, en: "The one channel through which the terminal grid, the transcript and the message box hand their requests to the host.", es: "El único canal por el que la cuadrícula del terminal, la transcripción y el cuadro de mensaje entregan sus peticiones al anfitrión.", pt_br: "O único canal pelo qual a grade do terminal, a transcrição e a caixa de mensagem entregam seus pedidos ao host.", de: "Der eine Kanal, über den Terminalraster, Protokoll und Nachrichtenfeld ihre Anfragen an den Host geben.", fr: "Le canal unique par lequel la grille du terminal, la transcription et la zone de message transmettent leurs demandes à l’hôte.", ar: "القناة الوحيدة التي تسلّم عبرها شبكة الطرفية والسجل ومربع الرسالة طلباتها إلى المضيف.", zh_hans: "终端网格、会话记录和消息框把请求交给宿主的唯一通道。", ja: "ターミナルのグリッド、記録、メッセージ欄が要求をホストに渡す唯一の経路です。" },
 ];

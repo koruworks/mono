@@ -653,6 +653,96 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "crates/koru-markdown-view/src/view.rs",
         include_str!("../../../../../../../crates/koru-markdown-view/src/view.rs"),
     ),
+    (
+        "crates/koru-session-view/src/cursor.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/cursor.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/geometry.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/geometry.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/history.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/history.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/input.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/input.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/interaction.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/interaction.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/lib.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/managed/interaction.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/managed/interaction.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/managed/layout.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/managed/layout.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/managed/mod.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/managed/mod.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/managed/model.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/managed/model.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/managed/render.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/managed/render.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/model.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/model.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/pending_input/interaction.rs",
+        include_str!(
+            "../../../../../../../crates/koru-session-view/src/pending_input/interaction.rs"
+        ),
+    ),
+    (
+        "crates/koru-session-view/src/pending_input/layout.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/pending_input/layout.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/pending_input/mod.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/pending_input/mod.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/pending_input/model.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/pending_input/model.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/pending_input/render.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/pending_input/render.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/render.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/render.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/row.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/row.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/selection.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/selection.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/style.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/style.rs"),
+    ),
+    (
+        "crates/koru-session-view/src/surface.rs",
+        include_str!("../../../../../../../crates/koru-session-view/src/surface.rs"),
+    ),
 ];
 
 /// One domain crate's root: its records declared in `lib.rs` itself, and
@@ -1042,6 +1132,32 @@ pub(super) const CRATES: &[Crate] = &[
             ("document", Module::Records(&["C-MARKDOWN-DOCUMENT"])),
             ("text", Module::Records(&["C-MARKDOWN-VIEW"])),
             ("view", Module::Records(&["C-MARKDOWN-VIEW"])),
+        ],
+    },
+    Crate {
+        owner: "koru-session-view",
+        lib: "crates/koru-session-view/src/lib.rs",
+        root: &[],
+        modules: &[
+            ("cursor", Module::Records(&["H-TERMINAL-STYLE"])),
+            ("geometry", Module::Records(&["C-TERMINAL-VIEW"])),
+            ("history", Module::Records(&["C-TERMINAL-VIEW"])),
+            ("input", Module::Records(&["C-TERMINAL-VIEW"])),
+            ("interaction", Module::Records(&["C-TERMINAL-VIEW"])),
+            (
+                "managed",
+                Module::Records(&["C-MANAGED-SESSION-VIEW", "C-MANAGED-TRANSCRIPT"]),
+            ),
+            ("model", Module::Records(&["C-TERMINAL-CONTENT"])),
+            ("pending_input", Module::Records(&["C-PENDING-INPUT-VIEW"])),
+            (
+                "render",
+                Module::Records(&["C-TERMINAL-VIEW", "C-TERMINAL-CONTENT"]),
+            ),
+            ("row", Module::Records(&["C-TERMINAL-VIEW"])),
+            ("selection", Module::Records(&["C-TERMINAL-VIEW"])),
+            ("style", Module::Records(&["H-TERMINAL-STYLE"])),
+            ("surface", Module::Records(&["H-SESSION-INTERACTION"])),
         ],
     },
 ];
