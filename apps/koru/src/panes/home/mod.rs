@@ -920,6 +920,7 @@ mod tests {
                 breadcrumb: "Notes".to_owned(),
                 title: "Ship it".to_owned(),
                 attributes: Vec::new(),
+                bucket: None,
             }],
             definitions: Vec::new(),
             tags: Vec::new(),

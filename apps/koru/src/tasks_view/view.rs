@@ -76,6 +76,9 @@ pub(super) const CHIP_GAP: f32 = 14.0;
 const HEADER_H_GUESS: f32 = 128.0;
 /// The `…` beside the heading, which opens the overflow menu.
 pub(super) const HEADER_DOTS: f32 = 24.0;
+/// The *From search* band's dismiss control: the header's own small square.
+pub(super) const FROM_SEARCH_DISMISS: f32 = 18.0;
+
 /// How long a revealed row stays lit — the document's own search flash.
 const FLASH: std::time::Duration = std::time::Duration::from_millis(1200);
 /// A list's colour square, ahead of its name in the header band. Larger than
@@ -104,6 +107,9 @@ pub(super) enum Line {
     Capture,
     /// A rule-label in Upcoming: sentence case, over a hairline.
     Rule(String),
+    /// The *From search* band's label, with its dismiss control: over the one
+    /// row a search sent somebody to that this page would not otherwise list.
+    FromSearch,
     /// An index into [`TasksView::rows`].
     Task(usize),
 }
@@ -114,6 +120,8 @@ pub(super) enum Hit {
     /// The `…` at the head of the page, which opens the overflow menu.
     HeaderDots,
     Capture,
+    /// The *From search* band's dismiss control.
+    DismissFromSearch,
     /// The complete control. Outranks the row it sits in, exactly as a tab's
     /// close box outranks the tab.
     Complete(usize),
@@ -391,6 +399,16 @@ pub struct TasksView {
     /// moment so the eye finds it, as the document flashes a search hit.
     /// The deadline is what drives the frames; it clears itself.
     pub(super) flash: Option<((DocumentId, NodeId), std::time::Instant)>,
+    /// **A task opened from search that this page may not list**: beyond its
+    /// first page of rows, hidden by a saved chip, or completed longer ago
+    /// than the Completed window. The row as it was read at the landing; it
+    /// is drawn in a band at the top of the page until the person leaves the
+    /// page or dismisses it — and not at all once the page's own rows hold
+    /// the task. Saved filters are never touched for it.
+    pub(super) from_search: Option<TaskEntry>,
+    /// Whether [`from_search`](Self::from_search) is in
+    /// [`rows`](Self::rows) now, as row `0` under the band's label.
+    pub(super) from_search_shown: bool,
     /// The *Add a task…* row while it has the caret — the words, the date
     /// word, and what `/due`, `/priority` and `/task_list` picked.
     pub(super) capture: Option<Capture>,
@@ -519,6 +537,8 @@ impl TasksView {
             selected: None,
             also: Vec::new(),
             flash: None,
+            from_search: None,
+            from_search_shown: false,
             capture: None,
             filters: Filters::default(),
             row_chip_ws: Vec::new(),
@@ -563,6 +583,8 @@ impl TasksView {
         }
         // A picker opened for the page left behind is not this page's.
         self.link = None;
+        // Nor is the task a search sent somebody to on that page.
+        self.clear_from_search();
         self.target = target;
         self.scroll = 0.0;
         self.hover = None;
@@ -693,6 +715,59 @@ impl TasksView {
 
     pub fn mark_stale(&mut self) {
         self.stale = true;
+    }
+
+    /// Hand the page the task a search sent somebody to, as it was read at
+    /// the landing. The page shows it in the *From search* band only if its
+    /// own rows turn out not to hold it.
+    pub fn set_from_search(&mut self, entry: TaskEntry) {
+        self.from_search = Some(entry);
+        self.stale = true;
+    }
+
+    /// Put the *From search* band away: dismissed, or the page was left.
+    pub fn clear_from_search(&mut self) -> bool {
+        let had = self.from_search.take().is_some();
+        if had {
+            self.from_search_shown = false;
+            self.stale = true;
+        }
+        had
+    }
+
+    /// Whether the *From search* band is showing.
+    #[cfg(test)]
+    pub fn shows_from_search(&self) -> bool {
+        self.from_search_shown
+    }
+
+    /// Put the search's task at the head of [`rows`](Self::rows) when the
+    /// page's own answer does not hold it. Run every time the rows are taken
+    /// from the panel.
+    ///
+    /// **Not before the page has answered**: until then *not in the rows*
+    /// means *not asked yet*, and a band that appeared and vanished a moment
+    /// later would be the page changing its mind in front of somebody.
+    fn merge_from_search(&mut self) {
+        self.from_search_shown = false;
+        let Some(entry) = self.from_search.clone() else {
+            return;
+        };
+        if !self.panel.known() {
+            return;
+        }
+        let listed = self
+            .rows
+            .iter()
+            .any(|row| (row.document, row.node) == (entry.document, entry.node));
+        if listed {
+            // The page holds it: the row is revealed in place, and there is
+            // nothing left for a band to say.
+            self.from_search = None;
+            return;
+        }
+        self.rows.insert(0, entry);
+        self.from_search_shown = true;
     }
 
     /// **Every request leaves through here, and leaves its echo behind.** The
@@ -916,6 +991,7 @@ impl TasksView {
             self.echoes.remove(i);
             self.rows = self.panel.rows().to_vec();
             self.apply_echoes();
+            self.merge_from_search();
             self.relayout();
         }
     }
@@ -1215,6 +1291,7 @@ impl TasksView {
         }
         self.rows = self.panel.rows().to_vec();
         self.apply_echoes();
+        self.merge_from_search();
         let here = ws.id();
         for row in &mut self.rows {
             row.residue = row.completed
@@ -1264,15 +1341,23 @@ impl TasksView {
         // chose is one line; the reverse — capturing an already-completed task
         // — would be a new product decision about what typing there means.
         self.remeasure_row_chips();
-        let mut lines = if self.target == RailTarget::Bucket(Bucket::Completed) {
-            Vec::new()
+        // **The search's task leads the page**, under its own label and above
+        // everything the page lists — the capture row included, so it is the
+        // first thing seen on arrival. It is row `0`; the page's own rows
+        // follow it and are grouped as if it were not there.
+        let band = usize::from(self.from_search_shown && !self.rows.is_empty());
+        let mut lines = if band == 1 {
+            vec![Line::FromSearch, Line::Task(0)]
         } else {
-            vec![Line::Capture]
+            Vec::new()
         };
+        if self.target != RailTarget::Bucket(Bucket::Completed) {
+            lines.push(Line::Capture);
+        }
         let grouped = self.target == RailTarget::Bucket(Bucket::Upcoming)
             && self.filters.sort == TaskSort::Due;
         let mut group: Option<Rule> = None;
-        for (i, row) in self.rows.iter().enumerate() {
+        for (i, row) in self.rows.iter().enumerate().skip(band) {
             if grouped && let Some(day) = row.due_day() {
                 let rule = Rule::of(day, self.today);
                 if group != Some(rule) {
@@ -1976,11 +2061,23 @@ impl TasksView {
         )
     }
 
+    /// The *From search* band's dismiss control, inside its label row: a
+    /// square at the row's right-hand inset, as tall as the label.
+    pub(super) fn from_search_dismiss(r: Rect) -> Rect {
+        let side = r.h.min(FROM_SEARCH_DISMISS);
+        Rect::new(
+            r.x + r.w - PAD - side,
+            r.y + (r.h - side) * 0.5,
+            side,
+            side,
+        )
+    }
+
     pub(super) fn bands(&self) -> Vec<Band> {
         self.lines
             .iter()
             .map(|line| match line {
-                Line::Rule(_) => Band::Section,
+                Line::Rule(_) | Line::FromSearch => Band::Section,
                 _ => Band::Row,
             })
             .collect()
@@ -2047,6 +2144,10 @@ impl TasksView {
             Line::Capture => Some(Hit::Capture),
             // A rule is a label for what is under it, not a control.
             Line::Rule(_) => None,
+            // The band's label is one too, except for its dismiss control.
+            Line::FromSearch => Self::from_search_dismiss(r)
+                .contains(x, y)
+                .then_some(Hit::DismissFromSearch),
             Line::Task(row) => {
                 let p = self.parts(r);
                 // Inside-out: the controls sit *in* the row, so they outrank it.
@@ -3174,6 +3275,11 @@ impl TasksView {
                 self.clear_selection();
                 had
             }
+            Some(Hit::DismissFromSearch) => {
+                crate::tasks::debug_line(format_args!("search landing: band dismissed"));
+                self.clear_from_search();
+                true
+            }
             Some(Hit::Capture) => {
                 self.begin_capture();
                 let rect = super::capture::input_rect(self.capture_rect());
@@ -4001,6 +4107,7 @@ impl View for TasksView {
                 | Hit::ListChip(_)
                 | Hit::ValueChip(..)
                 | Hit::Capture
+                | Hit::DismissFromSearch
                 | Hit::HeaderDots
                 | Hit::Swatch
                 | Hit::NoteOpen

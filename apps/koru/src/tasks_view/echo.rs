@@ -480,6 +480,7 @@ mod tests {
                 breadcrumb: String::new(),
                 title: "a task".to_owned(),
                 attributes,
+                bucket: None,
             },
             today(),
             now_ms(),

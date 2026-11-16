@@ -8612,6 +8612,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         trash_root: Option<NodeId>,
         match_text: Option<&str>,
         source_only: bool,
+        // A list or a task to open in Tasks instead of a document.
+        tasks: Option<crate::TasksTarget>,
     ) -> bool {
         let started = Instant::now();
         tracing::info!(
@@ -8663,7 +8665,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 );
                 continue;
             };
-            let accepted = if file {
+            let accepted = if let Some(tasks) = tasks {
+                pane.view.open_tasks_target(tasks, match_text)
+            } else if file {
                 document.is_some_and(|file| pane.view.open_file_search_target(file))
             } else {
                 pane.view.open_search_target(
@@ -8942,6 +8946,100 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.navigate_with_retry(event_loop, source, target, match_text, disposition, true);
     }
 
+    /// Open a list or a task in Tasks, when this process can. Answers `None`
+    /// when it did, and otherwise **the target to open instead**: the target
+    /// itself when it was never a Tasks one, the list's workspace, or the
+    /// task's own document at its line.
+    ///
+    /// **What this process can do** is the profile it already has open: the
+    /// workspace is switched to if it is another one, and a new window is a
+    /// second pane of this process. A workspace in a profile this process
+    /// does not hold, or one that will not switch, is handed on as its
+    /// fallback — a real place, and for a task the same place a landing that
+    /// cannot find the task ends up.
+    fn navigate_to_tasks(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        source: WindowId,
+        target: crate::NavigationTarget,
+        match_text: &Option<String>,
+        disposition: SearchTargetDisposition,
+    ) -> Option<crate::NavigationTarget> {
+        let (profile, workspace, tasks, fallback) = match target {
+            crate::NavigationTarget::TaskList {
+                profile,
+                workspace,
+                list,
+            } => (
+                profile,
+                workspace,
+                crate::TasksTarget::List(list),
+                crate::NavigationTarget::Workspace { profile, workspace },
+            ),
+            crate::NavigationTarget::Task { document, node } => {
+                let fallback = crate::NavigationTarget::Document {
+                    document,
+                    node: Some(node),
+                };
+                let located = self.runtime.workspace.store_client().and_then(|client| {
+                    client
+                        .locate_document(koru_store_core::ids::DocumentId::from_uuid(
+                            document.as_uuid(),
+                        ))
+                        .ok()
+                });
+                // Not located: the document path below says so, in its words.
+                let Some(location) = located else {
+                    return Some(fallback);
+                };
+                (
+                    koru_core::ProfileId::from_uuid(location.profile.as_uuid()),
+                    WorkspaceId::from_uuid(location.workspace.as_uuid()),
+                    crate::TasksTarget::Task { document, node },
+                    fallback,
+                )
+            }
+            other => return Some(other),
+        };
+        if self.runtime.profile.id() != Some(profile) {
+            tasks_debug_log(format_args!(
+                "search landing handed on: another profile, list={}",
+                matches!(tasks, crate::TasksTarget::List(_))
+            ));
+            return Some(fallback);
+        }
+        if self.runtime.current != workspace {
+            self.switch_workspace(workspace);
+        }
+        if self.runtime.current != workspace {
+            return Some(fallback);
+        }
+        if disposition == SearchTargetDisposition::NewWindow {
+            let mut view = self.host.duplicate(&self.runtime.workspace.ws);
+            if !view.open_tasks_target(tasks, match_text.as_deref()) {
+                return Some(fallback);
+            }
+            let title = self.app_window_title();
+            let id = self.open_pane(event_loop, view, &title);
+            self.reveal_pane(id);
+            if let Some(pane) = self.panes.get(&id) {
+                pane.window.focus_window();
+            }
+            self.request_redraw(id);
+            return None;
+        }
+        let opened = self.open_search_target_in_panes(
+            source,
+            None,
+            None,
+            None,
+            match_text.as_deref(),
+            disposition == SearchTargetDisposition::SourceWindow,
+            Some(tasks),
+        );
+        if opened { None } else { Some(fallback) }
+    }
+
     fn navigate_with_retry(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -8952,7 +9050,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
         retry_moved_document: bool,
     ) {
         let started = Instant::now();
+        // A list or a task opens in Tasks; where that cannot be done from
+        // this process it opens the workspace or the task's own document,
+        // through everything below.
+        let target = match self.navigate_to_tasks(event_loop, source, target, &match_text, disposition)
+        {
+            Some(fallback) => fallback,
+            None => return,
+        };
         match &target {
+            crate::NavigationTarget::TaskList { .. } | crate::NavigationTarget::Task { .. } => {}
             crate::NavigationTarget::Workspace { profile, workspace } => tracing::info!(
                 target: "koru::navigation",
                 profile = %profile.to_storage(),
@@ -8967,6 +9074,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ),
         }
         let resolved = match target {
+            // Both were turned into one of the two below by
+            // `navigate_to_tasks`.
+            crate::NavigationTarget::TaskList { .. } | crate::NavigationTarget::Task { .. } => {
+                return;
+            }
             crate::NavigationTarget::Workspace { profile, workspace } => {
                 Ok((profile, workspace, None, None))
             }
@@ -9159,6 +9271,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         None,
                         match_text.as_deref(),
                         disposition == SearchTargetDisposition::SourceWindow,
+                        None,
                     )
                 };
                 crate::search_debug!(

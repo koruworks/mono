@@ -75,6 +75,7 @@ fn wire_row(title: &str) -> TaskRow {
         breadcrumb: String::new(),
         title: title.to_owned(),
         attributes: Vec::<AttributeRowValue>::new(),
+        bucket: None,
     }
 }
 

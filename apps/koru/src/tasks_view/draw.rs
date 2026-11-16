@@ -316,6 +316,56 @@ impl TasksView {
                         &scene::rect(x, y, (r.w - PAD * 2.0).max(0.0), 1.0),
                     );
                 }
+                Line::FromSearch => {
+                    // The Upcoming rule's own shape — a quiet label over a
+                    // hairline — with the one control a band needs.
+                    let lang = crate::format::lang();
+                    t.paint_section(
+                        scene,
+                        root,
+                        &mut self.engine,
+                        r,
+                        koru_i18n::t(lang, koru_i18n::Key::TasksFromSearch),
+                    );
+                    let y = (r.y + r.h - 1.0).round();
+                    scene::fill(
+                        scene,
+                        root,
+                        theme::p().panel_border,
+                        &scene::rect(r.x + PAD, y, (r.w - PAD * 2.0).max(0.0), 1.0),
+                    );
+                    let dismiss = Self::from_search_dismiss(r);
+                    let _part = koru_draw::inspect::scope(
+                        "TasksFromSearchDismiss",
+                        "part",
+                        root,
+                        scene::rect(dismiss.x, dismiss.y, dismiss.w, dismiss.h),
+                        |record| {
+                            record.property("side", "FROM_SEARCH_DISMISS", "tasks_view");
+                            record.property(
+                                "name",
+                                koru_i18n::t(lang, koru_i18n::Key::TasksFromSearchDismiss),
+                                "koru-i18n",
+                            );
+                        },
+                    );
+                    if self.hover == Some(Hit::DismissFromSearch) {
+                        scene::fill(
+                            scene,
+                            root,
+                            theme::p().hover_tint,
+                            &scene::rrect(dismiss.x, dismiss.y, dismiss.w, dismiss.h, 4.0),
+                        );
+                    }
+                    koru_shell_chrome::tabs::draw_icon(
+                        scene,
+                        root,
+                        &mut self.engine,
+                        koru_draw::icons::WINDOW_CLOSE,
+                        dismiss,
+                        theme::p().text_dim,
+                    );
+                }
                 Line::Task(idx) => {
                     let Some(row) = self.rows.get(idx).cloned() else {
                         continue;

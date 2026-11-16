@@ -2257,6 +2257,26 @@ impl AgentLink {
                                         koru_search_ui::Target::Chat { chat, block, .. } => {
                                             format!("open chat={chat} block={block}")
                                         }
+                                        // Which kind, and where; never which
+                                        // list or which task.
+                                        koru_search_ui::Target::List {
+                                            profile,
+                                            workspace,
+                                            ..
+                                        } => format!(
+                                            "open task-list profile={} workspace={}",
+                                            profile.to_storage(),
+                                            workspace.to_storage()
+                                        ),
+                                        koru_search_ui::Target::Task {
+                                            profile,
+                                            workspace,
+                                            ..
+                                        } => format!(
+                                            "open task profile={} workspace={}",
+                                            profile.to_storage(),
+                                            workspace.to_storage()
+                                        ),
                                     },
                                     FromTheAgent::ReminderSnooze(intent) => format!(
                                         "reminder snooze profile={} workspace={}",
@@ -3053,27 +3073,63 @@ fn translate(push: Push) -> Option<FromTheAgent> {
             },
         }),
         Push::Open { target } => {
-            let profile = uuid_id(&target.profile)?;
-            let workspace = uuid_id(&target.workspace)?;
+            let profile = koru_store_core::ids::ProfileId::from_uuid(uuid_id(&target.profile)?);
+            let workspace =
+                koru_store_core::ids::WorkspaceId::from_uuid(uuid_id(&target.workspace)?);
             let document = match target.document.as_deref() {
                 None => None,
-                Some(raw) => Some(uuid_id(raw)?),
+                Some(raw) => Some(koru_store_core::ids::DocumentId::from_uuid(uuid_id(raw)?)),
             };
-            Some(FromTheAgent::Open(Box::new(
-                koru_search_ui::Target::Store {
-                    profile: koru_store_core::ids::ProfileId::from_uuid(profile),
-                    workspace: koru_store_core::ids::WorkspaceId::from_uuid(workspace),
-                    document: document.map(koru_store_core::ids::DocumentId::from_uuid),
+            let disposition = if target.new_window {
+                koru_search_ui::Disposition::NewWindow
+            } else {
+                koru_search_ui::Disposition::CurrentWindow
+            };
+            // A target that lacks what its kind needs is refused and opens
+            // nothing — never the workspace or the document instead. Logged by
+            // kind and reason, never by id.
+            let kind = target.kind;
+            let refuse = |reason: &str| {
+                koru_ipc::ipc_debug!("agent: a {} target {reason} — refused", kind.as_str());
+            };
+            let target = match kind {
+                koru_agent_wire::TargetKind::Document => koru_search_ui::Target::Store {
+                    profile,
+                    workspace,
+                    document,
                     node: target.node,
                     trashed: target.trashed,
                     match_text: target.match_text,
-                    disposition: if target.new_window {
-                        koru_search_ui::Disposition::NewWindow
-                    } else {
-                        koru_search_ui::Disposition::CurrentWindow
-                    },
+                    disposition,
                 },
-            )))
+                koru_agent_wire::TargetKind::Task => {
+                    let (Some(document), Some(node)) = (document, target.node) else {
+                        refuse("without a document or a node");
+                        return None;
+                    };
+                    koru_search_ui::Target::Task {
+                        profile,
+                        workspace,
+                        document,
+                        node,
+                        match_text: target.match_text,
+                        disposition,
+                    }
+                }
+                koru_agent_wire::TargetKind::TaskList => {
+                    let (None, Some(list)) = (document, target.list) else {
+                        refuse("with a document or without a list");
+                        return None;
+                    };
+                    koru_search_ui::Target::List {
+                        profile,
+                        workspace,
+                        list,
+                        disposition,
+                    }
+                }
+            };
+            Some(FromTheAgent::Open(Box::new(target)))
         }
         Push::ReminderSnooze { intent } => {
             let profile = koru_store_core::ProfileId::parse(&intent.profile)?;

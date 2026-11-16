@@ -12214,6 +12214,7 @@ mod tests {
             breadcrumb: "Спецификации / 会議録".into(),
             title: title.into(),
             attributes,
+            bucket: None,
         };
         TaskQueryResponse {
             rows: vec![

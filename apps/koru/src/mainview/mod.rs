@@ -1111,6 +1111,9 @@ pub struct MainView {
     /// that has not arrived yet looks exactly the same. So the ask is held and
     /// re-applied until the row shows up or the deadline passes.
     pending_task_reveal: Option<(koru_core::DocumentId, NodeId, std::time::Instant)>,
+    /// A task chosen in search, being read so it can be opened on the Tasks
+    /// page it is on now (`tasks_view::landing`). At most one.
+    search_landing: crate::tasks_view::landing::SearchLanding,
     /// **A task open waiting to be checked against the resolver**, because the
     /// document that answers is not open yet when the row is pressed.
     ///
@@ -2022,6 +2025,7 @@ impl MainView {
             pending_document_rename: None,
             pending_document_attrs: None,
             pending_task_reveal: None,
+            search_landing: Default::default(),
             pending_task_open: None,
             task_commands: Vec::new(),
             pending_count_deltas: Vec::new(),
@@ -13119,6 +13123,14 @@ impl View for MainView {
         MainView::open_whats_new(self, version)
     }
 
+    fn open_tasks_target(
+        &mut self,
+        target: koru_workspace_host::TasksTarget,
+        match_text: Option<&str>,
+    ) -> bool {
+        MainView::open_tasks_from_search(self, target, match_text)
+    }
+
     fn open_search_target(
         &mut self,
         ws: &WorkspaceDoc,
@@ -13127,6 +13139,9 @@ impl View for MainView {
         trash_root: Option<NodeId>,
         match_text: Option<&str>,
     ) -> bool {
+        // Any navigation retires a task landing still in flight: the person
+        // has gone somewhere, and its late answer must not take them away.
+        self.search_landing.retire();
         let started = Instant::now();
         tracing::info!(
             target: "koru::navigation",
@@ -15453,6 +15468,10 @@ impl View for MainView {
             // has no clock, which is the same bargain History keeps.
             self.cloud_sync.deadline(),
             self.task_counts.deadline(),
+            // A task from search is being read off-thread: look again soon.
+            self.search_landing
+                .pending()
+                .then(|| Instant::now() + std::time::Duration::from_millis(16)),
             self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
             // Only the tab in front has one: a Tasks tab in the background
@@ -15692,7 +15711,8 @@ impl View for MainView {
                 .set_counts(self.task_counts.counts());
             self.refresh_rail_lists();
         }
-        let context_tasks_changed = self.refresh_context_tasks(ws);
+        let landing_changed = self.finish_search_landing(now);
+        let context_tasks_changed = self.refresh_context_tasks(ws) | landing_changed;
         // The Tasks tab's own page. **Visible means the tab in front**: a Tasks
         // tab in the background has no deadline and makes no request at all,
         // which is the other half of "a background Tasks tab costs a bool".
