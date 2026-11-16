@@ -254,6 +254,11 @@ pub fn spawn(
     if let Some(tags) = crate::tagnames::tag_source(&derived, &state) {
         indexer = indexer.with_tag_names(tags);
     }
+    // **Task lists by name**, through the same door and for the same reason:
+    // the registry is in the system document, which the index cannot read.
+    if let Some(lists) = crate::tagnames::list_source(&derived, &state) {
+        indexer = indexer.with_list_names(lists);
+    }
     // **The words read out of files**, beside the tag names and for the same
     // reason: text the indexer fetches from outside the node. Absent — a
     // mirror that would not open — a file is found by its name, as before.

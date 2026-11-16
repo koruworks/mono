@@ -2076,6 +2076,8 @@ impl SearchSurface {
             // person typing `#` is what would fill this in.
             tags: Vec::new(),
             attributes,
+            include_lists: false,
+            task_results: false,
             sort: self.sort,
             page_size: if self.query.is_empty() { 3 } else { 50 },
             offset,
@@ -4775,6 +4777,8 @@ fn ai_display_hit(hit: &koru_ai_core::AiSearchHit) -> SearchHit {
         workspace_last_used_at_ms: None,
         page: None,
         picture_name: None,
+        list: None,
+        task: None,
     }
 }
 
@@ -5530,6 +5534,8 @@ mod tests {
             workspace_last_used_at_ms: None,
             page: None,
             picture_name: None,
+            list: None,
+            task: None,
         }
     }
 

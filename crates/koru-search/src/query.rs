@@ -49,9 +49,10 @@ use std::sync::LazyLock;
 
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 
+use crate::lists::ListRow;
 use crate::model::{
-    AttrFilter, AttrOp, Lifecycle, LifecycleFilter, SearchHit, SearchPage, SearchQuery,
-    SearchResult, SearchSort, field,
+    AttrFilter, AttrOp, Lifecycle, LifecycleFilter, ListHit, SearchHit, SearchPage, SearchQuery,
+    SearchResult, SearchSort, TaskHit, field,
 };
 use crate::normalize::{EvidenceTerm, matching_evidence_spans, normalize, query_terms, snippet};
 use crate::storage::{Listed, SearchIndex};
@@ -332,7 +333,7 @@ pub(crate) fn search(
     // fragment rows are one coherent generation even across two WAL
     // connections.
     let vocabulary = index.vocabulary.read();
-    prepare_evidence(connection, &vocabulary, &terms, false)?;
+    prepare_evidence(connection, &vocabulary, &terms, query.include_lists)?;
 
     let mut values = vec![
         Value::Integer(lifecycle_code(query.lifecycle)),
@@ -402,6 +403,12 @@ pub(crate) fn search(
                )"
         ));
     }
+    // **A filter never sees a generated row.** The index writes rows of its
+    // own into `attr_values` (the root-task marker), told apart by a kind
+    // beginning with `@` — which no authored attribute can carry. Whatever
+    // role or kind a caller names, `has` and `missing` answer from authored
+    // rows alone.
+    //
     // **The typed half of the same idea**, and the same shape: correlated on
     // the node, in `candidates` alone, so coverage and scoring are untouched
     // and no hit is duplicated.
@@ -439,7 +446,7 @@ pub(crate) fn search(
             "EXISTS (
                  SELECT 1 FROM attr_values v
                  WHERE v.document_id=f.document_id AND v.node_id=f.node_id
-                   AND v.role=?{key} AND ({body})
+                   AND v.role=?{key} AND v.kind NOT LIKE '@%' AND ({body})
                )"
         );
         if filter.op == AttrOp::Missing {
@@ -472,7 +479,31 @@ pub(crate) fn search(
     } else {
         COVERAGE
     };
-    let read_best = READ_BEST.as_str();
+    // **Two request flags, and with both off the answer is what it was.**
+    // Lists are candidates, and lead every sort, only when asked for. Tasks
+    // are named as tasks, weighted like titles and kept one per task among
+    // read text only when asked for; without the flag the statement's
+    // scoring and its read collapse are the strings they always were.
+    let (score, read_best) = if query.task_results {
+        (TASK_SCORE.as_str(), TASK_READ_BEST.as_str())
+    } else {
+        (SCORE, READ_BEST.as_str())
+    };
+    let lists = if query.include_lists {
+        ""
+    } else {
+        " AND f.field<>'task-list'"
+    };
+    let lists_first = if query.include_lists {
+        "CASE WHEN f.field='task-list' THEN 0 ELSE 1 END,"
+    } else {
+        ""
+    };
+    let task_node = if query.task_results {
+        TASK_NODE
+    } else {
+        "NULL"
+    };
 
     let sql = format!(
         "WITH candidates AS (
@@ -481,6 +512,7 @@ pub(crate) fn search(
            LEFT JOIN listing l ON l.document_id=f.document_id
            WHERE ({LIFECYCLE})
              {scope}
+             {lists}
              {kinds}
              {tags}
              {attrs}
@@ -489,8 +521,9 @@ pub(crate) fn search(
          {read_best}
          SELECT f.workspace_id, f.document_id, f.node_id, f.kind, f.field, f.text,
                 f.stable_key, d.observed_modified_at_ms, recent.last_used_at_ms,
-                {SCORE} AS score,
-                f.page
+                {score} AS score,
+                f.page,
+                {task_node} AS task_node
          FROM qualified q
          JOIN fragments f ON f.id=q.candidate_id
          LEFT JOIN documents d ON d.document_id=f.document_id
@@ -504,6 +537,7 @@ pub(crate) fn search(
          ) ws_change ON ws_change.workspace_id=f.workspace_id
          WHERE {READ_KEPT}
          ORDER BY
+           {lists_first}
            CASE WHEN ?4=1
              THEN COALESCE(d.observed_modified_at_ms,
                            ws_change.observed_modified_at_ms, 0) END DESC,
@@ -526,6 +560,7 @@ pub(crate) fn search(
                 workspace_last_used_at_ms: r.get(8)?,
                 score: r.get(9)?,
                 page: r.get(10)?,
+                task_node: r.get(11)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -539,6 +574,13 @@ pub(crate) fn search(
     };
     let listing = index.listing_of(&workspaces)?;
     let names = index.workspace_names()?;
+    // Read once, and only when a list is on the page: a list hit's path is
+    // assembled from the mirrored table, as a document's is from the listing.
+    let task_lists = if raw.iter().any(|row| row.field == field::TASK_LIST) {
+        index.lists_of(&workspaces)?
+    } else {
+        HashMap::new()
+    };
 
     let mut hits = Vec::with_capacity(raw.len());
     let mut corrected = terms.clone();
@@ -558,7 +600,37 @@ pub(crate) fn search(
         }
         let listed = row.document.as_ref().and_then(|d| listing.get(d));
         let workspace_name = names.get(&row.workspace).cloned().unwrap_or_default();
-        let path = breadcrumb(&workspace_name, listed, &listing);
+        // **A list hit.** Its title is the list's name and its path is the
+        // lists it is inside, read from the mirrored table.
+        let list = (row.field == field::TASK_LIST)
+            .then(|| row.node.clone())
+            .flatten()
+            .map(|id| {
+                let stored = task_lists.get(&(row.workspace.clone(), id.clone()));
+                ListHit {
+                    path: list_path(&row.workspace, &id, &task_lists),
+                    color: stored.and_then(|list| list.color.clone()),
+                    id,
+                }
+            });
+        // **A task hit.** `task_node` is the hit's own node, or the root of a
+        // page whose title matched and which is itself a task.
+        let task = match (&row.task_node, &row.document) {
+            (Some(node), Some(document)) => Some(TaskHit {
+                state: task_state(connection, document, node)?,
+                node: node.clone(),
+            }),
+            _ => None,
+        };
+        let path = match &list {
+            Some(list) => {
+                let mut names = vec![workspace_name.clone()];
+                names.extend(list.path.iter().cloned());
+                names.push(row.text.clone());
+                names.join(" / ")
+            }
+            None => breadcrumb(&workspace_name, listed, &listing),
+        };
         let direct = matching_evidence_spans(
             &row.text,
             evidence.direct.iter().map(|t| EvidenceTerm {
@@ -575,21 +647,36 @@ pub(crate) fn search(
                 whole_token: t.fuzzy,
             }),
         );
-        hits.push(SearchHit {
-            title: if query.entity_picker && row.node.is_some() {
-                row.text.clone()
-            } else {
+        let title = if list.is_some() || (query.entity_picker && row.node.is_some()) {
+            row.text.clone()
+        } else if let (Some(task), Some(document), Some(_)) = (&task, &row.document, &row.node) {
+            // The task's own words, as the entity picker titles it — not the
+            // attribute or the page of read text that happened to match.
+            task_text(connection, document, &task.node)?.unwrap_or_else(|| {
                 listed
                     .map(|l| l.title.clone())
                     .unwrap_or_else(|| workspace_name.clone())
-            },
+            })
+        } else {
+            listed
+                .map(|l| l.title.clone())
+                .unwrap_or_else(|| workspace_name.clone())
+        };
+        hits.push(SearchHit {
+            title,
             workspace_name,
             workspace: row.workspace,
             document: row.document,
             node: row.node,
             document_kind: listed.map(|l| l.kind.clone()).unwrap_or_default(),
             mime: listed.and_then(|l| l.mime.clone()),
-            kind: row.kind,
+            // The wire's word for a list result; the index's own token is the
+            // field's.
+            kind: if list.is_some() {
+                KIND_TASK_LIST.to_owned()
+            } else {
+                row.kind
+            },
             field: row.field,
             breadcrumb: path,
             breadcrumb_spans,
@@ -605,6 +692,8 @@ pub(crate) fn search(
             // there is nothing to decide here (TECHNICAL D13).
             page: row.page,
             picture_name,
+            list,
+            task,
         });
     }
     let has_more = hits.len() > page_size;
@@ -618,6 +707,139 @@ pub(crate) fn search(
         request_seq: query.request_seq,
     })
 }
+
+/// `SearchHit::kind` for a task list.
+pub const KIND_TASK_LIST: &str = "task_list";
+
+/// The names of the lists `id` is inside, outermost first.
+///
+/// Bounded by the table's own size, the breadcrumb's rule: the host hands
+/// over a repaired tree, but a hung query is worse than a short path.
+fn list_path(
+    workspace: &str,
+    id: &str,
+    lists: &HashMap<(String, String), ListRow>,
+) -> Vec<String> {
+    let mut path = Vec::new();
+    let key = |id: &str| (workspace.to_owned(), id.to_owned());
+    let mut at = lists.get(&key(id)).and_then(|list| list.parent.clone());
+    for _ in 0..lists.len() {
+        let Some(parent) = at.and_then(|id| lists.get(&key(&id))) else {
+            break;
+        };
+        path.push(parent.name.clone());
+        at = parent.parent.clone();
+    }
+    path.reverse();
+    path
+}
+
+/// A task's lifecycle token as indexed, `open` when none is recorded.
+fn task_state(connection: &Connection, document: &str, node: &str) -> SearchResult<String> {
+    let state: Option<String> = connection
+        .query_row(
+            "SELECT value FROM attr_values
+             WHERE document_id = ?1 AND node_id = ?2 AND role = 'koru.task_state'
+               AND kind NOT LIKE '@%'
+             LIMIT 1",
+            [document, node],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(state.unwrap_or_else(|| "open".to_owned()))
+}
+
+/// A task's own text: its node's primary fragment.
+fn task_text(connection: &Connection, document: &str, node: &str) -> SearchResult<Option<String>> {
+    let key = format!("node:{document}:{node}:primary");
+    let text: Option<String> = connection
+        .query_row("SELECT text FROM fragments WHERE stable_key = ?1", [key], |r| {
+            r.get(0)
+        })
+        .optional()?;
+    Ok(text.filter(|text| !text.trim().is_empty()))
+}
+
+/// **Which node makes a hit a task**, or NULL.
+///
+/// - *A node hit* whose node carries `koru.task` or `koru.due`: that node.
+/// - *A title hit* — which names no node — of a document whose root is a
+///   task: that root. The index does not record which node is a document's
+///   root, so the document walk writes one generated row for it, told apart
+///   by its **kind** (`@root-task`), never its role: a workspace may define an
+///   attribute spelled anything at all, and an authored row never carries a
+///   kind beginning with `@`.
+///
+/// A scalar subquery with `LIMIT 1`, so a title row can never be multiplied.
+const TASK_NODE: &str = "CASE
+                   WHEN f.node_id IS NOT NULL AND f.document_id IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM attr_values t
+                        WHERE t.document_id=f.document_id AND t.node_id=f.node_id
+                          AND t.role IN ('koru.task','koru.due'))
+                     THEN f.node_id
+                   WHEN f.node_id IS NULL AND f.field='title'
+                     THEN (SELECT root.node_id FROM attr_values root
+                           WHERE root.document_id=f.document_id
+                             AND root.kind='@root-task' LIMIT 1)
+                 END";
+
+/// [`SCORE`] for a query that asked for tasks: **a task's own text ranks
+/// like a title** (700), wherever its kind would have put it — a marked
+/// paragraph is `body`, a native task `task`, a marked picture's name `name`.
+/// Everything else scores exactly as [`SCORE`] scores it.
+static TASK_SCORE: LazyLock<String> = LazyLock::new(|| {
+    const TITLE_TIER: &str = "WHEN f.field IN ('workspace','title') THEN 700";
+    assert!(SCORE.contains(TITLE_TIER));
+    SCORE.replacen(
+        TITLE_TIER,
+        &format!(
+            "{TITLE_TIER}
+                   WHEN f.stable_key LIKE 'node:%:primary' AND EXISTS (
+                        SELECT 1 FROM attr_values t
+                        WHERE t.document_id=f.document_id AND t.node_id=f.node_id
+                          AND t.role IN ('koru.task','koru.due')) THEN 700"
+        ),
+        1,
+    )
+});
+
+/// [`READ_BEST`] for a query that asked for tasks: **one `read` hit per
+/// task**, and one for everything else in the document.
+///
+/// A marked picture or file is a task, and two of them in one document that
+/// both match are two results. So a marked node is its own partition and
+/// keeps its own best page; every unmarked node of the document shares one,
+/// and an ordinary PDF's pages still collapse to one row.
+///
+/// It stays where [`READ_BEST`] is — after `candidates` and `qualified`, read
+/// through [`READ_KEPT`]'s `IN`, `CROSS JOIN` fixing the order — and the
+/// `EXISTS` is a point lookup on `attr_values_node`. **A separate string
+/// chosen by the flag**, so the statement without the flag is today's, byte
+/// for byte, and its measured plan cannot move. This variant's own plan and
+/// timings on the large measured index are still owed.
+static TASK_READ_BEST: LazyLock<String> = LazyLock::new(|| {
+    let score = TASK_SCORE.as_str();
+    format!(
+        "read_best AS (
+           SELECT id FROM (
+             SELECT f.id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY f.document_id,
+                                   CASE WHEN EXISTS (
+                                          SELECT 1 FROM attr_values t
+                                          WHERE t.document_id=f.document_id
+                                            AND t.node_id=f.node_id
+                                            AND t.role IN ('koru.task','koru.due'))
+                                        THEN f.node_id END
+                      ORDER BY {score} DESC, f.seq, f.page, f.stable_key
+                    ) AS place
+             FROM qualified q
+             CROSS JOIN fragments f ON f.id=q.candidate_id
+             WHERE f.field='read'
+           ) WHERE place=1
+         )"
+    )
+});
 
 /// The one fragment that holds a picture's authored name: its node's primary
 /// fragment, which is a `name` field exactly when somebody named the picture
@@ -937,6 +1159,9 @@ struct RawHit {
     workspace_last_used_at_ms: Option<i64>,
     score: f64,
     page: Option<u32>,
+    /// The node that makes this hit a task, when the query asked for tasks
+    /// and it is one ([`TASK_NODE`]).
+    task_node: Option<String>,
 }
 
 #[cfg(test)]

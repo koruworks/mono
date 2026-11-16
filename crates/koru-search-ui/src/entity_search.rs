@@ -644,6 +644,8 @@ mod tests {
             workspace_last_used_at_ms: None,
             page: None,
             picture_name: None,
+            list: None,
+            task: None,
         }
     }
 

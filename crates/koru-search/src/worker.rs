@@ -67,6 +67,7 @@ use koru_projection::model::DocumentProjection;
 use koru_projection::{Consumer, Projections};
 use koru_store_core::ids::{DocumentId, WorkspaceId};
 
+use crate::lists::ListNames;
 use crate::model::{IndexStats, SearchResult};
 use crate::readings::{ReadingText, Readings};
 use crate::storage::{SEARCH_SCHEMA_VERSION, SearchIndex};
@@ -287,6 +288,11 @@ pub struct Indexer {
     /// workspace whether it can answer yet, and re-queues these when it can.
     /// In memory, bounded by the documents that hold a picture or a file.
     unread: HashMap<WorkspaceId, HashMap<DocumentId, Vec<String>>>,
+    /// Where a workspace's task lists come from. `None` indexes no list.
+    lists: Option<Box<dyn ListNames>>,
+    /// Workspaces whose lists and page-task markers this process has brought
+    /// up to date once ([`bootstrap`](Self::bootstrap)).
+    bootstrapped: HashSet<WorkspaceId>,
 }
 
 impl Indexer {
@@ -302,7 +308,17 @@ impl Indexer {
             said_unlisted: None,
             readings: None,
             unread: HashMap::new(),
+            lists: None,
+            bootstrapped: HashSet::new(),
         }
+    }
+
+    /// Install the task-list source, as [`with_tag_names`](Self::with_tag_names)
+    /// installs the tag table's. Without one no list is indexed and nothing
+    /// else changes.
+    pub fn with_list_names(mut self, lists: Box<dyn ListNames>) -> Self {
+        self.lists = Some(lists);
+        self
     }
 
     /// Install the tag-name source. The daemon does this in `search::spawn`,
@@ -503,6 +519,8 @@ impl Indexer {
         // is subscribed to, and nothing else needs to be.
         if listed.kind == KIND_SYSTEM {
             self.refresh_tags(workspace);
+            // The list table is in the same document, and this is it changing.
+            self.refresh_lists(workspace);
         }
         let tags = self.tag_table(workspace);
         // **The `TagNames` shape, for the words read out of this document's
@@ -718,6 +736,92 @@ impl Indexer {
         );
     }
 
+    /// Re-read one workspace's task lists and replace what the index holds
+    /// for them. Answers whether the source answered.
+    ///
+    /// **A read that fails is not an empty table.** With no source, or one
+    /// that says *not now*, nothing is written: the list rows already indexed
+    /// stay, and the next reconcile asks again. No other document is touched
+    /// — a list is not in any document's fragments.
+    fn refresh_lists(&mut self, workspace: WorkspaceId) -> bool {
+        let Some(lists) = self
+            .lists
+            .as_ref()
+            .and_then(|source| source.list_names(workspace))
+        else {
+            return false;
+        };
+        match self.index.refresh_lists(&workspace.to_storage(), &lists) {
+            Ok(changed) => {
+                if changed {
+                    // **Counts and ids only**, the tag refresh's rule: a
+                    // list's name is something a person wrote.
+                    tracing::debug!(
+                        target: "koru_search",
+                        %workspace,
+                        lists = lists.len(),
+                        "the task lists changed; their names were re-indexed"
+                    );
+                }
+                true
+            }
+            Err(why) => {
+                self.failed(why.0);
+                false
+            }
+        }
+    }
+
+    /// **What an index built before lists and task results existed is owed**,
+    /// once per workspace per process, whether or not any document is due.
+    ///
+    /// An index caught up to a revision is not re-read, so an upgrade alone
+    /// would leave it with no list rows and no root-task markers until
+    /// somebody edited a list or a page. So the first reconcile that sees a
+    /// workspace reads its lists, and queues **only** the pages that are
+    /// tasks and carry no marker yet — bounded by the number of such pages,
+    /// never a workspace walk. A read that fails does nothing and is tried
+    /// again at the next reconcile.
+    fn bootstrap(&mut self, workspace: WorkspaceId) -> usize {
+        if self.bootstrapped.contains(&workspace) {
+            return 0;
+        }
+        // No source wired at all: nothing will ever answer, and asking every
+        // two seconds for ever is the loop `compare` warns about.
+        let lists_done = self.lists.is_none() || self.refresh_lists(workspace);
+        let roots = match self.projections.task_root_documents(workspace) {
+            Ok(roots) => roots,
+            Err(why) => {
+                self.failed(why.0);
+                return 0;
+            }
+        };
+        let mut queued = 0;
+        for document in roots {
+            match self.index.has_root_task_marker(&document.to_storage()) {
+                Ok(true) => {}
+                Ok(false) => {
+                    self.queue.push_document(workspace, document);
+                    queued += 1;
+                }
+                Err(why) => {
+                    self.failed(why.0);
+                    return queued;
+                }
+            }
+        }
+        if lists_done {
+            self.bootstrapped.insert(workspace);
+            tracing::debug!(
+                target: "koru_search",
+                %workspace,
+                pages = queued,
+                "bootstrapped task lists and page-task markers"
+            );
+        }
+        queued
+    }
+
     /// Compare what the index consumed against what the projection holds, and
     /// enqueue the difference.
     ///
@@ -775,11 +879,20 @@ impl Indexer {
         let mut unlisted = 0;
 
         let ours = self.index.digests()?;
+        let mut mirrored = Vec::new();
         for (workspace, digest) in self.projections.listings()? {
             if ours.get(&workspace.to_storage()).map(Vec::as_slice) != Some(digest.as_slice()) {
                 self.queue.push_listing(workspace);
                 found += 1;
+            } else {
+                mirrored.push(workspace);
             }
+        }
+        // Only a workspace whose listing the index already holds: a page
+        // queued before its listing row exists would be abandoned, and the
+        // listing refresh that is queued above comes round again.
+        for workspace in mirrored {
+            found += self.bootstrap(workspace);
         }
 
         let cursors = self.index.cursors()?;

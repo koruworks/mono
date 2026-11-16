@@ -2628,6 +2628,40 @@ impl Projections {
         Ok(out)
     }
 
+    /// The documents of one workspace whose **root node is itself a task**:
+    /// it carries the task marker or a due. What the search index asks once
+    /// per workspace after an upgrade, to find the pages whose title should
+    /// be a task result and are not yet marked as one.
+    ///
+    /// The root is the document's first node in reading order, of kind
+    /// `document`, and live. Bounded by the number of pages that are tasks:
+    /// the walk starts from `document` nodes that carry one of two roles.
+    pub fn task_root_documents(&self, workspace: WorkspaceId) -> Result<Vec<DocumentId>> {
+        use koru_core::attributes::{KEY_DUE, KEY_TASK};
+        let mut q = self.db.prepare(&format!(
+            "SELECT DISTINCT n.document_id
+               FROM nodes n
+               JOIN documents d ON d.document_id = n.document_id
+               JOIN attrs a ON a.document_id = n.document_id AND a.node_id = n.node_id
+              WHERE d.workspace_id = ?1
+                AND n.kind = 'document' {bin}
+                AND a.role IN ('{KEY_TASK}', '{KEY_DUE}')
+                AND TRIM(a.value) <> ''
+                AND n.seq = (SELECT MIN(m.seq) FROM nodes m
+                              WHERE m.document_id = n.document_id)
+              ORDER BY n.document_id",
+            bin = NodeScope::Live.clause("n.in_trash"),
+        ))?;
+        let rows = q.query_map(params![workspace.to_storage()], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            if let Some(document) = DocumentId::parse(&row?) {
+                out.push(document);
+            }
+        }
+        Ok(out)
+    }
+
     // --------------------------------------------------------------- state
 
     /// A small key/value table, for the rebuild cursor and nothing else yet.
