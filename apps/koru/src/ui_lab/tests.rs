@@ -22,6 +22,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/app/leaf.rs"),
     ),
     (
+        "ui_lab/registry/app/mainview.rs",
+        include_str!("registry/app/mainview.rs"),
+    ),
+    (
         "ui_lab/registry/app/mini_app.rs",
         include_str!("registry/app/mini_app.rs"),
     ),
@@ -293,6 +297,7 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
 const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/app.rs",
     "ui_lab/registry/app/leaf.rs",
+    "ui_lab/registry/app/mainview.rs",
     "ui_lab/registry/app/mini_app.rs",
     "ui_lab/registry/app/pages.rs",
     "ui_lab/registry/app/tasks_view.rs",

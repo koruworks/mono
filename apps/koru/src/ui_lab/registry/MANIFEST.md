@@ -109,41 +109,41 @@ fail until this table says what they compute.
 | domain crate lib.rs public modules | 121 |
 | domain crate modules excluded | 73 |
 | app crates baselined | 1 |
-| app source files | 95 |
-| app files baselined | 14 |
-| app modules classified | 56 |
-| app modules excluded | 16 |
-| records: app crates | 25 |
-| records | 258 |
+| app source files | 189 |
+| app files baselined | 15 |
+| app modules classified | 128 |
+| app modules excluded | 52 |
+| records: app crates | 45 |
+| records | 278 |
 | records: foundations | 59 |
-| records: controls | 72 |
-| records: application compositions | 127 |
+| records: controls | 77 |
+| records: application compositions | 142 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 69 |
+| kind: support | 70 |
 | kind: domain composition | 57 |
-| kind: app-local | 22 |
+| kind: app-local | 41 |
 | token values listed | 174 |
-| symbols | 2032 |
+| symbols | 2103 |
 | symbols with typed recipes | 2 |
-| inspector identities | 57 |
-| inspector identity registration sites | 60 |
+| inspector identities | 60 |
+| inspector identity registration sites | 63 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 178 |
+| disposition: no story yet | 198 |
 | disposition: nonvisual | 61 |
 | disposition: platform-only | 0 |
 | disposition: boundary | 18 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 383 |
-| symbol story: nonvisual | 1498 |
+| symbol story: no story yet | 421 |
+| symbol story: nonvisual | 1531 |
 | symbol story: boundary | 150 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 1980 |
+| A2UI: not supported | 2051 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1234,6 +1234,74 @@ Defects found here (not fixed):
 - **Missing identities**: no Manage page below `KoruManage`, and no Trash,
   feedback, comparison, support or pop-out surface, registers a component
   identity.
+
+### Part 3 — the container (`mainview`)
+
+96 non-test files (`harness.rs`, `accessibility/integration.rs` and
+`accessibility/document/native.rs` are test-only; `shell_conformance.rs`
+is declared by no `mod` line and is not compiled). Read in full by the
+delegated readers except: `mod.rs` (18,865 lines) by declarations — its
+module docs, every `MainView` field, impl header and the ~575 function
+signatures, with `View::draw` and the caption, lane, menu and modal
+geometry read and the input handlers searched; `reminders.rs`,
+`canvas_chain.rs`, `canvas_runs.rs` by declarations; the two test-only
+accessibility files searched. 73 modules are baselined in
+`tests/drift/app.rs`.
+
+Records (* minted): `H-MAIN-VIEW`* (support: `impl View for MainView`,
+the frame order, accessibility delegation, the container's own confirms
+and toasts), `C-LANE`* (COMPONENTS.md's **KoruLane**, WF01, drawn over
+`H-LANE-LAYOUT` with `C-ICON-BUTTON` and `C-LOGO`), `C-APP-CAPTION`* (the
+caption band, the window buttons through `C-CAPTION`, the branch and
+offline chips through `C-BRANCH-CHIP` and `C-STATUS-CHIP`, and each pane
+group's strip, drawn by `C-TAB-STRIP`), `C-PANE-SPLITS`*,
+`C-APP-ZOOM-FLASH`*, `C-ERROR-DIALOG`* (the error badge, UI-003),
+`C-CHAT-FILE-PREVIEW`* (`ChatFilePreview`), `C-LINK-DEVICE-PANEL`*
+(`QRFloatingPanel`), `C-DELEGATE-FORM`* (`KoruDelegateForm`; finished
+phases on `C-PROMPT`, all on `C-MODAL`), `C-RECORDING-SETUP`*,
+`C-AGENT-CLI-CARDS`*, `C-FONT-PICKER`*, `C-IMPORT-DIALOG`*, `C-MOVE-TO`*,
+`C-NAME-PROMPTS`* (new document and snapshot on `C-DIALOG-FRAME`, rename
+and new list in place), `C-REMINDER-EDITOR`* (the bell's popovers on
+`C-POPOVER`, and the Reminders tab), `C-UPDATE-PROMPTS`*,
+`C-DICTATION-STRIP`*, `C-PROFILE-WAIT`*, `C-APP-MENUS`* (every container
+menu is `C-MENU` over `context_menu::MenuAction`, with `C-LAUNCHER` and
+`C-PLACE-CHOOSER`).
+
+Identities: `ChatFilePreview`, `QRFloatingPanel` and `KoruDelegateForm`
+are component scopes and are claimed. `KoruLane` is opened as a
+**container** scope (`draw.rs` 1103, and again by `panes/explore.rs`
+7103), so it is not an identity the checks count, though COMPONENTS.md
+names it a component. The tabs the strip draws are named "Tab (legacy
+shared)" by `koru_shell_chrome::tabs` (`tabs.rs` 523), recorded in batch 2a.
+
+Defects found here (not fixed):
+
+- **Hand-drawn scrims instead of `koru_ui::modal`** (no `KoruModal`
+  scope): the Move-to modal (`mod.rs` 12583–12623), the error dialog, the
+  file preview, the import dialog, the font picker, the link-device panel
+  and both update modals; the recording setup frames itself too.
+- **Local painters duplicating shared controls**: the error dialog's
+  badge (UI-003), details disclosure, text "buttons" and scrollbar thumb;
+  the link-device panel's own tab strip ("QRPanelTabs"); the delegate
+  form's text field and choice rows (`delegate/paint.rs` `draw_text_field`,
+  `draw_choice`); the recording setup's preset rows and disabled Record
+  stand-in; the lane controls' focus ring, the tear-off pill and the zoom
+  flash's popover (`draw.rs` 1230–1239). The zoom flash duplicates
+  `C-SHELL-ZOOM-LABEL`, which has no production caller.
+- **Hard-coded English a person reads**: the Move-to modal and its toasts
+  (`mod.rs` 2287–2541, 13707), the bulk-trash and list-delete confirms
+  (5845–5847, 9165–9171), toast actions (14194–14393), the feedback
+  failure toast (9607–9608), the screenshot dialog (9632–9634), the
+  "Toggle context" tooltip (18193), "Current document" (`draw.rs` 486),
+  recording sizes (`recording/paint.rs` 92, 330).
+- **Docs and source disagree**: `mod.rs`'s module table names `tabset`,
+  `panel` and `tabslide`, which no longer exist, and omits most modules;
+  the `accessibility` doc says four `impl View` methods and a comment says
+  seven (there are eight); `shell_conformance.rs` calls itself
+  `#[cfg(test)]` behind "a `#[cfg(test)] mod` line" that does not exist,
+  so **batch 2b's note that it is compiled under test is wrong** — it is
+  not compiled at all; `draw.rs`'s module doc says the caption paints
+  last, and the columns, cards, menus and modals all draw after it.
 
 ### What batches 2a and 2b left for this batch
 

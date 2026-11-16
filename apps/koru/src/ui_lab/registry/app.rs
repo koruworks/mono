@@ -29,11 +29,13 @@ use super::*;
 use koru_i18n::Key;
 
 mod leaf;
+mod mainview;
 mod mini_app;
 mod pages;
 mod tasks_view;
 
 pub(super) const LEAF: &[Entry] = leaf::RECORDS;
+pub(super) const MAINVIEW: &[Entry] = mainview::RECORDS;
 pub(super) const MINI_APP: &[Entry] = mini_app::RECORDS;
 pub(super) const PAGES: &[Entry] = pages::RECORDS;
 pub(super) const TASKS_VIEW: &[Entry] = tasks_view::RECORDS;

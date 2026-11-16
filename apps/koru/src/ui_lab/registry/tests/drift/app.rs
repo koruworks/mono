@@ -78,6 +78,382 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/leaf.rs"),
     ),
     (
+        "apps/koru/src/mainview/accessibility.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/chrome.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/chrome.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/commands.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/commands.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/document.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/document.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/launcher.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/launcher.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/menus.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/menus.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/persistence.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/persistence.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/place_chooser.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/place_chooser.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/reminders.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/reminders.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/accessibility/viewer.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/accessibility/viewer.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/agent_cli_updates.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/agent_cli_updates.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/agent_install.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/agent_install.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/agent_mcp.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/agent_mcp.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/agent_providers.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/agent_providers.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/canvas.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/canvas.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/canvas/wire.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/canvas/wire.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/canvas_chain.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/canvas_chain.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/canvas_runs.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/canvas_runs.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/chat_status.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/chat_status.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/chrome_debug.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/chrome_debug.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/chrome_focus.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/chrome_focus.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/closed_tabs.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/closed_tabs.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/cloud_sync.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/cloud_sync.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/context_menu.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/context_menu.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/job.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/job.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/modal.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/modal.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/modal/models.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/modal/models.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/modal/readiness.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/modal/readiness.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/modal/repeat.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/modal/repeat.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/paint.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/paint.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/pills.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/pills.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/delegate/world.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/delegate/world.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/dictation.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/dictation.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/dictation/chat.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/dictation/chat.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/document_appearance.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/document_appearance.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/draw.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/draw.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/error_dialog.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/error_dialog.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/file_preview.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/file_preview.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/font_picker.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/font_picker.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/help_menu.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/help_menu.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/history.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/history.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/icon_action.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/icon_action.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/import_dialog.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/import_dialog.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/keys.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/keys.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/launcher.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/launcher.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/layout.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/layout.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/link_device.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/link_device.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/linked_devices.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/linked_devices.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/mini_app.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/mini_app.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/mini_app_artifacts.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/mini_app_artifacts.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/mini_app_pins.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/mini_app_pins.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/mod.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/move_to.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/move_to.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/nav.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/nav.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/nav_debug.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/nav_debug.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/new_document.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/new_document.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/new_list.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/new_list.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/open.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/open.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/panes.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/panes.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/place_chooser.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/place_chooser.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/profile_probe.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/profile_probe.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/profile_wait.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/profile_wait.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/rail_overflow.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/rail_overflow.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/recording.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/recording.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/recording/modal.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/recording/modal.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/recording/paint.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/recording/paint.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/recording/telemetry.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/recording/telemetry.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/reminder_creation.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/reminder_creation.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/reminder_management.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/reminder_management.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/reminder_shell.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/reminder_shell.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/reminders.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/reminders.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/reminders_view.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/reminders_view.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/routing.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/routing.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/run_trash.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/run_trash.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/runs.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/runs.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/schedules.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/schedules.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/session.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/session.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/session_backend.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/session_backend.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/session_lanes.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/session_lanes.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/snapshot_prompt.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/snapshot_prompt.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/tab.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/tab.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/tab_rules.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/tab_rules.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/taskcounts.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/taskcounts.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/tasks.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/tasks.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/terminal_look.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/terminal_look.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/trash.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/trash.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/update_ui.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/update_ui.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/welcome_progress.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/welcome_progress.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/workspace_controller.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/workspace_controller.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/workspace_icon.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/workspace_icon.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/workspace_menu.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/workspace_menu.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/workspace_rename.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/workspace_rename.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/zoomlabel.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/zoomlabel.rs"),
+    ),
+    (
         "apps/koru/src/manage.rs",
         include_str!("../../../../../../../apps/koru/src/manage.rs"),
     ),
@@ -568,6 +944,241 @@ pub(super) struct Root {
 
 /// The baselines, an app file at a time.
 pub(super) const ROOTS: &[Root] = &[
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/mainview/mod.rs",
+        own: &["H-MAIN-VIEW"],
+        modules: &[
+            (
+                "harness",
+                Module::Excluded("test-only: #[cfg(test)] fixtures for the container's suite"),
+            ),
+            ("accessibility", Module::Records(&["H-MAIN-VIEW"])),
+            ("agent_cli_updates", Module::Records(&["C-AGENT-CLI-CARDS"])),
+            (
+                "agent_install",
+                Module::Excluded(
+                    "orchestration: installs a coding agent's command-line tool; draws nothing",
+                ),
+            ),
+            (
+                "agent_mcp",
+                Module::Excluded(
+                    "orchestration: registers the MCP bridge with a coding agent; draws nothing",
+                ),
+            ),
+            (
+                "agent_providers",
+                Module::Excluded(
+                    "data: the coding-agent provider catalog the container offers; draws nothing",
+                ),
+            ),
+            (
+                "canvas",
+                Module::Excluded(
+                    "orchestration: the canvas tab's wiring to its document; draws nothing",
+                ),
+            ),
+            (
+                "canvas_chain",
+                Module::Excluded(
+                    "orchestration: runs a canvas workflow chain for the canvas tab; draws nothing",
+                ),
+            ),
+            (
+                "canvas_runs",
+                Module::Excluded("orchestration: the canvas tab's agent runs; draws nothing"),
+            ),
+            (
+                "chat_status",
+                Module::Excluded(
+                    "data: the chats' status book behind the tab strip's status marks",
+                ),
+            ),
+            (
+                "chrome_debug",
+                Module::Excluded("io: chrome diagnostics to stderr"),
+            ),
+            ("chrome_focus", Module::Records(&["C-LANE"])),
+            (
+                "closed_tabs",
+                Module::Excluded("data: the reopen list of closed tabs"),
+            ),
+            (
+                "cloud_sync",
+                Module::Excluded("data: the Cloud sync panel's state, drawn by the context column"),
+            ),
+            ("context_menu", Module::Records(&["C-APP-MENUS"])),
+            ("delegate", Module::Records(&["C-DELEGATE-FORM"])),
+            ("dictation", Module::Records(&["C-DICTATION-STRIP"])),
+            (
+                "document_appearance",
+                Module::Excluded(
+                    "orchestration: applies a document's page appearance; draws nothing",
+                ),
+            ),
+            (
+                "draw",
+                Module::Records(&[
+                    "H-MAIN-VIEW",
+                    "C-LANE",
+                    "C-APP-CAPTION",
+                    "C-APP-ZOOM-FLASH",
+                    "C-APP-MENUS",
+                ]),
+            ),
+            ("error_dialog", Module::Records(&["C-ERROR-DIALOG"])),
+            ("file_preview", Module::Records(&["C-CHAT-FILE-PREVIEW"])),
+            ("font_picker", Module::Records(&["C-FONT-PICKER"])),
+            (
+                "help_menu",
+                Module::Excluded(
+                    "data: the help menu's rows; its popover is panes/explore/help.rs",
+                ),
+            ),
+            (
+                "history",
+                Module::Excluded(
+                    "data: the document history panel's state, drawn by the context column",
+                ),
+            ),
+            ("icon_action", Module::Records(&["C-APP-CAPTION"])),
+            ("import_dialog", Module::Records(&["C-IMPORT-DIALOG"])),
+            (
+                "keys",
+                Module::Excluded(
+                    "orchestration: the chords the container claims before a view sees them",
+                ),
+            ),
+            ("launcher", Module::Records(&["C-APP-MENUS"])),
+            ("layout", Module::Records(&["H-MAIN-VIEW"])),
+            ("link_device", Module::Records(&["C-LINK-DEVICE-PANEL"])),
+            (
+                "linked_devices",
+                Module::Excluded("data: the linked-devices list the Manage tab draws"),
+            ),
+            (
+                "mini_app",
+                Module::Excluded(
+                    "orchestration: opens, lands and refines mini-app tabs; the mini app draws itself",
+                ),
+            ),
+            (
+                "mini_app_artifacts",
+                Module::Excluded("orchestration: drains the mini app's save and open answers"),
+            ),
+            ("mini_app_pins", Module::Records(&["C-APP-MENUS"])),
+            ("move_to", Module::Records(&["C-MOVE-TO"])),
+            (
+                "nav",
+                Module::Excluded(
+                    "orchestration: where the window is standing and how it gets back",
+                ),
+            ),
+            (
+                "nav_debug",
+                Module::Excluded("io: navigation diagnostics to stderr"),
+            ),
+            ("new_document", Module::Records(&["C-NAME-PROMPTS"])),
+            ("new_list", Module::Records(&["C-NAME-PROMPTS"])),
+            (
+                "open",
+                Module::Excluded(
+                    "orchestration: how a document arrives in a tab; the drop preview it computes is painted by draw",
+                ),
+            ),
+            (
+                "panes",
+                Module::Records(&["C-PANE-SPLITS", "C-APP-CAPTION"]),
+            ),
+            ("place_chooser", Module::Records(&["C-APP-MENUS"])),
+            (
+                "profile_probe",
+                Module::Excluded("io: probes whether a Profile is reachable"),
+            ),
+            ("profile_wait", Module::Records(&["C-PROFILE-WAIT"])),
+            ("rail_overflow", Module::Records(&["C-APP-MENUS"])),
+            ("recording", Module::Records(&["C-RECORDING-SETUP"])),
+            ("reminder_creation", Module::Records(&["C-REMINDER-EDITOR"])),
+            (
+                "reminder_management",
+                Module::Records(&["C-REMINDER-EDITOR"]),
+            ),
+            ("reminder_shell", Module::Records(&["C-REMINDER-EDITOR"])),
+            (
+                "reminders",
+                Module::Excluded(
+                    "orchestration: drains the editor's reminder requests (H-EDITOR-REMINDERS) and the Agent's reminder state into the reminder surfaces",
+                ),
+            ),
+            ("reminders_view", Module::Records(&["C-REMINDER-EDITOR"])),
+            (
+                "routing",
+                Module::Excluded("orchestration: which surface an input goes to"),
+            ),
+            (
+                "run_trash",
+                Module::Excluded(
+                    "orchestration: the confirm and toast content for trashed runs, drawn by trash.rs",
+                ),
+            ),
+            (
+                "runs",
+                Module::Excluded("orchestration: the run index the Runs navigator reads"),
+            ),
+            (
+                "schedules",
+                Module::Excluded("orchestration: scheduled delegations"),
+            ),
+            ("session", Module::Excluded("data: what survives a restart")),
+            (
+                "session_backend",
+                Module::Excluded("io: the terminal sessions' backend"),
+            ),
+            (
+                "session_lanes",
+                Module::Excluded("data: the terminal sessions' lane grouping"),
+            ),
+            ("snapshot_prompt", Module::Records(&["C-NAME-PROMPTS"])),
+            ("tab", Module::Records(&["C-APP-CAPTION"])),
+            (
+                "tab_rules",
+                Module::Excluded("data: which views may share or replace a tab"),
+            ),
+            (
+                "taskcounts",
+                Module::Excluded(
+                    "data: the task counts panel's state, drawn by the context column",
+                ),
+            ),
+            (
+                "tasks",
+                Module::Excluded(
+                    "orchestration: the task commands that need the workspace a view never holds",
+                ),
+            ),
+            (
+                "terminal_look",
+                Module::Excluded("data: a terminal's resolved look"),
+            ),
+            ("trash", Module::Records(&["H-MAIN-VIEW"])),
+            ("update_ui", Module::Records(&["C-UPDATE-PROMPTS"])),
+            (
+                "welcome_progress",
+                Module::Excluded("data: the Welcome page's ticks"),
+            ),
+            ("workspace_controller", Module::Records(&["H-MAIN-VIEW"])),
+            (
+                "workspace_icon",
+                Module::Excluded(
+                    "hosting: opens koru-appearance-ui's emoji and color panel (C-EMOJI-COLOR-PANEL), which draws itself",
+                ),
+            ),
+            ("workspace_menu", Module::Records(&["C-APP-MENUS"])),
+            ("workspace_rename", Module::Records(&["C-NAME-PROMPTS"])),
+            ("zoomlabel", Module::Records(&["C-APP-ZOOM-FLASH"])),
+        ],
+    },
     Root {
         owner: "koru",
         file: "apps/koru/src/welcome/mod.rs",
