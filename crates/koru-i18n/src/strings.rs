@@ -3341,13 +3341,14 @@ pub enum Key {
     UiLabButtonSampleLabel,
     UiLabNotPressed,
     UiLabPressCount,
+    UiLabOptionGhost,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2368] = [
+    pub const ALL: [Key; 2369] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5716,6 +5717,7 @@ impl Key {
         Key::UiLabButtonSampleLabel,
         Key::UiLabNotPressed,
         Key::UiLabPressCount,
+        Key::UiLabOptionGhost,
     ];
 }
 
@@ -17253,4 +17255,5 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabButtonSampleLabel, en: "Save changes", es: "Guardar cambios", pt_br: "Salvar alterações", de: "Änderungen speichern", fr: "Enregistrer les modifications", ar: "حفظ التغييرات", zh_hans: "保存更改", ja: "変更を保存" },
     Row { key: Key::UiLabNotPressed, en: "Not pressed yet", es: "Aún no se ha pulsado", pt_br: "Ainda não foi pressionado", de: "Noch nicht gedrückt", fr: "Pas encore pressé", ar: "لم يُضغط بعد", zh_hans: "尚未按下", ja: "まだ押されていません" },
     Row { key: Key::UiLabPressCount, en: "Presses: {}", es: "Pulsaciones: {}", pt_br: "Pressionamentos: {}", de: "Betätigungen: {}", fr: "Pressions : {}", ar: "مرات الضغط: {}", zh_hans: "按下次数：{}", ja: "押した回数: {}" },
+    Row { key: Key::UiLabOptionGhost, en: "Ghost", es: "Sin fondo", pt_br: "Sem fundo", de: "Ohne Fläche", fr: "Sans fond", ar: "بلا خلفية", zh_hans: "无底色", ja: "背景なし" },
 ];
