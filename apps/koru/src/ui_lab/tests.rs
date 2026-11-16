@@ -53,6 +53,14 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/domain/runs.rs"),
     ),
     (
+        "ui_lab/registry/domain/search.rs",
+        include_str!("registry/domain/search.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/settings.rs",
+        include_str!("registry/domain/settings.rs"),
+    ),
+    (
         "ui_lab/registry/domain/shell_chrome.rs",
         include_str!("registry/domain/shell_chrome.rs"),
     ),
@@ -243,6 +251,8 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/domain/canvas.rs",
     "ui_lab/registry/domain/chats.rs",
     "ui_lab/registry/domain/runs.rs",
+    "ui_lab/registry/domain/search.rs",
+    "ui_lab/registry/domain/settings.rs",
     "ui_lab/registry/domain/shell_chrome.rs",
     "ui_lab/registry/domain/socials.rs",
     "ui_lab/registry/domain/voice.rs",

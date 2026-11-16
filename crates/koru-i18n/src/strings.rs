@@ -3700,13 +3700,25 @@ pub enum Key {
     UiLabSocialsSurfacePurpose,
     UiLabSocialsNavigatorName,
     UiLabSocialsNavigatorPurpose,
+    UiLabOptionAllWorkspaces,
+    UiLabOptionOneWorkspace,
+    UiLabOptionConnected,
+    UiLabOptionDisconnected,
+    UiLabSearchOverlayName,
+    UiLabSearchOverlayPurpose,
+    UiLabSearchPanelName,
+    UiLabSearchPanelPurpose,
+    UiLabSearchDocumentsName,
+    UiLabSearchDocumentsPurpose,
+    UiLabSettingsPagesName,
+    UiLabSettingsPagesPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2727] = [
+    pub const ALL: [Key; 2739] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6434,6 +6446,18 @@ impl Key {
         Key::UiLabSocialsSurfacePurpose,
         Key::UiLabSocialsNavigatorName,
         Key::UiLabSocialsNavigatorPurpose,
+        Key::UiLabOptionAllWorkspaces,
+        Key::UiLabOptionOneWorkspace,
+        Key::UiLabOptionConnected,
+        Key::UiLabOptionDisconnected,
+        Key::UiLabSearchOverlayName,
+        Key::UiLabSearchOverlayPurpose,
+        Key::UiLabSearchPanelName,
+        Key::UiLabSearchPanelPurpose,
+        Key::UiLabSearchDocumentsName,
+        Key::UiLabSearchDocumentsPurpose,
+        Key::UiLabSettingsPagesName,
+        Key::UiLabSettingsPagesPurpose,
     ];
 }
 
@@ -18330,4 +18354,16 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabSocialsSurfacePurpose, en: "Writes, schedules and follows posts for connected social accounts, with a week calendar, drafts, history, per-account versions and account connection.", es: "Redacta, programa y sigue publicaciones para cuentas sociales conectadas, con un calendario semanal, borradores, historial, versiones por cuenta y conexión de cuentas.", pt_br: "Escreve, agenda e acompanha publicações para contas sociais conectadas, com calendário semanal, rascunhos, histórico, versões por conta e conexão de contas.", de: "Schreibt, plant und verfolgt Beiträge für verbundene Social-Media-Konten, mit Wochenkalender, Entwürfen, Verlauf, Fassungen pro Konto und Kontoverbindung.", fr: "Rédige, planifie et suit des publications pour des comptes sociaux connectés, avec un calendrier hebdomadaire, des brouillons, un historique, des versions par compte et la connexion des comptes.", ar: "يكتب المنشورات ويجدولها ويتابعها للحسابات الاجتماعية المتصلة، مع تقويم أسبوعي ومسودات وسجل ونسخ لكل حساب وربط الحسابات.", zh_hans: "为已连接的社交账号撰写、排期和跟踪帖子，包含周历、草稿、历史记录、按账号的版本和账号连接。", ja: "週間カレンダー、下書き、履歴、アカウント別の版、アカウント接続を使って、接続したソーシャルアカウント向けの投稿を作成、予約、追跡します。" },
     Row { key: Key::UiLabSocialsNavigatorName, en: "Socials navigator", es: "Navegación de redes sociales", pt_br: "Navegação de redes sociais", de: "Social-Media-Navigation", fr: "Navigation des réseaux sociaux", ar: "تنقل التواصل الاجتماعي", zh_hans: "社交媒体导航", ja: "ソーシャルのナビゲーション" },
     Row { key: Key::UiLabSocialsNavigatorPurpose, en: "Lists scheduled and draft posts and each connected channel in the side column, with counts, and opens the matching page.", es: "Enumera en la columna lateral las publicaciones programadas, los borradores y cada canal conectado, con recuentos, y abre la página correspondiente.", pt_br: "Lista na coluna lateral as publicações agendadas, os rascunhos e cada canal conectado, com contagens, e abre a página correspondente.", de: "Listet in der Seitenspalte geplante Beiträge, Entwürfe und jeden verbundenen Kanal mit Zählern auf und öffnet die passende Seite.", fr: "Liste dans la colonne latérale les publications planifiées, les brouillons et chaque canal connecté, avec leurs nombres, et ouvre la page correspondante.", ar: "يعرض في العمود الجانبي المنشورات المجدولة والمسودات وكل قناة متصلة مع أعدادها، ويفتح الصفحة المطابقة.", zh_hans: "在侧栏列出已排期的帖子、草稿和每个已连接的频道及其数量，并打开相应页面。", ja: "サイドの列に予約済みの投稿、下書き、接続済みの各チャンネルを件数付きで並べ、対応するページを開きます。" },
+    Row { key: Key::UiLabOptionAllWorkspaces, en: "All workspaces", es: "Todos los espacios de trabajo", pt_br: "Todos os espaços de trabalho", de: "Alle Arbeitsbereiche", fr: "Tous les espaces de travail", ar: "كل مساحات العمل", zh_hans: "所有工作区", ja: "すべてのワークスペース" },
+    Row { key: Key::UiLabOptionOneWorkspace, en: "One workspace", es: "Un espacio de trabajo", pt_br: "Um espaço de trabalho", de: "Ein Arbeitsbereich", fr: "Un espace de travail", ar: "مساحة عمل واحدة", zh_hans: "单个工作区", ja: "1つのワークスペース" },
+    Row { key: Key::UiLabOptionConnected, en: "Connected", es: "Conectado", pt_br: "Conectado", de: "Verbunden", fr: "Connecté", ar: "متصل", zh_hans: "已连接", ja: "接続中" },
+    Row { key: Key::UiLabOptionDisconnected, en: "Disconnected", es: "Desconectado", pt_br: "Desconectado", de: "Getrennt", fr: "Déconnecté", ar: "غير متصل", zh_hans: "已断开", ja: "切断" },
+    Row { key: Key::UiLabSearchOverlayName, en: "Search overlay", es: "Superposición de búsqueda", pt_br: "Sobreposição de busca", de: "Such-Overlay", fr: "Superposition de recherche", ar: "طبقة البحث", zh_hans: "搜索浮层", ja: "検索オーバーレイ" },
+    Row { key: Key::UiLabSearchOverlayPurpose, en: "Shows search in a centered floating window over the dimmed app.", es: "Muestra la búsqueda en una ventana flotante centrada sobre la aplicación atenuada.", pt_br: "Mostra a busca em uma janela flutuante centralizada sobre o aplicativo escurecido.", de: "Zeigt die Suche in einem zentrierten schwebenden Fenster über der abgedunkelten App.", fr: "Affiche la recherche dans une fenêtre flottante centrée au-dessus de l’application assombrie.", ar: "يعرض البحث في نافذة عائمة في المنتصف فوق التطبيق المعتم.", zh_hans: "在变暗的应用上方，以居中的浮动窗口显示搜索。", ja: "暗くしたアプリの上に、中央の浮動ウィンドウで検索を表示します。" },
+    Row { key: Key::UiLabSearchPanelName, en: "Search panel", es: "Panel de búsqueda", pt_br: "Painel de busca", de: "Suchbereich", fr: "Panneau de recherche", ar: "لوحة البحث", zh_hans: "搜索面板", ja: "検索パネル" },
+    Row { key: Key::UiLabSearchPanelPurpose, en: "Finds pages, tasks, comments and workspaces as you type, with filters, sorting and recent searches.", es: "Encuentra páginas, tareas, comentarios y espacios de trabajo mientras escribes, con filtros, orden y búsquedas recientes.", pt_br: "Encontra páginas, tarefas, comentários e espaços de trabalho enquanto você digita, com filtros, ordenação e buscas recentes.", de: "Findet Seiten, Aufgaben, Kommentare und Arbeitsbereiche während der Eingabe, mit Filtern, Sortierung und letzten Suchen.", fr: "Trouve les pages, tâches, commentaires et espaces de travail pendant la saisie, avec filtres, tri et recherches récentes.", ar: "يعثر على الصفحات والمهام والتعليقات ومساحات العمل أثناء الكتابة، مع عوامل التصفية والفرز وعمليات البحث الأخيرة.", zh_hans: "输入时查找页面、任务、评论和工作区，并提供筛选、排序和最近搜索。", ja: "入力しながらページ、タスク、コメント、ワークスペースを検索し、絞り込み、並べ替え、最近の検索も使えます。" },
+    Row { key: Key::UiLabSearchDocumentsName, en: "Document search", es: "Búsqueda de documentos", pt_br: "Busca de documentos", de: "Dokumentsuche", fr: "Recherche de documents", ar: "البحث عن المستندات", zh_hans: "文档搜索", ja: "ドキュメント検索" },
+    Row { key: Key::UiLabSearchDocumentsPurpose, en: "Looks up documents by title for pickers, with the same matching as the main search.", es: "Busca documentos por título para los selectores, con la misma coincidencia que la búsqueda principal.", pt_br: "Procura documentos pelo título para os seletores, com a mesma correspondência da busca principal.", de: "Sucht Dokumente nach Titel für Auswahllisten, mit demselben Abgleich wie die Hauptsuche.", fr: "Recherche des documents par titre pour les sélecteurs, avec la même correspondance que la recherche principale.", ar: "يبحث عن المستندات حسب العنوان لأدوات الاختيار، بنفس طريقة المطابقة في البحث الرئيسي.", zh_hans: "按标题为选择器查找文档，匹配方式与主搜索相同。", ja: "選択リストのためにタイトルでドキュメントを探し、メイン検索と同じ一致方法を使います。" },
+    Row { key: Key::UiLabSettingsPagesName, en: "Settings pages", es: "Páginas de ajustes", pt_br: "Páginas de configurações", de: "Einstellungsseiten", fr: "Pages de réglages", ar: "صفحات الإعدادات", zh_hans: "设置页面", ja: "設定ページ" },
+    Row { key: Key::UiLabSettingsPagesPurpose, en: "Lists the settings pages in a sidebar and shows each one as cards of rows that save at once.", es: "Muestra las páginas de ajustes en una barra lateral y cada una como tarjetas de filas que se guardan al instante.", pt_br: "Lista as páginas de configurações em uma barra lateral e mostra cada uma como cartões de linhas que salvam na hora.", de: "Listet die Einstellungsseiten in einer Seitenleiste und zeigt jede als Karten mit Zeilen, die sofort speichern.", fr: "Liste les pages de réglages dans une barre latérale et affiche chacune en cartes de lignes enregistrées aussitôt.", ar: "يعرض صفحات الإعدادات في شريط جانبي ويعرض كل صفحة كبطاقات من الصفوف تُحفظ فورًا.", zh_hans: "在侧栏列出设置页面，并将每页显示为即时保存的行卡片。", ja: "設定ページをサイドバーに並べ、各ページをすぐに保存される行のカードとして表示します。" },
 ];

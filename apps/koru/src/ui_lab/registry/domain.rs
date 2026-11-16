@@ -18,6 +18,8 @@ mod artifacts;
 mod canvas;
 mod chats;
 mod runs;
+mod search;
+mod settings;
 mod shell_chrome;
 mod socials;
 mod voice;
@@ -28,6 +30,8 @@ pub(super) const ARTIFACTS: &[Entry] = artifacts::RECORDS;
 pub(super) const CANVAS: &[Entry] = canvas::RECORDS;
 pub(super) const CHATS: &[Entry] = chats::RECORDS;
 pub(super) const RUNS: &[Entry] = runs::RECORDS;
+pub(super) const SEARCH: &[Entry] = search::RECORDS;
+pub(super) const SETTINGS: &[Entry] = settings::RECORDS;
 pub(super) const SHELL_CHROME: &[Entry] = shell_chrome::RECORDS;
 pub(super) const SOCIALS: &[Entry] = socials::RECORDS;
 pub(super) const VOICE: &[Entry] = voice::RECORDS;
@@ -99,4 +103,10 @@ const fn boundary(symbol: &'static str) -> Api {
 /// Content, with the kinds of it the source declares.
 const fn boundary_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
     plain_with(symbol, options, Story::Boundary)
+}
+
+/// Nonvisual code the A2UI host uses to serve a fixed-catalog component; a
+/// declaration never names it.
+const fn host_only(symbol: &'static str) -> Api {
+    api(symbol, &[], A2ui::HostOnly, Story::Nonvisual)
 }
