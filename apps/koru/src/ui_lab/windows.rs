@@ -337,8 +337,10 @@ impl MultiWindowApp for LabWindows {
 
     fn window(&self, key: WindowKey) -> WindowAttributes {
         if key == PANEL {
+            // The panel is a Koru window too, and wears the same mark.
             self.inspector
                 .panel_window(self.lab_seat.scale, &self.monitors)
+                .with_window_icon(super::placement::icon())
         } else {
             WindowApp::window(&self.lab)
         }
@@ -362,6 +364,11 @@ impl MultiWindowApp for LabWindows {
     fn seated(&mut self, key: WindowKey, _id: WindowId) {
         if key == PANEL {
             self.panel_on_top = self.inspector.panel_pinned();
+        } else {
+            // macOS gives a window no icon of its own: the picture in the
+            // Dock and the app switcher is the application's, and exists to
+            // be set only once the first window does. Nothing elsewhere.
+            koru_window::set_dock_icon();
         }
         if let Some(access) = self.seat(key).access.as_mut() {
             access.revealed();

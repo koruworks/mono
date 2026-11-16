@@ -36,3 +36,25 @@ fn the_window_is_undecorated_at_the_placed_size_with_the_shared_floor() {
     // The system places it: no remembered position is ever supplied.
     assert_eq!(attributes.position, None);
 }
+
+/// The window wears the Koru mark: the artwork the ordinary app's window
+/// wears, compiled in and decoded in memory. The application's own helper
+/// reads the same file; this holds the Lab to it by reading the application's
+/// source rather than by calling into the application.
+#[test]
+fn the_window_wears_the_koru_mark() {
+    assert!(icon().is_some(), "the embedded mark decodes");
+    let attributes = Placement::in_memory(None).attributes("Lab");
+    assert!(attributes.window_icon.is_some());
+    // A square picture, large enough for the window switcher.
+    let rgba = image::load_from_memory(include_bytes!("../../../../../assets/logo.png"))
+        .expect("the mark is a PNG")
+        .to_rgba8();
+    assert_eq!(rgba.width(), rgba.height());
+    assert!(rgba.width() >= 256);
+    let app = include_str!("../../../../../crates/koru-workspace-host/src/app.rs");
+    assert!(
+        app.contains("include_bytes!(\"../../../assets/logo.png\")"),
+        "the ordinary app's window icon is no longer assets/logo.png"
+    );
+}
