@@ -460,6 +460,7 @@
     <string name="account_cloud_sync_complete">تتم المزامنة عبر Koru Cloud</string>
     <string name="account_cloud_sync_partial">جارٍ مزامنة %1$d من %2$d مساحات عمل</string>
     <string name="account_cloud_sync_unattached">غير متاح في هذا الإصدار</string>
+    <string name="account_cloud_sync_free_full">لا توجد أماكن متاحة في Koru Lite حاليًا. يبقى عملك على هذا الجهاز. يمكنك الانضمام إلى قائمة الانتظار من حسابك.</string>
     <string name="transfers">الملفات والصور</string>
     <string name="transfers_on_cellular">النقل عبر بيانات الجوال</string>
     <string name="transfers_on_cellular_explainer">عند إيقافه، تنتظر الملفات والصور اتصالاً غير محدود البيانات. تستمر مزامنة المستندات على أي حال، ولا يزال بإمكانك تنزيل عنصر واحد من المستند نفسه.</string>

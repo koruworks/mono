@@ -51,6 +51,11 @@ pub const CLOUD_SYNC_UNAVAILABLE: &str = "cloud_sync_unavailable";
 /// after reading it, or a disable has no incarnation to quote. Recorded
 /// against that Workspace; the rest of the Profile still applies.
 const VERSION_MISMATCH: &str = "workspace_version_mismatch";
+/// The account has neither Plus nor a Koru Free place, and no place is open
+/// (M3). It is the account's refusal, not one Workspace's: the choice and every
+/// local byte are kept, the waitlist is never joined for the person, and an
+/// automatic pass does not ask again until the account's access changes.
+pub const FREE_CAPACITY_FULL: &str = "cloud_free_capacity_full";
 /// A challenge answered for a different Workspace than the one asked about.
 /// Refusing here keeps a device signature off bytes minted for another row.
 const DATASET_MISMATCH: &str = "cloud_dataset_mismatch";
@@ -65,8 +70,9 @@ const MAX_LISTED_PAGES: usize = 8;
 /// What the runtime needs from its host before the switch can do anything.
 ///
 /// It is optional in [`super::AccountPorts`]: a host that does not supply it —
-/// Android today, and every test that does not arm it — answers
-/// [`CLOUD_SYNC_UNAVAILABLE`] rather than pretending a choice was applied.
+/// every test that does not arm it — answers [`CLOUD_SYNC_UNAVAILABLE`]
+/// rather than pretending a choice was applied. The desktop Agent and the
+/// phone's embedded host both supply it.
 ///
 /// **Signing is deliberately not here.** The service already holds this
 /// device's registered signing key — it is the same key, loaded from the same
@@ -86,7 +92,8 @@ pub trait CloudSyncPort: Send + Sync {
     fn store(&self, state: &DeviceCloudSync) -> Result<(), ServiceError>;
 
     /// Whether this host has a Store it must open to Cloud
-    /// ([`Self::open_to_cloud`]) — the desktop does. Where it does, a Profile
+    /// ([`Self::open_to_cloud`]) — the desktop and the phone both do. Where
+    /// it does, a Profile
     /// whose Cloud sync is on is opened by the reconcile, and a Profile
     /// created with the account or chosen from it starts on by itself
     /// (ADR-000-createdwithaccount). `false` leaves a host exactly as it
@@ -253,6 +260,10 @@ impl Listed {
 /// contract; treating it as "unknown" is the only safe reading.
 fn listed_version(candidate: &CloudWorkspaceCandidateV1) -> u64 {
     u64::try_from(candidate.authorization_version).unwrap_or(0)
+}
+
+fn capacity_refused(entry: &WorkspaceCloudSync) -> bool {
+    entry.error.as_deref() == Some(FREE_CAPACITY_FULL)
 }
 
 fn client_error_code(error: &ClientError) -> Option<&str> {
@@ -621,6 +632,7 @@ impl ProductionAccountService {
         local: &[WorkspaceId],
         change: Option<bool>,
         by_default: bool,
+        retry_refused: bool,
         listed: &mut Listed,
         cancel: &Cancel,
         woken: &mut bool,
@@ -697,9 +709,12 @@ impl ProductionAccountService {
                 let known = |workspace: &WorkspaceId| state.workspaces.get(workspace);
                 let any_enabled = local.iter().any(|w| known(w).is_some_and(|e| e.enabled));
                 let all_observed = local.iter().all(|w| known(w).is_some_and(|e| e.observed));
+                // A capacity refusal keeps what was asked for: nothing hosted
+                // exists to mirror yet, and that is not somebody's "off".
+                let refused = local.iter().any(|w| known(w).is_some_and(capacity_refused));
                 if any_enabled {
                     state.enabled = true;
-                } else if all_observed && !local.is_empty() {
+                } else if all_observed && !local.is_empty() && !refused {
                     state.enabled = false;
                 }
                 if state.enabled {
@@ -710,7 +725,9 @@ impl ProductionAccountService {
                         let entry = state.workspaces.entry(*workspace).or_default();
                         let never_hosted =
                             !entry.enabled && entry.observed && entry.authorization_version == 0;
-                        if !never_hosted {
+                        // No hot loop on a full Koru Free: only a pressed
+                        // switch or a change in the account's access asks again.
+                        if !never_hosted || (capacity_refused(entry) && !retry_refused) {
                             continue;
                         }
                         match self.activate_workspace(profile, *workspace, entry, listed, cancel) {
@@ -739,7 +756,16 @@ impl ProductionAccountService {
                 synced_workspaces: u32::try_from(synced).unwrap_or(u32::MAX),
                 // A Workspace refusal stays on that Workspace. Copying it here
                 // painted every row, including the ones that synced, as unavailable.
-                error: None,
+                // A full Koru Free is the account's refusal, so the row says it.
+                error: local
+                    .iter()
+                    .any(|workspace| {
+                        state
+                            .workspaces
+                            .get(workspace)
+                            .is_some_and(capacity_refused)
+                    })
+                    .then(|| FREE_CAPACITY_FULL.to_owned()),
             },
             !unsettled,
         )
@@ -840,9 +866,19 @@ impl ProductionAccountService {
             // here, because a Profile chosen from the account has none
             // until it is. Anything missing leaves the intention for the
             // next pass.
+            //
+            // **The first enable is how an account asks for its Koru Free
+            // place** (M3): it is attempted once without Cloud access, and the
+            // hosted side claims the place or refuses the enable whole. After
+            // a capacity refusal the intention stays and nothing asks again
+            // until the account's access changes or the switch is pressed.
+            let refused = profile_state.workspaces.values().any(capacity_refused);
+            let access = (applied.is_none() && (profile_state.starts_on || refused))
+                .then(|| self.cloud_access_known(account, cancel))
+                .flatten();
             let waiting = applied.is_none()
                 && profile_state.starts_on
-                && self.cloud_access_known(account, cancel) == Some(true);
+                && (access == Some(true) || (access == Some(false) && !refused));
             // **Cloud sync on means the Store is open to Cloud.** One rule,
             // however the Profile came to be on: the switch, the default, or
             // another device's switch mirrored here. The two used to be
@@ -894,6 +930,7 @@ impl ProductionAccountService {
                 &workspaces,
                 applied,
                 starting,
+                access == Some(true),
                 &mut listed,
                 cancel,
                 &mut woken,

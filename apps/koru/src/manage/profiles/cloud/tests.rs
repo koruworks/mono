@@ -479,3 +479,42 @@ fn turning_the_switch_on_or_off_asks_nothing() {
         Some(AccountCommand::SetProfileCloudSync { enabled: true, .. })
     ));
 }
+
+/// M3: an account with no Koru Cloud yet can still turn the switch on, which
+/// is how it asks for its Koru Free place. A full Koru Free is said in words
+/// on the row, with the switch left as the person set it.
+#[test]
+fn an_account_without_koru_cloud_can_ask_for_free_and_reads_a_full_refusal() {
+    let mut c = signed_in();
+    let work = profile("Work", Some(ACCOUNT));
+    c.profiles = vec![work.clone()];
+    let (request_id, submission) = start(&mut c);
+    assert!(c.account_command_admitted(CommandAdmission {
+        submission,
+        owner_scope: 1,
+        generation: 0
+    }));
+    assert!(c.complete_scoped(
+        1,
+        0,
+        AccountOperationResult::CloudSubscription {
+            request_id,
+            current: Some(false),
+            access: Some(false),
+        }
+    ));
+    assert_eq!(c.cloud_access(), Some(false));
+    assert_eq!(c.cloud_sync_availability(&work), SyncAvailability::Enabled);
+
+    let mut refused = row(&work, true, 0, 1);
+    refused.error = Some("cloud_free_capacity_full".into());
+    answer_sync(&mut c, vec![refused]);
+    assert!(c.cloud_sync_on(work.id));
+    assert_eq!(
+        subtitle(&c, 0).as_deref(),
+        Some(koru_i18n::t(
+            crate::format::lang(),
+            TextKey::CloudSyncFreeFull
+        ))
+    );
+}

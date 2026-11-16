@@ -420,6 +420,7 @@
     <string name="account_cloud_sync_complete">Wird über Koru Cloud synchronisiert</string>
     <string name="account_cloud_sync_partial">%1$d von %2$d Arbeitsbereichen werden synchronisiert</string>
     <string name="account_cloud_sync_unattached">In diesem Build nicht verfügbar</string>
+    <string name="account_cloud_sync_free_full">Koru Lite hat derzeit keinen freien Platz. Deine Arbeit bleibt auf diesem Gerät. Du kannst dich in deinem Konto in die Warteliste eintragen.</string>
     <string name="transfers">Dateien und Bilder</string>
     <string name="transfers_on_cellular">Über Mobilfunk übertragen</string>
     <string name="transfers_on_cellular_explainer">Ausgeschaltet warten Dateien und Bilder auf eine Verbindung ohne Datenlimit. Dokumente werden weiterhin synchronisiert, und eine einzelne Datei lässt sich weiterhin direkt im Dokument laden.</string>

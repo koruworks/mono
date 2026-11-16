@@ -106,6 +106,9 @@ struct HostedAccount {
     /// Whether the account has Koru Cloud.
     subscribed: AtomicBool,
     complimentary: AtomicBool,
+    /// Koru Free has no open place: an account without Koru Cloud is refused
+    /// at the end of its first enable, as the hosted side does.
+    free_full: AtomicBool,
 }
 
 impl HostedAccount {
@@ -306,6 +309,12 @@ impl Transport for HostedAccount {
                 serde_json::from_slice(&request.body).unwrap();
             assert_eq!(body.signature.len(), 64, "the device signature is ed25519");
             let workspace = self.challenges.lock().unwrap()[&body.challenge_id];
+            if self.free_full.load(Ordering::Acquire)
+                && !self.subscribed.load(Ordering::Acquire)
+                && !self.complimentary.load(Ordering::Acquire)
+            {
+                return Self::refuse(409, "cloud_free_capacity_full");
+            }
             let mut rows = self.rows.lock().unwrap();
             let previous = rows.get(&workspace).copied();
             let row = Row {
@@ -932,22 +941,55 @@ fn complimentary_access_starts_a_created_profile_without_a_subscription() {
     assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
 }
 
-/// With no Koru Cloud there is nothing to start, and the account is asked
-/// once rather than on every heartbeat. The pass after the settings page
-/// sees a subscription is the one that starts it.
+/// **The first enable is how an account asks for its Koru Free place.** A
+/// Profile created with an account that has no Koru Cloud still starts by
+/// itself: the hosted side claims the place with the first Workspace.
 #[test]
-fn it_waits_for_koru_cloud_without_asking_on_every_pass() {
+fn a_created_profile_asks_for_its_free_place_without_koru_cloud() {
+    let mut fixture = created_with_the_account(a_new_account_profile(), false, 2);
+    let rows = fixture.inspect().unwrap();
+    assert_eq!(
+        (
+            rows[0].enabled,
+            rows[0].synced_workspaces,
+            rows[0].error.clone()
+        ),
+        (true, 2, None)
+    );
+    assert_eq!(fixture.port.opened(), vec![fixture.profile]);
+    assert!(!remembered(&fixture).starts_on);
+    assert_eq!(fixture.hosted.subscription_reads(), 1);
+}
+
+/// A full Koru Free refuses the enable whole. What was asked for is kept, the
+/// row says why, and no later pass asks again by itself: the account is read
+/// once and the enable is attempted once, not on every heartbeat. The pass
+/// after the Koru Cloud page sees access is the one that finishes it.
+#[test]
+fn a_full_koru_free_keeps_the_intention_without_asking_on_every_pass() {
     let mut fixture = created_with_the_account(a_new_account_profile(), false, 1);
+    fixture.hosted.free_full.store(true, Ordering::Release);
     for _ in 0..3 {
         let rows = fixture.inspect().unwrap();
-        assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (false, 0));
+        assert_eq!(
+            (
+                rows[0].enabled,
+                rows[0].synced_workspaces,
+                rows[0].error.as_deref()
+            ),
+            (true, 0, Some("cloud_free_capacity_full"))
+        );
     }
     assert_eq!(fixture.hosted.subscription_reads(), 1);
-    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
-    assert!(fixture.port.opened().is_empty());
+    assert_eq!(
+        fixture.hosted.lifecycle_calls(),
+        2,
+        "one begin and one refused complete, never repeated"
+    );
+    let saved = remembered(&fixture);
     assert!(
-        remembered(&fixture).starts_on,
-        "still waiting, not forgotten"
+        saved.enabled && saved.starts_on,
+        "still asked for, not forgotten"
     );
 
     // They subscribe, and the Koru Cloud page asks — which is remembered.
@@ -971,11 +1013,62 @@ fn it_waits_for_koru_cloud_without_asking_on_every_pass() {
         }
     );
     let rows = fixture.inspect().unwrap();
-    assert_eq!((rows[0].enabled, rows[0].synced_workspaces), (true, 1));
+    assert_eq!(
+        (
+            rows[0].enabled,
+            rows[0].synced_workspaces,
+            rows[0].error.clone()
+        ),
+        (true, 1, None)
+    );
+    assert!(!remembered(&fixture).starts_on);
     assert_eq!(
         fixture.hosted.subscription_reads(),
         2,
         "the pass read the page's answer, not the account again"
+    );
+}
+
+/// A pressed switch is an explicit retry: refused while Koru Free is full
+/// without losing the choice, and granted by the next press once a place is
+/// open. Nothing in between asks on its own.
+#[test]
+fn a_pressed_switch_is_the_retry_after_a_full_koru_free() {
+    let hosted = a_new_account_profile();
+    let profile = hosted.profile.unwrap();
+    hosted.free_full.store(true, Ordering::Release);
+    let mut fixture = fixture(hosted, workspaces(profile, 1));
+    fixture.port.starts_on.store(true, Ordering::Release);
+
+    let rows = fixture.set(true).unwrap();
+    assert_eq!(
+        (
+            rows[0].enabled,
+            rows[0].synced_workspaces,
+            rows[0].error.as_deref()
+        ),
+        (true, 0, Some("cloud_free_capacity_full"))
+    );
+    let attempts = fixture.hosted.lifecycle_calls();
+    let rows = fixture.inspect().unwrap();
+    assert!(rows[0].enabled, "the choice survives the reconcile pass");
+    assert_eq!(fixture.hosted.lifecycle_calls(), attempts);
+
+    fixture.hosted.free_full.store(false, Ordering::Release);
+    let rows = fixture.inspect().unwrap();
+    assert_eq!(
+        rows[0].synced_workspaces, 0,
+        "an open place is not polled for"
+    );
+    assert_eq!(fixture.hosted.lifecycle_calls(), attempts);
+    let rows = fixture.set(true).unwrap();
+    assert_eq!(
+        (
+            rows[0].enabled,
+            rows[0].synced_workspaces,
+            rows[0].error.clone()
+        ),
+        (true, 1, None)
     );
 }
 
@@ -1042,8 +1135,8 @@ fn a_switch_somebody_moved_is_never_overridden_by_the_default() {
     assert!(fixture.port.opened().is_empty());
 }
 
-/// A host that cannot open its Store — the phone today — remembers no
-/// intention at all, so nothing starts half-way there.
+/// A host with no Store to open remembers no intention at all, so nothing
+/// starts half-way there.
 #[test]
 fn a_host_that_cannot_open_its_store_starts_nothing() {
     let hosted = a_new_account_profile();
