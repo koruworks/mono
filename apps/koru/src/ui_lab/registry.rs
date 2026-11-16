@@ -29,7 +29,13 @@
 //! [`OptionSet`]s: the identifiers the source declares, in its order, with a
 //! translated label where a person would choose one.
 //!
-//! **Where records live.** The Button is here because the trial story runs
+//! **A record with a story names what the story drives as a [`Recipe`]**:
+//! the symbol, its typed [`Styles`], the [`Control`]s the properties column
+//! offers for it and the option sets it takes. Every other symbol is an
+//! [`Api`]. The story IDs the Lab can run are the constants below; a story
+//! is looked up by its ID through the gallery ([`story`]).
+//!
+//! **Where records live.** The Button is here because the trial story ran
 //! it. The rest are filed a group at a time: [`foundations`] (tokens, the
 //! element layer, drawing primitives and their support code), [`controls`]
 //! (the shared widgets and the input support beside them) and
@@ -309,6 +315,45 @@ pub(crate) struct Source {
     pub(crate) file: &'static str,
 }
 
+/// A box a text input is drawn in: one of `koru_ui::text_input::InputStyle`'s
+/// constructors. The production type is a struct its constructors fill, not
+/// an enum, so the constructor is what a story chooses between.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) enum FieldStyle {
+    /// `InputStyle::form`: a form's field, its border the accent while
+    /// focused.
+    #[default]
+    Form,
+    /// `InputStyle::search`: a filled box with no border.
+    Search,
+    /// `InputStyle::inline`: a row being edited in place.
+    Inline,
+}
+
+impl FieldStyle {
+    /// The constructor's own name: what a written recipe names.
+    pub(crate) const fn ident(self) -> &'static str {
+        match self {
+            Self::Form => "form",
+            Self::Search => "search",
+            Self::Inline => "inline",
+        }
+    }
+
+    /// What the style control calls it.
+    pub(crate) const fn label(self) -> koru_i18n::Key {
+        match self {
+            Self::Form => koru_i18n::Key::UiLabOptionForm,
+            Self::Search => koru_i18n::Key::UiLabOptionSearch,
+            Self::Inline => koru_i18n::Key::UiLabOptionInline,
+        }
+    }
+}
+
+/// The boxes the text input's story draws it in, the default first.
+pub(crate) const FIELD_STYLES: [FieldStyle; 3] =
+    [FieldStyle::Form, FieldStyle::Search, FieldStyle::Inline];
+
 /// The styles one recipe supports, as its own production type.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Styles {
@@ -316,6 +361,20 @@ pub(crate) enum Styles {
     Dialog(&'static [ButtonRole]),
     /// `koru_ui::button::ActionStyle`: a compact toolbar or panel action.
     Compact(&'static [ActionStyle]),
+    /// `koru_ui::text_input::InputStyle`'s constructors.
+    Field(&'static [FieldStyle]),
+    /// The recipe takes no style: a layout box, a token table.
+    Unstyled,
+}
+
+/// What kind of input a [`Control`] is, which is what decides how the
+/// properties panel draws it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum Input {
+    /// Free text, typed into a field.
+    Text,
+    /// One of a list the story offers, each a production value.
+    Choice,
 }
 
 /// One input of a recipe that a story lets a person change. The properties
@@ -327,6 +386,15 @@ pub(crate) enum Control {
     Label,
     /// One of the recipe's [`Styles`]: a choice.
     Style,
+    /// The `placeholder: Option<&str>` a text input shows while empty: free
+    /// text.
+    Placeholder,
+    /// The `koru_draw::theme::Space` a stack keeps between its children
+    /// (`El::gap`): a choice.
+    Gap,
+    /// The `koru_draw::theme::Space` a box keeps round its content
+    /// (`El::pad`): a choice.
+    Padding,
 }
 
 impl Control {
@@ -335,6 +403,9 @@ impl Control {
         match self {
             Self::Label => koru_i18n::Key::UiLabControlLabel,
             Self::Style => koru_i18n::Key::UiLabControlStyle,
+            Self::Placeholder => koru_i18n::Key::UiLabControlPlaceholder,
+            Self::Gap => koru_i18n::Key::UiLabControlGap,
+            Self::Padding => koru_i18n::Key::UiLabControlPadding,
         }
     }
 
@@ -344,6 +415,16 @@ impl Control {
         match self {
             Self::Label => "label",
             Self::Style => "style",
+            Self::Placeholder => "placeholder",
+            Self::Gap => "gap",
+            Self::Padding => "padding",
+        }
+    }
+
+    pub(crate) const fn input(self) -> Input {
+        match self {
+            Self::Label | Self::Placeholder => Input::Text,
+            Self::Style | Self::Gap | Self::Padding => Input::Choice,
         }
     }
 }
@@ -357,6 +438,9 @@ pub(crate) struct Recipe {
     pub(crate) styles: Styles,
     /// The inputs a story of this recipe exposes, in panel order.
     pub(crate) controls: &'static [Control],
+    /// The production values the symbol takes beside its styles, a set per
+    /// type: a token table's members, listed as the source spells them.
+    pub(crate) options: &'static [OptionSet],
     pub(crate) a2ui: A2ui,
     pub(crate) story: Story,
 }
@@ -607,6 +691,45 @@ pub(crate) const BUTTON: &str = "C-BUTTON";
 
 /// The story the first trial runs: the dialog button, pressed for real.
 pub(crate) const BUTTON_DIALOG_STORY: &str = "C-BUTTON/dialog";
+/// The shared text input, typed in for real.
+pub(crate) const TEXT_INPUT_STORY: &str = "C-TEXT-INPUT/field";
+/// The element layer's row and column, their gap and padding chosen from
+/// the spacing scale.
+pub(crate) const ROW_STORY: &str = "P-ROW/spacing";
+pub(crate) const COLUMN_STORY: &str = "P-COLUMN/spacing";
+/// The token tables, each drawn from the table itself.
+pub(crate) const SPACE_STORY: &str = "T-SPACE/scale";
+pub(crate) const SURFACE_STORY: &str = "T-SURFACE/roles";
+pub(crate) const INK_STORY: &str = "T-INK/roles";
+pub(crate) const LINE_STORY: &str = "T-LINE/roles";
+pub(crate) const TEXT_ROLES_STORY: &str = "T-TEXT-ROLES/roles";
+
+/// A symbol a story drives that takes no style and has no input: a token
+/// table, shown whole.
+const fn table(
+    symbol: &'static str,
+    options: &'static [OptionSet],
+    a2ui: A2ui,
+    story_id: &'static str,
+) -> Recipe {
+    Recipe {
+        symbol,
+        styles: Styles::Unstyled,
+        controls: &[],
+        options,
+        a2ui,
+        story: Story::Available(story_id),
+    }
+}
+
+/// `record` as one the Lab runs: its story-driven symbols, and its Windows
+/// cell saying the Lab draws it. The other cells are left as they were
+/// recorded.
+const fn storied(mut record: Entry, recipes: &'static [Recipe]) -> Entry {
+    record.recipes = recipes;
+    record.platforms[0] = (Platform::Windows, Availability::Available);
+    record
+}
 
 const BUTTON_SOURCE: &str = "crates/koru-ui/src/button.rs";
 
@@ -664,6 +787,7 @@ const BUTTON_ENTRY: Entry = Entry {
             symbol: "koru_ui::button::draw_button",
             styles: Styles::Dialog(&DIALOG_STYLES),
             controls: &[Control::Label, Control::Style],
+            options: &[],
             a2ui: A2ui::NotSupported,
             story: Story::Available(BUTTON_DIALOG_STORY),
         },
@@ -671,6 +795,7 @@ const BUTTON_ENTRY: Entry = Entry {
             symbol: "koru_ui::button::ActionButton",
             styles: Styles::Compact(&COMPACT_STYLES),
             controls: &[Control::Label, Control::Style],
+            options: &[],
             a2ui: A2ui::HostStyled("Button"),
             story: Story::NoStoryYet,
         },
@@ -769,7 +894,7 @@ impl Entry {
             .iter()
             .map(|recipe| Symbol {
                 symbol: recipe.symbol,
-                options: &[],
+                options: recipe.options,
                 a2ui: recipe.a2ui,
                 story: recipe.story,
             })

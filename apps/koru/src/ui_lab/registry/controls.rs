@@ -637,24 +637,33 @@ const INPUT_RECORDS: [Entry; 4] = [
         DESKTOP_PHONES_PARTIAL,
         &[widget("koru_ui::text_field::TextArea")],
     ),
-    record(
-        "C-TEXT-INPUT",
-        "KoruTextInput",
-        Key::UiLabTextInputName,
-        Key::UiLabTextInputPurpose,
-        Kind::Widget,
-        Some("C-INPUT"),
-        &["KoruTextInput", "KoruInputEndIcon"],
-        ui("koru_ui::text_input", TEXT_INPUT),
-        DESKTOP_PHONES_PARTIAL,
-        &[
-            widget_with("koru_ui::text_input::TextInput", &[END_ICON]),
-            widget_with(
-                "koru_ui::text_input::InputStyle",
-                &[INPUT_STYLE, INPUT_INVALID],
-            ),
-            widget("koru_ui::text_input::draw_text_input"),
-        ],
+    storied(
+        record(
+            "C-TEXT-INPUT",
+            "KoruTextInput",
+            Key::UiLabTextInputName,
+            Key::UiLabTextInputPurpose,
+            Kind::Widget,
+            Some("C-INPUT"),
+            &["KoruTextInput", "KoruInputEndIcon"],
+            ui("koru_ui::text_input", TEXT_INPUT),
+            DESKTOP_PHONES_PARTIAL,
+            &[
+                widget_with(
+                    "koru_ui::text_input::InputStyle",
+                    &[INPUT_STYLE, INPUT_INVALID],
+                ),
+                widget("koru_ui::text_input::draw_text_input"),
+            ],
+        ),
+        &[Recipe {
+            symbol: "koru_ui::text_input::TextInput",
+            styles: Styles::Field(&FIELD_STYLES),
+            controls: &[Control::Placeholder, Control::Style],
+            options: &[END_ICON],
+            a2ui: A2ui::NotSupported,
+            story: Story::Available(TEXT_INPUT_STORY),
+        }],
     ),
     record(
         "C-DATE-GRID",

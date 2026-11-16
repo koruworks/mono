@@ -167,6 +167,7 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("shell/navigator.rs"),
     ),
     ("ui_lab/shell/page.rs", include_str!("shell/page.rs")),
+    ("ui_lab/shell/preview.rs", include_str!("shell/preview.rs")),
     (
         "ui_lab/shell/settings.rs",
         include_str!("shell/settings.rs"),

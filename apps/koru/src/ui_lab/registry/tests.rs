@@ -317,6 +317,156 @@ fn a_record_matches_when_every_word_is_found_in_what_it_is_called() {
     }
 }
 
+/// Each record with a story names the symbol the story drives as a recipe,
+/// is drawn on Windows, and kept what was recorded about A2UI and its
+/// values when it gained the story.
+#[test]
+fn every_storied_record_names_what_its_story_drives() {
+    let recipe = |id: &str| story(id).unwrap_or_else(|| panic!("no story `{id}`"));
+    let cases: [(&str, &str, &str, Styles, &[Control]); 9] = [
+        (
+            BUTTON_DIALOG_STORY,
+            "C-BUTTON",
+            "koru_ui::button::draw_button",
+            Styles::Dialog(&DIALOG_STYLES),
+            &[Control::Label, Control::Style],
+        ),
+        (
+            TEXT_INPUT_STORY,
+            "C-TEXT-INPUT",
+            "koru_ui::text_input::TextInput",
+            Styles::Field(&FIELD_STYLES),
+            &[Control::Placeholder, Control::Style],
+        ),
+        (
+            ROW_STORY,
+            "P-ROW",
+            "koru_draw::el::row",
+            Styles::Unstyled,
+            &[Control::Gap, Control::Padding],
+        ),
+        (
+            COLUMN_STORY,
+            "P-COLUMN",
+            "koru_draw::el::col",
+            Styles::Unstyled,
+            &[Control::Gap, Control::Padding],
+        ),
+        (
+            SPACE_STORY,
+            "T-SPACE",
+            "koru_draw::theme::Space",
+            Styles::Unstyled,
+            &[],
+        ),
+        (
+            SURFACE_STORY,
+            "T-SURFACE",
+            "koru_draw::theme::Surface",
+            Styles::Unstyled,
+            &[],
+        ),
+        (
+            INK_STORY,
+            "T-INK",
+            "koru_draw::theme::Ink",
+            Styles::Unstyled,
+            &[],
+        ),
+        (
+            LINE_STORY,
+            "T-LINE",
+            "koru_draw::theme::Line",
+            Styles::Unstyled,
+            &[],
+        ),
+        (
+            TEXT_ROLES_STORY,
+            "T-TEXT-ROLES",
+            "koru_draw::theme::roles",
+            Styles::Unstyled,
+            &[],
+        ),
+    ];
+    for (id, catalog_id, symbol, styles, controls) in cases {
+        let (entry, recipe) = recipe(id);
+        assert_eq!(entry.catalog_id, catalog_id, "{id}");
+        assert_eq!(recipe.symbol, symbol, "{id}");
+        assert_eq!(recipe.styles, styles, "{id}");
+        assert_eq!(recipe.controls, controls, "{id}");
+        assert_eq!(entry.story_id(), Some(id));
+        assert_eq!(
+            entry.availability(Platform::Windows),
+            Availability::Available,
+            "{id}"
+        );
+        // The other cells are what they were recorded as.
+        assert_eq!(
+            entry.availability(Platform::MacOs),
+            Availability::SharedSourceUnverified,
+            "{id}"
+        );
+    }
+    // Every story the catalog registers is one of these.
+    let registered = catalog()
+        .flat_map(|entry| entry.symbols())
+        .filter(|symbol| matches!(symbol.story, Story::Available(_)))
+        .count();
+    assert_eq!(registered, cases.len());
+    // What was recorded beside the symbol stayed with it.
+    assert_eq!(recipe(ROW_STORY).1.a2ui, A2ui::Component("Row"));
+    assert_eq!(recipe(COLUMN_STORY).1.a2ui, A2ui::Component("Column"));
+    assert!(matches!(
+        recipe(SPACE_STORY).1.a2ui,
+        A2ui::Values {
+            property: "layout.gap, layout.padding, Spacer.space",
+            ..
+        }
+    ));
+    assert_eq!(recipe(SPACE_STORY).1.options.len(), 1);
+    assert_eq!(recipe(SPACE_STORY).1.options[0].members.len(), 15);
+    assert_eq!(
+        recipe(TEXT_INPUT_STORY).1.options[0].members[0].ident,
+        "Reveal"
+    );
+    // The field styles are constructors of the production type, by name.
+    let idents: Vec<&str> = FIELD_STYLES.iter().map(|style| style.ident()).collect();
+    assert_eq!(idents, ["form", "search", "inline"]);
+    assert_eq!(FIELD_STYLES[0], FieldStyle::default());
+    let source = include_str!("../../../../../crates/koru-ui/src/text_input.rs");
+    for ident in idents {
+        assert!(
+            source.contains(&format!("pub fn {ident}(")),
+            "InputStyle no longer has `{ident}`"
+        );
+    }
+    // Every input is text or a choice, named in every language.
+    for control in [
+        Control::Label,
+        Control::Style,
+        Control::Placeholder,
+        Control::Gap,
+        Control::Padding,
+    ] {
+        let _ = control.input();
+        for lang in koru_i18n::Lang::ALL {
+            assert!(!koru_i18n::t(lang, control.name()).trim().is_empty());
+        }
+    }
+    let mut parts: Vec<&str> = [
+        Control::Label,
+        Control::Style,
+        Control::Placeholder,
+        Control::Gap,
+        Control::Padding,
+    ]
+    .map(Control::part)
+    .to_vec();
+    parts.sort_unstable();
+    parts.dedup();
+    assert_eq!(parts.len(), 5);
+}
+
 /// A record's status is its symbols': the Button runs, a token table waits,
 /// and what several symbols say about A2UI is listed once each.
 #[test]

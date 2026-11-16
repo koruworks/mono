@@ -141,16 +141,19 @@ const TOKEN_RECORDS: [Entry; 11] = [
             Story::Nonvisual,
         )],
     ),
-    record(
-        "T-SPACE",
-        "theme::Space",
-        Key::UiLabSpaceName,
-        Key::UiLabSpacePurpose,
-        Kind::Token,
-        P_DRAW,
-        draw("koru_draw::theme", TOKENS),
-        DESKTOP_PHONES_PARTIAL,
-        &[api(
+    storied(
+        record(
+            "T-SPACE",
+            "theme::Space",
+            Key::UiLabSpaceName,
+            Key::UiLabSpacePurpose,
+            Kind::Token,
+            P_DRAW,
+            draw("koru_draw::theme", TOKENS),
+            DESKTOP_PHONES_PARTIAL,
+            &[],
+        ),
+        &[table(
             "koru_draw::theme::Space",
             &[SPACE],
             A2ui::Values {
@@ -173,7 +176,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
                     ("S12", "S12"),
                 ],
             },
-            Story::NoStoryYet,
+            SPACE_STORY,
         )],
     ),
     record(
@@ -294,16 +297,19 @@ const TOKEN_RECORDS: [Entry; 11] = [
             Story::NoStoryYet,
         )],
     ),
-    record(
-        "T-TEXT-ROLES",
-        "theme::roles",
-        Key::UiLabTextRolesName,
-        Key::UiLabTextRolesPurpose,
-        Kind::Token,
-        P_DRAW,
-        draw("koru_draw::theme", TOKENS),
-        DESKTOP_PHONES_PARTIAL,
-        &[api(
+    storied(
+        record(
+            "T-TEXT-ROLES",
+            "theme::roles",
+            Key::UiLabTextRolesName,
+            Key::UiLabTextRolesPurpose,
+            Kind::Token,
+            P_DRAW,
+            draw("koru_draw::theme", TOKENS),
+            DESKTOP_PHONES_PARTIAL,
+            &[],
+        ),
+        &[table(
             "koru_draw::theme::roles",
             &[values(
                 Key::UiLabControlValues,
@@ -330,19 +336,22 @@ const TOKEN_RECORDS: [Entry; 11] = [
                     ("PopoverHeading", "POPOVER_HEADING"),
                 ],
             },
-            Story::NoStoryYet,
+            TEXT_ROLES_STORY,
         )],
     ),
-    record(
-        "T-SURFACE",
-        "theme::Surface",
-        Key::UiLabSurfaceName,
-        Key::UiLabSurfacePurpose,
-        Kind::Token,
-        P_DRAW,
-        draw("koru_draw::theme", TOKENS),
-        DESKTOP_PHONES_PARTIAL,
-        &[api(
+    storied(
+        record(
+            "T-SURFACE",
+            "theme::Surface",
+            Key::UiLabSurfaceName,
+            Key::UiLabSurfacePurpose,
+            Kind::Token,
+            P_DRAW,
+            draw("koru_draw::theme", TOKENS),
+            DESKTOP_PHONES_PARTIAL,
+            &[],
+        ),
+        &[table(
             "koru_draw::theme::Surface",
             &[values(
                 Key::UiLabControlValues,
@@ -361,19 +370,22 @@ const TOKEN_RECORDS: [Entry; 11] = [
                 property: "decoration.surface",
                 mapped: &[("Ground", "Ground"), ("Raised", "Raised"), ("Chip", "Chip")],
             },
-            Story::NoStoryYet,
+            SURFACE_STORY,
         )],
     ),
-    record(
-        "T-INK",
-        "theme::Ink",
-        Key::UiLabInkName,
-        Key::UiLabInkPurpose,
-        Kind::Token,
-        P_DRAW,
-        draw("koru_draw::theme", TOKENS),
-        DESKTOP_PHONES_PARTIAL,
-        &[api(
+    storied(
+        record(
+            "T-INK",
+            "theme::Ink",
+            Key::UiLabInkName,
+            Key::UiLabInkPurpose,
+            Kind::Token,
+            P_DRAW,
+            draw("koru_draw::theme", TOKENS),
+            DESKTOP_PHONES_PARTIAL,
+            &[],
+        ),
+        &[table(
             "koru_draw::theme::Ink",
             &[values(
                 Key::UiLabControlValues,
@@ -398,22 +410,26 @@ const TOKEN_RECORDS: [Entry; 11] = [
                     ("Accent", "Accent"),
                 ],
             },
-            Story::NoStoryYet,
+            INK_STORY,
         )],
     ),
-    record(
-        "T-LINE",
-        "theme::Line",
-        Key::UiLabLineName,
-        Key::UiLabLinePurpose,
-        Kind::Token,
-        P_DRAW,
-        draw("koru_draw::theme", TOKENS),
-        DESKTOP_ANDROID_PARTIAL,
-        &[plain_with(
+    storied(
+        record(
+            "T-LINE",
+            "theme::Line",
+            Key::UiLabLineName,
+            Key::UiLabLinePurpose,
+            Kind::Token,
+            P_DRAW,
+            draw("koru_draw::theme", TOKENS),
+            DESKTOP_ANDROID_PARTIAL,
+            &[],
+        ),
+        &[table(
             "koru_draw::theme::Line",
             &[LINE],
-            Story::NoStoryYet,
+            A2ui::NotSupported,
+            LINE_STORY,
         )],
     ),
     record(
@@ -973,37 +989,47 @@ const THEME_RECORDS: [Entry; 15] = [
 // ------------------------------------------------------------ element layer
 
 const ELEMENT_RECORDS: [Entry; 13] = [
-    record(
-        "P-ROW",
-        "el::row",
-        Key::UiLabRowName,
-        Key::UiLabRowPurpose,
-        Kind::Primitive,
-        None,
-        draw("koru_draw::el", EL),
-        ELEMENT_LAYER,
-        &[api(
-            "koru_draw::el::row",
+    storied(
+        record(
+            "P-ROW",
+            "el::row",
+            Key::UiLabRowName,
+            Key::UiLabRowPurpose,
+            Kind::Primitive,
+            None,
+            draw("koru_draw::el", EL),
+            ELEMENT_LAYER,
             &[],
-            A2ui::Component("Row"),
-            Story::NoStoryYet,
-        )],
+        ),
+        &[Recipe {
+            symbol: "koru_draw::el::row",
+            styles: Styles::Unstyled,
+            controls: &[Control::Gap, Control::Padding],
+            options: &[SPACE],
+            a2ui: A2ui::Component("Row"),
+            story: Story::Available(ROW_STORY),
+        }],
     ),
-    record(
-        "P-COLUMN",
-        "el::col",
-        Key::UiLabColumnName,
-        Key::UiLabColumnPurpose,
-        Kind::Primitive,
-        None,
-        draw("koru_draw::el", EL),
-        ELEMENT_LAYER,
-        &[api(
-            "koru_draw::el::col",
+    storied(
+        record(
+            "P-COLUMN",
+            "el::col",
+            Key::UiLabColumnName,
+            Key::UiLabColumnPurpose,
+            Kind::Primitive,
+            None,
+            draw("koru_draw::el", EL),
+            ELEMENT_LAYER,
             &[],
-            A2ui::Component("Column"),
-            Story::NoStoryYet,
-        )],
+        ),
+        &[Recipe {
+            symbol: "koru_draw::el::col",
+            styles: Styles::Unstyled,
+            controls: &[Control::Gap, Control::Padding],
+            options: &[SPACE],
+            a2ui: A2ui::Component("Column"),
+            story: Story::Available(COLUMN_STORY),
+        }],
     ),
     record(
         "P-BOX",

@@ -29,7 +29,6 @@
 //! record: the tree draws it and the screen reader's tree reads it, so the
 //! two cannot say different things.
 
-use super::settings::PreviewWidth;
 use super::*;
 
 /// The centre's viewport: the key the wheel, the scrollbar and the keyboard
@@ -186,10 +185,10 @@ impl Lab {
             .action(el::Action::Focus);
         match &self.story {
             Some(story) => {
-                page = page
-                    .child(self.stage(engine, story, room))
-                    .child(
-                        el::text(self.result_line())
+                page = page.child(self.stage(engine, story, room));
+                if let Some(line) = self.result_line() {
+                    page = page.child(
+                        el::text(breakable(&line))
                             .named("Click result")
                             .role(roles::ROW)
                             .ink(Ink::Secondary)
@@ -199,8 +198,9 @@ impl Lab {
                                 "preview column less its inset",
                             ))
                             .align_self(Align::Centre),
-                    )
-                    .child(el::divider(Line::Divider));
+                    );
+                }
+                page = page.child(el::divider(Line::Divider));
             }
             None => {
                 let status = entry.status();
@@ -225,47 +225,6 @@ impl Lab {
             }
         }
         page.child(symbols(entry))
-    }
-
-    /// The panel a story's component stands on.
-    fn stage(&self, engine: &mut TextEngine, story: &ButtonStory, room: f32) -> El {
-        let profile = Profile::Desktop;
-        // What the stage's own inset leaves the component. A label typed
-        // past it is clipped at the stage rather than drawn over a neighbour.
-        let inside = room - 2.0 * STAGE_INSET.token.px(profile);
-        let subject = el::leaf(
-            "Component under test",
-            Slot {
-                width: button::button_width(engine, story.label()),
-                height: button::H,
-            },
-        )
-        .semantic()
-        .id(SUBJECT)
-        .align_self(Align::Centre)
-        .max_w(Length::Runtime(
-            inside.max(button::MIN_W),
-            "preview column less its insets",
-        ))
-        .hit()
-        .focusable()
-        .semantics(Role::Button)
-        .name_text(story.label())
-        .action(el::Action::Click)
-        .action(el::Action::Focus);
-        let stage = el::col("Preview stage")
-            .id(STAGE)
-            .align_self(Align::Centre)
-            .pad(STAGE_INSET)
-            .bg(Surface::Raised)
-            .radius(Radius::L)
-            .child(subject);
-        match self.width {
-            // As wide as the component needs.
-            PreviewWidth::Fit => stage,
-            // Exactly the width asked for, so the component is seen in it.
-            PreviewWidth::Fixed(_) => stage.w(Length::Runtime(room, "the preview width setting")),
-        }
     }
 
     /// The right column: what the record is, what is recorded about it, and

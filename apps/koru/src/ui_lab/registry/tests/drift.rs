@@ -714,9 +714,9 @@ fn the_token_records_are_the_token_tables() {
     };
     fn members(symbol: &str, source: &str) -> Vec<&'static str> {
         let set = catalog()
-            .flat_map(|e| e.apis)
-            .filter(|api| api.symbol == symbol)
-            .flat_map(|api| api.options)
+            .flat_map(|e| e.symbols())
+            .filter(|listed| listed.symbol == symbol)
+            .flat_map(|listed| listed.options)
             .find(|set| set.source == source)
             .unwrap_or_else(|| panic!("no option set {source} on {symbol}"));
         set.members.iter().map(|m| m.ident).collect()
@@ -825,8 +825,8 @@ fn the_token_records_are_the_token_tables() {
 fn every_option_set_is_its_source_declaration() {
     let mut checked = 0;
     for set in catalog()
-        .flat_map(|e| e.apis)
-        .flat_map(|api| api.options)
+        .flat_map(|e| e.symbols())
+        .flat_map(|symbol| symbol.options)
         .copied()
         .chain([DIALOG_OPTIONS, COMPACT_OPTIONS])
     {
@@ -1675,8 +1675,8 @@ fn counts() -> Vec<(&'static str, usize)> {
         entries
             .iter()
             .filter(|e| e.kind == kind)
-            .flat_map(|e| e.apis)
-            .flat_map(|api| api.options)
+            .flat_map(|e| e.symbols())
+            .flat_map(|symbol| symbol.options)
             .map(|set| set.members.len())
             .sum()
     };

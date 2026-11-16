@@ -4134,13 +4134,19 @@ pub enum Key {
     UiLabWidthFit,
     UiLabWidthPixels,
     UiLabLanguage,
+    UiLabControlPlaceholder,
+    UiLabControlGap,
+    UiLabControlPadding,
+    UiLabFieldSamplePlaceholder,
+    UiLabTypedCount,
+    UiLabTextSample,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3161] = [
+    pub const ALL: [Key; 3167] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7302,6 +7308,12 @@ impl Key {
         Key::UiLabWidthFit,
         Key::UiLabWidthPixels,
         Key::UiLabLanguage,
+        Key::UiLabControlPlaceholder,
+        Key::UiLabControlGap,
+        Key::UiLabControlPadding,
+        Key::UiLabFieldSamplePlaceholder,
+        Key::UiLabTypedCount,
+        Key::UiLabTextSample,
     ];
 }
 
@@ -19632,4 +19644,10 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabWidthFit, en: "Full width", es: "Ancho completo", pt_br: "Largura total", de: "Volle Breite", fr: "Pleine largeur", ar: "العرض الكامل", zh_hans: "全宽", ja: "全幅" },
     Row { key: Key::UiLabWidthPixels, en: "{} px", es: "{} px", pt_br: "{} px", de: "{} px", fr: "{} px", ar: "{} بكسل", zh_hans: "{} 像素", ja: "{} px" },
     Row { key: Key::UiLabLanguage, en: "Language", es: "Idioma", pt_br: "Idioma", de: "Sprache", fr: "Langue", ar: "اللغة", zh_hans: "语言", ja: "言語" },
+    Row { key: Key::UiLabControlPlaceholder, en: "Placeholder", es: "Texto de ejemplo", pt_br: "Texto de exemplo", de: "Platzhalter", fr: "Texte indicatif", ar: "النص التوضيحي", zh_hans: "占位文字", ja: "プレースホルダー" },
+    Row { key: Key::UiLabControlGap, en: "Gap", es: "Separación", pt_br: "Espaçamento", de: "Abstand", fr: "Espacement", ar: "الفاصل", zh_hans: "间距", ja: "間隔" },
+    Row { key: Key::UiLabControlPadding, en: "Padding", es: "Relleno", pt_br: "Preenchimento", de: "Innenabstand", fr: "Marge intérieure", ar: "الحشوة", zh_hans: "内边距", ja: "パディング" },
+    Row { key: Key::UiLabFieldSamplePlaceholder, en: "Type something", es: "Escribe algo", pt_br: "Digite algo", de: "Etwas eingeben", fr: "Saisissez quelque chose", ar: "اكتب شيئًا", zh_hans: "输入内容", ja: "何か入力してください" },
+    Row { key: Key::UiLabTypedCount, en: "Characters typed: {}", es: "Caracteres escritos: {}", pt_br: "Caracteres digitados: {}", de: "Eingegebene Zeichen: {}", fr: "Caractères saisis : {}", ar: "عدد الأحرف المكتوبة: {}", zh_hans: "已输入字符数：{}", ja: "入力した文字数: {}" },
+    Row { key: Key::UiLabTextSample, en: "Notes, tasks and people in one place", es: "Notas, tareas y personas en un solo lugar", pt_br: "Notas, tarefas e pessoas em um só lugar", de: "Notizen, Aufgaben und Personen an einem Ort", fr: "Notes, tâches et personnes au même endroit", ar: "الملاحظات والمهام والأشخاص في مكان واحد", zh_hans: "笔记、任务和联系人集中在一处", ja: "メモ、タスク、連絡先をひとつの場所に" },
 ];

@@ -12,6 +12,8 @@ use accesskit::Toggled;
 use koru_workspace_host::accessibility::projection::build;
 
 use super::*;
+use crate::ui_lab::story::{ButtonStory, dialog_part};
+use koru_ui::button::ButtonRole;
 
 const SIZE: (f32, f32) = (1120.0, 720.0);
 const WINDOW: WindowSlot = WindowSlot::from_raw(3);
@@ -36,9 +38,12 @@ fn drawn() -> (Lab, TextEngine) {
     (lab, engine)
 }
 
-/// The story on show.
+/// The button's story, which is the one on show.
 fn story(lab: &Lab) -> &ButtonStory {
-    lab.story.as_ref().expect("the record on show has a story")
+    match lab.story.as_ref() {
+        Some(Story::Button(story)) => story,
+        other => panic!("the story on show is not the button's: {other:?}"),
+    }
 }
 
 fn tree(lab: &Lab) -> WindowSemantics {
@@ -552,7 +557,7 @@ fn every_node_stands_where_its_control_was_drawn() {
         }
         let segments = lab.laid.as_ref().unwrap().segments.clone().unwrap();
         for (style, rect) in story(&lab).styles().iter().zip(&segments.segments) {
-            let locator = format!("s:{STYLE_OPTIONS}#{}", style_part(*style));
+            let locator = format!("s:{STYLE_OPTIONS}#{}", dialog_part(*style));
             assert_eq!(find(&semantics, &locator).bounds, Some(*rect));
         }
         let caption = lab.caption_rect().unwrap();

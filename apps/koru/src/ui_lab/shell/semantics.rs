@@ -23,17 +23,21 @@
 //! │   ├── Button         a group             s:ui-lab.group#<group>    expanded or collapsed
 //! │   └── ListBoxOption  a record            s:ui-lab.navigator#<catalog id>   selected, n of N
 //! ├── Group     Details                      s:ui-lab#page
-//! │   ├── Button    the component under test s:ui-lab#subject      named by its label
-//! │   ├── Label     what pressing it did     s:ui-lab#result       spoken when it changes
+//! │   ├── Button    the component under test s:ui-lab#subject      a button named by its label,
+//! │   │                                                            a text field with its value,
+//! │   │                                                            or a group for a layout or table
+//! │   ├── Label     a token and its value    s:ui-lab.token#<token>    a token table's rows
+//! │   ├── Label     what using it did        s:ui-lab#result       spoken when it changes
 //! │   ├── Heading   the record's status      s:ui-lab#status
 //! │   ├── Label     why nothing runs         s:ui-lab#status-reason
 //! │   └── Label     a symbol                 s:ui-lab.symbol#<path>    its status and options
 //! └── Group     Properties                   s:ui-lab#properties
 //!     ├── Heading   the record's name        s:ui-lab.fact#name
 //!     ├── Label     its purpose              s:ui-lab.fact#purpose
-//!     ├── TextInput Label                    s:ui-lab.control#label     value = the text
-//!     ├── Group     Style                    s:ui-lab.control#style
-//!     │   └── RadioButton  a style           s:ui-lab.style#<style>     checked on the one worn
+//!     ├── TextInput a free-text input        s:ui-lab.control#<input>   value = the text
+//!     ├── Group     a choice among a few     s:ui-lab.control#<input>
+//!     │   └── RadioButton  an option         s:ui-lab.style#<option>    checked on the one in force
+//!     ├── ComboBox  a choice among many      s:ui-lab.control#<input>   value = the one in force
 //!     └── Label     each fact recorded       s:ui-lab.fact#<fact>
 //! └── Menu      the list that is open        s:ui-lab#menu             named for its field
 //!     └── MenuItemRadio  an option           s:ui-lab.option#<option>  checked on the one in force
@@ -53,7 +57,6 @@
 //! an empty box on the edge it left by.
 
 use accesskit::{Action, ActionData, Live, Role as NativeRole};
-use koru_ui::button::ButtonRole;
 use koru_workspace_host::accessibility::{
     CaptionGeometry, ControlPart, ObjectKey, Occurrence, Resolved, Revision, Scope, SemanticNode,
     ViewSlot, WindowSemantics, WindowSlot, part, window_commands,
@@ -61,6 +64,7 @@ use koru_workspace_host::accessibility::{
 
 use super::navigator::NOTHING_FOUND;
 use super::page::{NAME, PURPOSE, REASON, STATUS, SYMBOL, facts, option_line, symbol_status};
+use super::preview::{TOKEN, option_text};
 use super::settings::{MENU, OPTION};
 use super::*;
 
@@ -68,17 +72,6 @@ use super::*;
 const STYLE_OPTIONS: &str = "ui-lab.style";
 /// The line under the preview that says what pressing the button did.
 const RESULT: Key = Key::surface("ui-lab", "result");
-
-/// A dialog style's identity: a code keyword, the same in every language.
-/// Exhaustive, so a style added to the production button cannot be offered
-/// here without one.
-const fn style_part(style: ButtonRole) -> &'static str {
-    match style {
-        ButtonRole::Secondary => "secondary",
-        ButtonRole::Primary => "primary",
-        ButtonRole::Destructive => "destructive",
-    }
-}
 
 /// Which window and view an occurrence in this tree belongs to.
 #[derive(Copy, Clone)]
@@ -163,12 +156,10 @@ impl Lab {
                 .u64(open.menu.hover.map_or(u64::MAX, |slot| slot as u64)),
             None => revision.byte(0),
         };
+        // The story is plain data: everything a person changed about it is
+        // in how it prints.
         match &self.story {
-            Some(story) => revision
-                .byte(1)
-                .str(story.label())
-                .u64(story.presses())
-                .u64(story.style_slot().map_or(u64::MAX, |slot| slot as u64)),
+            Some(story) => revision.byte(1).str(&format!("{story:?}")),
             None => revision.byte(0),
         };
         // The navigator: what it lists, how it is folded and what it shows.
@@ -275,6 +266,8 @@ impl Lab {
             .with_children(options);
         if let Some(setting) = Setting::of(open.owner) {
             menu = menu.with_label(text(setting.name()));
+        } else if let Some(control) = self.control_of(open.owner) {
+            menu = menu.with_label(text(control.name()));
         }
         Some(menu)
     }
@@ -413,7 +406,10 @@ impl Lab {
                 .iter()
                 .filter_map(|child| self.control_node(place, laid, child)),
         );
-        if key == control_key(Control::Style) {
+        if self
+            .segmented()
+            .is_some_and(|(control, _)| control_key(control) == key)
+        {
             children.extend(self.style_options(place, laid));
         }
         if key == PAGE {
@@ -478,6 +474,19 @@ impl Lab {
     fn page_nodes(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
         let entry = self.entry;
         let mut nodes = Vec::new();
+        // A token table's rows: each token's name and what it comes to.
+        if let Some(Story::Tokens(table)) = &self.story {
+            nodes.extend(table.rows().into_iter().filter_map(|row| {
+                Self::text_node(
+                    place,
+                    laid,
+                    PAGE,
+                    Key::surface(TOKEN, row.name),
+                    NativeRole::Label,
+                    koru_i18n::fill(text(koru_i18n::Key::UiLabFactLine), &[row.name, &row.value]),
+                )
+            }));
+        }
         nodes.extend(self.result_node(place, laid));
         let status = entry.status();
         nodes.extend(Self::text_node(
@@ -516,31 +525,30 @@ impl Lab {
         nodes
     }
 
-    /// The style control's options, each where the shared segmented control
+    /// A segmented choice's options, each where the shared segmented control
     /// drew it. The control paints them itself, so the frame has no element
     /// for one; its measured segments are the same rectangles the pointer is
     /// answered from.
     fn style_options(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
-        let (Some(segments), Some(story)) = (&laid.segments, &self.story) else {
+        let (Some(segments), Some((_, options))) = (&laid.segments, self.segmented()) else {
             return Vec::new();
         };
-        story
-            .styles()
+        options
             .iter()
             .zip(&segments.segments)
-            .map(|(style, rect)| {
+            .map(|(option, rect)| {
                 SemanticNode::new(
                     Occurrence::surface(
                         place.window,
                         place.view,
                         STYLE_OPTIONS,
-                        ControlPart::new(style_part(*style)),
+                        ControlPart::new(option.part),
                     ),
                     NativeRole::RadioButton,
                 )
-                .with_label(text(registry::dialog_style_label(*style)))
+                .with_label(option_text(&option.label))
                 .with_bounds(*rect)
-                .with_toggled(*style == story.style())
+                .with_toggled(option.selected)
                 .with_action(Action::Click)
             })
             .collect()
@@ -554,7 +562,7 @@ impl Lab {
         let bounds = within(rect, page.viewport.unwrap_or(page.rect));
         Some(
             SemanticNode::new(place.of(RESULT)?, NativeRole::Label)
-                .with_label(self.result_line())
+                .with_label(self.result_line()?)
                 .with_bounds(bounds)
                 .with_live(Live::Polite),
         )
@@ -599,16 +607,19 @@ impl Lab {
         // closes first, as it does for a press outside it.
         self.close_menu();
         if surface == STYLE_OPTIONS {
-            let slot = self.story.as_ref().and_then(|story| {
-                story
-                    .styles()
-                    .iter()
-                    .position(|style| style_part(*style) == occurrence.part.name())
-            });
+            let Some((control, options)) = self.segmented() else {
+                return false;
+            };
+            let slot = options
+                .iter()
+                .position(|option| option.part == occurrence.part.name());
             return match (request.action, slot) {
                 (Action::Click, Some(slot)) => {
-                    let focused = self.set_focus(engine, Some(control_key(Control::Style)));
-                    self.story.as_mut().is_some_and(|story| story.choose(slot)) || focused
+                    let focused = self.set_focus(engine, Some(control_key(control)));
+                    self.story
+                        .as_mut()
+                        .is_some_and(|story| story.choose(control, slot))
+                        || focused
                 }
                 _ => false,
             };

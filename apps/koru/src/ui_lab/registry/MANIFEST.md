@@ -15,6 +15,42 @@ commands found the candidates; they did not decide what a candidate is. The
 drift checks in `tests/drift.rs` hold the records to the source afterwards,
 within the limits stated under [Drift checks](#drift-checks).
 
+## What the gallery shows, and what it runs
+
+Added with the gallery (ROADMAP.final.md's L3b, 16 November 2026). The
+inventory below is unchanged by it; this section says how the Lab reads it.
+
+**The gallery is desktop only.** `registry::desktop()` is the one function
+the navigator, the search, the counts beside a group and the story lookup
+read the catalog through. It keeps a record when any of its Windows, macOS
+or Linux cells says the record has a role there, so the 34 records written
+from the Android and iOS apps are in the registry and in none of those, and
+no page shows a phone's cell. The macOS share extension and the desktop's
+system surfaces are native and are listed.
+
+**Nine records have a story.** A record with a story names the symbol the
+story drives as a `Recipe`: its typed styles, the inputs the properties
+column offers, and the option sets the symbol takes. Its Windows cell is
+`Available`, which the registry's tests hold equal to having a story.
+
+| Story | Record | What runs |
+| --- | --- | --- |
+| `C-BUTTON/dialog` | Button | `koru_ui::button::draw_button`: label, style, press count |
+| `C-TEXT-INPUT/field` | Text input | `koru_ui::text_input::TextInput`: typed in; placeholder; the `form`, `search` and `inline` boxes |
+| `P-ROW/spacing` | Row | `koru_draw::el::row`: gap and padding from `Space::ALL` |
+| `P-COLUMN/spacing` | Column | `koru_draw::el::col`: the same |
+| `T-SPACE/scale` | Spacing | `Space::ALL`: each step, its value, a bar that long |
+| `T-SURFACE/roles` | Surfaces | `Surface::ALL`: each role painted on the ground and on a raised surface |
+| `T-INK/roles` | Ink | `Ink::ALL`: each role set as text |
+| `T-LINE/roles` | Lines | `Line::ALL`: each hairline drawn |
+| `T-TEXT-ROLES/roles` | Text roles | `roles::ALL`: a sample set in each role, with its size and line height |
+
+The text input's story drives three of `InputStyle`'s four constructors;
+`bare` draws no box and waits for a story of its own, as do `invalid` and the
+`Reveal` end icon. `theme::Accent`, `Radius`, `IconSize`, the metrics and the
+aliases have no story yet: the element layer has no setter that paints an
+accent, and the others are L4b's.
+
 ## State of the inventory
 
 Closed at the end of batch 4 (16 November 2026, branch `ui-lab/l1b`): the
@@ -211,16 +247,16 @@ batch's counts.
 | kind: native adapter | 35 |
 | token values listed | 174 |
 | symbols | 2378 |
-| symbols with typed recipes | 2 |
+| symbols with typed recipes | 10 |
 | inspector identities | 60 |
 | inspector identity registration sites | 63 |
-| disposition: story exists | 1 |
-| disposition: no story yet | 211 |
+| disposition: story exists | 9 |
+| disposition: no story yet | 203 |
 | disposition: nonvisual | 62 |
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
-| symbol story: available | 1 |
-| symbol story: no story yet | 451 |
+| symbol story: available | 9 |
+| symbol story: no story yet | 443 |
 | symbol story: nonvisual | 1664 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
@@ -237,7 +273,7 @@ about each platform.
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| Windows | 9 | 277 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
 | macOS | 0 | 1 | 285 | 0 | 1 | 3 | 34 | 8 | 0 |
 | Linux | 0 | 0 | 285 | 0 | 0 | 7 | 36 | 3 | 1 |
 | Android | 0 | 18 | 0 | 73 | 13 | 195 | 28 | 3 | 2 |

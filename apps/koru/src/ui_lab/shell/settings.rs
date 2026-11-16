@@ -208,7 +208,19 @@ impl Lab {
                     selected: lang == self.lang,
                 })
                 .collect(),
-            None => Vec::new(),
+            // A choice of the story's: its options are the story's.
+            None => match (self.control_of(owner), &self.story) {
+                (Some(control), Some(story)) => story
+                    .options(control)
+                    .into_iter()
+                    .map(|option| Choice {
+                        part: option.part,
+                        label: preview::option_text(&option.label),
+                        selected: option.selected,
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
         }
     }
 
@@ -232,7 +244,10 @@ impl Lab {
             Some(Setting::Language) => Lang::ALL
                 .get(slot)
                 .is_some_and(|lang| self.set_language(engine, *lang)),
-            None => false,
+            None => match (self.control_of(owner), self.story.as_mut()) {
+                (Some(control), Some(story)) => story.choose(control, slot),
+                _ => false,
+            },
         }
     }
 
@@ -274,13 +289,9 @@ impl Lab {
         publish_language(lang);
         Self::in_language(lang, || {
             self.nav.rebuild();
-            if self.story.as_ref().is_some_and(ButtonStory::is_pristine) {
+            if self.story.as_ref().is_some_and(Story::is_pristine) {
                 self.story = Self::story_for(self.entry);
-                let label = self
-                    .story
-                    .as_ref()
-                    .map_or(String::new(), |story| story.label().to_owned());
-                self.set_field(engine, control_key(Control::Label), &label);
+                self.restore_fields(engine);
             }
         });
         self.bring_shown_into_view = true;
@@ -451,9 +462,10 @@ impl Lab {
             .draw(scene, root, engine, rect, hovered, 1.0);
     }
 
-    /// Whether `key` is a dropdown's field.
+    /// Whether `key` is a dropdown's field: a setting's, or a choice of the
+    /// story's with too many options to stand side by side.
     pub(super) fn is_dropdown(&self, key: Key) -> bool {
-        Setting::of(key).is_some()
+        Setting::of(key).is_some() || self.is_story_dropdown(key)
     }
 }
 

@@ -8,6 +8,8 @@
 //! on the process, so these run beside every other test in the binary.
 
 use koru_ui::button::ButtonRole;
+
+use crate::ui_lab::story::ButtonStory;
 use koru_window::KeyState;
 use winit::keyboard::{KeyCode, KeyLocation, PhysicalKey};
 
@@ -49,9 +51,18 @@ pub(super) fn frame(lab: &Lab) -> &Frame {
     &lab.laid.as_ref().expect("the Lab has drawn").frame
 }
 
-/// The story on show.
+/// The button's story, which is the one on show.
 pub(super) fn story(lab: &Lab) -> &ButtonStory {
-    lab.story.as_ref().expect("the record on show has a story")
+    match lab.story.as_ref() {
+        Some(Story::Button(story)) => story,
+        other => panic!("the story on show is not the button's: {other:?}"),
+    }
+}
+
+/// The line under the component on show.
+pub(super) fn result(lab: &Lab) -> String {
+    lab.result_line()
+        .expect("the story on show says what using it did")
 }
 
 /// The label property's field.
@@ -302,10 +313,10 @@ fn the_keyboard_stops_are_the_controls_that_exist() {
 fn pressing_the_button_is_counted_and_shown() {
     english(|| {
         let (mut lab, mut engine) = drawn(SIZE);
-        assert_eq!(lab.result_line(), "Not pressed yet");
+        assert_eq!(result(&lab), "Not pressed yet");
         assert!(press(&mut lab, &mut engine, SUBJECT));
         assert_eq!(story(&lab).presses(), 1);
-        assert_eq!(lab.result_line(), "Presses: 1");
+        assert_eq!(result(&lab), "Presses: 1");
         assert_eq!(lab.focus, Some(SUBJECT), "a press takes the focus");
 
         // Two quick presses are two presses: the runner reports the second as
@@ -314,7 +325,7 @@ fn pressing_the_button_is_counted_and_shown() {
         assert!(lab.click(&mut engine, x, y, false));
         assert!(lab.double_click(&mut engine, x, y));
         assert_eq!(story(&lab).presses(), 3);
-        assert_eq!(lab.result_line(), "Presses: 3");
+        assert_eq!(result(&lab), "Presses: 3");
 
         // A press beside it, on the stage, is not a press of it.
         let stage = lab.rect(STAGE).unwrap();
@@ -330,7 +341,7 @@ fn the_result_line_counts_in_the_display_languages_own_digits() {
     english(|| press(&mut lab, &mut engine, SUBJECT));
     for lang in koru_i18n::Lang::ALL {
         koru_i18n::with_current(lang, || {
-            let line = lab.result_line();
+            let line = result(&lab);
             assert!(
                 line.contains(&koru_i18n::number::decimal(lang, 1)),
                 "{lang:?}: {line}"
@@ -465,7 +476,7 @@ fn reset_restores_the_label_the_style_and_the_click_result() {
         assert_eq!(story(&lab).label(), "Save changes");
         assert_eq!(label(&lab).raw_text(), "Save changes", "the field follows");
         assert_eq!(story(&lab).style(), ButtonRole::Secondary);
-        assert_eq!(lab.result_line(), "Not pressed yet");
+        assert_eq!(result(&lab), "Not pressed yet");
         assert_eq!(lab.focus, Some(RESET));
         // What Reset leaves alone: the entry on show.
         assert_eq!(lab.entry.catalog_id, registry::BUTTON);
@@ -886,7 +897,7 @@ fn showing_another_record_discards_the_storys_edits() {
         assert!(story(&lab).is_pristine());
         assert_eq!(story(&lab).label(), "Save changes");
         assert_eq!(label(&lab).raw_text(), "Save changes");
-        assert_eq!(lab.result_line(), "Not pressed yet");
+        assert_eq!(result(&lab), "Not pressed yet");
     });
 }
 

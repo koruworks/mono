@@ -18,10 +18,11 @@
 //! a phone stays in the registry and is neither listed nor found. The centre is the page of the record on show: its story
 //! when it has one, and otherwise its status said in words, with nothing
 //! drawn in the component's place. The properties column states what is
-//! recorded about it and holds a story's inputs. The one story so far is the
-//! shared dialog button, with its label and style changed from the
-//! properties the registration lists, a visible result for pressing it, and
-//! Reset; its state is [`story`]'s and lives in memory. The toolbar sets the
+//! recorded about it and holds a story's inputs. The stories so far are the
+//! shared dialog button, the shared text input, the element layer's row and
+//! column, and the spacing, color-role and text-role tables; each is the
+//! production thing, changed through the inputs its registration lists, with
+//! Reset. A story's state is [`story`]'s and lives in memory. The toolbar sets the
 //! theme, how wide the preview is and the display language, for this
 //! process only and in memory only. F12 opens the same
 //! inspector the app has, in a window of its own ([`windows`]), over the

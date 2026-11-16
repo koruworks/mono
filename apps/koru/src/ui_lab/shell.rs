@@ -38,11 +38,12 @@
 //! pointer and the keyboard all read, so where a control is drawn and where
 //! it is pressed cannot disagree.
 //!
-//! **The controls are the production ones.** The button under test is
-//! `koru_ui::button::draw_button`; the label is typed into a `TextInput`, the
-//! style is chosen on a `Segmented`, Reset is an `ActionButton`, the three
-//! viewports are the element layer's scroll element with the shared
-//! scrollbar, and the window controls are the shared caption's. The tree
+//! **The controls are the production ones.** A story's component is the
+//! production one ([`preview`]); free text is typed into a `TextInput`, a
+//! choice is made on a `Segmented` or a `Dropdown`, Reset is an
+//! `ActionButton`, the three viewports are the element layer's scroll
+//! element with the shared scrollbar, and the window controls are the shared
+//! caption's. The tree
 //! gives each a slot and this file draws the real control in it; nothing here
 //! paints a control of its own.
 //!
@@ -72,7 +73,7 @@ use self::page::{PAGE, PANEL};
 use self::settings::{OpenMenu, PreviewWidth, Setting};
 use super::placement::Placement;
 use super::registry::{self, Control, Entry, Family};
-use super::story::ButtonStory;
+use super::story::Story;
 use super::tokens::*;
 
 /// The caption row: the band that drags the window and holds its controls.
@@ -83,10 +84,10 @@ const RESET: Key = Key::surface("ui-lab", "reset");
 const STAGE: Key = Key::surface("ui-lab", "stage");
 /// The component under test.
 const SUBJECT: Key = Key::surface("ui-lab", "subject");
-/// The segments inside the style control: where the shared control is drawn.
-/// The control's own key, the one that is pressed and focused, is
-/// [`control_key`]`(Control::Style)`.
-const STYLE_SEGMENTS: Key = Key::surface("ui-lab", "style-segments");
+/// The segments inside a choice: where the shared segmented control is
+/// drawn. The control's own key, the one that is pressed and focused, is
+/// [`control_key`] of the input it chooses.
+const SEGMENTS: Key = Key::surface("ui-lab", "segments");
 
 /// One of the two columns beside the preview.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -310,7 +311,7 @@ pub(crate) struct Lab {
     entry: &'static Entry,
     /// The record's story, when it has one. Dropped, edits and all, when
     /// another record is shown.
-    story: Option<ButtonStory>,
+    story: Option<Story>,
     /// Every field a person types in, by the key of the control it is drawn
     /// in: the navigator's search, and one for each free-text property of
     /// the story on show. A field owns the text being edited — caret,
@@ -384,28 +385,35 @@ impl Lab {
 
     /// The story `entry`'s page runs, at its defaults: `None` for a record
     /// the registry lists nothing runnable for.
-    fn story_for(entry: &'static Entry) -> Option<ButtonStory> {
-        (entry.story_id() == Some(registry::BUTTON_DIALOG_STORY))
-            .then(|| ButtonStory::new(text(koru_i18n::Key::UiLabButtonSampleLabel)))
+    fn story_for(entry: &'static Entry) -> Option<Story> {
+        entry.story_id().and_then(Story::open)
     }
 
     /// A field for each free-text property of `story`, holding what the
-    /// story holds.
-    fn story_fields(engine: &mut TextEngine, story: Option<&ButtonStory>) -> Vec<(Key, TextInput)> {
+    /// story holds; and, for a story whose component is itself typed in,
+    /// that component's own field.
+    fn story_fields(engine: &mut TextEngine, story: Option<&Story>) -> Vec<(Key, TextInput)> {
         let Some(story) = story else {
             return Vec::new();
         };
-        story
+        let mut fields: Vec<(Key, TextInput)> = story
             .controls()
             .iter()
-            .filter(|control| **control == Control::Label)
-            .map(|control| {
-                (
+            .filter_map(|control| {
+                let held = story.text(*control)?;
+                Some((
                     control_key(*control),
-                    TextInput::with_text(engine, theme::role::row(), story.label()),
-                )
+                    TextInput::with_text(engine, theme::role::row(), held),
+                ))
             })
-            .collect()
+            .collect();
+        if let Story::Field(field) = story {
+            fields.push((
+                SUBJECT,
+                TextInput::with_text(engine, theme::role::row(), field.typed()),
+            ));
+        }
+        fields
     }
 
     /// The field drawn in `key`'s control, when it is one.
@@ -446,28 +454,6 @@ impl Lab {
 
     fn segment_at(&self, x: f32, y: f32) -> Option<usize> {
         self.laid.as_ref()?.segments.as_ref()?.segment_at(x, y)
-    }
-
-    /// What pressing the button has done so far, as the line under it.
-    fn result_line(&self) -> String {
-        let lang = koru_i18n::current();
-        match self.story.as_ref().map_or(0, ButtonStory::presses) {
-            0 => koru_i18n::t(lang, koru_i18n::Key::UiLabNotPressed).to_owned(),
-            presses => koru_i18n::fill(
-                koru_i18n::t(lang, koru_i18n::Key::UiLabPressCount),
-                &[&koru_i18n::number::decimal(lang, presses)],
-            ),
-        }
-    }
-
-    /// The style control's option labels, in the registration's order.
-    fn style_labels(&self) -> Vec<&'static str> {
-        self.story
-            .as_ref()
-            .map_or(&[][..], ButtonStory::styles)
-            .iter()
-            .map(|style| text(registry::dialog_style_label(*style)))
-            .collect()
     }
 
     /// **Which side columns a window `width` wide shows.** The preview is
@@ -566,13 +552,17 @@ impl Lab {
         };
         let text = field.1.raw_text();
         if key == SEARCH {
-            self.nav.set_query(text)
-        } else if key == control_key(Control::Label) {
-            self.story
-                .as_mut()
-                .is_some_and(|story| story.set_label(text))
-        } else {
-            false
+            return self.nav.set_query(text);
+        }
+        let control = self.control_of(key);
+        let Some(story) = self.story.as_mut() else {
+            return false;
+        };
+        match control {
+            Some(control) => story.set_text(control, text),
+            // The component under test, when it is one that is typed in.
+            None if key == SUBJECT => story.set_typed(text),
+            None => false,
         }
     }
 
@@ -590,17 +580,36 @@ impl Lab {
         self.adopt(key)
     }
 
-    /// The toolbar's Reset: the story back to how it opened, and the field
-    /// showing the label it went back to. The record on show, the search and
-    /// what it found, and where anything is scrolled are left as they are.
+    /// The toolbar's Reset: the story back to how it opened, and its fields
+    /// showing what it went back to. The record on show, the search and what
+    /// it found, the settings and where anything is scrolled are left as
+    /// they are.
     fn reset(&mut self, engine: &mut TextEngine) -> bool {
         let Some(story) = self.story.as_mut() else {
             return false;
         };
         let changed = story.reset();
-        let label = story.label().to_owned();
-        self.set_field(engine, control_key(Control::Label), &label);
+        self.restore_fields(engine);
         changed
+    }
+
+    /// Make every field of the story show what the story holds: after a
+    /// reset, or after the story was started again.
+    fn restore_fields(&mut self, engine: &mut TextEngine) {
+        let Some(story) = self.story.as_ref() else {
+            return;
+        };
+        let mut held: Vec<(Key, String)> = story
+            .controls()
+            .iter()
+            .filter_map(|control| Some((control_key(*control), story.text(*control)?.to_owned())))
+            .collect();
+        if let Story::Field(field) = story {
+            held.push((SUBJECT, field.typed().to_owned()));
+        }
+        for (key, text) in held {
+            self.set_field(engine, key, &text);
+        }
     }
 
     /// Empty the search, so the navigator lists the whole gallery again.
@@ -663,13 +672,7 @@ impl Lab {
     /// the focused control both come here, so they cannot disagree.
     fn activate(&mut self, engine: &mut TextEngine, key: Key) -> bool {
         if key == SUBJECT {
-            match self.story.as_mut() {
-                Some(story) => {
-                    story.press();
-                    true
-                }
-                None => false,
-            }
+            self.story.as_mut().is_some_and(Story::press)
         } else if key == RESET {
             self.reset(engine)
         } else if key == RESET_SEARCH {
@@ -862,11 +865,14 @@ impl Lab {
                     field.click(engine, rect, x, y)
                 };
             }
-        } else if key == control_key(Control::Style) {
+        } else if let Some((control, _)) = self
+            .segmented()
+            .filter(|(control, _)| control_key(*control) == key)
+        {
             if let Some(slot) = self.segment_at(x, y)
                 && let Some(story) = self.story.as_mut()
             {
-                changed |= story.choose(slot);
+                changed |= story.choose(control, slot);
             }
         } else {
             changed |= self.activate(engine, key);
@@ -1021,16 +1027,19 @@ impl Lab {
         {
             return self.open_menu(engine, focus);
         }
-        if focus == control_key(Control::Style) {
+        if let Some((control, _)) = self
+            .segmented()
+            .filter(|(control, _)| control_key(*control) == focus)
+        {
             let Some(story) = self.story.as_mut() else {
                 return false;
             };
             return match key {
                 KeyboardKey::Named(NamedKey::ArrowRight | NamedKey::ArrowDown) => {
-                    story.step_style(true)
+                    story.step(control, true)
                 }
                 KeyboardKey::Named(NamedKey::ArrowLeft | NamedKey::ArrowUp) => {
-                    story.step_style(false)
+                    story.step(control, false)
                 }
                 KeyboardKey::Named(NamedKey::Escape) => self.set_focus(engine, None),
                 _ => false,
@@ -1118,8 +1127,9 @@ impl Lab {
                 .id(RESET)
                 .hit()
                 .focusable()
-                // Nothing to put back for a record with no story.
-                .disabled(self.story.is_none())
+                // Nothing to put back for a record with no story, or for a
+                // story with nothing to change.
+                .disabled(self.story.as_ref().is_none_or(|story| !story.can_change()))
                 .semantics(Role::Button)
                 .name(koru_i18n::Key::UiLabReset)
                 .action(el::Action::Click)
@@ -1189,52 +1199,6 @@ impl Lab {
             column.child(navigator::nothing_found(engine, self.query()))
         } else {
             column.child(self.nav.element(self.entry, height))
-        }
-    }
-
-    /// One property's control, by what kind of input it is.
-    fn control(&self, engine: &mut TextEngine, control: Control) -> El {
-        let key = control_key(control);
-        match control {
-            Control::Label => el::leaf(
-                "Label field",
-                Slot {
-                    width: 0.0,
-                    height: FIELD_HEIGHT.value,
-                },
-            )
-            .semantic()
-            .h(FIELD_HEIGHT)
-            .id(key)
-            .hit()
-            .focusable()
-            // The element layer has no text-field role; the window's
-            // semantics publish this node as one, with its value.
-            .semantics(Role::Group)
-            .name(control.name())
-            .action(el::Action::Focus),
-            Control::Style => el::boxed("Style choice")
-                .align_self(Align::Start)
-                .pad(FOCUS_INSET)
-                .radius(Radius::M)
-                .states(&FRAME_STATES)
-                .id(key)
-                .hit()
-                .focusable()
-                .semantics(Role::Group)
-                .name(control.name())
-                .action(el::Action::Focus)
-                .child(
-                    el::leaf(
-                        "Style segments",
-                        Slot {
-                            width: Segmented::width(engine, &self.style_labels()),
-                            height: Segmented::H,
-                        },
-                    )
-                    .decorative()
-                    .id(STYLE_SEGMENTS),
-                ),
         }
     }
 
@@ -1376,9 +1340,10 @@ impl WindowApp for Lab {
         }
         let caption = self.caption_action_at(x, y);
         let hot = self.hit_at(x, y);
-        let segment = (hot == Some(control_key(Control::Style)))
-            .then(|| self.segment_at(x, y))
-            .flatten();
+        let segment = self
+            .segmented()
+            .filter(|(control, _)| hot == Some(control_key(*control)))
+            .and_then(|_| self.segment_at(x, y));
         let changed =
             self.caption_hover != caption || self.hot != hot || self.style_hover != segment;
         self.caption_hover = caption;
@@ -1564,9 +1529,12 @@ impl Lab {
         {
             self.focus = None;
         }
-        let labels = self.style_labels();
+        let segment_options = self.segmented().map_or(Vec::new(), |(_, options)| options);
+        let chosen_segment = segment_options.iter().position(|option| option.selected);
+        let labels = self.segment_labels();
+        let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
         let segments = frame
-            .node(STYLE_SEGMENTS)
+            .node(SEGMENTS)
             .map(|node| Segmented::layout(engine, &labels, node.rect.x, node.rect.y));
         let stage = frame.node(STAGE).map(|node| node.rect);
         let caption_state = caption::State {
@@ -1582,6 +1550,13 @@ impl Lab {
         let dropdowns: Vec<(Key, String, bool)> = Setting::ALL
             .into_iter()
             .map(|setting| setting.key())
+            .chain(
+                self.story
+                    .iter()
+                    .flat_map(|story| story.controls())
+                    .map(|control| control_key(*control))
+                    .filter(|key| self.is_story_dropdown(*key)),
+            )
             .filter(|key| frame.contains(*key))
             .map(|key| {
                 let value = self
@@ -1624,7 +1599,7 @@ impl Lab {
                         );
                     }
                 } else if key == SUBJECT
-                    && let Some(story) = story.as_ref()
+                    && let Some(Story::Button(story)) = story.as_ref()
                 {
                     // The production button does not elide its label, so a
                     // label longer than the column is clipped at the stage.
@@ -1680,22 +1655,26 @@ impl Lab {
                     // The search is the shared search box, with the hint of
                     // what it searches while it is empty; a property is a
                     // form's field.
-                    let (style, hint) = if key == SEARCH {
-                        (InputStyle::search(), Some(search))
-                    } else {
-                        (InputStyle::form(state.focused), None)
+                    let (style, hint) = match story.as_ref() {
+                        _ if key == SEARCH => (InputStyle::search(), Some(search)),
+                        // The component under test: the box and the hint are
+                        // the story's two inputs.
+                        Some(Story::Field(story)) if key == SUBJECT => (
+                            preview::field_box(story.style(), state.focused),
+                            Some(story.placeholder()),
+                        ),
+                        _ => (InputStyle::form(state.focused), None),
                     };
                     field.draw(scene, root, engine, rect, style, hint, state.focused);
-                } else if key == STYLE_SEGMENTS
+                } else if key == SEGMENTS
                     && let Some(segments) = &segments
-                    && let Some(story) = story.as_ref()
                 {
                     segments.draw(
                         scene,
                         root,
                         engine,
                         &labels,
-                        story.style_slot(),
+                        chosen_segment,
                         *style_hover,
                         1.0,
                     );
@@ -1718,6 +1697,7 @@ impl Lab {
 
 mod navigator;
 mod page;
+mod preview;
 mod semantics;
 mod settings;
 

@@ -72,14 +72,20 @@ fn a_record_without_a_story_says_so_and_draws_no_stand_in() {
             assert_eq!(frame.contains(STAGE), runs, "{context}");
             assert_eq!(frame.contains(STATUS), !runs, "{context}");
             assert_eq!(frame.contains(REASON), !runs, "{context}");
-            assert_eq!(frame.named("Click result").count(), usize::from(runs));
+            assert_eq!(
+                frame.named("Click result").count(),
+                usize::from(lab.result_line().is_some())
+            );
             // Without a story there is no control to operate and nothing to
             // reset; the page is still a page.
-            assert_eq!(frame.named("Property").count() > 0, runs, "{context}");
-            assert_eq!(frame.node(RESET).unwrap().disabled, !runs, "{context}");
+            let inputs = lab.story.as_ref().map_or(0, |story| story.controls().len());
+            assert_eq!(frame.named("Property").count(), inputs, "{context}");
+            let resets = lab.story.as_ref().is_some_and(|story| story.can_change());
+            assert!(!resets || runs);
+            assert_eq!(frame.node(RESET).unwrap().disabled, !resets, "{context}");
             assert_eq!(
                 lab.laid.as_ref().unwrap().stops().contains(&RESET),
-                runs,
+                resets,
                 "{context}"
             );
             assert!(frame.contains(NAME) && frame.contains(PURPOSE), "{context}");
