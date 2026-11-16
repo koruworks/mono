@@ -8,12 +8,14 @@
 //!
 //! What these checks cover is bounded and named: the `pub mod` lists of
 //! `koru-ui` and `koru-draw` (and `koru-draw::theme`), the module lists of
-//! the thirteen domain UI crates' roots ([`domain`]), the token tables, the
-//! component identities painters register in any of those sources, the
-//! option enums and constants a record lists, the symbols each record names,
-//! and the A2UI composition catalog and the fixed catalog's search host.
-//! They do not discover a new painter in an app or a native platform, nor a
-//! new public item inside a module already classified; that is the
+//! the domain crates' roots ([`domain`]) and of the app files that declare
+//! modules ([`app`]), the token tables, the component identities painters
+//! register in any of those sources, the option enums and constants a record
+//! lists, the symbols each record names, the A2UI composition catalog and
+//! the fixed catalog's search host, the counts and platform tables, and the
+//! native platforms' composables, views and entry points ([`native`]). They
+//! do not discover a painter that registers no identity, a new public item
+//! inside a module already classified, or a new native file; that is the
 //! manifest's hand-reviewed scope.
 
 use super::*;

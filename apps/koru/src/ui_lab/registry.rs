@@ -15,9 +15,9 @@
 //! in memory: the module lists of `koru-ui`, `koru-draw` and the domain UI
 //! crates, the token tables, the inspector identities painters register, the
 //! option enums and the A2UI catalogs, so a module, token, identity or option
-//! added or removed upstream fails until it is classified here. What no test can see — a new painter in
-//! an app, a native control — is the manifest's to reconcile by hand
-//! (`registry/MANIFEST.md`).
+//! added or removed upstream fails until it is classified here. What no test
+//! can see — a painter that registers no identity, a new native file — is the
+//! manifest's to reconcile by hand (`registry/MANIFEST.md`).
 //!
 //! **Options are the production type's own values.** A dialog button is styled
 //! by [`ButtonRole`] and a compact action by [`ActionStyle`]; they are two

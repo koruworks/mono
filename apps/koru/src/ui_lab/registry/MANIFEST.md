@@ -3,9 +3,10 @@
 What the registry's records were written from, how the sources were searched,
 what was left out and why, and how many of each thing there are. The records
 themselves are the Rust in this folder (`foundations.rs`, `controls.rs`,
-`compositions.rs`, a file per domain crate in `domain/`, and the Button in
-`../registry.rs`); this page is the audit
-trail beside them, not a second catalog.
+`compositions.rs`, a file per domain crate in `domain/`, a file per app area
+in `app/`, a file per native platform in `native/`, and the Button in
+`../registry.rs`); this page is the audit trail beside them, not a second
+catalog.
 
 **Hand-reviewed.** Every record below was written by reading the module it
 names: its module documentation, its public types, functions and constants,
@@ -13,6 +14,235 @@ its enums' members and the inspector names its painters register. The search
 commands found the candidates; they did not decide what a candidate is. The
 drift checks in `tests/drift.rs` hold the records to the source afterwards,
 within the limits stated under [Drift checks](#drift-checks).
+
+## State of the inventory
+
+Closed at the end of batch 4 (16 November 2026, branch `ui-lab/l1b`): the
+M1 inventory of ROADMAP.final.md's L1b, the union of the four batches
+reconciled.
+
+**What is complete.** Every source owner the inventory's scope names has
+been read and every candidate it turned up has a disposition — a record, a
+place inside another record (the *private parts* lists), or an exclusion
+with its reason: `koru-ui` and `koru-draw` (batch 1); the thirteen domain
+UI crates (2a); the editor, document, session, shell, webview, window and
+workspace-host crates (2b); the workspace app, the document app and the
+Agent (3); the Android app, the iOS app and its share extension, the macOS
+share extension, the Store's and the notification owner's system surfaces
+and the notification boundary crate (4). No list in this page is left "to
+do" or "for the next batch"; where an earlier batch said a later one owed
+something, the later section says what became of it. Every record has a
+localized name and one-line purpose in all eight languages. Every platform
+cell has an answer except three phone cells and one desktop cell, each
+left `NotAudited` with its reason: `C-TASKS-VIEW` on Android and iOS,
+`C-BUTTON` on Android (see *Reconciliation*), and `C-WINDOW-FRAME` on Linux
+(batch 2b: no page says what the frame is there).
+
+**What is machine-checked**, by the tests beside the records, all in memory:
+the module lists of `koru-ui`, `koru-draw` and its theme, 21 crate roots
+and 23 app files, each module a record or a reason; the token tables, read
+as values; every option set against its Rust, Kotlin or Swift declaration;
+every symbol against a declaration where its path says; every component
+identity a compiled-in painter registers, claimed exactly once; the A2UI
+catalogs, the host's mappings and the hosts' imports; every composable and
+view a compiled-in native file declares, recorded; the doors into the
+native UI (the Android manifest's components, its routes and Gradle
+modules, the Xcode targets, the iOS routes, what the macOS packager
+compiles); the two tables below; the isolation scan of the Lab's own
+sources; every displayed string present in all eight languages, names
+distinct and no identifier inside translated text.
+
+**What is hand-reviewed**, and only as good as the reading: which symbols a
+record holds and what kind and family it is; its dispositions and
+construction notes; every platform cell and its reason; A2UI statuses
+beyond the catalogs' own components; the mobile-equivalent mappings; the
+exclusion reasons; the defects. And what no test can see: a public item
+added inside a module already classified, a painter that registers no
+identity, a trait's methods, a new native file (Gradle and Xcode list none
+at compile time) behind an existing door.
+
+**Known reading-depth limits.** Most files were read in full; these were
+read at declaration level (types, functions, constructors, draw entry
+points, inspector scopes) with the bodies searched, or only searched:
+
+- `koru-ai-ui/src/lib.rs` (16,578 lines) and `koru-search-ui/src/lib.rs`
+  (7,326): declarations; `koru-socials-ui`'s `paint.rs`: in part.
+- `koru-editor`: 48 of 49 files by declarations (60,375 lines, `editor.rs`
+  10,293 before its tests); `koru-session-view` 18 of 22, `koru-app-shell`
+  14 of 15, `koru-window` 31 of 32, `koru-webview` 2 of 5.
+- `koru-workspace-host`: all 77 files by declarations; `app.rs` (21,795)
+  only searched.
+- `apps/koru`: `mainview/mod.rs` (18,865) and `panes/explore.rs` (8,517) by
+  declarations; `manager_view.rs` in parts; `manage/profiles/`, the Windows
+  half of `taskbar.rs`, `agent.rs`, `reminder_settings.rs` and
+  `schedule_index.rs` searched. Most of the app was read by delegated
+  readers whose reports were checked name by name (batch 3).
+- `apps/koru-document`: five files by declarations, two searched;
+  `apps/koru-agent`: `app.rs`, `run.rs`, `service.rs`, `update.rs` searched
+  with their window and dialog code read, `tray.rs` by declarations, the
+  rest classified from declarations.
+- Batch 4: the 44 Android and 10 iOS files that draw nothing, searched (and
+  read where a record depended on them); `AppUpdates.kt` to line 150 of
+  212; the Store's 30 worker files by module documentation and search;
+  four of `koru-native-notifications`' five files by declarations; the
+  mobile host and its shims searched.
+
+### Defects found, all batches (not fixed)
+
+One list, deduplicated; each batch's section below has the lines.
+
+- **Hard-coded English or fixed formats a person reads**:
+  `koru-appearance-ui` and `koru-search-ui` (neither links `koru-i18n`);
+  `koru-ai-ui`'s status lines, confirmations, provider setup, usage report
+  and service messages; `koru-voice-ui`'s key names; `koru-socials-ui`'s
+  badge letters, `format!`-built labels and separators; `koru-runs-ui`'s
+  joined phrases and a `Debug` name; `koru-editor`'s command menu, color,
+  priority and attribute tables, name prompt and emoji groups;
+  `koru-markdown-view`'s `": "` joins; `koru-session-view`'s public English
+  default copy; the workspace app's Tasks capture and empty state, mini-app
+  failures and refusals, feedback form, Welcome rows, Manage pages, Trash,
+  Jump List, Settings rows, Agent trouble lines and the container's modals,
+  toasts and tooltip; `koru-document`'s confirmations, menus, bubble and
+  find bar; the Agent's windows, tray and dialogs; the Store's tray menu,
+  backup dialogs and failure box; `koru-native-notifications`'
+  `ActionLabels::default()`, against its own doc; the macOS share
+  extension's notice; iOS's device history, details sheet and developer
+  screen; Android's event-kind fallback, exception text in a sentence,
+  developer screen and ASCII list ordinals; fixed `" · "`, `" — "`, `", "`
+  and `": "` separators on both phones and across the desktop.
+- **Local painters beside shared controls**: `koru-session-view`'s managed
+  session buttons (UI-011) and pending-input squares; the workspace host's
+  account switcher and first-run rows over `scene`; the pop-out close
+  dialog (UI-010); the feedback form's checkboxes, radios and cards; the
+  canvas text dialog's own frame; the error badge (UI-003), its disclosure
+  and scrollbar; hand-drawn scrims in place of `KoruModal` (Move to, error,
+  file preview, import, font picker, link device, both update modals,
+  recording setup); the link-device panel's own tab strip; the delegate
+  form's field and choices; the lane's focus ring, tear-off pill and zoom
+  popover; two zoom labels (the app's and `C-SHELL-ZOOM-LABEL`, which has no
+  production caller); `koru-document`'s second floating-menu
+  implementation, its bubble buttons and tooltip and find-bar checkboxes;
+  the mini-app header's own focus ring; Android's raw highlight and code
+  backgrounds and iOS's raw green and red beside each phone's theme.
+- **Missing inspector identities**: no identity for the Socials, canvas,
+  session, voice and run surfaces, the document text and image boundaries,
+  every editor picker but the entity and emoji ones, `koru-markdown-view`,
+  `koru-session-view`'s three views, `koru-app-shell`'s painters, the mini
+  app, Manage's pages below `KoruManage`, Trash, feedback, comparison,
+  support and pop-out surfaces, and the side columns; `KoruLane` opens a
+  *container* scope though COMPONENTS.md calls it a component; the shell
+  chrome names each tab "Tab (legacy shared)". The phones have no Koru
+  inspector by design (COMPONENTS.md).
+- **Test helpers in public API**: `koru-ai-ui`'s three `*_for_host_test`;
+  `koru-runs-ui`'s `press_label`, `has_control`, `lines`,
+  `control_labels`, `RunFolder::unchecked` and an ungated `mod dependency`;
+  `koru-search-ui`'s `has_reader`; `koru-canvas-ui`'s `counters`;
+  `koru-socials-ui`'s `preview_fixture` and hidden `backend`;
+  `koru-workspaces-ui`'s `WorkspaceFixture`; `MarkdownView::lines`;
+  `koru-app-shell`'s `TabKey::for_test`.
+- **Docs and source disagree**: COMPONENTS.md's WF05 CREATE seam, WF02
+  `apps_row.rs`, WF03 `floor.rs`, the Explore ellipsis (UI-012) and the
+  profile switcher row are stale; `EntitySearch::new` says it never dials;
+  `koru-runs-ui`'s "three views" and "both surfaces";
+  `koru-settings-ui`'s three host apps and its Terminal sections;
+  `koru-workspaces-ui` links a deleted surface; line counts quoted in
+  `koru-window`, `onboarding`, `search.rs` and `app.rs` are stale; the
+  Manage tab's D258 Cloud question, Welcome's owner greeting, the support
+  view's cursor, `taskbar.rs`'s categories, `settings_view.rs`'s
+  `VoiceOff`; `mainview/mod.rs`'s module table; `shell_conformance.rs`'s
+  claim to be compiled under test; `koru-document`'s pin button and
+  toolbar; the Agent's "every tray string is English"; and, from the
+  native audit, mobile CATCHUP's *Auto-update — never* against the Android
+  nightly's update notice, its "Android draws its own reminder surfaces"
+  against its *Reminders* row, its "both phones restore" a trashed
+  document (neither phone's UI lists or restores one), its "no phone UI
+  offers" creation and the README's "iOS editor foundation remains
+  disabled" against iOS's creation and editing controls, and the README's
+  "equivalent Koru semantic tokens" against the phones' different accents.
+- **Controls with nothing behind them**: every create and edit control in
+  the iOS app (the store services refuse each one) and its Add image,
+  which inserts a fixed 1×1 picture; `SearchSurface::is_global_search`
+  always true; `AccountSwitcher`, the shell's caption painters and
+  `page_menu::draw_button` with no production caller; `panes/fold.rs` dead.
+
+### Counts
+
+Computed from the registration and the compiled-in source, for the whole
+inventory; the drift checks fail until these tables say what they compute.
+A module is not a component and an identity is not an occurrence: see each
+batch's counts.
+
+<!-- counts:begin -->
+| Count | Value |
+| --- | --- |
+| koru-ui public modules | 58 |
+| koru-ui private modules | 1 |
+| koru-draw public modules | 19 |
+| koru-draw theme public submodules | 5 |
+| domain crates | 21 |
+| domain crate source files | 365 |
+| domain crate lib.rs modules | 251 |
+| domain crate lib.rs public modules | 121 |
+| domain crate modules excluded | 73 |
+| app crates baselined | 5 |
+| app source files | 342 |
+| app files baselined | 23 |
+| app modules classified | 265 |
+| app modules excluded | 135 |
+| records: app crates | 63 |
+| native files: Android | 24 |
+| native files: iOS | 10 |
+| native files: macOS | 1 |
+| native composables | 89 |
+| native views | 30 |
+| native entry points baselined | 30 |
+| records: native platforms | 35 |
+| records | 332 |
+| records: foundations | 61 |
+| records: controls | 88 |
+| records: application compositions | 183 |
+| records: domain crates | 114 |
+| kind: token | 25 |
+| kind: primitive | 24 |
+| kind: widget | 61 |
+| kind: support | 72 |
+| kind: domain composition | 57 |
+| kind: app-local | 58 |
+| kind: native adapter | 35 |
+| token values listed | 174 |
+| symbols | 2378 |
+| symbols with typed recipes | 2 |
+| inspector identities | 60 |
+| inspector identity registration sites | 63 |
+| disposition: story exists | 1 |
+| disposition: no story yet | 211 |
+| disposition: nonvisual | 62 |
+| disposition: platform-only | 33 |
+| disposition: boundary | 25 |
+| symbol story: available | 1 |
+| symbol story: no story yet | 451 |
+| symbol story: nonvisual | 1664 |
+| symbol story: platform-only | 98 |
+| symbol story: boundary | 164 |
+| A2UI: component | 11 |
+| A2UI: host-styled | 1 |
+| A2UI: declarable values | 9 |
+| A2UI: host only | 31 |
+| A2UI: not supported | 2326 |
+<!-- counts:end -->
+
+Platform cells, by platform and availability: each record says one thing
+about each platform.
+
+<!-- cells:begin -->
+| Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| macOS | 0 | 1 | 285 | 0 | 1 | 3 | 34 | 8 | 0 |
+| Linux | 0 | 0 | 285 | 0 | 0 | 7 | 36 | 3 | 1 |
+| Android | 0 | 18 | 0 | 73 | 13 | 195 | 28 | 3 | 2 |
+| iOS | 0 | 14 | 0 | 55 | 13 | 210 | 33 | 6 | 1 |
+<!-- cells:end -->
 
 ## Batch 1 — shared APIs and tokens
 
@@ -93,77 +323,8 @@ not option sets: they arrive with each story's state matrix (STATES.md).
 
 ### Counts
 
-Computed from the registration and the compiled-in source; the drift checks
-fail until this table says what they compute.
-
-<!-- counts:begin -->
-| Count | Value |
-| --- | --- |
-| koru-ui public modules | 58 |
-| koru-ui private modules | 1 |
-| koru-draw public modules | 19 |
-| koru-draw theme public submodules | 5 |
-| domain crates | 21 |
-| domain crate source files | 365 |
-| domain crate lib.rs modules | 251 |
-| domain crate lib.rs public modules | 121 |
-| domain crate modules excluded | 73 |
-| app crates baselined | 5 |
-| app source files | 342 |
-| app files baselined | 23 |
-| app modules classified | 265 |
-| app modules excluded | 135 |
-| records: app crates | 63 |
-| native files: Android | 24 |
-| native files: iOS | 10 |
-| native files: macOS | 1 |
-| native composables | 89 |
-| native views | 30 |
-| native entry points baselined | 30 |
-| records: native platforms | 35 |
-| records | 332 |
-| records: foundations | 61 |
-| records: controls | 88 |
-| records: application compositions | 183 |
-| records: domain crates | 114 |
-| kind: token | 25 |
-| kind: primitive | 24 |
-| kind: widget | 61 |
-| kind: support | 72 |
-| kind: domain composition | 57 |
-| kind: app-local | 58 |
-| kind: native adapter | 35 |
-| token values listed | 174 |
-| symbols | 2378 |
-| symbols with typed recipes | 2 |
-| inspector identities | 60 |
-| inspector identity registration sites | 63 |
-| disposition: story exists | 1 |
-| disposition: no story yet | 211 |
-| disposition: nonvisual | 62 |
-| disposition: platform-only | 33 |
-| disposition: boundary | 25 |
-| symbol story: available | 1 |
-| symbol story: no story yet | 451 |
-| symbol story: nonvisual | 1664 |
-| symbol story: platform-only | 98 |
-| symbol story: boundary | 164 |
-| A2UI: component | 11 |
-| A2UI: host-styled | 1 |
-| A2UI: declarable values | 9 |
-| A2UI: host only | 31 |
-| A2UI: not supported | 2326 |
-<!-- counts:end -->
-
-<!-- cells:begin -->
-| Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
-| macOS | 0 | 1 | 285 | 0 | 1 | 3 | 34 | 8 | 0 |
-| Linux | 0 | 0 | 285 | 0 | 0 | 7 | 36 | 3 | 1 |
-| Android | 0 | 18 | 0 | 73 | 13 | 195 | 28 | 3 | 2 |
-| iOS | 0 | 14 | 0 | 55 | 13 | 210 | 33 | 6 | 1 |
-<!-- cells:end -->
+The whole inventory's counts, this batch's rows among them, are at the top
+of this page ([Counts](#counts)).
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
 above, some modules two (`card`, `menu`, `nav_list`, `text_field`), one a
@@ -272,7 +433,8 @@ cannot collide with another crate's):
   "Socials navigator composition" COMPONENTS.md describes).
 - `koru-voice-ui`: `C-VOICE-SURFACE`*, `C-VOICE-HUD`*.
 - `koru-workspaces-ui`: none; the crate is a controller that draws nothing
-  (COMPONENTS.md says so), and its drawing is the app's Manage tab (batch 3).
+  (COMPONENTS.md says so), and its drawing is the app's Manage tab, recorded
+  by batch 3 as `C-MANAGE-WORKSPACES`.
 
 **Kinds.** A surface a domain crate owns is `DomainComposition`. A small
 painter with its own paint that two hosts draw — the branch chip, the
@@ -313,8 +475,10 @@ the queued messages (`queue.rs`, `ComposerQueue`), the composer notice line
 approval mode picker (`approval_modes.rs`), the tool approval picker and the
 workspace access panel (`privacy.rs`), the skill and command list
 (`skills.rs`), the save chat panel (`lib.rs`), the jump-to-latest button and
-the add-to-chat pill (`quote_pills.rs`). The reply bodies are
-`koru-markdown-view` content (batch 2b) and have no boundary record here.
+the add-to-chat pill (`quote_pills.rs`). The reply bodies are this crate's
+own `live_markdown` over `koru-markdown`, recorded on `C-AI-CONVERSATION`
+(this batch first pointed them at `koru-markdown-view`; batch 2b corrected
+it).
 
 ### What building each surface needs
 
@@ -355,12 +519,13 @@ Neither catalog names a domain crate's surface. The fixed catalog's
 `DocumentSearch` (`crates/koru-ai-core/src/mini_apps.rs`,
 `("search", "DocumentSearch")`) is the mini-app chrome's own field and
 floating results in `apps/koru/src/mini_app/chrome.rs` — an app-local
-surface, batch 3's to record with that mapping — and it reads through
+surface, recorded with that mapping by batch 3 as `C-DOCUMENT-SEARCH` — and
+it reads through
 `koru_search_ui::EntitySearch`. `H-ENTITY-SEARCH` marks `EntitySearch`,
 `new_at`, `request`, `poll`, `pending` and `EntitySearchUpdate` host-only,
 and `tests/drift.rs` holds each to the line of the chrome that uses it.
 `TaskDocument`, `TaskListSelector`, `TaskCollection` and `DocumentHost` are
-backed by `apps/koru` (`mini_app`, `tasks_view`, `leaf`): batch 3.
+backed by `apps/koru` (`mini_app`, `tasks_view`, `leaf`), recorded by batch 3.
 `koru-ai-ui`'s `mini_apps` module only hands a validated declaration from
 the chat's stream to the host, and `koru-artifacts-ui`'s `OpenedArtifact`
 opens a saved mini-app artifact as a Markdown tab; neither serves a catalog
@@ -376,7 +541,9 @@ chip is not applicable on Android and iOS; the search modal, the Settings
 surface and both Socials records are unavailable there ("no consumer of
 this desktop modal", "no implementation of these desktop contracts", "no
 host adapter"). Linux has no column in those records and keeps the shared
-source default.
+source default. Batch 4 settled every Android and iOS cell left not audited
+here against the native sources, and moved the Settings surface to native
+partial (see *Reconciliation*).
 
 ### Bounded searches
 
@@ -440,7 +607,7 @@ own batch.
 
 ### Counts
 
-The table under Batch 1's counts is the whole registration's and now
+The table at the top of this page is the whole registration's and
 includes these crates; its domain rows (crates, source files, `lib.rs`
 modules, excluded modules, records owned by a domain crate) are computed
 from `tests/drift/domain.rs`. Modules, records and occurrences are separate
@@ -610,8 +777,9 @@ IDs marked * are minted here in batch 1's style.
     `C-DOCUMENT-IMAGE`* (COMPONENTS.md's "unregistered Document image
     boundary", `draw::draw_image_row`, and the pending-image placeholder),
     `C-DOCUMENT-TABLE`* and `C-DOCUMENT-DIAGRAM`*.
-  - A row's own controls, as `Widget`s (the tasks view, the Explore rail
-    and `koru-document` draw them too): `C-ROW-GUTTER`*,
+  - A row's own controls, as `Widget`s (the Explore rail and
+    `koru-document` draw them too; this batch also named the Tasks view,
+    which batch 3 found does not): `C-ROW-GUTTER`*,
     `C-ROW-ATTRIBUTE-CHIPS`*, `C-LINK-CARD`*.
   - The panels that float over a row: `C-EDITOR-OVERLAY`* (the shared
     popover frame and its routing), `C-COMMAND-MENU`*, `C-ENTITY-PICKER`*
@@ -672,9 +840,11 @@ IDs marked * are minted here in batch 1's style.
   production consumer** (`apps/koru/src/mainview`, `panes/explore.rs`):
   `ShellState`, the caption and pane-header painters, `Popover`,
   `BannerState` and `ZoomLabel` are exercised only by the crate's own tests
-  and `apps/koru/src/mainview/shell_conformance.rs`, which is
-  `#[cfg(test)]` (ADR-262's seam, kept compiled until `MainView` becomes
-  the shell's surface). The app draws its own zoom flash
+  and `apps/koru/src/mainview/shell_conformance.rs` (ADR-262's seam until
+  `MainView` becomes the shell's surface), which no `mod` line declares,
+  so it is not compiled at all — batch 3 found this; the file's own comment,
+  and this batch first, said it was compiled under test. The app draws its
+  own zoom flash
   (`apps/koru/src/mainview/zoomlabel.rs`). Their availability stays the
   shared desktop default because the source ships in the linked crate; the
   missing consumer is recorded here rather than as a platform status.
@@ -749,10 +919,11 @@ from the source or the page named:
   `docs/features/macos/CATCHUP.md` owns the change that adds it); Linux is
   `Unavailable` (`accessibility.rs` 315: an inert stand-in that never builds
   a tree, with no plan recorded).
-- `C-WINDOW-FRAME` on Linux, and every Android and iOS cell of these
-  records, are `NotAudited`: no page says what the frame or the mobile
-  equivalents are, and a desktop window frame's absence on a phone is not
-  written down anywhere.
+- `C-WINDOW-FRAME` on Linux is `NotAudited`: no page says what the frame
+  is there. This batch left every Android and iOS cell `NotAudited` too;
+  batch 4 settled them from the native sources (see *Reconciliation*:
+  the window frame is unavailable on both phones, pending PLATFORMS.md's
+  owed applicability decision).
 - `C-SYSTEM-MENUS` is `NativeOwned` on Windows and macOS (`muda` is linked
   only there, `Cargo.toml` 279 and 289) and `Unavailable` on Linux, where
   `Popup::show` and `MenuBar::install` are stand-ins (`menus.rs` 156,
@@ -1028,7 +1199,9 @@ Reviewed at `81f287d6` (branch `ui-lab/l1b`), 16 November 2026: the UI the
 app crates under `apps/` draw for themselves. The records are in `app/`, a
 file per area (`app.rs` holds what they share and reuses `domain.rs`'s
 helpers); the drift checks are `tests/drift/app.rs`. Landed a folder at a
-time; each part below says what is recorded and what is still owed.
+time; each part below says what it recorded. Nothing it found is left
+owed: the two OS-surface crates and the macOS extension it handed on were
+recorded by batch 4.
 
 ### Method and how deeply each folder was read
 
@@ -1402,10 +1575,11 @@ only winit use is `NamedKey`), `koru-voice` (the voice worker),
 `koru-com-notification` draw nothing. `koru-store-server` owns only
 operating-system surfaces — a tray icon and menu (`src/tray.rs`, Windows)
 and a fatal message box (`src/log.rs`) — and `koru-notification-owner`
-only titles macOS notification actions; they are not compiled into the
-checks and have no record, a disposition the native audit can revisit.
-`apps/macos/KoruShare/ShareViewController.swift` is the macOS share
-extension (AppKit), left to batch 4.
+only titles macOS notification actions; this batch left them unrecorded
+for the native audit, and batch 4 recorded both (`C-STORE-TRAY`,
+`C-STORE-FAILURE-DIALOG`, `C-MAC-NOTIFICATION-OWNER`, with their files now
+in the checks). `apps/macos/KoruShare/ShareViewController.swift`, the
+macOS share extension (AppKit), is batch 4's `C-MACOS-SHARE-EXTENSION`.
 
 Defects found here (not fixed):
 
@@ -1436,6 +1610,13 @@ Defects found here (not fixed):
   doc on `backup_store`.
 
 ### What batches 2a and 2b left for this batch
+
+All of it is recorded above, as each part says; the list is kept as the
+hand-over it was. Two of its claims were corrected on the way: the Tasks
+view does not draw `C-ROW-GUTTER` or `C-ROW-ATTRIBUTE-CHIPS` (Part 1), and
+`shell_conformance.rs` is not compiled at all, under test or otherwise
+(Part 3); the app's `MainView` and `Host` implementations are `H-MAIN-VIEW`
+and `H-APP-HOST`.
 
 | Owner | Non-test `.rs` files | Identity sites |
 | --- | --- | --- |
@@ -1525,7 +1706,9 @@ from and reads it in its own syntax:
   the Android manifest's components (activities, aliases, services,
   receivers, providers — so a new activity, share target, widget receiver
   or notification service fails), its navigation routes (each also opened
-  by the navigation host) and its Gradle modules.
+  by the navigation host) and its Gradle modules; the iOS project's
+  targets (a widget or notification extension would be one), the root's
+  routes; and every Swift path the macOS packager compiles.
 
 **What it cannot see.** A native file that is renamed or deleted stops the
 suite compiling; a file that is *added* is not seen, because Gradle lists
@@ -2103,7 +2286,10 @@ compositions' helper takes the platforms as every other helper does.
 | `H-EMOJI` | native partial | native partial | the leading-emoji split the profile and workspace tiles draw (`leadingEmoji`) |
 <!-- phones:end -->
 
-## Notes for later batches
+## Keeping the inventory true
+
+The inventory is closed; these are the rules for whoever changes a UI owner
+next, and for the stories that will read these records.
 
 - Add records to the group file they are shown under, with `Kind`,
   `Source::owner` and per-platform `Availability`; add a module baseline to
@@ -2116,4 +2302,13 @@ compositions' helper takes the platforms as every other helper does.
   `LAB_SOURCES`, and nothing else is exempt.
 - A crate's records go in `domain/<crate>.rs` (or the group file of an app
   batch), its non-test files in `tests/drift/domain.rs`'s `SOURCES`, and its
-  `lib.rs` baseline in `CRATES` there.
+  `lib.rs` baseline in `CRATES` there. An app crate's go in `app/`, its
+  files in `tests/drift/app.rs`'s `SOURCES` and its root file in `ROOTS`.
+- A native screen goes in `native/<platform>.rs` with its file in
+  `tests/drift/native.rs`'s `SOURCES`; a new manifest component, route,
+  Gradle module, Xcode target or packaged Swift file goes in that file's
+  baselines. A new Kotlin or Swift file fails nothing on its own: it is
+  found by reading the platform's `ui` folder or target against `SOURCES`.
+- A phone cell names its counterpart in *Reconciliation* when it says
+  native partial, and its page when it says not applicable; a desktop
+  record's phone cell is never `Existing`.
