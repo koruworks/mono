@@ -23,7 +23,7 @@ use std::sync::atomic::AtomicUsize;
 
 /// Accept the one enrollment connection, bounded so a missing request fails
 /// the test instead of hanging it.
-fn accept_within(listener: &TcpListener, within: Duration) -> TcpStream {
+pub(super) fn accept_within(listener: &TcpListener, within: Duration) -> TcpStream {
     listener.set_nonblocking(true).unwrap();
     let deadline = Instant::now() + within;
     loop {
@@ -42,7 +42,7 @@ fn accept_within(listener: &TcpListener, within: Duration) -> TcpStream {
     }
 }
 
-fn steps(log: &[crate::actor::decision_resume::ResumeTurnRecord]) -> Vec<Step> {
+pub(super) fn steps(log: &[crate::actor::decision_resume::ResumeTurnRecord]) -> Vec<Step> {
     log.iter()
         .filter_map(|record| match record.turn {
             ResumeTurn::Stepped(_, step) => Some(step),
@@ -314,7 +314,7 @@ fn turn_once(actor: &mut Actor, inbox: &mpsc::Receiver<Command>) {
     }
 }
 
-fn ledger(actor: &mut Actor) -> &mut dyn koru_delegate_sqlite::BotLedger {
+pub(super) fn ledger(actor: &mut Actor) -> &mut dyn koru_delegate_sqlite::BotLedger {
     actor.orchestrator.ports_mut().store.bots().unwrap()
 }
 
@@ -665,7 +665,7 @@ fn a_stop_after_the_settlement_finishes_on_the_real_tick() {
 
 // ------------------------------------------------------------------ O157
 
-fn decision_of(
+pub(super) fn decision_of(
     actor: &mut Actor,
     prepared: &koru_delegate_runtime::test_support::PreparedDecision,
 ) -> koru_delegate_sqlite::DecisionRecord {
@@ -678,7 +678,7 @@ fn decision_of(
 /// One loop iteration as `run` serves it: the maintenance tick with its
 /// wakes, then the Bot budget deadline for every Run it tracks (the cleanup
 /// owner's retry lives there).
-fn loop_once(actor: &mut Actor, inbox: &mpsc::Receiver<Command>) {
+pub(super) fn loop_once(actor: &mut Actor, inbox: &mpsc::Receiver<Command>) {
     turn_once(actor, inbox);
     for tracked in actor.orchestrator.bot_budget_runs() {
         let _ = actor.orchestrator.bot_budget_tick(tracked);

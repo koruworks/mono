@@ -857,3 +857,50 @@ fn a_process_end_and_a_restart_after_the_settlement_recover_and_finish() {
     assert!(matches!(r.published(), Some((_, DecisionPhase::Settled))));
     r.finish_window_cleanup();
 }
+
+/// M5 (D16): which retained outcome settles a consumed decision before its
+/// turn ends. A private read settles on `confirmed` and on `refused`, never
+/// on `unknown`; and no kind settles on another kind's outcome.
+#[test]
+fn m5_private_settle_cleanup_only_a_final_known_private_outcome_settles_mid_turn() {
+    use koru_delegate_core::{PrivateEffectKey, PrivateEffectRefusal};
+    let key = PrivateEffectKey {
+        run: RunId::mint(),
+        operation_id: uuid::Uuid::new_v4(),
+        attempt: koru_delegate_core::RunAttemptId::mint(),
+        generation: koru_delegate_core::AttemptGeneration::FIRST,
+        turn: koru_delegate_core::AgentTurnId::mint(),
+    };
+    let confirmed = DecisionRetainedEffect::PrivateConfirmed {
+        key: key.clone(),
+        outcome_bytes: 9,
+        withheld: false,
+    };
+    let withheld = DecisionRetainedEffect::PrivateConfirmed {
+        key: key.clone(),
+        outcome_bytes: 9,
+        withheld: true,
+    };
+    let refused = DecisionRetainedEffect::PrivateNotApplied {
+        key: key.clone(),
+        code: PrivateEffectRefusal::CredentialLocked,
+    };
+    let unknown = DecisionRetainedEffect::PrivateUnknown { key };
+    for settles in [&confirmed, &withheld, &refused] {
+        assert!(super::settles_mid_turn(
+            DecisionKind::PrivateOperation,
+            settles
+        ));
+    }
+    assert!(!super::settles_mid_turn(
+        DecisionKind::PrivateOperation,
+        &unknown
+    ));
+    for effect in [&confirmed, &withheld, &refused, &unknown] {
+        assert!(!super::settles_mid_turn(DecisionKind::KoruEdit, effect));
+        assert!(!super::settles_mid_turn(
+            DecisionKind::NativeApproval,
+            effect
+        ));
+    }
+}

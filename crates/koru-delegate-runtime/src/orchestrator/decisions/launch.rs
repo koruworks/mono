@@ -26,6 +26,32 @@ const CONTINUATION_DOMAIN: &str = "koru.bot.decision.continuation.v1";
 /// Domain of the digest of one observed continuation acknowledgment.
 const ACKNOWLEDGMENT_DOMAIN: &str = "koru.bot.decision.continuation.ack.v1";
 
+/// The native tool a resumed Bot calls to perform its one approved read.
+const PRIVATE_READ_TOOL: &str = "read_connection_item";
+
+/// What an allowed decision's continuation tells its successor to do. Closed:
+/// a decision that resumes by a successor is one of these, and a later wait
+/// kind adds its own variant here rather than a branch at each caller. The
+/// key, the fingerprint domain and the acknowledgment digest do not depend on
+/// the variant.
+pub(super) enum ContinuationSubject<'a> {
+    /// The one approved edit, which Koru also saves itself (O133).
+    Edit(&'a koru_delegate_core::decisions::DecisionEditBinding),
+    /// The one approved read, which only the successor's exact retry performs.
+    PrivateRead(&'a koru_delegate_core::decisions::DecisionPrivateBinding),
+}
+
+impl<'a> ContinuationSubject<'a> {
+    /// `None` for a decision that is answered in place and never resumed.
+    pub(super) fn of(binding: &'a DecisionBindingV1) -> Option<Self> {
+        match binding {
+            DecisionBindingV1::KoruEdit(edit) => Some(Self::Edit(edit)),
+            DecisionBindingV1::PrivateOperation(read) => Some(Self::PrivateRead(read)),
+            DecisionBindingV1::NativeApproval(_) => None,
+        }
+    }
+}
+
 /// Provider payload, never logged: the person's original captured task input,
 /// why a new session continues it, and the one edit the person allowed,
 /// exactly as retained in the decision binding (target, operation id and the
@@ -36,11 +62,26 @@ const ACKNOWLEDGMENT_DOMAIN: &str = "koru.bot.decision.continuation.ack.v1";
 /// outcome (and the fallback that saves once if Koru could not): the one-use
 /// consume and the retained result make it never save twice. No answer text
 /// or earlier conversation is added.
+///
+/// For a private read (M5, D8) there is one performer: the resumed Bot's exact
+/// retry. The text names the tool and three ids and nothing else: no title, no
+/// account label, no link and no content.
 fn continuation_body(
     task: &str,
     decision: DecisionId,
-    edit: &koru_delegate_core::decisions::DecisionEditBinding,
+    subject: &ContinuationSubject<'_>,
 ) -> Result<String, RunError> {
+    let edit = match subject {
+        ContinuationSubject::Edit(edit) => edit,
+        ContinuationSubject::PrivateRead(read) => {
+            return Ok(format!(
+                "{task}\n\nKoru resumed this run in a new session after the person allowed decision `{decision}`. The earlier session's conversation is not available here; results it already wrote remain.\n\nThe person approved exactly one read. To perform it, call `{PRIVATE_READ_TOOL}` once with operation_id `{operation}`, connection_id `{connection}` and item_id `{item}`. That performs the one approved read and returns its content. It can never read twice. Then continue the task.",
+                operation = read.operation_id,
+                connection = read.connection,
+                item = read.item,
+            ));
+        }
+    };
     let tool = match edit.action {
         koru_delegate_core::decisions::DecisionEditAction::EditDocument => "edit_document",
     };
@@ -124,7 +165,7 @@ impl Orchestrator {
         if retained.receipt.binding_digest != expected.binding_digest {
             return Err(refused("bot_fenced"));
         }
-        let DecisionBindingV1::KoruEdit(edit) = &retained.receipt.binding else {
+        let Some(subject) = ContinuationSubject::of(&retained.receipt.binding) else {
             return Err(refused("bot_fenced"));
         };
         let workspace = self.decision_run_workspace(run)?;
@@ -132,7 +173,7 @@ impl Orchestrator {
         let text = crate::orchestrator::bot_controls::native_prompt::compose(
             run,
             &workspace,
-            &continuation_body(&task.text, expected.decision, edit)?,
+            &continuation_body(&task.text, expected.decision, &subject)?,
         );
         let input = PendingInput {
             idempotency_key: key,

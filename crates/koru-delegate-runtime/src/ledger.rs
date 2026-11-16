@@ -195,6 +195,9 @@ impl RunStore for RunsDb {
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         Some(self)
     }
+    fn private_effects(&mut self) -> Option<&mut dyn crate::PrivateEffectLedger> {
+        Some(self)
+    }
 
     fn validate_intent(
         &self,

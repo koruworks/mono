@@ -162,7 +162,7 @@ impl Orchestrator {
         Ok(admission.submission.policy)
     }
 
-    fn native_live_turn(
+    pub(in crate::orchestrator) fn native_live_turn(
         &mut self,
         fence: &BotExecutionFence,
         device: DeviceId,

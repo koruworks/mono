@@ -41,6 +41,7 @@ mod control;
 mod economics;
 mod execution;
 mod lifecycle;
+mod private;
 mod schedule;
 mod scope;
 mod tokens;
@@ -56,6 +57,7 @@ pub use execution::{
 pub use lifecycle::{
     RunCancelled, RunCompleted, RunCreated, RunFailed, RunInterrupted, RunResumed, RunStarted,
 };
+pub use private::{PrivateOperationSettled, PrivateOutcome};
 pub use schedule::{
     ScheduleChain, ScheduleContextFailureStage, ScheduleCreated, ScheduleFired,
     ScheduleFiringOutcome, SchedulePauseReason, SchedulePaused, ScheduleRef, ScheduleSkipReason,

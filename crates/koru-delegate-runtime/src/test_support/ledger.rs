@@ -59,6 +59,9 @@ impl RunStore for UncountedLedger {
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         Some(&mut self.0)
     }
+    fn private_effects(&mut self) -> Option<&mut dyn crate::PrivateEffectLedger> {
+        Some(&mut self.0)
+    }
     fn validate_intent(
         &self,
         request: &DelegationRequest,

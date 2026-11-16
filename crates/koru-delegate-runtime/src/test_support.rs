@@ -243,6 +243,31 @@ pub fn edit_request() -> DecisionEditRequest {
     }
 }
 
+/// The private read the fixture decision asks about, or a granted Run
+/// performs: one `read_item` of a fixture item on a fixture connection, with
+/// a fresh operation id and the fingerprint its owners recompute. Ids and
+/// digests only. Pure data.
+pub fn private_proposal() -> koru_delegate_core::PrivateOperationProposal {
+    use koru_delegate_core::decisions::DecisionRevision;
+    use koru_delegate_core::{ConnectionId, ConnectionItemId, PrivateOperationKind};
+    let connection = ConnectionId::from_uuid(fixture_uuid(0x71));
+    let item = ConnectionItemId::from_uuid(fixture_uuid(0x72));
+    let item_ref = DecisionDigest::from_bytes([0x73; 32]);
+    let operation = PrivateOperationKind::ReadItem;
+    koru_delegate_core::PrivateOperationProposal {
+        operation_id: uuid::Uuid::new_v4(),
+        connection,
+        connection_revision: DecisionRevision::new(1).expect("a fixture revision"),
+        account: DecisionDigest::from_bytes([0x74; 32]),
+        item,
+        item_ref,
+        operation,
+        request_fingerprint: koru_delegate_core::private_request_fingerprint(
+            operation, connection, item, item_ref,
+        ),
+    }
+}
+
 // ----------------------------------------------------------- the builder
 
 /// An orchestrator holding a prepared Koru edit decision in memory, the
@@ -291,6 +316,9 @@ pub struct PreparedDecision {
     pub host: HostInstanceId,
     /// The origin attempt's creation key.
     pub origin_creation: IdempotencyKey,
+    /// The read a private decision asks about ([`private_decision_chain`]);
+    /// `None` for an edit decision.
+    pub private: Option<koru_delegate_core::PrivateOperationProposal>,
 }
 
 impl std::fmt::Debug for PreparedDecision {
@@ -357,7 +385,7 @@ pub struct SuccessorKeys {
 /// must be queued ([`PreparedDecision::script_resume`]) before the driver
 /// can stop the origin or start a successor.
 pub fn decision_chain() -> DecisionChain {
-    chain(false)
+    chain(Asked::Edit, false)
 }
 
 /// [`decision_chain`] for a **Routine Run**: the same prepared Koru edit
@@ -376,7 +404,95 @@ pub fn decision_chain() -> DecisionChain {
 /// carries the Routine's barrier, and [`PreparedDecision::submission`] its
 /// Routine provenance.
 pub fn routine_decision_chain() -> DecisionChain {
-    chain(true)
+    chain(Asked::Edit, true)
+}
+
+/// [`decision_chain`] for a **private decision** (M5): the same Run, the
+/// same steps, but the question the person must answer is "may this Bot read
+/// this item once". It is prepared through `bot_prepare_private_decision`
+/// with [`private_proposal`]; the Run's captured and current policy hold no
+/// connection grant, which is what makes the read a question.
+///
+/// Ledger, memory and session script after are [`decision_chain`]'s, with a
+/// private decision in place of the edit decision and no effect row.
+/// [`PreparedDecision::private`] is the proposal.
+pub fn private_decision_chain() -> DecisionChain {
+    chain(Asked::PrivateRead, false)
+}
+
+/// A Bot Run executing its first turn that **holds a connection grant**, and
+/// no decision: what the granted private path starts from.
+pub struct GrantedPrivateRun {
+    pub orchestrator: Orchestrator,
+    pub sessions: Arc<Mutex<SessionScript>>,
+    /// The one instant both the orchestrator and the ledger read.
+    pub clock: Arc<AtomicI64>,
+    pub waits: PublishedWaits,
+    /// The admitted submission; its captured policy holds the grant.
+    pub submission: BotSubmission,
+    pub owner: BotOwner,
+    pub run: RunId,
+    /// The live consumer's fence, with its acknowledged InitialSend turn.
+    pub fence: BotExecutionFence,
+    pub boot: DelegateBootId,
+    /// The fresh proof of the current policy, which holds the grant too.
+    pub proof: FreshBotPolicyProof,
+    /// A read of the granted connection ([`private_proposal`]).
+    pub proposal: koru_delegate_core::PrivateOperationProposal,
+    /// The origin attempt's creation key.
+    pub origin_creation: IdempotencyKey,
+}
+
+/// Build [`GrantedPrivateRun`] through public orchestrator methods only: the
+/// steps of [`decision_chain`] up to the synchronized policy, with the grant
+/// for [`private_proposal`]'s connection in the submission's captured policy
+/// and so in its policy barrier. No decision is prepared, nothing is owed,
+/// and no effect row exists.
+pub fn granted_private_run() -> GrantedPrivateRun {
+    let proposal = private_proposal();
+    private_run(live(false, Some(proposal.grant())), proposal)
+}
+
+/// The same shape for a **Routine Run** that holds **no** connection grant:
+/// a Bot Routine's occurrence executing its first turn
+/// ([`routine_decision_chain`]'s admission), with nothing asked.
+/// [`GrantedPrivateRun::proof`] carries the Routine's barrier, and
+/// [`GrantedPrivateRun::proposal`] is a read neither the Bot's policy nor the
+/// Routine's grant allows.
+pub fn routine_private_run() -> GrantedPrivateRun {
+    private_run(live(true, None), private_proposal())
+}
+
+fn private_run(
+    live: Live,
+    proposal: koru_delegate_core::PrivateOperationProposal,
+) -> GrantedPrivateRun {
+    let origin_creation = live.origin_creation();
+    let Live {
+        orchestrator,
+        sessions,
+        clock,
+        waits,
+        submission,
+        fence,
+        proof,
+        boot,
+        ..
+    } = live;
+    GrantedPrivateRun {
+        owner: submission.provenance.owner,
+        run: submission.request.run,
+        orchestrator,
+        sessions,
+        clock,
+        waits,
+        submission,
+        fence,
+        boot,
+        proof,
+        proposal,
+        origin_creation,
+    }
 }
 
 /// Claim one occurrence of a Bot Routine for `submission` (made a Routine
@@ -550,7 +666,44 @@ fn admit_routine(store: &mut RunsDb, submission: &mut BotSubmission) -> RoutineP
     grant
 }
 
-fn chain(routine: bool) -> DecisionChain {
+/// What the prepared decision asks its person.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Asked {
+    Edit,
+    PrivateRead,
+}
+
+/// A Run executing its first turn, with its policy synchronized and nothing
+/// asked yet: everything [`chain`] and [`granted_private_run`] share.
+struct Live {
+    orchestrator: Orchestrator,
+    sessions: Arc<Mutex<SessionScript>>,
+    clock: Arc<AtomicI64>,
+    documents: DocumentFaults,
+    waits: PublishedWaits,
+    submission: BotSubmission,
+    fence: BotExecutionFence,
+    proof: FreshBotPolicyProof,
+    boot: DelegateBootId,
+    host: HostInstanceId,
+}
+
+impl Live {
+    fn origin_creation(&self) -> IdempotencyKey {
+        // Read through the ledger the orchestrator owns; nothing is written.
+        self.orchestrator
+            .ports()
+            .store
+            .current_attempt(self.submission.request.run)
+            .expect("read the origin attempt")
+            .expect("the origin attempt exists")
+            .provider_session
+            .expect("the origin attempt is bound")
+            .idempotency
+    }
+}
+
+fn live(routine: bool, grant: Option<koru_delegate_core::ConnectionGrantRef>) -> Live {
     let clock = Arc::new(AtomicI64::new(FIXTURE_NOW_MS));
     let host = HostInstanceId::from_uuid(fixture_uuid(0xd1));
     let sessions = Arc::new(Mutex::new(SessionScript::new(host)));
@@ -560,6 +713,9 @@ fn chain(routine: bool) -> DecisionChain {
     )
     .expect("open the in-memory ledger");
     let mut submission = bot_submission(1);
+    if let Some(connection) = grant {
+        submission.policy.connections.insert(connection);
+    }
     let grant = routine.then(|| admit_routine(&mut store, &mut submission));
     let documents = inert::MemoryRunDocuments::new();
     let faults = documents.faults();
@@ -647,23 +803,51 @@ fn chain(routine: bool) -> DecisionChain {
         routine: grant,
     };
     let boot = orchestrator.delegate_boot();
-    let decision = orchestrator
-        .bot_prepare_edit_decision(&fence, device, &edit_request(), &proof, boot)
-        .expect("bot_prepare_edit_decision")
-        .receipt
-        .decision;
+    Live {
+        orchestrator,
+        sessions,
+        clock,
+        documents: faults,
+        waits,
+        submission,
+        fence,
+        proof,
+        boot,
+        host,
+    }
+}
+
+fn chain(asked: Asked, routine: bool) -> DecisionChain {
+    let live = live(routine, None);
+    let origin_creation = live.origin_creation();
+    let Live {
+        mut orchestrator,
+        sessions,
+        clock,
+        documents: faults,
+        waits,
+        submission,
+        fence,
+        proof,
+        boot,
+        host,
+    } = live;
+    let owner = submission.provenance.owner;
+    let device = owner.device;
+    let run = submission.request.run;
+    let private = (asked == Asked::PrivateRead).then(private_proposal);
+    let decision = match &private {
+        None => orchestrator
+            .bot_prepare_edit_decision(&fence, device, &edit_request(), &proof, boot)
+            .expect("bot_prepare_edit_decision"),
+        Some(proposal) => orchestrator
+            .bot_prepare_private_decision(&fence, device, proposal, &proof, boot)
+            .expect("bot_prepare_private_decision"),
+    }
+    .receipt
+    .decision;
     publish_owed(&mut orchestrator, run).expect("publish the initial projection");
 
-    let origin = orchestrator
-        .ports_mut()
-        .store
-        .current_attempt(run)
-        .expect("read the origin attempt")
-        .expect("the origin attempt exists");
-    let origin_creation = origin
-        .provider_session
-        .expect("the origin attempt is bound")
-        .idempotency;
     let ActorRef::Person { profile: human } = submission.request.requested_by else {
         panic!("the fixture submission is a person's request");
     };
@@ -683,6 +867,7 @@ fn chain(routine: bool) -> DecisionChain {
         host,
         origin_creation,
         submission,
+        private,
     };
     DecisionChain {
         orchestrator,
@@ -896,6 +1081,62 @@ impl PreparedDecision {
         orchestrator: &mut Orchestrator,
     ) -> Result<Option<DecisionAcknowledgedContinuation>, RunError> {
         Ok(bot_ledger(orchestrator)?.decision_acknowledged_continuation(self.owner, self.run)?)
+    }
+}
+
+/// A bus that keeps every `delegate.private_operation.settled` fact it was
+/// handed, with the event id it travelled under, and nothing else. A test
+/// installs it in place of the builder's inert bus to count settlements.
+#[derive(Clone, Default)]
+pub struct SettledEvents {
+    published: Arc<Mutex<Vec<(koru_delegate_core::EventId, crate::PrivateOperationSettled)>>>,
+    refusing: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SettledEvents {
+    /// Replace `orchestrator`'s event port with a new recorder and return it.
+    pub fn install(orchestrator: &mut Orchestrator) -> Self {
+        let recorder = Self::default();
+        orchestrator.ports_mut().events = Box::new(recorder.clone());
+        recorder
+    }
+
+    /// Every settled fact published so far, in order.
+    pub fn published(&self) -> Vec<(koru_delegate_core::EventId, crate::PrivateOperationSettled)> {
+        self.published
+            .lock()
+            .expect("the recorder is not poisoned")
+            .clone()
+    }
+
+    /// While set, the bus refuses every settled fact (and keeps none).
+    pub fn refuse(&self, refusing: bool) {
+        self.refusing
+            .store(refusing, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl crate::RunEvents for SettledEvents {
+    fn publish(
+        &mut self,
+        _event: koru_delegate_core::EventId,
+        _fact: &crate::RunFact,
+    ) -> Result<(), crate::PublishFailure> {
+        Ok(())
+    }
+    fn publish_private_settled(
+        &mut self,
+        event: koru_delegate_core::EventId,
+        fact: &crate::PrivateOperationSettled,
+    ) -> Result<(), crate::PublishFailure> {
+        if self.refusing.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(crate::PublishFailure { retryable: true });
+        }
+        self.published
+            .lock()
+            .expect("the recorder is not poisoned")
+            .push((event, *fact));
+        Ok(())
     }
 }
 

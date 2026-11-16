@@ -26,6 +26,13 @@ pub(super) fn bot_failure(error: RunError) -> Failure {
                 true,
             )
         }
+        // IPC 18: each new private refusal has its one fixed text. None
+        // interpolates a value and none is retryable.
+        RunError::Port(error)
+            if koru_delegate_api::bots::private_failure(&error.code).is_some() =>
+        {
+            koru_delegate_api::bots::private_failure(&error.code).expect("checked above")
+        }
         RunError::Port(error) if error.code.starts_with("bot_") => {
             Failure::new(error.code, "The Bot operation was refused.", false)
         }
@@ -115,6 +122,11 @@ impl Actor {
                 .is_some_and(|owner| owner.device != self.device)
         {
             return Err(unavailable("bot_owner_mismatch"));
+        }
+        // IPC 18: a private command that is malformed, or over its 16 KiB
+        // bound, is refused before anything reads the ledger.
+        if command.private_valid() == Some(false) {
+            return Err(unavailable("bot_invalid"));
         }
         let device = self.device;
         let reply = match command {
@@ -558,6 +570,84 @@ impl Actor {
                 // The exact owner/subject read succeeded and found no frozen
                 // cleanup intent; an error above is never reported as Missing.
                 (None, _) => BotReply::Missing,
+            },
+            BotCommand::AnnouncePrivateDispatcher { owner, dispatcher } => {
+                let resolved = self
+                    .orchestrator
+                    .bot_announce_private_dispatcher(owner, dispatcher, device)
+                    .map_err(bot_failure)?;
+                BotReply::PrivateDispatcher {
+                    dispatcher,
+                    resolved,
+                }
+            }
+            BotCommand::PreparePrivateDecision {
+                fence,
+                operation,
+                proof,
+                boot,
+            } => BotReply::Decision {
+                decision: decision_view(
+                    self.orchestrator
+                        .bot_prepare_private_decision(&fence, device, &operation, &proof, boot)
+                        .map_err(bot_failure)?,
+                ),
+            },
+            BotCommand::ConsumePrivateDecision {
+                fence,
+                dispatcher,
+                operation,
+                proof,
+                boot,
+            } => BotReply::PrivateEffect {
+                effect: self
+                    .orchestrator
+                    .bot_consume_private_decision(
+                        &fence, device, dispatcher, &operation, &proof, boot,
+                    )
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::PreparePrivateEffect {
+                fence,
+                dispatcher,
+                operation,
+                proof,
+                boot,
+            } => BotReply::PrivateEffect {
+                effect: self
+                    .orchestrator
+                    .bot_prepare_private_effect(
+                        &fence, device, dispatcher, &operation, &proof, boot,
+                    )
+                    .map_err(bot_failure)?,
+            },
+            BotCommand::AdvancePrivateEffect {
+                key,
+                dispatcher,
+                transition,
+            } => {
+                let effect = self
+                    .orchestrator
+                    .bot_advance_private_effect(&key, dispatcher, &transition, device)
+                    .map_err(bot_failure)?;
+                // A final row may have settled its decision; watchers of the
+                // Run learn it, and the owed Control is published next turn.
+                self.notify(key.run);
+                BotReply::PrivateEffect { effect }
+            }
+            BotCommand::ReadPrivateEffect {
+                run,
+                operation_id,
+                dispatcher,
+            } => match self
+                .orchestrator
+                .bot_read_private_effect(run, operation_id, dispatcher, device)
+                .map_err(bot_failure)?
+            {
+                Some(effect) => BotReply::PrivateEffect { effect },
+                // The Run's exact owner read succeeded and found no effect;
+                // an error above is never reported as Missing.
+                None => BotReply::Missing,
             },
             BotCommand::TakeOver { .. } | BotCommand::HandBack { .. } => {
                 return Err(unavailable("bot_control_unsupported"));

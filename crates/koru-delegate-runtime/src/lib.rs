@@ -84,6 +84,7 @@ pub use ports::{
     Clock, ContextCapture, ContextPin, CreatedSession, ListedRun, ListedSchedule,
     MaterializeFailure, MaterializeStage, MaterializedContext, McpEndpoints, McpLaunch,
     NoScheduleEvents, Port, PortError, PortResult, Ports, Preamble, PreparedScheduleEvent,
+    PrivateEffectLedger, PrivateOperationSettled,
     PublishFailure, RoutineBridge, RoutineBridgeFailure, RoutineBridgeResult, RoutineCandidate,
     RoutineLedger, RoutinePreparationObservation, RoutinePreparedReply, RoutineWork,
     DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage, RunDocumentHandle,

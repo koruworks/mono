@@ -372,6 +372,10 @@ pub struct Orchestrator {
     /// open-wait caps; a Run leaves only when a read proves no wait open.
     decision_authority: std::collections::BTreeMap<RunId, koru_delegate_core::BotOwner>,
     decision_authority_seeded: bool,
+    /// Private effects whose settled event this process published (M5), by
+    /// Run and operation. Bounded; only a convenience: the event id is
+    /// derived from the same pair, so a repeat is deduplicated by the journal.
+    private_settled: std::collections::BTreeSet<(RunId, uuid::Uuid)>,
 }
 
 impl Orchestrator {
@@ -389,6 +393,7 @@ impl Orchestrator {
             publication_retry: record::PublicationRetry::default(),
             decision_authority: std::collections::BTreeMap::new(),
             decision_authority_seeded: false,
+            private_settled: std::collections::BTreeSet::new(),
         }
     }
 

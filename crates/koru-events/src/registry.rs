@@ -324,6 +324,29 @@ const DELEGATE_PRIOR_ATTEMPT: &[&str] = &["ended", "unknown"];
 /// re-submitted with the recorded pins and the artifacts so far.
 const DELEGATE_RESUME_SEAM: &[&str] = &["native", "recorded_context"];
 
+/// `PrivateOperationKind` (M5): what one private operation does. One read.
+const DELEGATE_PRIVATE_KIND: &[&str] = &["read_item"];
+
+/// The final stages of a private effect. `prepared` and `dispatched` are open
+/// stages and are never reported.
+const DELEGATE_PRIVATE_STAGE: &[&str] = &["confirmed", "refused", "unknown"];
+
+/// `PrivateEffectRefusal`: why a private operation was not performed. A
+/// closed code, never a vendor message.
+const DELEGATE_PRIVATE_REFUSAL: &[&str] = &[
+    "not_dispatched",
+    "access_denied",
+    "revoked",
+    "wrong_account",
+    "credential_expired",
+    "credential_locked",
+    "credential_missing",
+    "item_unavailable",
+    "destination_changed",
+    "vendor_rejected",
+    "unavailable",
+];
+
 /// D29: a completed run that registered no artifact is finished needing
 /// attention, never a delivered result.
 const DELEGATE_COMPLETION: &[&str] = &["delivered", "needs_attention"];
@@ -1770,6 +1793,67 @@ pub const REGISTRY: &[EventSpec] = &[
               slept-through slot is skipped with zero catch-up (D25), and a \
               busy scope is skipped rather than overlapped (D34). The actor is \
               the delegate worker; a planned skipped RunId is never exposed.",
+    },
+    // ------------------------------------------------- private operations
+    //
+    // M5. Content-free: ids, closed tokens, a flag and a size. The row never
+    // carries an account label, a connection name, an item title, a vendor
+    // reference, a link, a token, content that was read or a vendor message.
+    // No subscriber acts on it: it wakes readers, which then read
+    // authoritative state.
+    //
+    // The contract's second row, `connection.changed`, is not registered
+    // here: `connection` is not an area of the event-name grammar
+    // (`AREAS`, which grows by review), and adding an area is a decision of
+    // its own.
+    EventSpec {
+        name: "delegate.private_operation.settled",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr("run", "The run the operation belongs to."),
+            id_attr("bot", "The Bot that ran it."),
+            id_attr(
+                "operation",
+                "The effect's own id: the operation id its tool call carried.",
+            ),
+            id_attr("connection", "The connection the operation used."),
+            token_attr("kind", DELEGATE_PRIVATE_KIND, "What the operation does."),
+            token_attr(
+                "stage",
+                DELEGATE_PRIVATE_STAGE,
+                "The final stage. `unknown` means the call may have reached \
+                 the vendor and no trustworthy answer was recorded; it is \
+                 never resent.",
+            ),
+            optional(token_attr(
+                "refusal",
+                DELEGATE_PRIVATE_REFUSAL,
+                "Why it was not performed, exactly for `refused`. A closed \
+                 code, never a vendor message.",
+            )),
+            optional(flag_attr(
+                "withheld",
+                "Exactly for `confirmed`: `true` when the content was dropped \
+                 because access was revoked while the call was in flight.",
+            )),
+            optional(id_attr(
+                "decision",
+                "The decision that allowed the operation, when a person was \
+                 asked.",
+            )),
+            optional(count_attr(
+                "outcome_bytes",
+                "Exactly for `confirmed`: the size of what was read. Never \
+                 the content, and never a digest of it.",
+            )),
+        ],
+        doc: "One private operation reached a final stage: `confirmed`, \
+              `refused` or `unknown`. Published after the ledger committed \
+              that stage, under an id derived from the run and the operation, \
+              so a retry is deduplicated and an effect has one row. Every \
+              final stage is final. The actor is the orchestrator.",
     },
     // ------------------------------------------- the Store's catalog facts
     //

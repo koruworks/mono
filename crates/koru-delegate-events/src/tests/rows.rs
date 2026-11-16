@@ -38,7 +38,11 @@ fn every_delegate_row_has_exactly_one_builder() {
     let built_set: BTreeSet<&str> = built.iter().copied().collect();
     assert_eq!(built.len(), built_set.len(), "a row was built twice");
     assert_eq!(built_set, registered);
-    assert_eq!(registered.len(), 32, "the roadmap's rows, exactly");
+    assert_eq!(
+        registered.len(),
+        33,
+        "the roadmap's rows, and M5's settled private operation, exactly"
+    );
 }
 
 /// D41: every row stays on this machine. The class is domain — 90 days in

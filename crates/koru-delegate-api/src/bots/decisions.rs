@@ -65,7 +65,9 @@ pub struct DecisionReceiptView {
     pub resume: Option<DecisionResume>,
 }
 
-fn operation_uuid<'de, D: serde::Deserializer<'de>>(d: D) -> Result<uuid::Uuid, D::Error> {
+pub(super) fn operation_uuid<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> Result<uuid::Uuid, D::Error> {
     let text = String::deserialize(d)?;
     let id = uuid::Uuid::parse_str(&text)
         .map_err(|_| serde::de::Error::custom("invalid decision operation UUID"))?;

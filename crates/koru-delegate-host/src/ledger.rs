@@ -14,6 +14,7 @@
 //! guard while it calls another port or waits on the actor rendezvous.
 
 mod bots;
+mod private;
 
 use std::sync::{Arc, Mutex};
 
@@ -355,6 +356,9 @@ impl RunStore for SharedLedger {
             .decision_open_publications_for(run, limit)
     }
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
+        Some(self)
+    }
+    fn private_effects(&mut self) -> Option<&mut dyn koru_delegate_runtime::PrivateEffectLedger> {
         Some(self)
     }
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {

@@ -26,6 +26,7 @@ mod decision_composition;
 mod decision_resume;
 mod decisions;
 mod native_lookup;
+mod private;
 pub(crate) mod routine;
 mod routine_route;
 

@@ -8,7 +8,7 @@
 //! `every_row` is the fixture the crate's promises are checked against: one
 //! envelope per registry row, built through the builders with deterministic
 //! ids and clocks, so the validity, privacy and vector tests all speak about
-//! the same 32 envelopes and a row added to the registry without a builder —
+//! the same 33 envelopes and a row added to the registry without a builder —
 //! or a builder without a row — fails `rows::every_delegate_row_has_exactly_one_builder`.
 
 use std::collections::BTreeSet;
@@ -31,6 +31,7 @@ mod actors;
 mod dependency;
 mod identity;
 mod privacy;
+mod private;
 mod rows;
 mod tokens;
 mod vectors;
@@ -553,6 +554,16 @@ pub(crate) fn every_row() -> Vec<(&'static str, Envelope)> {
                     occurrence_ms: T0 + 172_800_000,
                     reason: ScheduleSkipReason::busy(run_ref().run),
                 },
+            ),
+        ),
+        (
+            "delegate.private_operation.settled",
+            chain.private_operation_settled(
+                stamp(32),
+                private::private_fact(PrivateOutcome::Confirmed {
+                    outcome_bytes: 2048,
+                    withheld: false,
+                }),
             ),
         ),
     ]

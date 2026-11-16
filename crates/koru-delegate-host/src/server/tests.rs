@@ -311,7 +311,7 @@ fn decision_commands_need_the_private_capability_device_and_the_current_frame() 
 fn ipc15_frames_are_refused_before_decoding_and_dropped_unanswered_so_the_peer_sees_delegate_unavailable()
  {
     use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
-    assert_eq!(WIRE_VERSION, 17);
+    assert_eq!(WIRE_VERSION, 18);
     let previous = WIRE_VERSION - 1;
     let owner: koru_delegate_core::BotOwner = serde_json::from_value(
         serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":uuid::Uuid::new_v4()}),
@@ -378,7 +378,7 @@ fn routine_control_route(
 #[test]
 fn routine_control_frames_need_the_private_capability_this_device_and_ipc17() {
     use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority, RoutineControlAction};
-    assert_eq!(WIRE_VERSION, 17);
+    assert_eq!(WIRE_VERSION, 18);
     let capability =
         BotDelegateAuthority::new("routine-control-private-capability-0123456789012345".into())
             .unwrap();
@@ -538,4 +538,113 @@ fn routine_control_is_served_by_the_scheduler_and_never_reaches_the_actor() {
         Err(mpsc::TryRecvError::Empty)
     ));
     scheduler.stop();
+}
+
+/// IPC 18. A private command needs the private Bot capability, and the
+/// commands that assert an owner need this device. A peer still on IPC 17 is
+/// refused by its version before its body is decoded and is dropped
+/// unanswered (it sees `delegate_unavailable`), so no private command ever
+/// reaches the actor from it. A bounded private command over its 16 KiB is
+/// dropped the same way, before its content is decoded.
+#[test]
+fn m5_ipc18_frame_version_an_ipc17_peer_is_refused_cleanly_and_an_oversized_private_frame_is_dropped()
+ {
+    use koru_delegate_api::bots::{
+        BotCommand, BotDelegateAuthority, PRIVATE_FRAME_LIMIT, PrivateDispatcherId,
+        PrivateEffectKey, PrivateEffectTransition,
+    };
+    assert_eq!(WIRE_VERSION, 18);
+    let capability =
+        BotDelegateAuthority::new("private-operation-capability-01234567890123456".into()).unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let mut identity = Identity {
+        launch_id: "fixture".into(),
+        authority: "ordinary-stop".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
+    };
+    let owner: koru_delegate_core::BotOwner = serde_json::from_value(
+        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":device}),
+    )
+    .unwrap();
+    let dispatcher = PrivateDispatcherId::mint();
+    let run = koru_delegate_core::RunId::mint();
+    let commands = [
+        BotCommand::AnnouncePrivateDispatcher { owner, dispatcher },
+        BotCommand::AdvancePrivateEffect {
+            key: PrivateEffectKey {
+                run,
+                operation_id: uuid::Uuid::new_v4(),
+                attempt: koru_delegate_core::RunAttemptId::mint(),
+                generation: koru_delegate_core::AttemptGeneration::FIRST,
+                turn: koru_delegate_core::AgentTurnId::mint(),
+            },
+            dispatcher,
+            transition: PrivateEffectTransition::Unknown {},
+        },
+        BotCommand::ReadPrivateEffect {
+            run,
+            operation_id: uuid::Uuid::new_v4(),
+            dispatcher,
+        },
+    ];
+    for command in commands {
+        assert!(admits_bot_command(&identity, &capability, &command));
+        let other =
+            BotDelegateAuthority::new("ordinary-scope-label-01234567890123456789".into()).unwrap();
+        assert!(!admits_bot_command(&identity, &other, &command));
+        if command.owner().is_some() {
+            // An owner on another device is not this worker's.
+            identity.device_id = koru_delegate_core::DeviceId::new().to_storage();
+            assert!(!admits_bot_command(&identity, &capability, &command));
+            identity.device_id = device.to_storage();
+        }
+        let request = Request::Bot {
+            authority: capability.clone(),
+            command,
+        };
+        for older in 1..WIRE_VERSION {
+            assert!(
+                read_current_request(&mut frame::encode(older, &request).unwrap().as_slice())
+                    .unwrap()
+                    .is_none(),
+                "an IPC {older} frame never becomes a private command"
+            );
+        }
+        // The version is checked before any body decoding.
+        let undecodable = frame::encode(17, &serde_json::json!({"old": true})).unwrap();
+        assert!(
+            read_current_request(&mut undecodable.as_slice())
+                .unwrap()
+                .is_none()
+        );
+        // Over its bound: dropped unanswered, and no command exists.
+        let mut padded = serde_json::to_value(&request).unwrap();
+        padded["command"]["padding"] = "x".repeat(PRIVATE_FRAME_LIMIT).into();
+        let oversized = frame::encode(WIRE_VERSION, &padded).unwrap();
+        assert!(
+            read_current_request(&mut oversized.as_slice())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            read_current_request(&mut frame::encode(WIRE_VERSION, &request).unwrap().as_slice())
+                .unwrap(),
+            Some(request)
+        );
+    }
+    // What an IPC 17 worker would have been sent does not decode there
+    // either: the command names did not exist, so nothing is reinterpreted.
+    let unknown_to_17 = frame::encode(
+        17,
+        &serde_json::json!({"frame":"bot","authority":"x".repeat(48),
+            "command":{"command":"announce_private_dispatcher"}}),
+    )
+    .unwrap();
+    assert!(
+        read_current_request(&mut unknown_to_17.as_slice())
+            .unwrap()
+            .is_none()
+    );
 }

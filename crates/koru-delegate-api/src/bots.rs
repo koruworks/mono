@@ -24,10 +24,18 @@ pub use koru_delegate_core::{
 use serde::{Deserialize, Serialize};
 
 mod decisions;
+mod private;
 mod routine_control;
 pub use decisions::{DecisionAnswerRequest, DecisionEditProposal, DecisionReceiptView};
 pub use koru_delegate_core::{
     ROUTINE_CONTROL_WIRE_LIMIT, RoutineControlLifecycle, RoutineControlOutcome,
+};
+pub use private::{
+    ConnectionGrantRef, ConnectionId, ConnectionItemId, PRIVATE_FAILURES, PRIVATE_FRAME_LIMIT,
+    PRIVATE_RESOLVED_LIMIT, PRIVATE_WIRE_LIMIT, PrivateDispatcherId, PrivateEffectDisposition,
+    PrivateEffectKey, PrivateEffectRefusal, PrivateEffectStage, PrivateEffectTransition,
+    PrivateEffectView, PrivateOperationKind, PrivateOperationProposal, PrivateRoutineBinding,
+    private_failure, private_frame_oversized,
 };
 pub use routine_control::{
     ROUTINE_CONTROL_FRAME_LIMIT, RoutineControlAction, routine_control_frame_oversized,
@@ -337,8 +345,80 @@ pub enum BotCommand {
         expected_revision: u32,
         occurrence_ms: i64,
     },
+    /// IPC 18: the AI worker adopted `owner` under this process's dispatcher
+    /// id. Sent whenever it adopts an owner, not only at start. It closes
+    /// what a dead dispatcher instance left open for that owner and nothing
+    /// else; `Hello` never does.
+    AnnouncePrivateDispatcher {
+        owner: koru_delegate_core::BotOwner,
+        dispatcher: PrivateDispatcherId,
+    },
+    /// IPC 18: prepare the question "may this Bot read this item once" for
+    /// the exact live consumer's current turn. No effect row is written.
+    PreparePrivateDecision {
+        fence: BotExecutionFence,
+        #[serde(with = "private::StrictPrivateProposal")]
+        operation: PrivateOperationProposal,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 18: the one-use consume by the exact acknowledged successor. The
+    /// reply carries `execute` only on the first fresh commit.
+    ConsumePrivateDecision {
+        fence: BotExecutionFence,
+        dispatcher: PrivateDispatcherId,
+        #[serde(with = "private::StrictPrivateProposal")]
+        operation: PrivateOperationProposal,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 18: the intent of a granted read, with no decision. The proof
+    /// carries the Routine barrier for a Routine Run.
+    PreparePrivateEffect {
+        fence: BotExecutionFence,
+        dispatcher: PrivateDispatcherId,
+        #[serde(with = "private::StrictPrivateProposal")]
+        operation: PrivateOperationProposal,
+        proof: koru_delegate_core::FreshBotPolicyProof,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 18, the row's own dispatcher only: what it knows about the vendor
+    /// call. Sizes and codes; never content.
+    AdvancePrivateEffect {
+        #[serde(with = "private::StrictPrivateEffectKey")]
+        key: PrivateEffectKey,
+        dispatcher: PrivateDispatcherId,
+        transition: PrivateEffectTransition,
+    },
+    /// IPC 18: the retained effect of one operation, or `Missing`. History
+    /// only: it never answers `execute` or `deliver`.
+    ReadPrivateEffect {
+        run: koru_delegate_core::RunId,
+        #[serde(deserialize_with = "decisions::operation_uuid")]
+        operation_id: uuid::Uuid,
+        dispatcher: PrivateDispatcherId,
+    },
 }
 impl BotCommand {
+    /// IPC 18 private commands only: whether the command is well formed, and
+    /// for the three that carry no policy proof, within the 16 KiB encoded
+    /// bound. `None` for every other command. The sender checks it while
+    /// encoding and the delegate before it acts.
+    pub fn private_valid(&self) -> Option<bool> {
+        Some(match self {
+            Self::AnnouncePrivateDispatcher { .. } => private::within_wire_limit(self),
+            Self::PreparePrivateDecision { operation, .. }
+            | Self::ConsumePrivateDecision { operation, .. }
+            | Self::PreparePrivateEffect { operation, .. } => operation.valid(),
+            Self::AdvancePrivateEffect { key, .. } => {
+                private::key_valid(key) && private::within_wire_limit(self)
+            }
+            Self::ReadPrivateEffect { operation_id, .. } => {
+                private::operation_valid(operation_id) && private::within_wire_limit(self)
+            }
+            _ => return None,
+        })
+    }
     /// IPC 17 owner controls only: whether the command is well formed and
     /// within its 4 KiB encoded bound. `None` for every other command. The
     /// sender checks it while encoding and the delegate before it acts.
@@ -401,7 +481,11 @@ impl BotCommand {
             | Self::EffectFence { fence }
             | Self::PrepareNativeDecision { fence, .. }
             | Self::PrepareEditDecision { fence, .. }
-            | Self::ConsumeDecisionEdit { fence, .. } => Some(&fence.owner),
+            | Self::ConsumeDecisionEdit { fence, .. }
+            | Self::PreparePrivateDecision { fence, .. }
+            | Self::ConsumePrivateDecision { fence, .. }
+            | Self::PreparePrivateEffect { fence, .. } => Some(&fence.owner),
+            Self::AnnouncePrivateDispatcher { owner, .. } => Some(owner),
             Self::AnswerDecision { answer, .. } => Some(&answer.owner),
             Self::ReadBotDecisionWait { owner, .. } => Some(owner),
             Self::ControlRoutine { route, .. } | Self::TestRoutine { route, .. } => {
@@ -418,7 +502,10 @@ impl BotCommand {
             | Self::CheckNativeEffectDrain { .. }
             | Self::PrepareNativeResult { .. }
             | Self::ReconcileNativeResult { .. }
-            | Self::ConfirmNativeResult { .. } => None,
+            | Self::ConfirmNativeResult { .. }
+            // The actor resolves the Run's immutable binding itself.
+            | Self::AdvancePrivateEffect { .. }
+            | Self::ReadPrivateEffect { .. } => None,
         }
     }
 }
@@ -540,8 +627,31 @@ pub enum BotReply {
         slot: koru_delegate_core::RoutineSlot,
         definition: koru_delegate_core::RoutineDefinitionIdentity,
     },
+    /// IPC 18: the retained private effect after a consume, a granted
+    /// prepare, an advance or a read. Every field is always present; an
+    /// absent value is `null`. `effect.dispatcher` is the row's, not the
+    /// caller's.
+    PrivateEffect {
+        effect: PrivateEffectView,
+    },
+    /// IPC 18: the announce's answer. `resolved` counts the rows of other
+    /// dispatcher instances closed now.
+    PrivateDispatcher {
+        dispatcher: PrivateDispatcherId,
+        resolved: u16,
+    },
 }
 impl BotReply {
+    /// IPC 18 private replies only: well formed and within the 16 KiB encoded
+    /// bound. `None` for every other reply.
+    pub fn private_valid(&self) -> Option<bool> {
+        let formed = match self {
+            Self::PrivateEffect { effect } => private::view_valid(effect),
+            Self::PrivateDispatcher { resolved, .. } => *resolved <= PRIVATE_RESOLVED_LIMIT,
+            _ => return None,
+        };
+        Some(formed && private::within_wire_limit(self))
+    }
     /// IPC 17 owner-control replies only: well formed and within the 4 KiB
     /// encoded bound. `None` for every other reply.
     pub fn routine_control_valid(&self) -> Option<bool> {
@@ -721,8 +831,8 @@ impl LocalBotDelegate {
     }
 }
 impl LocalBotDelegate {
-    /// An owner control over its bound, or malformed, is refused before a
-    /// frame is written. Every other command is unaffected.
+    /// An owner control or a private command over its bound, or malformed, is
+    /// refused before a frame is written. Every other command is unaffected.
     fn encodable(command: &BotCommand) -> Result<(), crate::Failure> {
         if command.routine_control_valid() == Some(false) {
             return Err(crate::Failure::new(
@@ -731,11 +841,21 @@ impl LocalBotDelegate {
                 false,
             ));
         }
+        if command.private_valid() == Some(false) {
+            return Err(crate::Failure::new(
+                "invalid_request",
+                "The private operation request is malformed or too large.",
+                false,
+            ));
+        }
         Ok(())
     }
     fn answer(response: crate::ipc::Response) -> Result<BotReply, crate::Failure> {
         match response {
-            crate::ipc::Response::Bot(reply) if reply.routine_control_valid() != Some(false) => {
+            crate::ipc::Response::Bot(reply)
+                if reply.routine_control_valid() != Some(false)
+                    && reply.private_valid() != Some(false) =>
+            {
                 Ok(reply)
             }
             crate::ipc::Response::Failure(failure) => Err(failure),

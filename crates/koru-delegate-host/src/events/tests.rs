@@ -287,3 +287,77 @@ fn a_rows_identity_and_moment_are_the_stamp_it_was_given() {
     assert_eq!(envelope.event_id, stamp.event_id);
     assert_eq!(envelope.occurred_at_ms, stamp.occurred_at_ms);
 }
+
+/// M5: a settled private effect becomes `delegate.private_operation.settled`
+/// under the id and the moment it was handed, with exactly what its stage
+/// records. An open stage, or a final one missing what it must record, has no
+/// row at all.
+#[test]
+fn m5_events_content_free_a_settled_private_effect_maps_to_its_row_and_an_open_one_to_none() {
+    use koru_delegate_core::{PrivateEffectRefusal, PrivateEffectStage, PrivateOperationKind};
+    use koru_delegate_events::PrivateOutcome;
+    use koru_delegate_runtime::PrivateOperationSettled;
+    let (chain, run) = chain();
+    let fact = PrivateOperationSettled {
+        run,
+        bot: koru_delegate_core::BotId::mint(),
+        operation: uuid::Uuid::new_v4(),
+        connection: koru_delegate_core::ConnectionId::mint(),
+        kind: PrivateOperationKind::ReadItem,
+        stage: PrivateEffectStage::Confirmed,
+        refusal: None,
+        withheld: Some(true),
+        decision: Some(koru_delegate_core::decisions::DecisionId::mint()),
+        outcome_bytes: Some(64),
+        resolved_at_ms: 1_770_000_000_123,
+    };
+    let row = super::private_settled_row(&fact).expect("a final stage has a row");
+    assert_eq!(
+        row.outcome,
+        PrivateOutcome::Confirmed {
+            outcome_bytes: 64,
+            withheld: true
+        }
+    );
+    let stamp = Stamp {
+        event_id: fact.event_id(),
+        occurred_at_ms: fact.resolved_at_ms,
+    };
+    let envelope = chain.private_operation_settled(stamp, row);
+    assert_eq!(envelope.name.as_str(), "delegate.private_operation.settled");
+    assert_eq!(envelope.event_id, fact.event_id());
+    assert_eq!(envelope.occurred_at_ms, 1_770_000_000_123);
+    // The same fact again is the same envelope: a retry is deduplicated.
+    assert_eq!(
+        chain.private_operation_settled(stamp, super::private_settled_row(&fact).unwrap()),
+        envelope
+    );
+
+    let mut refused = fact;
+    refused.stage = PrivateEffectStage::Refused;
+    refused.refusal = Some(PrivateEffectRefusal::Revoked);
+    assert_eq!(
+        super::private_settled_row(&refused).unwrap().outcome,
+        PrivateOutcome::Refused {
+            code: PrivateEffectRefusal::Revoked
+        }
+    );
+    let mut unknown = fact;
+    unknown.stage = PrivateEffectStage::Unknown;
+    assert_eq!(
+        super::private_settled_row(&unknown).unwrap().outcome,
+        PrivateOutcome::Unknown
+    );
+    for open in [PrivateEffectStage::Prepared, PrivateEffectStage::Dispatched] {
+        let mut fact = fact;
+        fact.stage = open;
+        assert!(super::private_settled_row(&fact).is_none(), "{open:?}");
+    }
+    // A final stage that does not carry what it records is not published.
+    let mut incomplete = refused;
+    incomplete.refusal = None;
+    assert!(super::private_settled_row(&incomplete).is_none());
+    let mut incomplete = fact;
+    incomplete.outcome_bytes = None;
+    assert!(super::private_settled_row(&incomplete).is_none());
+}

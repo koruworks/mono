@@ -502,6 +502,10 @@ fn read_current_request(reader: &mut impl std::io::Read) -> std::io::Result<Opti
     if koru_delegate_api::bots::routine_control_frame_oversized(&body) {
         return Ok(None);
     }
+    // IPC 18: the same for a bounded private command over its 16 KiB.
+    if koru_delegate_api::bots::private_frame_oversized(&body) {
+        return Ok(None);
+    }
     frame::decode(&body).map(Some)
 }
 

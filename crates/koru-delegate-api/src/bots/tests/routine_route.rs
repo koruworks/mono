@@ -21,7 +21,7 @@ fn ipc15_claim_read_and_link_ack_are_closed_owner_bound_commands() {
         ),
     ] {
         assert_eq!(command.owner(), Some(&slot.owner));
-        let bytes = koru_ipc::frame::encode(17, &command).unwrap();
+        let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (_, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
         assert_eq!(decoded, command);
@@ -57,8 +57,8 @@ fn ipc15_routine_route_is_closed_owner_bound_and_rejects_ipc14_reply() {
         identity: identity.clone(),
     };
     assert_eq!(command.owner(), Some(&identity.owner));
-    assert_eq!(crate::ipc::WIRE_VERSION, 17);
-    let bytes = koru_ipc::frame::encode(17, &command).unwrap();
+    assert_eq!(crate::ipc::WIRE_VERSION, 18);
+    let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     let (_, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
     assert_eq!(decoded, command);

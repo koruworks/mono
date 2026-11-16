@@ -25,6 +25,7 @@ mod driver;
 mod edit;
 mod expiry;
 mod launch;
+mod private;
 mod resume;
 #[cfg(test)]
 mod routine_tests;

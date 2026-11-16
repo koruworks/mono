@@ -538,7 +538,63 @@ impl BusRunEvents {
     }
 }
 
+/// The row a settled private effect becomes, or `None` for a fact that is not
+/// final or does not carry what its stage records. Closed tokens and sizes
+/// only: nothing here can hold a label, a title, a link or content.
+pub(crate) fn private_settled_row(
+    fact: &koru_delegate_runtime::PrivateOperationSettled,
+) -> Option<koru_delegate_events::PrivateOperationSettled> {
+    use koru_delegate_core::PrivateEffectStage as Stage;
+    use koru_delegate_events::PrivateOutcome;
+    let outcome = match fact.stage {
+        Stage::Confirmed => PrivateOutcome::Confirmed {
+            outcome_bytes: fact.outcome_bytes?,
+            withheld: fact.withheld?,
+        },
+        Stage::Refused => PrivateOutcome::Refused {
+            code: fact.refusal?,
+        },
+        Stage::Unknown => PrivateOutcome::Unknown,
+        Stage::Prepared | Stage::Dispatched => return None,
+    };
+    Some(koru_delegate_events::PrivateOperationSettled {
+        bot: fact.bot,
+        operation: fact.operation,
+        connection: fact.connection,
+        kind: fact.kind,
+        outcome,
+        decision: fact.decision,
+    })
+}
+
 impl RunEvents for BusRunEvents {
+    fn publish_private_settled(
+        &mut self,
+        event: EventId,
+        fact: &koru_delegate_runtime::PrivateOperationSettled,
+    ) -> Result<(), PublishFailure> {
+        let Some(row) = private_settled_row(fact) else {
+            // Not a final stage: there is nothing to say yet.
+            return Ok(());
+        };
+        // The moment is the ledger's own, so a retry sends the same bytes.
+        let stamp = Stamp {
+            event_id: event,
+            occurred_at_ms: fact.resolved_at_ms,
+        };
+        let envelope = match self.chain(fact.run) {
+            Some(chain) => chain.private_operation_settled(stamp, row),
+            None => {
+                tracing::warn!(
+                    target: "koru::delegate",
+                    "this device holds no chain for the run; the private operation's receipt stays in the ledger"
+                );
+                return Err(PublishFailure { retryable: false });
+            }
+        };
+        self.send(&envelope)
+    }
+
     fn publish(&mut self, event: EventId, fact: &RunFact) -> Result<(), PublishFailure> {
         let stamp = Stamp {
             event_id: event,

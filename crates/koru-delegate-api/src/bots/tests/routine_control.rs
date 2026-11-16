@@ -51,7 +51,7 @@ fn frame(command: &BotCommand) -> Vec<u8> {
 
 #[test]
 fn routine_control_commands_are_ipc17_strict_and_owner_bound_to_the_route() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 17);
+    assert_eq!(crate::ipc::WIRE_VERSION, 18);
     for (command, tag, action) in [
         (
             control(RoutineControlAction::Enable {}),
@@ -76,7 +76,7 @@ fn routine_control_commands_are_ipc17_strict_and_owner_bound_to_the_route() {
         let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
         let (version, decoded): (u8, BotCommand) =
             koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();
-        assert_eq!((version, &decoded), (17, &command));
+        assert_eq!((version, &decoded), (crate::ipc::WIRE_VERSION, &command));
         let wire = serde_json::to_value(&command).unwrap();
         assert_eq!(wire["command"], tag);
         if let Some(action) = action {

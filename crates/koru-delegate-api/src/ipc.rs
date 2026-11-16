@@ -45,7 +45,9 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 16 adds Bot decisions (prepare, answer, edit consume, wait read with
 // its resume) and a stable request key on the native approval answer.
 // Version 17 adds the owner control and the owner Test of one Bot Routine.
-pub const WIRE_VERSION: u8 = 17;
+// Version 18 adds private operations: their decision, their one-use consume,
+// their effect intent and receipt, and the dispatcher's announce.
+pub const WIRE_VERSION: u8 = 18;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

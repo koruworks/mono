@@ -32,6 +32,44 @@ pub trait RowToken: Copy {
     fn token(self) -> &'static str;
 }
 
+impl RowToken for koru_delegate_core::PrivateOperationKind {
+    fn token(self) -> &'static str {
+        match self {
+            Self::ReadItem => "read_item",
+        }
+    }
+}
+
+impl RowToken for koru_delegate_core::PrivateEffectRefusal {
+    fn token(self) -> &'static str {
+        match self {
+            Self::NotDispatched => "not_dispatched",
+            Self::AccessDenied => "access_denied",
+            Self::Revoked => "revoked",
+            Self::WrongAccount => "wrong_account",
+            Self::CredentialExpired => "credential_expired",
+            Self::CredentialLocked => "credential_locked",
+            Self::CredentialMissing => "credential_missing",
+            Self::ItemUnavailable => "item_unavailable",
+            Self::DestinationChanged => "destination_changed",
+            Self::VendorRejected => "vendor_rejected",
+            Self::Unavailable => "unavailable",
+        }
+    }
+}
+
+/// The final stage `delegate.private_operation.settled` reports. An open
+/// stage has no variant, so it has no token.
+impl RowToken for crate::private::PrivateOutcome {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Confirmed { .. } => "confirmed",
+            Self::Refused { .. } => "refused",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 impl RowToken for TurnOriginator {
     fn token(self) -> &'static str {
         match self {

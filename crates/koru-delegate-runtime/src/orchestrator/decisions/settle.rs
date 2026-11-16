@@ -4,6 +4,14 @@
 //! positively recorded, so the decision-wait fence (O147) lifts mid-turn and
 //! the resumed Bot can keep working.
 //!
+//! M5 (D16) extends it to a private decision: its consumed effect settles the
+//! decision at once when the read is `confirmed` (withheld or not) **and when
+//! it is `refused`**, so a refused or failed read does not leave the resumed
+//! Bot unable to write or to ask again until its turn ends. An `unknown`
+//! effect settles only at cleanup. The private callers are
+//! `AdvancePrivateEffect` and resolution (`private.rs`); the per-turn resume
+//! driver calls the same hook, as for an edit.
+//!
 //! Both savers end in the same delegate write: Koru's own trigger (the AI's
 //! approved-edit job) and the model's exact retry through the gateway each
 //! run the shared native effect, whose positive Store outcome is recorded by
@@ -29,6 +37,22 @@ use koru_delegate_core::decisions::{
 };
 use koru_delegate_sqlite::BotLedgerError;
 
+/// Which retained outcome settles a consumed decision before its turn ends.
+/// An edit: only its positively `Durable` save. A private read: `confirmed`
+/// (the content was read, delivered or withheld) and `refused` (it was not
+/// performed), never `unknown`. Each kind names only its own outcomes.
+fn settles_mid_turn(kind: DecisionKind, effect: &DecisionRetainedEffect) -> bool {
+    match kind {
+        DecisionKind::KoruEdit => matches!(effect, DecisionRetainedEffect::Durable { .. }),
+        DecisionKind::PrivateOperation => matches!(
+            effect,
+            DecisionRetainedEffect::PrivateConfirmed { .. }
+                | DecisionRetainedEffect::PrivateNotApplied { .. }
+        ),
+        DecisionKind::NativeApproval => false,
+    }
+}
+
 impl Orchestrator {
     /// Settle the Run's open Koru edit decision when its consumed effect's
     /// retained outcome is positively `Durable`. `Ok(true)` when this call
@@ -50,7 +74,7 @@ impl Orchestrator {
         ) else {
             return Ok(false);
         };
-        if state.kind != DecisionKind::KoruEdit
+        if !state.kind.resumes_by_successor()
             || state.authorization != DecisionAuthorization::Consumed
             || state.phase != DecisionPhase::Effect
             || execution.wait.phase != BotWaitPhase::ResumeReserved
@@ -63,9 +87,10 @@ impl Orchestrator {
                 .bot_ledger()?
                 .decision_retained_effect(owner, run, expected.decision)
             {
-                Ok(Some(effect @ DecisionRetainedEffect::Durable { .. })) => effect,
+                Ok(Some(effect)) if settles_mid_turn(state.kind, &effect) => effect,
                 // A refused save, nothing owed, or an effect still unresolved
-                // (a held lease, an unconfirmed or unknown outcome): no change.
+                // (a held lease, an open private row, an unconfirmed or
+                // unknown outcome): no change.
                 Ok(_) | Err(BotLedgerError::Fenced) => return Ok(false),
                 Err(error) => return Err(error.into()),
             };

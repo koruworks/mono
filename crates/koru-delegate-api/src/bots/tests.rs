@@ -4,6 +4,7 @@ use koru_delegate_core::{AttemptGeneration, DocumentId, RunAttemptId, RunId};
 use uuid::Uuid;
 mod admission_read;
 mod decisions;
+mod private;
 mod routine_control;
 mod routine_policy;
 mod routine_route;
@@ -68,7 +69,7 @@ fn ipc14_memory_commands_are_closed_owner_derived_and_reject_ipc13_before_body_d
             authority,
         },
     ];
-    assert_eq!(crate::ipc::WIRE_VERSION, 17);
+    assert_eq!(crate::ipc::WIRE_VERSION, 18);
     for command in commands {
         assert!(command.owner().is_none());
         let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
@@ -223,7 +224,7 @@ fn automatic_interrupt_has_closed_private_ipc_eleven_shape_and_owner() {
 
 #[test]
 fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 17);
+    assert_eq!(crate::ipc::WIRE_VERSION, 18);
     let owner: koru_delegate_core::BotOwner = serde_json::from_value(
         serde_json::json!({"user_scope":Uuid::new_v4(),"device":Uuid::new_v4()}),
     )
@@ -267,7 +268,7 @@ fn unsettled_work_read_is_private_ipc_twelve_owner_bound_and_closed() {
 
 #[test]
 fn drain_commands_use_current_ipc_and_refuse_undeclared_trigger_authority() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 17);
+    assert_eq!(crate::ipc::WIRE_VERSION, 18);
     let request = prepare();
     for reason in [
         NativeDrainReason::GatewayStartup,

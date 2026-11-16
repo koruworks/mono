@@ -194,6 +194,12 @@ pub trait RunStore: ScheduleLedger {
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
         None
     }
+    /// The same ledger connection's private-operation half (M5). A store
+    /// that does not compose it answers `None`, and every private command
+    /// then refuses with `bot_private_unavailable`.
+    fn private_effects(&mut self) -> Option<&mut dyn PrivateEffectLedger> {
+        None
+    }
     /// Validate an existing RunId without creating an intent. Used before
     /// scope preflight so an exact satisfied retry keeps its §7.1 answer.
     fn validate_intent(
@@ -279,8 +285,10 @@ pub trait RunStore: ScheduleLedger {
     ) -> Result<WriteOutcome, LedgerError>;
 }
 
+mod private;
 mod publication;
 mod routines;
+pub use private::*;
 pub use publication::*;
 pub use routines::*;
 
@@ -1347,6 +1355,21 @@ pub struct PublishFailure {
 /// it (§7.1, §17.2).
 pub trait RunEvents {
     fn publish(&mut self, event: EventId, fact: &RunFact) -> Result<(), PublishFailure>;
+    /// `delegate.private_operation.settled` (M5): one private effect reached
+    /// a final stage. Called after the ledger committed that stage, under the
+    /// id [`PrivateOperationSettled::event_id`] derives from the effect, so
+    /// every retry carries the same id and the journal keeps one row. It does
+    /// not ride the pending-publication queue: the fact is rebuilt from the
+    /// retained row whenever that row is observed again. A host without a bus
+    /// keeps nothing.
+    fn publish_private_settled(
+        &mut self,
+        event: EventId,
+        fact: &PrivateOperationSettled,
+    ) -> Result<(), PublishFailure> {
+        let _ = (event, fact);
+        Ok(())
+    }
 }
 
 // ------------------------------------------------------------- the preamble

@@ -5,6 +5,7 @@ mod boot;
 mod decisions;
 mod host_gone;
 mod native_results;
+mod private;
 mod publication;
 mod routines;
 
