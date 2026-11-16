@@ -37,6 +37,14 @@
 //! [`PREVIEW_MIN_WIDTH`]. When a column closes with the keyboard inside it,
 //! the keyboard goes to the toggle that opens it again.
 //!
+//! **The navigator's edge drags**, between the width it opens at and twice
+//! that, by the app shell's own grip: an undrawn band over the line between
+//! the navigator and the centre, with the column-resize pointer. As in the
+//! app it is the pointer's only. A window too narrow for the dragged width
+//! shows the navigator narrower, down to its narrowest, before the rule
+//! above closes a column; the dragged width is kept and comes back with the
+//! room.
+//!
 //! The surface is one element tree ([`koru_draw::el`]); every size in it is a
 //! token ([`super::tokens`]). One layout gives the frame that paint, the
 //! pointer and the keyboard all read, so where a control is drawn and where
@@ -156,11 +164,14 @@ impl Side {
     }
 }
 
-/// Which side columns a window shows.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+/// Which side columns a window shows, and how wide the navigator is in it.
+#[derive(Copy, Clone, Debug, PartialEq)]
 struct Columns {
     navigator: bool,
     properties: bool,
+    /// The navigator's width while it shows: the width it was dragged to,
+    /// or as much of that as leaves the preview its least.
+    navigator_width: f32,
 }
 
 impl Columns {
@@ -176,7 +187,7 @@ impl Columns {
     fn width(self) -> f32 {
         let line = theme::BORDER_W as f32;
         let navigator = if self.navigator {
-            NAVIGATOR_WIDTH.value + line
+            self.navigator_width + line
         } else {
             0.0
         };
@@ -386,6 +397,13 @@ pub(crate) struct Lab {
     /// The theme or the language changed and the process's other window has
     /// not been told.
     appearance_changed: bool,
+    /// How wide the person dragged the navigator, between
+    /// [`NAVIGATOR_WIDTH`] and [`NAVIGATOR_MAX_WIDTH`]. Kept while the
+    /// navigator is hidden and while a narrow window shows it narrower; held
+    /// in memory only, so the next Lab opens at the default again.
+    navigator_width: f32,
+    /// The navigator's edge being dragged: how far from the edge it is held.
+    edge_drag: Option<f32>,
     /// What the person asked of each side column: shown, hidden, or `None`
     /// while it follows the window's width. By [`Side`]: navigator, then
     /// properties.
@@ -431,6 +449,8 @@ impl Lab {
             width: PreviewWidth::Fit,
             menu: None,
             appearance_changed: false,
+            navigator_width: NAVIGATOR_WIDTH.value,
+            edge_drag: None,
             asked: [None; 2],
             opened_last: Side::Navigator,
             page_scroll: 0.0,
@@ -518,33 +538,64 @@ impl Lab {
     /// person asked for it, or, unasked, while there is room for it. When
     /// both are asked for and the window has no room for both, the one
     /// opened last stays and the other gives way until there is room again.
+    ///
+    /// **The navigator narrows before a column closes.** Which columns show
+    /// is decided with the navigator at its narrowest; shown, it is then as
+    /// wide as it was dragged to, or as much of that as leaves the preview
+    /// its least. The dragged width itself is kept, so it comes back when
+    /// the window has room again.
     fn columns(&self, width: f32) -> Columns {
+        let narrowest = |navigator: bool, properties: bool| Columns {
+            navigator,
+            properties,
+            navigator_width: NAVIGATOR_WIDTH.value,
+        };
         let fits = |columns: Columns| width - columns.width() >= PREVIEW_MIN_WIDTH.value;
         let [navigator, properties] = self.asked;
         let navigator = navigator.unwrap_or(true);
-        let properties = properties.unwrap_or_else(|| {
-            fits(Columns {
-                navigator,
-                properties: true,
-            })
-        });
-        let both = Columns {
-            navigator,
-            properties,
+        let properties = properties.unwrap_or_else(|| fits(narrowest(navigator, true)));
+        let mut shown = narrowest(navigator, properties);
+        if navigator && properties && !fits(shown) {
+            shown = match self.opened_last {
+                Side::Navigator => narrowest(true, false),
+                Side::Properties => narrowest(false, true),
+            };
+        }
+        if shown.navigator {
+            // What the window can give the navigator beyond its narrowest.
+            let spare = (width - shown.width() - PREVIEW_MIN_WIDTH.value).max(0.0);
+            shown.navigator_width = self
+                .navigator_width
+                .min(NAVIGATOR_WIDTH.value + spare)
+                .max(NAVIGATOR_WIDTH.value);
+        }
+        shown
+    }
+
+    /// **The band that resizes the navigator**: the app shell's own grip,
+    /// straddling the navigator's edge with the centre, half over each. It
+    /// is not drawn; the pointer says what it is. `None` while the navigator
+    /// is hidden.
+    fn navigator_grip(&self) -> Option<Rect> {
+        let navigator = self.laid.as_ref()?.frame.rect_of("Navigator")?;
+        Some(koru_app_shell::panel::grip(navigator))
+    }
+
+    /// Drag the navigator's edge to `x`, held `grab` from the edge. The
+    /// width is held between the narrowest and the widest the navigator
+    /// goes, and to what leaves the preview its least: at any of the three
+    /// the edge stops and the pointer goes on without it. Returns whether
+    /// the navigator's width changed.
+    fn drag_navigator(&mut self, x: f32, grab: f32) -> bool {
+        let Some(size) = self.frame_size() else {
+            return false;
         };
-        if !(navigator && properties) || fits(both) {
-            return both;
-        }
-        match self.opened_last {
-            Side::Navigator => Columns {
-                navigator: true,
-                properties: false,
-            },
-            Side::Properties => Columns {
-                navigator: false,
-                properties: true,
-            },
-        }
+        // The most this window can show, found by asking for the widest.
+        let before = self.columns(size.0).navigator_width;
+        self.navigator_width = NAVIGATOR_MAX_WIDTH.value;
+        let most = self.columns(size.0).navigator_width;
+        self.navigator_width = (x - grab).clamp(NAVIGATOR_WIDTH.value, most);
+        self.navigator_width != before
     }
 
     /// The columns the window showed in its last frame, or would in its
@@ -900,6 +951,12 @@ impl Lab {
             // The Lab's caption has no window menu.
             Some(caption::Action::WindowMenu) | None => {}
         }
+        // The navigator's edge is taken hold of before anything under the
+        // band, which lies half over the list and half over the centre.
+        if let Some(grip) = self.navigator_grip().filter(|grip| grip.contains(x, y)) {
+            self.edge_drag = Some(x - (grip.x + grip.w * 0.5));
+            return true;
+        }
         // A scrollbar is pressed before whatever is under it.
         if let Some(held) = self.scrollbar_at(x, y) {
             self.scroll_drag = Some(held);
@@ -1205,8 +1262,10 @@ impl Lab {
         let mut workbench = el::row("Workbench").fill();
         if columns.navigator {
             workbench = workbench
-                .child(self.navigator(engine, height))
-                .child(el::divider(Line::Divider));
+                .child(self.navigator(engine, height, columns.navigator_width))
+                // The edge the navigator is resized by: the grip is a band
+                // over this line, not an element of its own.
+                .child(el::divider(Line::Divider).named("Navigator edge"));
         }
         workbench = workbench.child(centre);
         if columns.properties {
@@ -1301,9 +1360,15 @@ impl Lab {
 
     /// The left column: its heading, the search, and under it the catalog
     /// or, when the search finds nothing, a line saying so.
-    fn navigator(&self, engine: &mut TextEngine, height: f32) -> El {
+    fn navigator(&self, engine: &mut TextEngine, height: f32, width: f32) -> El {
         let column = el::col("Navigator")
-            .w(NAVIGATOR_WIDTH)
+            // The token while it is at the width it opens at; the dragged
+            // width, named for what it is, once it is not.
+            .w(if width == NAVIGATOR_WIDTH.value {
+                Length::Metric(NAVIGATOR_WIDTH)
+            } else {
+                Length::Runtime(width, "the navigator's dragged width")
+            })
             .pad(alias::NAV_PAD)
             .gap(NAVIGATOR_GAP)
             .child(
@@ -1407,6 +1472,17 @@ impl WindowApp for Lab {
     }
 
     fn cursor_icon(&self, x: f32, y: f32) -> CursorIcon {
+        // The navigator's edge says what it is before anything under it,
+        // and goes on saying so for as long as it is held. Not under an open
+        // list, which takes the press.
+        if self.edge_drag.is_some()
+            || (self.menu.is_none()
+                && self
+                    .navigator_grip()
+                    .is_some_and(|grip| grip.contains(x, y)))
+        {
+            return CursorIcon::ColResize;
+        }
         if self
             .hit_at(x, y)
             .is_some_and(|key| self.field(key).is_some())
@@ -1436,6 +1512,7 @@ impl WindowApp for Lab {
         self.style_hover = None;
         self.caption_hover = None;
         self.scroll_drag = None;
+        self.edge_drag = None;
         // A list hangs from where its field was.
         self.menu = None;
     }
@@ -1465,6 +1542,7 @@ impl WindowApp for Lab {
                 field.release();
             }
             self.scroll_drag = None;
+            self.edge_drag = None;
             self.menu = None;
         }
         true
@@ -1484,7 +1562,11 @@ impl WindowApp for Lab {
             return self.menu_hover(x, y);
         }
         let caption = self.caption_action_at(x, y);
-        let hot = self.hit_at(x, y);
+        // Nothing under the navigator's edge lights: the band is the edge's.
+        let on_edge = self
+            .navigator_grip()
+            .is_some_and(|grip| grip.contains(x, y));
+        let hot = self.hit_at(x, y).filter(|_| !on_edge);
         let segment = self
             .segmented()
             .filter(|(control, _)| hot == Some(control_key(*control)))
@@ -1519,6 +1601,10 @@ impl WindowApp for Lab {
     }
 
     fn drag(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
+        if let Some(grab) = self.edge_drag {
+            self.pointer = Some((x, y));
+            return self.drag_navigator(x, grab);
+        }
         if self.scroll_drag.is_some() {
             self.pointer = Some((x, y));
             return self.drag_scroll(y);
@@ -1543,6 +1629,7 @@ impl WindowApp for Lab {
             field.release();
         }
         self.scroll_drag = None;
+        self.edge_drag = None;
         false
     }
 
@@ -1656,7 +1743,14 @@ impl Lab {
             }
             if let Some((x, y)) = self.pointer
                 && self.scroll_drag.is_none()
+                && self.edge_drag.is_none()
                 && self.menu.is_none()
+                && !koru_app_shell::panel::grip(
+                    frame
+                        .rect_of("Navigator")
+                        .unwrap_or(Rect::new(0.0, 0.0, 0.0, 0.0)),
+                )
+                .contains(x, y)
             {
                 let hot = frame.hit_at(x, y);
                 settled &= hot == self.hot;

@@ -143,7 +143,10 @@ impl Lab {
             .bool(self.maximised)
             .bool(self.active);
         let columns = self.shown_columns();
-        revision.bool(columns.navigator).bool(columns.properties);
+        revision
+            .bool(columns.navigator)
+            .bool(columns.properties)
+            .f32(columns.navigator_width);
         // The settings: what each is, and the list that is open.
         for setting in Setting::ALL {
             if let Some(choice) = self.chosen(setting.key()) {

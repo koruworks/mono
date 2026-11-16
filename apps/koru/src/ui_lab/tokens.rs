@@ -30,6 +30,11 @@ pub(crate) const CAPTION_GAP: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_GAP", 
 /// window.
 pub(crate) const NAVIGATOR_WIDTH: Metric = Metric::new("UI_LAB_NAVIGATOR_W", 240.0);
 
+/// The widest the navigator can be dragged: twice the width it opens at,
+/// which is also the narrowest it goes. Past this a column of names is
+/// mostly empty.
+pub(crate) const NAVIGATOR_MAX_WIDTH: Metric = Metric::new("UI_LAB_NAVIGATOR_MAX_W", 480.0);
+
 /// The least the preview is left beside the side columns before one of them
 /// gives way: room for the narrowest preview width on offer.
 pub(crate) const PREVIEW_MIN_WIDTH: Metric = Metric::new("UI_LAB_PREVIEW_MIN_W", 320.0);

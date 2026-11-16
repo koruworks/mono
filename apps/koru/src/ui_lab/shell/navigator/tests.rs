@@ -10,6 +10,16 @@ use super::super::tests::{
 };
 use super::*;
 
+/// Which of the three regions a frame holds.
+fn regions(lab: &Lab) -> (bool, bool, bool) {
+    let frame = frame(lab);
+    (
+        frame.rect_of("Navigator").is_some(),
+        frame.rect_of("Preview").is_some(),
+        frame.rect_of("Properties").is_some(),
+    )
+}
+
 const NONE: ModifiersState = ModifiersState::empty();
 
 /// The keys of every navigator row the frame holds, top to bottom.
@@ -779,5 +789,254 @@ fn the_search_field_takes_composed_text_and_reports_its_caret() {
         // Another window has the keyboard: no composition is ours to place.
         lab.focus_changed(false);
         assert_eq!(lab.ime_cursor_area(), None);
+    });
+}
+
+// -------------------------------------------------- the navigator's width
+
+const WIDE: (f32, f32) = (1600.0, 800.0);
+const LEAST: f32 = NAVIGATOR_WIDTH.value;
+const MOST: f32 = NAVIGATOR_MAX_WIDTH.value;
+
+fn navigator_width(lab: &Lab) -> f32 {
+    frame(lab).rect_of("Navigator").unwrap().w
+}
+
+/// Take hold of the navigator's edge, drag it to `x`, and draw.
+fn drag_edge_to(lab: &mut Lab, engine: &mut TextEngine, x: f32, size: (f32, f32)) -> bool {
+    let grip = lab.navigator_grip().expect("the navigator shows");
+    let (gx, gy) = grip.centre();
+    assert!(
+        lab.click(engine, gx, gy, false),
+        "the edge is taken hold of"
+    );
+    let changed = lab.drag(engine, x, gy);
+    draw(lab, engine, size);
+    lab.mouse_up();
+    changed
+}
+
+/// The band that resizes the navigator is the app shell's own: its width,
+/// straddling the line between the navigator and the centre, the whole
+/// height of the column. The pointer says so there and nowhere else, and
+/// nothing under the band lights.
+#[test]
+fn the_navigators_edge_is_the_app_shells_grip() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let navigator = frame(&lab).rect_of("Navigator").unwrap();
+        let edge = frame(&lab).rect_of("Navigator edge").unwrap();
+        let grip = lab.navigator_grip().unwrap();
+        assert_eq!(grip, koru_app_shell::panel::grip(navigator));
+        assert_eq!(grip.w, koru_app_shell::panel::GRIP);
+        assert_eq!(edge.x, navigator.x + navigator.w, "the line it lies over");
+        assert_eq!(grip.x + grip.w * 0.5, edge.x);
+        assert_eq!((grip.y, grip.h), (navigator.y, navigator.h));
+        assert_eq!(LEAST * 2.0, MOST, "at most twice what it opens at");
+
+        let y = grip.y + grip.h * 0.5;
+        for x in [grip.x + 0.5, edge.x, grip.x + grip.w - 0.5] {
+            assert_eq!(lab.cursor_icon(x, y), CursorIcon::ColResize, "{x}");
+        }
+        for x in [grip.x - 2.0, grip.x + grip.w + 2.0] {
+            assert_ne!(lab.cursor_icon(x, y), CursorIcon::ColResize, "{x}");
+        }
+        // A row runs under the inner half of the band; it does not light.
+        lab.pointer_moved(grip.x + 1.0, y);
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(lab.hot, None);
+        // A press there is the edge's: no row is shown, nothing is focused.
+        let shown = lab.entry.catalog_id;
+        assert!(lab.click(&mut engine, grip.x + 1.0, y, false));
+        assert!(lab.edge_drag.is_some());
+        assert_eq!(lab.entry.catalog_id, shown);
+        assert_eq!(lab.focus, None);
+        lab.mouse_up();
+        assert!(lab.edge_drag.is_none());
+
+        // Hidden, there is no edge to take hold of.
+        lab.set_column(Side::Navigator, false);
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(lab.navigator_grip(), None);
+        assert_ne!(lab.cursor_icon(edge.x, y), CursorIcon::ColResize);
+        // Under an open list the press is the list's.
+        lab.set_column(Side::Navigator, true);
+        draw(&mut lab, &mut engine, SIZE);
+        assert!(press(&mut lab, &mut engine, Setting::Theme.key()));
+        assert_ne!(lab.cursor_icon(edge.x, y), CursorIcon::ColResize);
+        assert!(lab.click(&mut engine, edge.x, y, false));
+        assert!(lab.menu.is_none() && lab.edge_drag.is_none());
+    });
+}
+
+/// Dragging the edge widens the navigator up to twice its width and narrows
+/// it back to the width it opens at, and stops at either. The rows are laid
+/// out to the new width and the centre starts where the navigator ends.
+#[test]
+fn dragging_the_edge_resizes_the_navigator_between_its_limits() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(WIDE);
+        assert_eq!(navigator_width(&lab), LEAST);
+        let row = |lab: &Lab| frame(lab).node(entry_key(registry::BUTTON)).unwrap().rect;
+        let narrow_row = row(&lab);
+        let revision = lab.semantics_revision();
+
+        assert!(drag_edge_to(&mut lab, &mut engine, 340.0, WIDE));
+        assert_eq!(navigator_width(&lab), 340.0);
+        assert_eq!(row(&lab).w, narrow_row.w + 100.0, "the rows follow");
+        assert_ne!(lab.semantics_revision(), revision);
+        let frame_now = frame(&lab);
+        let toolbar = frame_now.rect_of("Toolbar").unwrap();
+        let preview = frame_now.rect_of("Preview").unwrap();
+        assert_eq!(toolbar.x, 340.0 + theme::BORDER_W as f32);
+        assert_eq!((toolbar.x, toolbar.w), (preview.x, preview.w));
+        // Only the rows in view are elements, as before.
+        let held = rows_in_frame(&lab).len();
+        assert!(held <= (WIDE.1 / NAVIGATOR_ROW.value).ceil() as usize + 1);
+        assert_sound(&lab, "a wider navigator");
+
+        // Past the widest it stops, and the pointer goes on without it.
+        assert!(drag_edge_to(&mut lab, &mut engine, 1200.0, WIDE));
+        assert_eq!(navigator_width(&lab), MOST);
+        assert!(!drag_edge_to(&mut lab, &mut engine, 1300.0, WIDE));
+        assert_eq!(lab.navigator_width, MOST);
+        assert_sound(&lab, "the widest navigator");
+        // And past the narrowest.
+        assert!(drag_edge_to(&mut lab, &mut engine, 20.0, WIDE));
+        assert_eq!(navigator_width(&lab), LEAST);
+        assert!(!drag_edge_to(&mut lab, &mut engine, -50.0, WIDE));
+        assert_eq!(row(&lab), narrow_row);
+
+        // The edge is held where it was taken: a press off its middle does
+        // not jump the width.
+        let grip = lab.navigator_grip().unwrap();
+        let y = grip.y + 40.0;
+        assert!(lab.click(&mut engine, grip.x + 1.0, y, false));
+        assert!(!lab.drag(&mut engine, grip.x + 1.0, y), "not moved yet");
+        assert!(lab.drag(&mut engine, grip.x + 31.0, y));
+        assert_eq!(lab.navigator_width, LEAST + 30.0);
+        lab.mouse_up();
+        // Released: the pointer moving is a hover again.
+        lab.drag(&mut engine, 500.0, y);
+        assert_eq!(lab.navigator_width, LEAST + 30.0);
+    });
+}
+
+/// The preview keeps its least width: the edge stops where widening the
+/// navigator would take it, and does not move at all when the centre is
+/// already there.
+#[test]
+fn the_edge_stops_where_the_preview_would_lose_its_least() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let preview = |lab: &Lab| frame(lab).rect_of("Preview").unwrap().w;
+        let spare = preview(&lab) - PREVIEW_MIN_WIDTH.value;
+        assert!(spare > 0.0 && LEAST + spare < MOST);
+        assert!(drag_edge_to(&mut lab, &mut engine, 900.0, SIZE));
+        assert_eq!(navigator_width(&lab), LEAST + spare);
+        assert_eq!(preview(&lab), PREVIEW_MIN_WIDTH.value);
+        assert_eq!(regions(&lab), (true, true, true), "no column closed for it");
+        // What was dragged to is what shows: not a wish for more.
+        assert_eq!(lab.navigator_width, LEAST + spare);
+        assert_sound(&lab, "the preview at its least");
+
+        // A window that leaves the centre exactly its least: nowhere to go.
+        let tight = (
+            LEAST + PROPERTIES_WIDTH.value + 2.0 * theme::BORDER_W as f32 + PREVIEW_MIN_WIDTH.value,
+            700.0,
+        );
+        let (mut lab, mut engine) = drawn(tight);
+        assert_eq!(preview(&lab), PREVIEW_MIN_WIDTH.value);
+        assert!(!drag_edge_to(&mut lab, &mut engine, 600.0, tight));
+        assert_eq!(navigator_width(&lab), LEAST);
+        assert_eq!(lab.navigator_width, LEAST);
+    });
+}
+
+/// The dragged width is the Lab's for as long as it is open: hiding and
+/// showing the navigator, a search and a change of language all keep it. A
+/// new Lab opens at the default.
+#[test]
+fn the_dragged_width_lasts_while_the_lab_is_open() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(WIDE);
+        drag_edge_to(&mut lab, &mut engine, 400.0, WIDE);
+        assert_eq!(navigator_width(&lab), 400.0);
+
+        assert!(lab.set_column(Side::Navigator, false));
+        draw(&mut lab, &mut engine, WIDE);
+        assert!(frame(&lab).rect_of("Navigator").is_none());
+        assert!(lab.set_column(Side::Navigator, true));
+        draw(&mut lab, &mut engine, WIDE);
+        assert_eq!(navigator_width(&lab), 400.0);
+
+        lab.set_field(&mut engine, SEARCH, "button");
+        assert!(lab.set_language(&mut engine, koru_i18n::Lang::De));
+        lab.show(&mut engine, record("T-SPACE"));
+        draw(&mut lab, &mut engine, WIDE);
+        assert_eq!(navigator_width(&lab), 400.0);
+        lab.reset(&mut engine);
+        assert_eq!(lab.navigator_width, 400.0);
+
+        let (fresh, _) = drawn(WIDE);
+        assert_eq!(navigator_width(&fresh), LEAST);
+    });
+}
+
+/// As the window narrows, a widened navigator gives its extra width back
+/// before any column closes, and has it again when the room returns: the
+/// width that was dragged to is never overwritten by a squeeze.
+#[test]
+fn a_narrowing_window_squeezes_the_navigator_before_it_closes_a_column() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(WIDE);
+        drag_edge_to(&mut lab, &mut engine, 400.0, WIDE);
+        let line = theme::BORDER_W as f32;
+        let fixed = PROPERTIES_WIDTH.value + 2.0 * line + PREVIEW_MIN_WIDTH.value;
+        let resize = |lab: &mut Lab, engine: &mut TextEngine, width: f32| {
+            lab.resized(PhysicalSize::new(width as u32, 700), 1.0);
+            draw(lab, engine, (width, 700.0));
+        };
+        // Room for all of it.
+        resize(&mut lab, &mut engine, 400.0 + fixed + 50.0);
+        assert_eq!(navigator_width(&lab), 400.0);
+        assert_eq!(regions(&lab), (true, true, true));
+        // Room for some of it: the preview is at its least and the navigator
+        // has what is left.
+        resize(&mut lab, &mut engine, 330.0 + fixed);
+        assert_eq!(navigator_width(&lab), 330.0);
+        assert_eq!(regions(&lab), (true, true, true));
+        assert_eq!(
+            frame(&lab).rect_of("Preview").unwrap().w,
+            PREVIEW_MIN_WIDTH.value
+        );
+        assert_sound(&lab, "a squeezed navigator");
+        // Room for none of it: the navigator at its narrowest, both columns
+        // still showing.
+        resize(&mut lab, &mut engine, LEAST + fixed);
+        assert_eq!(navigator_width(&lab), LEAST);
+        assert_eq!(regions(&lab), (true, true, true));
+        // Narrower still, the existing rule closes the properties; the
+        // navigator then has room for the width it was dragged to again.
+        resize(&mut lab, &mut engine, LEAST + fixed - 1.0);
+        assert_eq!(regions(&lab), (true, true, false));
+        assert_eq!(navigator_width(&lab), 400.0);
+        // The smallest window: squeezed again, and never under its least.
+        resize(&mut lab, &mut engine, SMALLEST.0);
+        assert_eq!(regions(&lab), (true, true, false));
+        assert_eq!(
+            navigator_width(&lab),
+            (SMALLEST.0 - line - PREVIEW_MIN_WIDTH.value).min(400.0)
+        );
+        assert_sound(&lab, "the smallest window");
+        // Opening the properties there closes the navigator, as before.
+        lab.set_column(Side::Properties, true);
+        draw(&mut lab, &mut engine, (SMALLEST.0, 700.0));
+        assert_eq!(regions(&lab), (false, true, true));
+        // Through all of it the dragged width was kept, and it is back.
+        assert_eq!(lab.navigator_width, 400.0);
+        resize(&mut lab, &mut engine, WIDE.0);
+        assert_eq!(regions(&lab), (true, true, true));
+        assert_eq!(navigator_width(&lab), 400.0);
     });
 }
