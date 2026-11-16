@@ -24,7 +24,15 @@ pub(crate) const CAPTION_INSET: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_PAD"
 /// The navigator column: wide enough for a component's name in any of the
 /// eight languages, narrow enough to leave the preview room in the smallest
 /// window.
-pub(crate) const NAVIGATOR_WIDTH: Metric = Metric::new("UI_LAB_NAVIGATOR_W", 200.0);
+pub(crate) const NAVIGATOR_WIDTH: Metric = Metric::new("UI_LAB_NAVIGATOR_W", 240.0);
+
+/// The least the preview is left beside the side columns before one of them
+/// gives way: room for the narrowest preview width on offer.
+pub(crate) const PREVIEW_MIN_WIDTH: Metric = Metric::new("UI_LAB_PREVIEW_MIN_W", 320.0);
+
+/// A side column's toggle in the toolbar: a square as high as the compact
+/// action beside it.
+pub(crate) const TOGGLE_SIZE: Metric = Metric::new("UI_LAB_TOGGLE", 26.0);
 
 /// The properties column: the widest style control, in the language that
 /// spells it longest, inside the panel's inset.

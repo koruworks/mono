@@ -81,7 +81,7 @@ fn the_toolbar_holds_the_three_settings() {
         let (lab, _) = drawn(SIZE);
         let stops = lab.laid.as_ref().unwrap().stops();
         assert_eq!(
-            stops[..4],
+            stops[1..5],
             [
                 Setting::Theme.key(),
                 Setting::Width.key(),
@@ -361,11 +361,13 @@ fn the_preview_width_is_the_stages() {
         pick(&mut lab, &mut engine, Setting::Width, "fit");
         assert_eq!(lab.rect(STAGE).unwrap().w, hugging.w);
 
-        // In the smallest window every preset is wider than the column.
-        lab.set_width(PreviewWidth::Fixed(320));
+        // In the smallest window, with the properties open, the column is
+        // narrower than the preset: the preview is as wide as the column.
+        lab.set_width(PreviewWidth::Fixed(480));
+        lab.set_column(Side::Properties, true);
         draw(&mut lab, &mut engine, SMALLEST);
         let narrow = lab.page_room(SMALLEST.0);
-        assert!(narrow < 320.0);
+        assert!(narrow < 480.0 && narrow >= 320.0 - 32.0, "{narrow}");
         assert_eq!(lab.rect(STAGE).unwrap().w, narrow);
         assert_sound(&lab, "a preset wider than the column");
     });

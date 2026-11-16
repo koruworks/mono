@@ -142,6 +142,11 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     Some("Close window")
                 ),
                 (
+                    "s:ui-lab#toggle-navigator".to_owned(),
+                    NativeRole::Button,
+                    Some("Components")
+                ),
+                (
                     "s:ui-lab.setting#theme".to_owned(),
                     NativeRole::ComboBox,
                     Some("Theme")
@@ -157,6 +162,11 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     Some("Language")
                 ),
                 (RESET_AT.to_owned(), NativeRole::Button, Some("Reset")),
+                (
+                    "s:ui-lab#toggle-properties".to_owned(),
+                    NativeRole::Button,
+                    Some("Properties")
+                ),
                 (
                     SEARCH_AT.to_owned(),
                     NativeRole::TextInput,
@@ -1046,5 +1056,54 @@ fn the_tree_is_published_in_the_labs_language() {
         );
         // The identities are what they were in English.
         assert!(find(&semantics, SUBJECT_AT).label.is_some());
+    });
+}
+
+/// A column's toggle says whether its column shows, and a request toggles
+/// it: the column's nodes leave the tree with it and come back with it.
+#[test]
+fn a_column_toggle_says_whether_its_column_shows() {
+    english(|| {
+        let (mut lab, mut engine) = drawn();
+        const TOGGLE_AT: &str = "s:ui-lab#toggle-properties";
+        let semantics = tree(&lab);
+        let toggle = find(&semantics, TOGGLE_AT);
+        assert_eq!(toggle.toggled, Some(Toggled::True));
+        assert_eq!(toggle.actions, [Action::Click, Action::Focus]);
+        assert_eq!(
+            find(&semantics, "s:ui-lab#toggle-navigator").toggled,
+            Some(Toggled::True)
+        );
+
+        // The keyboard is in the column when it is asked to close.
+        assert!(ask(&mut lab, &mut engine, FIELD_AT, Action::Focus));
+        let shown = lab.semantics_revision();
+        assert!(ask(&mut lab, &mut engine, TOGGLE_AT, Action::Click));
+        assert_ne!(lab.semantics_revision(), shown);
+        let semantics = tree(&lab);
+        assert_eq!(find(&semantics, TOGGLE_AT).toggled, Some(Toggled::False));
+        for node in flat(&semantics.children) {
+            let locator = tail(&node.occurrence);
+            assert!(
+                locator != PANEL_AT && locator != FIELD_AT && locator != STYLE_AT,
+                "`{locator}` is published with its column hidden"
+            );
+        }
+        assert_eq!(
+            semantics.focus,
+            Some(find(&semantics, TOGGLE_AT).occurrence),
+            "the request moved the keyboard to the toggle"
+        );
+        // The preview is still there, and still works.
+        assert!(ask(&mut lab, &mut engine, SUBJECT_AT, Action::Click));
+        assert_eq!(story(&lab).presses(), 1);
+
+        assert!(ask(&mut lab, &mut engine, TOGGLE_AT, Action::Click));
+        let semantics = tree(&lab);
+        assert_eq!(find(&semantics, TOGGLE_AT).toggled, Some(Toggled::True));
+        assert_eq!(
+            find(&semantics, FIELD_AT).value.as_deref(),
+            Some("Save changes")
+        );
     });
 }

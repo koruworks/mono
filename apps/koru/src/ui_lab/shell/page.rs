@@ -157,16 +157,11 @@ pub(super) fn breakable(identifier: &str) -> String {
 }
 
 impl Lab {
-    /// How wide the centre's content may be: the window less the two side
-    /// columns, the lines between them and the page's own inset.
+    /// How wide the centre's content may be: the window less the side
+    /// columns it shows, the lines beside them and the page's own inset.
     pub(super) fn page_room(&self, width: f32) -> f32 {
         let profile = Profile::Desktop;
-        (width
-            - NAVIGATOR_WIDTH.value
-            - PROPERTIES_WIDTH.value
-            - 2.0 * theme::BORDER_W as f32
-            - 2.0 * PREVIEW_INSET.token.px(profile))
-        .max(0.0)
+        (width - self.columns(width).width() - 2.0 * PREVIEW_INSET.token.px(profile)).max(0.0)
     }
 
     /// The centre: the story when the record has one, its status when it has

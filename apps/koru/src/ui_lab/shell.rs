@@ -18,12 +18,20 @@
 //! ```text
 //! col  UI Lab                         the window, on the ground surface
 //!   row  Caption                      the title; the shared window controls
-//!   row  Toolbar                      the record's name; theme, width, language; Reset
+//!   row  Toolbar                      a column's toggle at each end; the record's
+//!                                     name; theme, width, language; Reset
 //!   row  Workbench
 //!     col  Navigator                  the catalog              (navigator.rs)
 //!     scroll  Preview                 the record's page        (page.rs)
 //!     scroll  Properties              what is recorded, and a story's inputs
 //! ```
+//!
+//! **The preview is always there; the columns beside it fold away.** Each
+//! has a toggle in the toolbar. A window too narrow for both shows the
+//! navigator and hides the properties until asked, and opening one in a
+//! narrow window closes the other, so the preview never has less than
+//! [`PREVIEW_MIN_WIDTH`]. When a column closes with the keyboard inside it,
+//! the keyboard goes to the toggle that opens it again.
 //!
 //! The surface is one element tree ([`koru_draw::el`]); every size in it is a
 //! token ([`super::tokens`]). One layout gives the frame that paint, the
@@ -51,7 +59,7 @@ use koru_draw::scene;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Ink, Line, Profile, Radius, Surface, alias, roles};
 use koru_ui::button::{self, ActionButton, ActionStyle};
-use koru_ui::{InputStyle, Segmented, TextInput, Typed, caption};
+use koru_ui::{InputStyle, Segmented, TextInput, Typed, caption, icon_button};
 use koru_window::{ImeEvent, RichKeyEvent, WindowApp, WindowRequest};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -79,6 +87,85 @@ const SUBJECT: Key = Key::surface("ui-lab", "subject");
 /// The control's own key, the one that is pressed and focused, is
 /// [`control_key`]`(Control::Style)`.
 const STYLE_SEGMENTS: Key = Key::surface("ui-lab", "style-segments");
+
+/// One of the two columns beside the preview.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Side {
+    Navigator,
+    Properties,
+}
+
+impl Side {
+    const ALL: [Self; 2] = [Self::Navigator, Self::Properties];
+
+    /// The toolbar button that shows and hides the column.
+    const fn toggle(self) -> Key {
+        match self {
+            Self::Navigator => Key::surface("ui-lab", "toggle-navigator"),
+            Self::Properties => Key::surface("ui-lab", "toggle-properties"),
+        }
+    }
+
+    /// What the column, and so its toggle, is called.
+    const fn name(self) -> koru_i18n::Key {
+        match self {
+            Self::Navigator => koru_i18n::Key::UiLabNavigator,
+            Self::Properties => koru_i18n::Key::UiLabProperties,
+        }
+    }
+
+    /// The pane toggle's own glyph: the side the column is on.
+    const fn glyph(self) -> char {
+        match self {
+            Self::Navigator => koru_draw::icons::PANEL_LEFT,
+            Self::Properties => koru_draw::icons::PANEL_RIGHT,
+        }
+    }
+
+    /// The column a control belongs to, by its key: where the keyboard goes
+    /// back to when the column closes under it.
+    fn of(key: Key) -> Option<Self> {
+        match key.object {
+            el::Object::Surface("ui-lab.navigator" | "ui-lab.group") => Some(Self::Navigator),
+            el::Object::Surface("ui-lab.control") => Some(Self::Properties),
+            _ if key == SEARCH || key == RESET_SEARCH => Some(Self::Navigator),
+            _ => None,
+        }
+    }
+}
+
+/// Which side columns a window shows.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct Columns {
+    navigator: bool,
+    properties: bool,
+}
+
+impl Columns {
+    fn shows(self, side: Side) -> bool {
+        match side {
+            Side::Navigator => self.navigator,
+            Side::Properties => self.properties,
+        }
+    }
+
+    /// How much of a window's width the columns showing take, each with the
+    /// line beside it.
+    fn width(self) -> f32 {
+        let line = theme::BORDER_W as f32;
+        let navigator = if self.navigator {
+            NAVIGATOR_WIDTH.value + line
+        } else {
+            0.0
+        };
+        let properties = if self.properties {
+            PROPERTIES_WIDTH.value + line
+        } else {
+            0.0
+        };
+        navigator + properties
+    }
+}
 
 /// The three viewports that scroll, front to back for a point in more than
 /// one (there is never more than one, but the order is the answer if there
@@ -241,6 +328,13 @@ pub(crate) struct Lab {
     /// The theme or the language changed and the process's other window has
     /// not been told.
     appearance_changed: bool,
+    /// What the person asked of each side column: shown, hidden, or `None`
+    /// while it follows the window's width. By [`Side`]: navigator, then
+    /// properties.
+    asked: [Option<bool>; 2],
+    /// The column opened last: the one that stays when the window has no
+    /// room for both.
+    opened_last: Side,
     /// Where the centre and the properties column are scrolled.
     page_scroll: f32,
     panel_scroll: f32,
@@ -279,6 +373,8 @@ impl Lab {
             width: PreviewWidth::Fit,
             menu: None,
             appearance_changed: false,
+            asked: [None; 2],
+            opened_last: Side::Navigator,
             page_scroll: 0.0,
             panel_scroll: 0.0,
             cache: TextCache::default(),
@@ -372,6 +468,64 @@ impl Lab {
             .iter()
             .map(|style| text(registry::dialog_style_label(*style)))
             .collect()
+    }
+
+    /// **Which side columns a window `width` wide shows.** The preview is
+    /// never left less than [`PREVIEW_MIN_WIDTH`]: a column shows when the
+    /// person asked for it, or, unasked, while there is room for it. When
+    /// both are asked for and the window has no room for both, the one
+    /// opened last stays and the other gives way until there is room again.
+    fn columns(&self, width: f32) -> Columns {
+        let fits = |columns: Columns| width - columns.width() >= PREVIEW_MIN_WIDTH.value;
+        let [navigator, properties] = self.asked;
+        let navigator = navigator.unwrap_or(true);
+        let properties = properties.unwrap_or_else(|| {
+            fits(Columns {
+                navigator,
+                properties: true,
+            })
+        });
+        let both = Columns {
+            navigator,
+            properties,
+        };
+        if !(navigator && properties) || fits(both) {
+            return both;
+        }
+        match self.opened_last {
+            Side::Navigator => Columns {
+                navigator: true,
+                properties: false,
+            },
+            Side::Properties => Columns {
+                navigator: false,
+                properties: true,
+            },
+        }
+    }
+
+    /// The columns the window showed in its last frame, or would in its
+    /// first.
+    fn shown_columns(&self) -> Columns {
+        let width = self
+            .laid
+            .as_ref()
+            .map_or(Placement::DEFAULT_SIZE.0, |laid| laid.size.0);
+        self.columns(width)
+    }
+
+    /// Show or hide a side column, because the person asked. Returns
+    /// whether the window changes.
+    fn set_column(&mut self, side: Side, open: bool) -> bool {
+        let before = self.shown_columns();
+        self.asked[side as usize] = Some(open);
+        if open {
+            self.opened_last = side;
+            if side == Side::Navigator {
+                self.bring_shown_into_view = true;
+            }
+        }
+        self.shown_columns() != before
     }
 
     /// Whether the keyboard can be on `key`: a Tab stop of the last frame,
@@ -522,6 +676,9 @@ impl Lab {
             self.reset_search(engine)
         } else if self.is_dropdown(key) {
             self.open_menu(engine, key)
+        } else if let Some(side) = Side::ALL.into_iter().find(|side| side.toggle() == key) {
+            let open = !self.shown_columns().shows(side);
+            self.set_column(side, open)
         } else {
             match self.nav.row_of(key) {
                 Some(Row::Group(family)) => {
@@ -910,11 +1067,36 @@ impl Lab {
             .child(el::boxed("Window controls").w(CAPTION_CONTROLS));
 
         let reset = text(koru_i18n::Key::UiLabReset);
+        let columns = self.columns(width);
+        let toggle = |side: Side| {
+            ringed(
+                "Column toggle",
+                side.toggle(),
+                el::leaf(
+                    "Column toggle button",
+                    Slot {
+                        width: TOGGLE_SIZE.value,
+                        height: TOGGLE_SIZE.value,
+                    },
+                )
+                .semantic()
+                .id(side.toggle())
+                .hit()
+                .focusable()
+                // Published as a button that is on while its column shows.
+                .semantics(Role::Button)
+                .name(side.name())
+                .selected(columns.shows(side))
+                .action(el::Action::Click)
+                .action(el::Action::Focus),
+            )
+        };
         let toolbar = el::row("Toolbar")
             .pad_x(TOOLBAR_INSET_X)
             .pad_y(TOOLBAR_INSET_Y)
             .gap(TOOLBAR_GAP)
             .items_center()
+            .child(toggle(Side::Navigator))
             .child(
                 el::text(text(entry.name))
                     .named("Story title")
@@ -942,23 +1124,30 @@ impl Lab {
                 .name(koru_i18n::Key::UiLabReset)
                 .action(el::Action::Click)
                 .action(el::Action::Focus),
-            );
+            )
+            .child(toggle(Side::Properties));
 
+        // The preview is always there; a side column is there while the
+        // window has room for it or the person asked for it.
+        let mut workbench = el::row("Workbench").fill();
+        if columns.navigator {
+            workbench = workbench
+                .child(self.navigator(engine, height))
+                .child(el::divider(Line::Divider));
+        }
+        workbench = workbench.child(self.page(engine, width));
+        if columns.properties {
+            workbench = workbench
+                .child(el::divider(Line::Divider))
+                .child(self.properties(engine));
+        }
         el::col("UI Lab")
             .bg(Surface::Ground)
             .child(caption)
             .child(el::divider(Line::Divider))
             .child(toolbar)
             .child(el::divider(Line::Divider))
-            .child(
-                el::row("Workbench")
-                    .fill()
-                    .child(self.navigator(engine, height))
-                    .child(el::divider(Line::Divider))
-                    .child(self.page(engine, width))
-                    .child(el::divider(Line::Divider))
-                    .child(self.properties(engine)),
-            )
+            .child(workbench)
     }
 
     /// The left column: its heading, the search, and under it the catalog
@@ -1317,6 +1506,17 @@ impl Lab {
     /// One frame: lay the window out, paint it, and keep the layout for the
     /// events that follow.
     fn paint(&mut self, scene: &mut Scene, engine: &mut TextEngine, w: f32, h: f32) {
+        // A control that went with its column hands the keyboard back to the
+        // button that opens the column, before the frame is laid out, so the
+        // button is the one drawn focused.
+        let columns = self.columns(w);
+        if let Some(side) = self
+            .focus
+            .and_then(Side::of)
+            .filter(|side| !columns.shows(*side))
+        {
+            self.focus = Some(side.toggle());
+        }
         // Once, as a rule. Again when the layout clamped the navigator's
         // offset, because its rows were chosen for the offset it had before;
         // when what is under a pointer that has not moved is no longer what
@@ -1378,6 +1578,7 @@ impl Lab {
         let reset_search = text(koru_i18n::Key::UiLabResetSearch);
         let search = text(koru_i18n::Key::UiLabSearch);
         // Each dropdown's value in force, and whether its list is open.
+        let toggles = Side::ALL.map(|side| (side.toggle(), side.glyph(), columns.shows(side)));
         let dropdowns: Vec<(Key, String, bool)> = Setting::ALL
             .into_iter()
             .map(|setting| setting.key())
@@ -1444,6 +1645,23 @@ impl Lab {
                         state.focused,
                     );
                     scene.pop_layer();
+                } else if let Some((_, glyph, open)) =
+                    toggles.iter().find(|(toggle, _, _)| *toggle == key)
+                {
+                    // The app's own pane toggle: lit while its pane shows.
+                    icon_button::draw_with(
+                        scene,
+                        root,
+                        engine,
+                        rect,
+                        *glyph,
+                        icon_button::State {
+                            hovered: state.hovered,
+                            active: *open,
+                            disabled: false,
+                        },
+                        icon_button::Metrics::INLINE,
+                    );
                 } else if let Some((_, value, open)) =
                     dropdowns.iter().find(|(owner, _, _)| *owner == key)
                 {

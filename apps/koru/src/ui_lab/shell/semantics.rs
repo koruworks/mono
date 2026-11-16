@@ -13,6 +13,7 @@
 //! ```text
 //! Window        UI Lab                       s:window#window
 //! ├── Button    Minimize / Maximize / Close  s:window#minimize, #maximize, #close
+//! ├── Button    Components / Properties      s:ui-lab#toggle-navigator, #toggle-properties   on while shown
 //! ├── ComboBox  Theme, Preview width, Language  s:ui-lab.setting#<setting>   value = the one in force
 //! ├── Button    Reset                        s:ui-lab#reset
 //! ├── TextInput Search components            s:ui-lab#search           value = the query
@@ -147,6 +148,8 @@ impl Lab {
             .str(self.query())
             .bool(self.maximised)
             .bool(self.active);
+        let columns = self.shown_columns();
+        revision.bool(columns.navigator).bool(columns.properties);
         // The settings: what each is, and the list that is open.
         for setting in Setting::ALL {
             if let Some(choice) = self.chosen(setting.key()) {
@@ -363,6 +366,11 @@ impl Lab {
         }
         if dropdown && let Some(choice) = self.chosen(key) {
             result = result.with_value(choice.label);
+        }
+        if Side::ALL.into_iter().any(|side| side.toggle() == key) {
+            // On while its column shows; a request toggles it, as a press
+            // does.
+            result = result.with_toggled(node.selected == Some(true));
         }
         match row {
             // Selected or not is said of every record's row, and where it

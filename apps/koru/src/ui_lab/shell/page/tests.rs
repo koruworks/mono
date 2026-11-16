@@ -165,22 +165,34 @@ fn the_facts_are_the_records_own() {
     }
 }
 
-/// A path too long for the narrowest page wraps at its separators.
+/// A path too long for the narrowest page wraps at its separators: the
+/// longest symbol in the gallery, in the smallest window with the properties
+/// open beside it.
 #[test]
 fn a_long_symbol_wraps_inside_the_narrowest_page() {
     english(|| {
-        let (lab, _) = drawn(SMALLEST);
-        let long = "koru_ui::button::ActionButton::draw_focused_elided";
+        let (entry, long) = registry::desktop()
+            .flat_map(|entry| entry.symbols().map(move |symbol| (entry, symbol.symbol)))
+            .max_by_key(|(_, symbol)| symbol.len())
+            .unwrap();
+        assert!(long.len() > 60, "{long}");
+        let (mut lab, mut engine) = showing_record(entry, SMALLEST);
+        assert!(lab.set_column(Side::Properties, true));
+        draw(&mut lab, &mut engine, SMALLEST);
         let frame = frame(&lab);
         let block = frame
             .nodes
             .iter()
             .position(|node| node.key == Some(Key::surface(SYMBOL, long)))
-            .expect("the Button's page lists the symbol");
+            .expect("the record's page lists the symbol");
         // The block's first child is the path itself.
         let path = &frame.nodes[block + 1];
         assert_eq!(path.name, "Symbol path");
-        assert!(path.lines() > Some(1), "{:?} lines", path.lines());
+        assert!(
+            path.lines() > Some(1),
+            "{:?} lines for {long}",
+            path.lines()
+        );
         let page = frame.node(PAGE).unwrap().rect;
         assert!(path.rect.w < page.w);
         assert_sound(&lab, "the narrowest page");
@@ -254,17 +266,6 @@ fn every_desktop_record_has_a_sound_page() {
                 assert_sound(&lab, &format!("{} at {size:?}", entry.catalog_id));
                 let frame = frame(&lab);
                 assert_eq!(frame.named("Symbol").count(), entry.symbols().count());
-                // A path longer than the page is broken over lines, not
-                // drawn past its column.
-                if size == SMALLEST {
-                    for node in frame.named("Symbol path") {
-                        let wide = entry.symbols().any(|symbol| symbol.symbol.len() > 40);
-                        assert!(node.lines().is_some());
-                        if wide && entry.symbols().count() == 1 {
-                            assert!(node.lines() > Some(1), "{}", entry.catalog_id);
-                        }
-                    }
-                }
                 // Everything the page holds is inside the page's width.
                 let page = frame.node(PAGE).unwrap().rect;
                 for node in frame.named("Symbol path") {
@@ -342,6 +343,9 @@ fn the_properties_column_brings_a_tabbed_control_into_view() {
     english(|| {
         let size = (SMALLEST.0, 340.0);
         let (mut lab, mut engine) = drawn(size);
+        // Too narrow for the properties until they are asked for.
+        assert!(lab.set_column(Side::Properties, true));
+        draw(&mut lab, &mut engine, size);
         assert!(
             frame(&lab).scrollbar(PANEL).is_some(),
             "the column is taller than a 340 high window"

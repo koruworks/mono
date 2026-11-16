@@ -164,9 +164,10 @@ pub(super) fn assert_sound(lab: &Lab, context: &str) {
 
 /// Navigator, preview and properties, left to right under the toolbar, with
 /// every element inside the window and nothing overflowing — in each of the
-/// eight languages, at the default size and at the smallest one accepted.
+/// eight languages, at the default size and at the smallest one accepted,
+/// where the properties wait to be asked for.
 #[test]
-fn the_three_regions_compose_in_every_language_and_at_the_smallest_size() {
+fn the_regions_compose_in_every_language_and_at_the_smallest_size() {
     for lang in koru_i18n::Lang::ALL {
         koru_i18n::with_current(lang, || {
             for size in [SIZE, SMALLEST] {
@@ -176,24 +177,39 @@ fn the_three_regions_compose_in_every_language_and_at_the_smallest_size() {
                 let frame = frame(&lab);
                 let navigator = frame.rect_of("Navigator").unwrap();
                 let preview = frame.rect_of("Preview").unwrap();
-                let properties = frame.rect_of("Properties").unwrap();
                 let toolbar = frame.rect_of("Toolbar").unwrap();
                 assert_eq!(navigator.x, 0.0, "{context}");
                 assert!(navigator.x + navigator.w <= preview.x, "{context}");
-                assert!(preview.x + preview.w <= properties.x, "{context}");
-                assert_eq!(properties.x + properties.w, size.0, "{context}");
-                assert!(preview.w >= button::MIN_W, "{context}: {preview:?}");
-                for region in [navigator, preview, properties] {
+                assert!(
+                    preview.w >= PREVIEW_MIN_WIDTH.value,
+                    "{context}: {preview:?}"
+                );
+                let mut regions = vec![navigator, preview];
+                match frame.rect_of("Properties") {
+                    Some(properties) => {
+                        assert_eq!(size, SIZE, "{context}");
+                        assert!(preview.x + preview.w <= properties.x, "{context}");
+                        assert_eq!(properties.x + properties.w, size.0, "{context}");
+                        // The style control, in the language that spells it
+                        // longest, still fits the properties column.
+                        let choice = lab.rect(style()).unwrap();
+                        assert!(
+                            choice.x + choice.w <= properties.x + properties.w,
+                            "{context}: {choice:?} leaves {properties:?}"
+                        );
+                        regions.push(properties);
+                    }
+                    None => {
+                        assert_eq!(size, SMALLEST, "{context}");
+                        assert_eq!(preview.x + preview.w, size.0, "{context}");
+                    }
+                }
+                for region in regions {
                     assert!(region.y >= toolbar.y + toolbar.h, "{context}");
                     assert_eq!(region.y + region.h, size.1, "{context}");
                 }
-                // The style control, in the language that spells it longest,
-                // still fits the properties column.
-                let choice = lab.rect(style()).unwrap();
-                assert!(
-                    choice.x + choice.w <= properties.x + properties.w,
-                    "{context}: {choice:?} leaves {properties:?}"
-                );
+                // The toolbar's controls all fit beside each other.
+                assert_eq!(toolbar.w, size.0, "{context}");
                 // The component under test stands on its stage, in the
                 // preview column.
                 let subject = lab.rect(SUBJECT).unwrap();
@@ -243,8 +259,9 @@ fn the_lab_opens_with_the_record_on_show_in_view() {
     });
 }
 
-/// The keyboard's stops are the toolbar's settings and Reset, the search,
-/// one row of the navigator, the page, and the story's own controls. Nothing stands in for a control
+/// The keyboard's stops are the toolbar's two toggles, its settings and
+/// Reset, the search, one row of the navigator, the page, and the story's
+/// own controls. Nothing stands in for a control
 /// the Lab does not have yet.
 #[test]
 fn the_keyboard_stops_are_the_controls_that_exist() {
@@ -253,10 +270,12 @@ fn the_keyboard_stops_are_the_controls_that_exist() {
         assert_eq!(
             lab.laid.as_ref().unwrap().stops(),
             [
+                Side::Navigator.toggle(),
                 Setting::Theme.key(),
                 Setting::Width.key(),
                 Setting::Language.key(),
                 RESET,
+                Side::Properties.toggle(),
                 SEARCH,
                 entry_key(registry::BUTTON),
                 PAGE,
@@ -888,4 +907,275 @@ fn reset_keeps_the_navigator_as_it_is() {
         assert_eq!(lab.nav.scroll, scrolled);
         assert!(lab.nav.is_folded(Family::Compositions));
     });
+}
+
+// ------------------------------------------------------- the side columns
+
+const NAVIGATOR_TOGGLE: Key = Side::Navigator.toggle();
+const PROPERTIES_TOGGLE: Key = Side::Properties.toggle();
+
+/// Which of the three regions a frame holds.
+fn regions(lab: &Lab) -> (bool, bool, bool) {
+    let frame = frame(lab);
+    (
+        frame.rect_of("Navigator").is_some(),
+        frame.rect_of("Preview").is_some(),
+        frame.rect_of("Properties").is_some(),
+    )
+}
+
+/// The preview is always there. A window with room shows both columns
+/// beside it; one without shows the navigator and leaves the properties
+/// until they are asked for.
+#[test]
+fn a_narrow_window_keeps_the_preview_and_gives_up_a_column() {
+    english(|| {
+        let least = PREVIEW_MIN_WIDTH.value;
+        let (lab, _) = drawn(SIZE);
+        assert_eq!(regions(&lab), (true, true, true));
+        assert!(frame(&lab).rect_of("Preview").unwrap().w >= least);
+        let (lab, _) = drawn(SMALLEST);
+        assert_eq!(regions(&lab), (true, true, false));
+        assert!(frame(&lab).rect_of("Preview").unwrap().w >= least);
+        // The width at which the properties first have room.
+        let both =
+            NAVIGATOR_WIDTH.value + PROPERTIES_WIDTH.value + 2.0 * theme::BORDER_W as f32 + least;
+        let (lab, _) = drawn((both, 700.0));
+        assert_eq!(regions(&lab), (true, true, true));
+        assert_eq!(frame(&lab).rect_of("Preview").unwrap().w, least);
+        let (lab, _) = drawn((both - 1.0, 700.0));
+        assert_eq!(regions(&lab), (true, true, false));
+        // Both toggles are in the toolbar whatever shows, and say which is on.
+        for size in [SIZE, SMALLEST] {
+            let (lab, _) = drawn(size);
+            let frame = frame(&lab);
+            let toolbar = frame.rect_of("Toolbar").unwrap();
+            for side in Side::ALL {
+                let toggle = frame.node(side.toggle()).unwrap();
+                assert!(toggle.rect.y >= toolbar.y);
+                assert!(toggle.rect.x + toggle.rect.w <= size.0);
+                assert_eq!(
+                    toggle.selected,
+                    Some(lab.columns(size.0).shows(side)),
+                    "{side:?} at {size:?}"
+                );
+            }
+        }
+    });
+}
+
+/// A toggle hides and shows its column, and the preview takes the room.
+#[test]
+fn a_toggle_hides_and_shows_its_column() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let preview = |lab: &Lab| frame(lab).rect_of("Preview").unwrap();
+        let with_both = preview(&lab);
+
+        assert!(press(&mut lab, &mut engine, PROPERTIES_TOGGLE));
+        assert_eq!(regions(&lab), (true, true, false));
+        assert_eq!(lab.focus, Some(PROPERTIES_TOGGLE));
+        assert_eq!(
+            preview(&lab).w,
+            with_both.w + PROPERTIES_WIDTH.value + theme::BORDER_W as f32
+        );
+        assert!(!frame(&lab).contains(field()), "its controls went with it");
+        assert_sound(&lab, "no properties");
+        // The story is the same story: hiding its inputs changes nothing.
+        press(&mut lab, &mut engine, SUBJECT);
+        assert_eq!(story(&lab).presses(), 1);
+
+        assert!(press(&mut lab, &mut engine, NAVIGATOR_TOGGLE));
+        assert_eq!(regions(&lab), (false, true, false));
+        assert_eq!(preview(&lab).x, 0.0);
+        assert_eq!(preview(&lab).w, SIZE.0);
+        assert_sound(&lab, "the preview alone");
+        // The record on show and the search are kept while the list is away.
+        assert_eq!(lab.entry.catalog_id, registry::BUTTON);
+
+        assert!(press(&mut lab, &mut engine, PROPERTIES_TOGGLE));
+        assert!(press(&mut lab, &mut engine, NAVIGATOR_TOGGLE));
+        assert_eq!(regions(&lab), (true, true, true));
+        assert_eq!(preview(&lab), with_both);
+        assert_eq!(story(&lab).presses(), 1);
+        // The list comes back with the record on show in view.
+        let row = frame(&lab).node(entry_key(registry::BUTTON)).unwrap();
+        assert_eq!(row.selected, Some(true));
+    });
+}
+
+/// In a window with no room for both, opening one column closes the other,
+/// so the preview keeps its least width; with room again, both asked-for
+/// columns show.
+#[test]
+fn in_a_narrow_window_opening_one_column_closes_the_other() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SMALLEST);
+        let size = SMALLEST;
+        let toggle = |lab: &mut Lab, engine: &mut TextEngine, key: Key| {
+            let (x, y) = centre(lab, key);
+            let changed = lab.click(engine, x, y, false);
+            lab.mouse_up();
+            draw(lab, engine, size);
+            changed
+        };
+        assert!(toggle(&mut lab, &mut engine, PROPERTIES_TOGGLE));
+        assert_eq!(regions(&lab), (false, true, true));
+        let preview = frame(&lab).rect_of("Preview").unwrap();
+        assert!(preview.w >= PREVIEW_MIN_WIDTH.value, "{preview:?}");
+        assert!(frame(&lab).contains(field()));
+        assert_sound(&lab, "the properties in a narrow window");
+
+        assert!(toggle(&mut lab, &mut engine, NAVIGATOR_TOGGLE));
+        assert_eq!(regions(&lab), (true, true, false));
+        assert_sound(&lab, "the navigator in a narrow window");
+        // Both were asked for: a window with room shows both.
+        lab.resized(PhysicalSize::new(1120, 720), 1.0);
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(regions(&lab), (true, true, true));
+        // And narrow again, the one opened last is the one that stays.
+        lab.resized(PhysicalSize::new(720, 600), 1.0);
+        draw(&mut lab, &mut engine, SMALLEST);
+        assert_eq!(regions(&lab), (true, true, false));
+
+        // Closing the navigator makes room for the properties that were
+        // asked for; closing those leaves the preview the whole window.
+        assert!(toggle(&mut lab, &mut engine, NAVIGATOR_TOGGLE));
+        assert_eq!(regions(&lab), (false, true, true));
+        assert!(toggle(&mut lab, &mut engine, PROPERTIES_TOGGLE));
+        assert_eq!(regions(&lab), (false, true, false));
+        assert_eq!(frame(&lab).rect_of("Preview").unwrap().w, SMALLEST.0);
+        assert_sound(&lab, "the preview alone in the smallest window");
+    });
+}
+
+/// When a column closes with the keyboard inside it, the keyboard goes to
+/// the toggle that opens it again, and that toggle is the one drawn focused.
+#[test]
+fn a_closing_column_hands_the_keyboard_to_its_toggle() {
+    english(|| {
+        // The window is made too narrow for the properties.
+        let (mut lab, mut engine) = drawn(SIZE);
+        press(&mut lab, &mut engine, field());
+        assert_eq!(lab.focus, Some(field()));
+        lab.resized(PhysicalSize::new(720, 600), 1.0);
+        draw(&mut lab, &mut engine, SMALLEST);
+        assert_eq!(regions(&lab), (true, true, false));
+        assert_eq!(lab.focus, Some(PROPERTIES_TOGGLE));
+        let focused: Vec<Key> = frame(&lab)
+            .nodes
+            .iter()
+            .filter(|node| node.state.focused)
+            .filter_map(|node| node.key)
+            .collect();
+        assert_eq!(focused, [PROPERTIES_TOGGLE]);
+        let ring = frame(&lab)
+            .named("Column toggle")
+            .find(|node| node.state.focused)
+            .expect("the box round the toggle is lit");
+        assert!(ring.ring.is_some());
+        // Enter on it opens the column again, where the story was left.
+        let none = ModifiersState::empty();
+        assert!(lab.key(
+            &mut engine,
+            &KeyboardKey::Named(NamedKey::Enter),
+            None,
+            none
+        ));
+        draw(&mut lab, &mut engine, SMALLEST);
+        assert_eq!(regions(&lab), (false, true, true));
+        assert_eq!(story(&lab).label(), "Save changes");
+
+        // Opening the properties in a narrow window closes the navigator
+        // under a keyboard that was in its search field or on one of its
+        // rows.
+        for inside in [SEARCH, entry_key(registry::BUTTON)] {
+            let (mut lab, mut engine) = drawn(SMALLEST);
+            let (x, y) = centre(&lab, inside);
+            lab.click(&mut engine, x, y, false);
+            lab.mouse_up();
+            assert_eq!(lab.focus, Some(inside));
+            assert!(lab.set_column(Side::Properties, true));
+            draw(&mut lab, &mut engine, SMALLEST);
+            assert_eq!(regions(&lab), (false, true, true));
+            assert_eq!(lab.focus, Some(NAVIGATOR_TOGGLE), "{inside:?}");
+        }
+        // A control outside the columns keeps the keyboard.
+        let (mut lab, mut engine) = drawn(SIZE);
+        press(&mut lab, &mut engine, SUBJECT);
+        assert!(lab.set_column(Side::Properties, false));
+        assert!(lab.set_column(Side::Navigator, false));
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(lab.focus, Some(SUBJECT));
+    });
+}
+
+/// At the smallest window, in every language, everything can be reached
+/// from the keyboard: the toolbar, the list, the preview, and the story's
+/// inputs once their column is opened from its toggle.
+#[test]
+fn the_smallest_window_is_usable_from_the_keyboard_in_every_language() {
+    for lang in koru_i18n::Lang::ALL {
+        koru_i18n::with_current(lang, || {
+            let (mut lab, mut engine) = drawn(SMALLEST);
+            let context = format!("{lang:?}");
+            assert_sound(&lab, &context);
+            let step = |lab: &mut Lab, engine: &mut TextEngine, key: NamedKey| {
+                let none = ModifiersState::empty();
+                let changed = lab.key(engine, &KeyboardKey::Named(key), None, none);
+                draw(lab, engine, SMALLEST);
+                changed
+            };
+            let stops = lab.laid.as_ref().unwrap().stops();
+            assert_eq!(stops.first(), Some(&NAVIGATOR_TOGGLE));
+            for expected in [PROPERTIES_TOGGLE, SEARCH, PAGE, SUBJECT] {
+                assert!(stops.contains(&expected), "{context}: {expected:?}");
+            }
+            assert!(!stops.contains(&field()), "{context}");
+            // Every stop is inside the window.
+            for stop in &stops {
+                let rect = lab.rect(*stop).unwrap();
+                assert!(
+                    rect.x >= 0.0 && rect.x + rect.w <= SMALLEST.0,
+                    "{context}: {stop:?} at {rect:?}"
+                );
+            }
+            // Press the component, then open the properties and relabel it.
+            while lab.focus != Some(SUBJECT) {
+                assert!(step(&mut lab, &mut engine, NamedKey::Tab));
+            }
+            assert!(step(&mut lab, &mut engine, NamedKey::Enter));
+            assert_eq!(story(&lab).presses(), 1);
+            while lab.focus != Some(PROPERTIES_TOGGLE) {
+                assert!(step(&mut lab, &mut engine, NamedKey::Tab));
+            }
+            assert!(step(&mut lab, &mut engine, NamedKey::Space));
+            assert_eq!(regions(&lab), (false, true, true), "{context}");
+            assert_sound(&lab, &context);
+            while lab.focus != Some(field()) {
+                assert!(step(&mut lab, &mut engine, NamedKey::Tab));
+            }
+            type_text(&mut lab, &mut engine, "Go");
+            draw(&mut lab, &mut engine, SMALLEST);
+            assert_eq!(story(&lab).label(), "Go", "{context}");
+            assert!(step(&mut lab, &mut engine, NamedKey::Tab));
+            assert_eq!(lab.focus, Some(style()));
+            assert!(step(&mut lab, &mut engine, NamedKey::ArrowRight));
+            assert_eq!(story(&lab).style(), ButtonRole::Primary);
+            // Back to the list: its toggle, then Tab into it.
+            while lab.focus != Some(NAVIGATOR_TOGGLE) {
+                assert!(step(&mut lab, &mut engine, NamedKey::Tab));
+            }
+            assert!(step(&mut lab, &mut engine, NamedKey::Enter));
+            assert_eq!(regions(&lab), (true, true, false), "{context}");
+            assert_sound(&lab, &context);
+            while !lab.focus.is_some_and(|key| lab.is_navigator_key(key)) {
+                assert!(step(&mut lab, &mut engine, NamedKey::Tab));
+            }
+            assert_eq!(lab.focus, Some(entry_key(registry::BUTTON)));
+            // The story kept what was done to it while its column was away.
+            assert_eq!(story(&lab).label(), "Go");
+            assert_eq!(story(&lab).presses(), 1);
+        });
+    }
 }
