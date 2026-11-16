@@ -512,10 +512,13 @@ impl MultiWindowApp for LabWindows {
         self.lab_input(|lab| WindowApp::mouse_up(lab))
     }
 
-    fn scroll_by(&mut self, key: WindowKey, _delta: f32, _mods: ModifiersState) -> bool {
-        // The Lab has nothing that scrolls; the panel's wheel is the
-        // inspector's and has already been answered.
-        self.take_stale(key)
+    fn scroll_by(&mut self, key: WindowKey, delta: f32, mods: ModifiersState) -> bool {
+        if key == PANEL {
+            // The panel's wheel is the inspector's and has already been
+            // answered.
+            return self.take_stale(PANEL);
+        }
+        self.lab_input(|lab| WindowApp::scroll_by(lab, delta, mods))
     }
 
     fn key(

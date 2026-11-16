@@ -1638,17 +1638,13 @@ enum Disposition {
 /// if any visual symbol does; otherwise it is a boundary, platform-only or
 /// nonvisual, in that order.
 fn disposition(entry: &Entry) -> Disposition {
-    let stories: Vec<Story> = symbols(entry).map(|(_, _, story)| story).collect();
-    if stories.iter().any(|s| matches!(s, Story::Available(_))) {
-        Disposition::StoryExists
-    } else if stories.contains(&Story::NoStoryYet) {
-        Disposition::NoStoryYet
-    } else if stories.contains(&Story::Boundary) {
-        Disposition::Boundary
-    } else if stories.iter().any(|s| matches!(s, Story::PlatformOnly)) {
-        Disposition::PlatformOnly
-    } else {
-        Disposition::Nonvisual
+    // The registry's own answer: the one a record's page states.
+    match entry.status() {
+        Story::Available(_) => Disposition::StoryExists,
+        Story::NoStoryYet => Disposition::NoStoryYet,
+        Story::Boundary => Disposition::Boundary,
+        Story::PlatformOnly => Disposition::PlatformOnly,
+        Story::Nonvisual => Disposition::Nonvisual,
     }
 }
 

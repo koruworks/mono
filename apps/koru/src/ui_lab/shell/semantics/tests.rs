@@ -36,6 +36,11 @@ fn drawn() -> (Lab, TextEngine) {
     (lab, engine)
 }
 
+/// The story on show.
+fn story(lab: &Lab) -> &ButtonStory {
+    lab.story.as_ref().expect("the record on show has a story")
+}
+
 fn tree(lab: &Lab) -> WindowSemantics {
     lab.window_semantics(WINDOW, VIEW, 1.0)
         .expect("a drawn Lab has a tree")
@@ -85,6 +90,10 @@ const RESULT_AT: &str = "s:ui-lab#result";
 const FIELD_AT: &str = "s:ui-lab.control#label";
 const STYLE_AT: &str = "s:ui-lab.control#style";
 const ENTRY_AT: &str = "s:ui-lab.navigator#C-BUTTON";
+const LIST_AT: &str = "s:ui-lab#navigator";
+const PAGE_AT: &str = "s:ui-lab#page";
+const PANEL_AT: &str = "s:ui-lab#properties";
+const CONTROLS_AT: &str = "s:ui-lab.group#controls";
 const CLOSE_AT: &str = "s:window#close";
 
 #[test]
@@ -106,70 +115,169 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
         assert_eq!(semantics.client, Rect::new(0.0, 0.0, SIZE.0, SIZE.1));
         assert_eq!(semantics.focus, None, "nothing has the keyboard yet");
 
-        let described: Vec<(String, NativeRole, Option<&str>, Vec<Action>)> =
-            flat(&semantics.children)
-                .into_iter()
-                .map(|node| {
-                    (
-                        tail(&node.occurrence),
-                        node.role,
-                        node.label.as_deref(),
-                        node.actions.clone(),
-                    )
-                })
-                .collect();
-        let click_focus = vec![Action::Click, Action::Focus];
+        // The window's own level: its three controls, Reset, and the three
+        // regions, in reading order.
+        let top: Vec<(String, NativeRole, Option<&str>)> = semantics
+            .children
+            .iter()
+            .map(|node| (tail(&node.occurrence), node.role, node.label.as_deref()))
+            .collect();
         assert_eq!(
-            described,
+            top,
             [
                 (
                     "s:window#minimize".to_owned(),
                     NativeRole::Button,
-                    Some("Minimize"),
-                    vec![]
+                    Some("Minimize")
                 ),
                 (
                     "s:window#maximize".to_owned(),
                     NativeRole::Button,
-                    Some("Maximize"),
-                    vec![]
+                    Some("Maximize")
                 ),
                 (
                     CLOSE_AT.to_owned(),
                     NativeRole::Button,
-                    Some("Close window"),
-                    vec![Action::Click]
+                    Some("Close window")
                 ),
+                (RESET_AT.to_owned(), NativeRole::Button, Some("Reset")),
+                (LIST_AT.to_owned(), NativeRole::ListBox, Some("Components")),
+                (PAGE_AT.to_owned(), NativeRole::Group, Some("Details")),
+                (PANEL_AT.to_owned(), NativeRole::Group, Some("Properties")),
+            ]
+        );
+        let click_focus = vec![Action::Click, Action::Focus];
+        for locator in ["s:window#minimize", "s:window#maximize"] {
+            assert!(find(&semantics, locator).actions.is_empty());
+        }
+        assert_eq!(find(&semantics, CLOSE_AT).actions, [Action::Click]);
+        assert_eq!(find(&semantics, RESET_AT).actions, click_focus);
+
+        // The page: the component, what pressing it did, then its symbols.
+        let page = find(&semantics, PAGE_AT);
+        let described: Vec<(String, NativeRole, Option<&str>, Vec<Action>)> = page
+            .children
+            .iter()
+            .take(2)
+            .map(|node| {
                 (
-                    RESET_AT.to_owned(),
-                    NativeRole::Button,
-                    Some("Reset"),
-                    click_focus.clone()
-                ),
-                (
-                    ENTRY_AT.to_owned(),
-                    NativeRole::ListItem,
-                    Some("Button"),
-                    click_focus.clone()
-                ),
+                    tail(&node.occurrence),
+                    node.role,
+                    node.label.as_deref(),
+                    node.actions.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            described,
+            [
                 (
                     SUBJECT_AT.to_owned(),
                     NativeRole::Button,
                     Some("Save changes"),
-                    click_focus
+                    click_focus.clone()
                 ),
                 (
-                    FIELD_AT.to_owned(),
-                    NativeRole::TextInput,
-                    Some("Label"),
-                    vec![Action::Focus, Action::SetValue]
+                    RESULT_AT.to_owned(),
+                    NativeRole::Label,
+                    Some("Not pressed yet"),
+                    vec![]
+                ),
+            ]
+        );
+        assert_eq!(find(&semantics, RESULT_AT).live, Some(Live::Polite));
+        let first = find(&semantics, "s:ui-lab.symbol#koru_ui::button::draw_button");
+        assert_eq!(first.role, NativeRole::Label);
+        assert_eq!(
+            first.label.as_deref(),
+            Some("koru_ui::button::draw_button"),
+            "a symbol is named as it is written"
+        );
+        assert_eq!(
+            first.description.as_deref(),
+            Some("Story available · Not supported by A2UI")
+        );
+
+        // The properties column: what the record is, the story's inputs,
+        // then what is recorded about it.
+        let panel = find(&semantics, PANEL_AT);
+        let stated: Vec<(String, NativeRole, Option<&str>)> = panel
+            .children
+            .iter()
+            .map(|node| (tail(&node.occurrence), node.role, node.label.as_deref()))
+            .collect();
+        let purpose = koru_i18n::t(koru_i18n::Lang::En, koru_i18n::Key::UiLabButtonPurpose);
+        let availability = "Availability: Windows: Runs in this Lab, macOS: Same source builds; \
+                            not verified, Linux: Same source builds; not verified";
+        let a2ui = "A2UI: Component “Button”; the host picks its style, Used by the host only; \
+                    a declaration cannot name it, Not supported by A2UI";
+        assert_eq!(
+            stated,
+            [
+                (
+                    "s:ui-lab.fact#name".to_owned(),
+                    NativeRole::Heading,
+                    Some("Button")
                 ),
                 (
-                    STYLE_AT.to_owned(),
-                    NativeRole::Group,
-                    Some("Style"),
-                    vec![Action::Focus]
+                    "s:ui-lab.fact#purpose".to_owned(),
+                    NativeRole::Label,
+                    Some(purpose)
                 ),
+                (FIELD_AT.to_owned(), NativeRole::TextInput, Some("Label")),
+                (STYLE_AT.to_owned(), NativeRole::Group, Some("Style")),
+                (
+                    "s:ui-lab.fact#kind".to_owned(),
+                    NativeRole::Label,
+                    Some("Kind: Shared component")
+                ),
+                (
+                    "s:ui-lab.fact#source".to_owned(),
+                    NativeRole::Label,
+                    Some("Source: koru-ui, koru_ui::button")
+                ),
+                (
+                    "s:ui-lab.fact#availability".to_owned(),
+                    NativeRole::Label,
+                    Some(availability)
+                ),
+                (
+                    "s:ui-lab.fact#a2ui".to_owned(),
+                    NativeRole::Label,
+                    Some(a2ui)
+                ),
+                (
+                    "s:ui-lab.fact#story".to_owned(),
+                    NativeRole::Label,
+                    Some("Story: Story available")
+                ),
+            ]
+        );
+        assert_eq!(
+            find(&semantics, FIELD_AT).actions,
+            [Action::Focus, Action::SetValue]
+        );
+        assert_eq!(
+            find(&semantics, FIELD_AT).value.as_deref(),
+            Some("Save changes")
+        );
+        let style = find(&semantics, STYLE_AT);
+        assert_eq!(style.actions, [Action::Focus]);
+        let options: Vec<(String, NativeRole, Option<&str>, Vec<Action>)> = style
+            .children
+            .iter()
+            .map(|node| {
+                (
+                    tail(&node.occurrence),
+                    node.role,
+                    node.label.as_deref(),
+                    node.actions.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            options,
+            [
                 (
                     "s:ui-lab.style#secondary".to_owned(),
                     NativeRole::RadioButton,
@@ -188,19 +296,8 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     Some("Destructive"),
                     vec![Action::Click]
                 ),
-                (
-                    RESULT_AT.to_owned(),
-                    NativeRole::Label,
-                    Some("Not pressed yet"),
-                    vec![]
-                ),
             ]
         );
-        assert_eq!(
-            find(&semantics, FIELD_AT).value.as_deref(),
-            Some("Save changes")
-        );
-        assert_eq!(find(&semantics, RESULT_AT).live, Some(Live::Polite));
         assert_eq!(
             find(&semantics, "s:ui-lab.style#secondary").toggled,
             Some(Toggled::True),
@@ -209,6 +306,163 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
         assert_eq!(
             find(&semantics, "s:ui-lab.style#primary").toggled,
             Some(Toggled::False)
+        );
+    });
+}
+
+/// The navigator is a list one of whose rows is the selected one. It says
+/// how many rows it has, each row where it sits among them, and each group
+/// whether it is folded; only the rows in view are nodes.
+#[test]
+fn the_navigator_is_a_list_of_groups_and_selectable_records() {
+    english(|| {
+        let (mut lab, mut engine) = drawn();
+        let semantics = tree(&lab);
+        let list = find(&semantics, LIST_AT);
+        let all = lab.nav.rows().len();
+        assert_eq!(list.size_of_set, Some(all));
+        assert!(list.children.len() < all, "only the rows in view");
+        assert_eq!(
+            list.children.len(),
+            lab.laid
+                .as_ref()
+                .unwrap()
+                .frame
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.name, "Navigator entry" | "Navigator group"))
+                .count()
+        );
+        // The list opened part of the way down: it can be scrolled both ways.
+        assert!(list.actions.contains(&Action::ScrollUp));
+        assert!(list.actions.contains(&Action::ScrollDown));
+
+        let entry = find(&semantics, ENTRY_AT);
+        assert_eq!(entry.role, NativeRole::ListBoxOption);
+        assert_eq!(entry.label.as_deref(), Some("Button"));
+        assert_eq!(entry.selected, Some(true));
+        assert_eq!(entry.actions, [Action::Click, Action::Focus]);
+        let at = lab
+            .nav
+            .rows()
+            .iter()
+            .position(|row| row.key() == Key::surface("ui-lab.navigator", "C-BUTTON"))
+            .unwrap();
+        assert_eq!(entry.position, Some(at), "its place among every row");
+        let selected = list
+            .children
+            .iter()
+            .filter(|node| node.selected == Some(true))
+            .count();
+        assert_eq!(selected, 1);
+        for node in &list.children {
+            match node.role {
+                NativeRole::ListBoxOption => assert!(node.selected.is_some()),
+                NativeRole::Button => assert!(node.description.is_some()),
+                other => panic!("a {other:?} is in the navigator"),
+            }
+        }
+
+        // Scrolled to the top, the first row is the first group, expanded.
+        while lab.nav.scroll > 0.0 {
+            assert!(ask(&mut lab, &mut engine, LIST_AT, Action::ScrollUp));
+        }
+        let semantics = tree(&lab);
+        assert!(
+            !find(&semantics, LIST_AT)
+                .actions
+                .contains(&Action::ScrollUp),
+            "nothing above the top"
+        );
+        let group = find(&semantics, "s:ui-lab.group#foundations");
+        assert_eq!(group.role, NativeRole::Button);
+        assert_eq!(group.label.as_deref(), Some("Foundations"));
+        assert_eq!(group.description.as_deref(), Some("Expanded"));
+        assert_eq!(group.actions, [Action::Click, Action::Focus]);
+
+        // A click on it folds it, as a press does, and says so.
+        assert!(ask(
+            &mut lab,
+            &mut engine,
+            "s:ui-lab.group#foundations",
+            Action::Click
+        ));
+        assert!(lab.nav.is_folded(Family::Foundations));
+        let semantics = tree(&lab);
+        assert_eq!(
+            find(&semantics, "s:ui-lab.group#foundations")
+                .description
+                .as_deref(),
+            Some("Collapsed")
+        );
+        assert_eq!(
+            find(&semantics, LIST_AT).size_of_set,
+            Some(lab.nav.rows().len())
+        );
+        assert_eq!(
+            find(&semantics, CONTROLS_AT).description.as_deref(),
+            Some("Expanded")
+        );
+        assert_eq!(
+            semantics.focus,
+            Some(find(&semantics, "s:ui-lab.group#foundations").occurrence)
+        );
+    });
+}
+
+/// A click on a record's row shows it. A record with no story publishes its
+/// status and the reason in words, and no component.
+#[test]
+fn a_record_without_a_story_is_announced_as_one() {
+    english(|| {
+        let (mut lab, mut engine) = drawn();
+        let row = lab
+            .nav
+            .rows()
+            .iter()
+            .find_map(|row| match row {
+                Row::Entry(entry) if entry.status() == registry::Story::NoStoryYet => Some(*entry),
+                _ => None,
+            })
+            .unwrap();
+        // Its row is brought into view by the keyboard's own path, then
+        // asked for.
+        lab.set_focus(&mut engine, Some(Row::Entry(row).key()));
+        lab.reveal(Row::Entry(row).key());
+        draw(&mut lab, &mut engine);
+        let locator = format!("s:ui-lab.navigator#{}", row.catalog_id);
+        assert!(ask(&mut lab, &mut engine, &locator, Action::Click));
+        assert_eq!(lab.entry.catalog_id, row.catalog_id);
+
+        let semantics = tree(&lab);
+        assert_eq!(find(&semantics, &locator).selected, Some(true));
+        let page = find(&semantics, PAGE_AT);
+        let status = &page.children[0];
+        assert_eq!(tail(&status.occurrence), "s:ui-lab#status");
+        assert_eq!(status.role, NativeRole::Heading);
+        assert_eq!(status.label.as_deref(), Some("No story yet"));
+        let reason = &page.children[1];
+        assert_eq!(tail(&reason.occurrence), "s:ui-lab#status-reason");
+        assert_eq!(
+            reason.label.as_deref(),
+            Some("The Lab has nothing to run for this yet. No stand-in is shown in its place.")
+        );
+        for node in flat(&semantics.children) {
+            let locator = tail(&node.occurrence);
+            assert!(
+                locator != SUBJECT_AT && locator != RESULT_AT && locator != FIELD_AT,
+                "a record with no story publishes `{locator}`"
+            );
+        }
+        // Reset has nothing to put back: it says so and does nothing.
+        let reset = find(&semantics, RESET_AT);
+        assert!(reset.disabled);
+        assert_eq!(reset.actions, [Action::Focus]);
+        assert!(!ask(&mut lab, &mut engine, RESET_AT, Action::Click));
+        assert!(!ask(&mut lab, &mut engine, RESET_AT, Action::Focus));
+        assert_eq!(
+            find(&tree(&lab), "s:ui-lab.fact#story").label.as_deref(),
+            Some("Story: No story yet")
         );
     });
 }
@@ -256,13 +510,17 @@ fn every_node_stands_where_its_control_was_drawn() {
         for (locator, key) in [
             (SUBJECT_AT, SUBJECT),
             (RESET_AT, RESET),
+            (ENTRY_AT, Key::surface("ui-lab.navigator", "C-BUTTON")),
+            (LIST_AT, LIST),
+            (PAGE_AT, PAGE),
+            (PANEL_AT, PANEL),
             (FIELD_AT, control_key(Control::Label)),
             (STYLE_AT, control_key(Control::Style)),
         ] {
             assert_eq!(find(&semantics, locator).bounds, lab.rect(key), "{locator}");
         }
         let segments = lab.laid.as_ref().unwrap().segments.clone().unwrap();
-        for (style, rect) in lab.story.styles().iter().zip(&segments.segments) {
+        for (style, rect) in story(&lab).styles().iter().zip(&segments.segments) {
             let locator = format!("s:{STYLE_OPTIONS}#{}", style_part(*style));
             assert_eq!(find(&semantics, &locator).bounds, Some(*rect));
         }
@@ -289,7 +547,7 @@ fn a_click_request_is_the_press_the_pointer_makes() {
     english(|| {
         let (mut lab, mut engine) = drawn();
         assert!(ask(&mut lab, &mut engine, SUBJECT_AT, Action::Click));
-        assert_eq!(lab.story.presses(), 1);
+        assert_eq!(story(&lab).presses(), 1);
         let semantics = tree(&lab);
         assert_eq!(
             find(&semantics, RESULT_AT).label.as_deref(),
@@ -307,7 +565,7 @@ fn a_click_request_is_the_press_the_pointer_makes() {
             "s:ui-lab.style#destructive",
             Action::Click
         ));
-        assert_eq!(lab.story.style(), ButtonRole::Destructive);
+        assert_eq!(story(&lab).style(), ButtonRole::Destructive);
         assert_eq!(
             find(&tree(&lab), "s:ui-lab.style#destructive").toggled,
             Some(Toggled::True)
@@ -321,7 +579,7 @@ fn a_click_request_is_the_press_the_pointer_makes() {
         ));
 
         assert!(ask(&mut lab, &mut engine, RESET_AT, Action::Click));
-        assert!(lab.story.is_pristine());
+        assert!(story(&lab).is_pristine());
     });
 }
 
@@ -331,7 +589,7 @@ fn a_focus_request_moves_the_keyboard_and_presses_nothing() {
         let (mut lab, mut engine) = drawn();
         assert!(ask(&mut lab, &mut engine, SUBJECT_AT, Action::Focus));
         assert_eq!(lab.focus, Some(SUBJECT));
-        assert_eq!(lab.story.presses(), 0);
+        assert_eq!(story(&lab).presses(), 0);
         assert!(!ask(&mut lab, &mut engine, SUBJECT_AT, Action::Focus));
 
         assert!(ask(&mut lab, &mut engine, FIELD_AT, Action::Focus));
@@ -354,7 +612,7 @@ fn setting_the_fields_value_relabels_the_button() {
         );
         assert!(lab.accessibility_action(&mut engine, &set));
         draw(&mut lab, &mut engine);
-        assert_eq!(lab.story.label(), "Delete");
+        assert_eq!(story(&lab).label(), "Delete");
         let semantics = tree(&lab);
         assert_eq!(find(&semantics, FIELD_AT).value.as_deref(), Some("Delete"));
         assert_eq!(
@@ -371,7 +629,7 @@ fn setting_the_fields_value_relabels_the_button() {
             Some(ActionData::Value("x".into())),
         );
         assert!(!lab.accessibility_action(&mut engine, &wrong));
-        assert_eq!(lab.story.label(), "Delete");
+        assert_eq!(story(&lab).label(), "Delete");
     });
 }
 
@@ -394,6 +652,21 @@ fn only_close_can_be_asked_of_the_caption_and_it_ends_the_process() {
 fn a_request_for_something_the_frame_does_not_show_does_nothing() {
     english(|| {
         let (mut lab, mut engine) = drawn();
+        let out_of_view = lab
+            .nav
+            .rows()
+            .iter()
+            .rev()
+            .find_map(|row| match row {
+                Row::Entry(entry) => Some(entry.catalog_id),
+                Row::Group(_) => None,
+            })
+            .unwrap();
+        let unlisted = registry::catalog()
+            .find(|entry| !entry.on_desktop())
+            .unwrap()
+            .catalog_id;
+        let shown = lab.entry.catalog_id;
         let absent = |object: ObjectKey, part: &'static str| Resolved {
             occurrence: Occurrence {
                 window: WINDOW,
@@ -406,14 +679,19 @@ fn a_request_for_something_the_frame_does_not_show_does_nothing() {
         };
         for request in [
             absent(ObjectKey::Surface("ui-lab"), "search"),
+            // A row the list holds and the frame does not show.
+            absent(ObjectKey::Surface("ui-lab.navigator"), out_of_view),
+            // A record of the registry that the gallery does not list.
+            absent(ObjectKey::Surface("ui-lab.navigator"), unlisted),
             absent(ObjectKey::Surface(STYLE_OPTIONS), "ghost"),
             absent(ObjectKey::Model(uuid::Uuid::from_u128(7)), "subject"),
             absent(ObjectKey::Instance { kind: "tab", id: 1 }, "subject"),
         ] {
             assert!(!lab.accessibility_action(&mut engine, &request));
         }
-        assert!(lab.story.is_pristine());
+        assert!(story(&lab).is_pristine());
         assert_eq!(lab.focus, None);
+        assert_eq!(lab.entry.catalog_id, shown);
     });
 }
 

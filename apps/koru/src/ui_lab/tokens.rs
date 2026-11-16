@@ -40,14 +40,36 @@ pub(crate) const TOOLBAR_INSET_Y: Tagged<Space> = Tagged::new("UI_LAB_TOOLBAR_PA
 /// Between the toolbar's title and its actions: 8.
 pub(crate) const TOOLBAR_GAP: Tagged<Space> = Tagged::new("UI_LAB_TOOLBAR_GAP", Space::S2);
 
-/// Between the navigator's headings and its entries: 4.
+/// Between the navigator's heading and what is under it: 4.
 pub(crate) const NAVIGATOR_GAP: Tagged<Space> = Tagged::new("UI_LAB_NAVIGATOR_GAP", Space::S1);
+
+/// One row of the navigator's list, a group's or an entry's. Every row is
+/// this high, which is what lets the list lay out only the rows in view.
+pub(crate) const NAVIGATOR_ROW: Metric = Metric::new("UI_LAB_NAVIGATOR_ROW_H", 28.0);
+
+/// An entry's inset under its group: 24, the chevron's width and its gap.
+pub(crate) const NAVIGATOR_INDENT: Tagged<Space> =
+    Tagged::new("UI_LAB_NAVIGATOR_INDENT", Space::S6);
+
+/// Between a group's chevron, its heading and its count: 4.
+pub(crate) const NAVIGATOR_GROUP_GAP: Tagged<Space> =
+    Tagged::new("UI_LAB_NAVIGATOR_GROUP_GAP", Space::S1);
+
+/// Between a page's sections, the stage and the result line under it
+/// among them: 16.
+pub(crate) const PAGE_GAP: Tagged<Space> = Tagged::new("UI_LAB_PAGE_GAP", Space::S4);
+
+/// Between the lines of one symbol on a record's page: 2.
+pub(crate) const SYMBOL_GAP: Tagged<Space> = Tagged::new("UI_LAB_SYMBOL_GAP", Space::S0_5);
+
+/// Between one symbol and the next: 8.
+pub(crate) const SYMBOLS_GAP: Tagged<Space> = Tagged::new("UI_LAB_SYMBOLS_GAP", Space::S2);
+
+/// Between a fact's name and its value in the properties column: 2.
+pub(crate) const FACT_GAP: Tagged<Space> = Tagged::new("UI_LAB_FACT_GAP", Space::S0_5);
 
 /// The preview column's inset round the stage: 16.
 pub(crate) const PREVIEW_INSET: Tagged<Space> = Tagged::new("UI_LAB_PREVIEW_PAD", Space::S4);
-
-/// Between the stage and the result line under it: 16.
-pub(crate) const PREVIEW_GAP: Tagged<Space> = Tagged::new("UI_LAB_PREVIEW_GAP", Space::S4);
 
 /// The stage's inset round the component under test: 24. With the preview's
 /// own inset it still leaves the narrowest dialog button its full width in

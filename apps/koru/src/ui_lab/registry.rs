@@ -66,6 +66,24 @@ impl Family {
     /// entries were registered in.
     pub(crate) const ALL: [Self; 3] = [Self::Foundations, Self::Controls, Self::Compositions];
 
+    /// The stable part of the group's identity in the window.
+    pub(crate) const fn part(self) -> &'static str {
+        match self {
+            Self::Foundations => "foundations",
+            Self::Controls => "controls",
+            Self::Compositions => "compositions",
+        }
+    }
+
+    /// Where the group sits in [`Family::ALL`].
+    pub(crate) const fn slot(self) -> usize {
+        match self {
+            Self::Foundations => 0,
+            Self::Controls => 1,
+            Self::Compositions => 2,
+        }
+    }
+
     /// The group's heading in the navigator.
     pub(crate) fn heading(self) -> koru_i18n::Key {
         match self {
@@ -99,6 +117,21 @@ pub(crate) enum Kind {
     NativeAdapter,
 }
 
+impl Kind {
+    /// What a record's page calls the kind.
+    pub(crate) const fn label(self) -> koru_i18n::Key {
+        match self {
+            Self::Token => koru_i18n::Key::UiLabKindToken,
+            Self::Primitive => koru_i18n::Key::UiLabKindPrimitive,
+            Self::Widget => koru_i18n::Key::UiLabKindWidget,
+            Self::Support => koru_i18n::Key::UiLabKindSupport,
+            Self::DomainComposition => koru_i18n::Key::UiLabKindDomain,
+            Self::AppLocal => koru_i18n::Key::UiLabKindAppLocal,
+            Self::NativeAdapter => koru_i18n::Key::UiLabKindNative,
+        }
+    }
+}
+
 /// A platform an entry's availability is recorded for, one at a time: shared
 /// Rust source on one says nothing about a native adapter on another.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -108,6 +141,24 @@ pub(crate) enum Platform {
     Linux,
     Android,
     Ios,
+}
+
+impl Platform {
+    /// The platforms the gallery covers. The phones' apps are Kotlin and
+    /// Swift and are another effort: their records stay in the registry and
+    /// the gallery neither lists them nor shows a phone's column.
+    pub(crate) const DESKTOP: [Self; 3] = [Self::Windows, Self::MacOs, Self::Linux];
+
+    /// The platform's own name: a product name, the same in every language.
+    pub(crate) const fn name(self) -> &'static str {
+        match self {
+            Self::Windows => "Windows",
+            Self::MacOs => "macOS",
+            Self::Linux => "Linux",
+            Self::Android => "Android",
+            Self::Ios => "iOS",
+        }
+    }
 }
 
 /// What is known about an entry on one platform. Availability, not
@@ -134,6 +185,23 @@ pub(crate) enum Availability {
     NotAudited,
 }
 
+impl Availability {
+    /// What a record's page says for a platform in this state.
+    pub(crate) const fn label(self) -> koru_i18n::Key {
+        match self {
+            Self::Available => koru_i18n::Key::UiLabAvailAvailable,
+            Self::Existing => koru_i18n::Key::UiLabAvailExisting,
+            Self::SharedSourceUnverified => koru_i18n::Key::UiLabAvailShared,
+            Self::NativePartial => koru_i18n::Key::UiLabAvailNativePartial,
+            Self::Planned => koru_i18n::Key::UiLabAvailPlanned,
+            Self::Unavailable => koru_i18n::Key::UiLabAvailUnavailable,
+            Self::NotApplicable => koru_i18n::Key::UiLabAvailNotApplicable,
+            Self::NativeOwned => koru_i18n::Key::UiLabAvailNativeOwned,
+            Self::NotAudited => koru_i18n::Key::UiLabAvailNotAudited,
+        }
+    }
+}
+
 /// Whether a model-written composition may ask for this symbol, checked
 /// against the composition catalog the playground validates with.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -157,6 +225,37 @@ pub(crate) enum A2ui {
     NotSupported,
 }
 
+impl A2ui {
+    /// What a record's page says, in the display language. The catalog name
+    /// and the property path are identifiers and are filled in as they are.
+    pub(crate) fn sentence(self) -> String {
+        let lang = koru_i18n::current();
+        let (key, identifier) = match self {
+            Self::Component(name) => (koru_i18n::Key::UiLabA2uiComponent, Some(name)),
+            Self::HostStyled(name) => (koru_i18n::Key::UiLabA2uiHostStyled, Some(name)),
+            Self::Values { property, .. } => (koru_i18n::Key::UiLabA2uiValues, Some(property)),
+            Self::HostOnly => (koru_i18n::Key::UiLabA2uiHostOnly, None),
+            Self::NotSupported => (koru_i18n::Key::UiLabA2uiNotSupported, None),
+        };
+        match identifier {
+            Some(identifier) => koru_i18n::fill(koru_i18n::t(lang, key), &[identifier]),
+            None => koru_i18n::t(lang, key).to_owned(),
+        }
+    }
+
+    /// Where the status sorts when a record's symbols differ: what a
+    /// declaration can name first, what it cannot last.
+    const fn rank(self) -> u8 {
+        match self {
+            Self::Component(_) => 0,
+            Self::HostStyled(_) => 1,
+            Self::Values { .. } => 2,
+            Self::HostOnly => 3,
+            Self::NotSupported => 4,
+        }
+    }
+}
+
 /// Whether the Lab can show this symbol running, or why it never will.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Story {
@@ -172,6 +271,31 @@ pub(crate) enum Story {
     /// a document's own marks. Recorded so it is accounted for, shown through
     /// the components that use it rather than as a gallery story.
     Boundary,
+}
+
+impl Story {
+    /// The status a page states for a symbol or a record, said plainly.
+    pub(crate) const fn label(self) -> koru_i18n::Key {
+        match self {
+            Self::Available(_) => koru_i18n::Key::UiLabStoryAvailable,
+            Self::NoStoryYet => koru_i18n::Key::UiLabStoryNone,
+            Self::Nonvisual => koru_i18n::Key::UiLabStoryNonvisual,
+            Self::PlatformOnly => koru_i18n::Key::UiLabStoryPlatformOnly,
+            Self::Boundary => koru_i18n::Key::UiLabStoryBoundary,
+        }
+    }
+
+    /// One sentence on why there is nothing to run. `None` for a story,
+    /// which is run instead of explained.
+    pub(crate) const fn reason(self) -> Option<koru_i18n::Key> {
+        match self {
+            Self::Available(_) => None,
+            Self::NoStoryYet => Some(koru_i18n::Key::UiLabStoryNoneWhy),
+            Self::Nonvisual => Some(koru_i18n::Key::UiLabStoryNonvisualWhy),
+            Self::PlatformOnly => Some(koru_i18n::Key::UiLabStoryPlatformOnlyWhy),
+            Self::Boundary => Some(koru_i18n::Key::UiLabStoryBoundaryWhy),
+        }
+    }
 }
 
 /// The production source that owns an entry.
@@ -609,10 +733,96 @@ const BUTTON_ENTRY: Entry = Entry {
     ],
 };
 
-/// The entries the navigator lists at this checkpoint: the ones a story can
-/// run. The gallery's search and scrolling list (L3b) shows the whole
-/// [`CATALOG`]; until then a row with nothing behind it would be a dead end.
-pub(crate) const ENTRIES: &[Entry] = &[BUTTON_ENTRY];
+/// One symbol of a record, story-driven or not, as a page lists it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Symbol {
+    /// The path a caller writes: a technical identifier.
+    pub(crate) symbol: &'static str,
+    /// The production values it takes, a set per type.
+    pub(crate) options: &'static [OptionSet],
+    pub(crate) a2ui: A2ui,
+    pub(crate) story: Story,
+}
+
+impl Entry {
+    /// What is recorded for the record on `platform`.
+    pub(crate) fn availability(&self, platform: Platform) -> Availability {
+        self.platforms
+            .iter()
+            .find(|(recorded, _)| *recorded == platform)
+            .map_or(Availability::NotAudited, |(_, availability)| *availability)
+    }
+
+    /// Whether the record has any role on a desktop platform. Read from the
+    /// record's own platform cells: one whose Windows, macOS and Linux cells
+    /// all say it has no role there exists only on a phone.
+    pub(crate) fn on_desktop(&self) -> bool {
+        Platform::DESKTOP
+            .into_iter()
+            .any(|platform| self.availability(platform) != Availability::NotApplicable)
+    }
+
+    /// Every symbol of the record, the story-driven ones first.
+    pub(crate) fn symbols(&self) -> impl Iterator<Item = Symbol> + use<> {
+        let (recipes, apis) = (self.recipes, self.apis);
+        recipes
+            .iter()
+            .map(|recipe| Symbol {
+                symbol: recipe.symbol,
+                options: &[],
+                a2ui: recipe.a2ui,
+                story: recipe.story,
+            })
+            .chain(apis.iter().map(|api| Symbol {
+                symbol: api.symbol,
+                options: api.options,
+                a2ui: api.a2ui,
+                story: api.story,
+            }))
+    }
+
+    /// What the record's symbols add up to: a story if any symbol has one;
+    /// otherwise it waits for one if any visual symbol does; otherwise it is
+    /// a boundary, platform-only or nonvisual, in that order.
+    pub(crate) fn status(&self) -> Story {
+        let stories: Vec<Story> = self.symbols().map(|symbol| symbol.story).collect();
+        if let Some(available) = stories
+            .iter()
+            .find(|story| matches!(story, Story::Available(_)))
+        {
+            *available
+        } else if stories.contains(&Story::NoStoryYet) {
+            Story::NoStoryYet
+        } else if stories.contains(&Story::Boundary) {
+            Story::Boundary
+        } else if stories.contains(&Story::PlatformOnly) {
+            Story::PlatformOnly
+        } else {
+            Story::Nonvisual
+        }
+    }
+
+    /// The story the record's page runs, when it has one.
+    pub(crate) fn story_id(&self) -> Option<&'static str> {
+        match self.status() {
+            Story::Available(id) => Some(id),
+            _ => None,
+        }
+    }
+
+    /// Each distinct thing the record's symbols say about A2UI, what a
+    /// declaration can name first. One line when they all agree.
+    pub(crate) fn a2ui(&self) -> Vec<A2ui> {
+        let mut statuses: Vec<A2ui> = Vec::new();
+        for symbol in self.symbols() {
+            if !statuses.contains(&symbol.a2ui) {
+                statuses.push(symbol.a2ui);
+            }
+        }
+        statuses.sort_by_key(|status| status.rank());
+        statuses
+    }
+}
 
 /// Every record, a group's file at a time, in the order the navigator lists
 /// each group.
@@ -658,9 +868,18 @@ pub(crate) fn catalog() -> impl Iterator<Item = &'static Entry> {
     CATALOG.iter().flat_map(|records| records.iter())
 }
 
+/// **What the gallery shows**: every record with a role on a desktop
+/// platform. The navigator, the search, the counts beside a group and the
+/// story lookup all read the catalog through this, so a record that exists
+/// only on Android or iOS is in none of them. Nothing is removed from the
+/// registry: [`catalog`] still has every record.
+pub(crate) fn desktop() -> impl Iterator<Item = &'static Entry> {
+    catalog().filter(|entry| entry.on_desktop())
+}
+
 /// The entry and recipe a story ID runs.
 pub(crate) fn story(story_id: &str) -> Option<(&'static Entry, &'static Recipe)> {
-    catalog().find_map(|entry| {
+    desktop().find_map(|entry| {
         entry
             .recipes
             .iter()

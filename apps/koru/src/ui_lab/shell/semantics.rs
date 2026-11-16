@@ -6,20 +6,30 @@
 //! The tree is the last frame's: the same [`Frame`] that painted the window
 //! and answers the pointer gives each control its rectangle here, so where a
 //! control is drawn, pressed and announced cannot disagree. A request comes
-//! back as the press or the focus move the pointer and the keyboard already
-//! make ([`Lab::activate`], [`Lab::set_focus`]); nothing here is a second way
-//! to change the story.
+//! back as the press, the focus move or the scroll the pointer and the
+//! keyboard already make ([`Lab::activate`], [`Lab::set_focus`],
+//! [`Lab::scroll_to`]); nothing here is a second way to change anything.
 //!
 //! ```text
 //! Window        UI Lab                       s:window#window
 //! ├── Button    Minimize / Maximize / Close  s:window#minimize, #maximize, #close
 //! ├── Button    Reset                        s:ui-lab#reset
-//! ├── ListItem  an entry                     s:ui-lab.navigator#<catalog id>
-//! ├── Button    the component under test     s:ui-lab#subject      named by its label
-//! ├── Label     what pressing it did         s:ui-lab#result       spoken when it changes
-//! ├── TextInput Label                        s:ui-lab.control#label     value = the text
-//! └── Group     Style                        s:ui-lab.control#style
-//!     └── RadioButton  a style               s:ui-lab.style#<style>     checked on the one worn
+//! ├── ListBox   Components                   s:ui-lab#navigator        how many rows it has
+//! │   ├── Button         a group             s:ui-lab.group#<group>    expanded or collapsed
+//! │   └── ListBoxOption  a record            s:ui-lab.navigator#<catalog id>   selected, n of N
+//! ├── Group     Details                      s:ui-lab#page
+//! │   ├── Button    the component under test s:ui-lab#subject      named by its label
+//! │   ├── Label     what pressing it did     s:ui-lab#result       spoken when it changes
+//! │   ├── Heading   the record's status      s:ui-lab#status
+//! │   ├── Label     why nothing runs         s:ui-lab#status-reason
+//! │   └── Label     a symbol                 s:ui-lab.symbol#<path>    its status and options
+//! └── Group     Properties                   s:ui-lab#properties
+//!     ├── Heading   the record's name        s:ui-lab.fact#name
+//!     ├── Label     its purpose              s:ui-lab.fact#purpose
+//!     ├── TextInput Label                    s:ui-lab.control#label     value = the text
+//!     ├── Group     Style                    s:ui-lab.control#style
+//!     │   └── RadioButton  a style           s:ui-lab.style#<style>     checked on the one worn
+//!     └── Label     each fact recorded       s:ui-lab.fact#<fact>
 //! ```
 //!
 //! Identity is the element's own key, a code keyword and never a label, so a
@@ -27,6 +37,13 @@
 //! do is advertised: Minimize and Maximize are named and placed but offer no
 //! action, because the runner performs a window request only inside a pointer
 //! or key event and a screen reader's request is neither.
+//!
+//! **Only what the frame holds is published.** A navigator row scrolled out
+//! of view is not an element of the frame and so is not a node; the list
+//! says how many rows it has and each row where it sits among them, and the
+//! list's scroll actions bring the rest. Everything else a viewport holds is
+//! a node whether or not it shows: placed where the viewport shows it, or as
+//! an empty box on the edge it left by.
 
 use accesskit::{Action, ActionData, Live, Role as NativeRole};
 use koru_ui::button::ButtonRole;
@@ -35,6 +52,7 @@ use koru_workspace_host::accessibility::{
     ViewSlot, WindowSemantics, WindowSlot, part, window_commands,
 };
 
+use super::page::{NAME, PURPOSE, REASON, STATUS, SYMBOL, facts, option_line, symbol_status};
 use super::*;
 
 /// The surface the style control's options are identified under.
@@ -75,6 +93,27 @@ impl Place {
     }
 }
 
+/// The part of `rect` a viewport shows; `None` when it shows none of it.
+fn showing(rect: Rect, viewport: Rect) -> Option<Rect> {
+    let left = rect.x.max(viewport.x);
+    let top = rect.y.max(viewport.y);
+    let right = (rect.x + rect.w).min(viewport.x + viewport.w);
+    let bottom = (rect.y + rect.h).min(viewport.y + viewport.h);
+    (right > left && bottom > top).then(|| Rect::new(left, top, right - left, bottom - top))
+}
+
+/// Where something is, as far as its viewport shows it. What is scrolled
+/// wholly out of view keeps its node, because a request to focus a control
+/// is what brings it back and a line of text can still be read; it is placed
+/// as an empty box on the edge it left by.
+fn within(rect: Rect, viewport: Rect) -> Rect {
+    showing(rect, viewport).unwrap_or_else(|| {
+        let x = rect.x.clamp(viewport.x, viewport.x + viewport.w);
+        let y = rect.y.clamp(viewport.y, viewport.y + viewport.h);
+        Rect::new(x, y, 0.0, 0.0)
+    })
+}
+
 impl Lab {
     /// The client size the last frame was laid out at, in logical pixels.
     pub(in crate::ui_lab) fn frame_size(&self) -> Option<(f32, f32)> {
@@ -99,11 +138,25 @@ impl Lab {
         let mut revision = Revision::new();
         revision
             .str(self.entry.catalog_id)
-            .str(self.story.label())
-            .u64(self.story.presses())
-            .u64(self.story.style_slot().map_or(u64::MAX, |slot| slot as u64))
             .bool(self.maximised)
             .bool(self.active);
+        match &self.story {
+            Some(story) => revision
+                .byte(1)
+                .str(story.label())
+                .u64(story.presses())
+                .u64(story.style_slot().map_or(u64::MAX, |slot| slot as u64)),
+            None => revision.byte(0),
+        };
+        // The navigator: what it lists, how it is folded and what it shows.
+        revision.u64(self.nav.rows().len() as u64);
+        for family in Family::ALL {
+            revision.bool(self.nav.is_folded(family));
+        }
+        revision
+            .f32(self.nav.scroll)
+            .f32(self.page_scroll)
+            .f32(self.panel_scroll);
         match self.focus {
             Some(Key {
                 object: el::Object::Surface(surface),
@@ -133,15 +186,15 @@ impl Lab {
                 .iter()
                 .filter_map(|node| self.control_node(place, laid, node)),
         );
-        children.extend(self.result_node(place, laid));
         Some(WindowSemantics {
             window,
             label: text(koru_i18n::Key::UiLabTitle).to_owned(),
             scale,
             client: Rect::new(0.0, 0.0, laid.size.0, laid.size.1),
+            // A row scrolled out of view has no node to be the focused one.
             focus: self
                 .focus
-                .filter(|_| self.active)
+                .filter(|key| self.active && laid.frame.contains(*key))
                 .and_then(|key| place.of(key)),
             children,
             scope: Scope::Whole,
@@ -182,8 +235,14 @@ impl Lab {
     fn control_node(&self, place: Place, laid: &Laid, node: &el::SemNode) -> Option<SemanticNode> {
         let key = node.key?;
         let field = control_key(Control::Label);
+        let row = self.nav.row_of(key);
         let role = if key == field {
             NativeRole::TextInput
+        } else if key == LIST {
+            // A list one of whose items is the selected one.
+            NativeRole::ListBox
+        } else if matches!(row, Some(Row::Entry(_))) {
+            NativeRole::ListBoxOption
         } else {
             match node.role {
                 Role::Button => NativeRole::Button,
@@ -196,7 +255,13 @@ impl Lab {
                 Role::Group => NativeRole::Group,
             }
         };
-        let mut result = SemanticNode::new(place.of(key)?, role).with_bounds(node.bounds);
+        // A control inside a viewport is announced where the viewport shows
+        // it, which is where the pointer can reach it.
+        let bounds = match laid.frame.node(key).and_then(|placed| placed.clip) {
+            Some(clip) => within(node.bounds, clip),
+            None => node.bounds,
+        };
+        let mut result = SemanticNode::new(place.of(key)?, role).with_bounds(bounds);
         result = match &node.name {
             Some(el::Name::Key(name)) => result.with_label(text(*name)),
             Some(el::Name::Text(content)) => result.with_label(content.clone()),
@@ -218,15 +283,148 @@ impl Lab {
                 .with_value(self.label.raw_text())
                 .with_action(Action::SetValue);
         }
-        let mut children: Vec<SemanticNode> = node
-            .children
-            .iter()
-            .filter_map(|child| self.control_node(place, laid, child))
-            .collect();
+        match row {
+            // Selected or not is said of every record's row, and where it
+            // sits among all the rows, in view or not.
+            Some(row @ Row::Entry(entry)) => {
+                result = result.with_selected(entry.catalog_id == self.entry.catalog_id);
+                if let Some(at) = self.nav.rows().iter().position(|listed| *listed == row) {
+                    result = result.with_position(at);
+                }
+            }
+            Some(Row::Group(family)) => {
+                result = result.with_description(text(if self.nav.is_folded(family) {
+                    koru_i18n::Key::UiLabCollapsed
+                } else {
+                    koru_i18n::Key::UiLabExpanded
+                }));
+            }
+            None => {}
+        }
+        if key == LIST {
+            result = result.with_size_of_set(self.nav.rows().len());
+        }
+        if VIEWPORTS.contains(&key) {
+            // Offered only while there is somewhere to scroll to.
+            let (max, _) = laid.scroll_range(key).unwrap_or_default();
+            let offset = self.scroll_of(key);
+            if offset > 0.0 {
+                result = result.with_action(Action::ScrollUp);
+            }
+            if offset < max {
+                result = result.with_action(Action::ScrollDown);
+            }
+        }
+        let mut children: Vec<SemanticNode> = Vec::new();
+        if key == PANEL {
+            children.extend(self.identity_nodes(place, laid));
+        }
+        children.extend(
+            node.children
+                .iter()
+                .filter_map(|child| self.control_node(place, laid, child)),
+        );
         if key == control_key(Control::Style) {
             children.extend(self.style_options(place, laid));
         }
+        if key == PAGE {
+            children.extend(self.page_nodes(place, laid));
+        }
+        if key == PANEL {
+            children.extend(self.fact_nodes(place, laid));
+        }
         Some(result.with_children(children))
+    }
+
+    /// A line of text the frame holds at `key`, as a node: where `viewport`
+    /// shows it, and on the edge it left by once the viewport has scrolled
+    /// past it. It stays a node either way, so a page can be read to its end
+    /// without being scrolled, and what is published does not depend on how
+    /// a language wraps.
+    fn text_node(
+        place: Place,
+        laid: &Laid,
+        viewport: Key,
+        key: Key,
+        role: NativeRole,
+        label: String,
+    ) -> Option<SemanticNode> {
+        let rect = laid.rect(key)?;
+        let viewport = laid.frame.node(viewport)?;
+        let bounds = within(rect, viewport.viewport.unwrap_or(viewport.rect));
+        Some(
+            SemanticNode::new(place.of(key)?, role)
+                .with_label(label)
+                .with_bounds(bounds),
+        )
+    }
+
+    /// What the properties column opens with: the record's name and its
+    /// purpose.
+    fn identity_nodes(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
+        let entry = self.entry;
+        [
+            (NAME, NativeRole::Heading, text(entry.name).to_owned()),
+            (PURPOSE, NativeRole::Label, text(entry.purpose).to_owned()),
+        ]
+        .into_iter()
+        .filter_map(|(key, role, label)| Self::text_node(place, laid, PANEL, key, role, label))
+        .collect()
+    }
+
+    /// What is recorded about the record, a fact a node, as the column
+    /// draws them under the story's inputs.
+    fn fact_nodes(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
+        facts(self.entry)
+            .into_iter()
+            .filter_map(|fact| {
+                let label = fact.spoken();
+                Self::text_node(place, laid, PANEL, fact.key, NativeRole::Label, label)
+            })
+            .collect()
+    }
+
+    /// What the centre says beside the component: what using it did, or the
+    /// record's status and the reason, then each symbol in view.
+    fn page_nodes(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
+        let entry = self.entry;
+        let mut nodes = Vec::new();
+        nodes.extend(self.result_node(place, laid));
+        let status = entry.status();
+        nodes.extend(Self::text_node(
+            place,
+            laid,
+            PAGE,
+            STATUS,
+            NativeRole::Heading,
+            text(status.label()).to_owned(),
+        ));
+        if let Some(reason) = status.reason() {
+            nodes.extend(Self::text_node(
+                place,
+                laid,
+                PAGE,
+                REASON,
+                NativeRole::Label,
+                text(reason).to_owned(),
+            ));
+        }
+        nodes.extend(entry.symbols().filter_map(|symbol| {
+            // The path is the name, as written; what is recorded beside it
+            // is its description.
+            let mut described = vec![symbol_status(&symbol)];
+            described.extend(symbol.options.iter().map(option_line));
+            Self::text_node(
+                place,
+                laid,
+                PAGE,
+                Key::surface(SYMBOL, symbol.symbol),
+                NativeRole::Label,
+                symbol.symbol.to_owned(),
+            )
+            .map(|node| node.with_description(described.join("; ")))
+        }));
+        nodes
     }
 
     /// The style control's options, each where the shared segmented control
@@ -234,10 +432,10 @@ impl Lab {
     /// for one; its measured segments are the same rectangles the pointer is
     /// answered from.
     fn style_options(&self, place: Place, laid: &Laid) -> Vec<SemanticNode> {
-        let Some(segments) = &laid.segments else {
+        let (Some(segments), Some(story)) = (&laid.segments, &self.story) else {
             return Vec::new();
         };
-        self.story
+        story
             .styles()
             .iter()
             .zip(&segments.segments)
@@ -253,7 +451,7 @@ impl Lab {
                 )
                 .with_label(text(registry::dialog_style_label(*style)))
                 .with_bounds(*rect)
-                .with_toggled(*style == self.story.style())
+                .with_toggled(*style == story.style())
                 .with_action(Action::Click)
             })
             .collect()
@@ -263,10 +461,12 @@ impl Lab {
     /// feedback a press has, so it must not be the one thing left unsaid.
     fn result_node(&self, place: Place, laid: &Laid) -> Option<SemanticNode> {
         let rect = laid.frame.rect_of("Click result")?;
+        let page = laid.frame.node(PAGE)?;
+        let bounds = within(rect, page.viewport.unwrap_or(page.rect));
         Some(
             SemanticNode::new(place.of(RESULT)?, NativeRole::Label)
                 .with_label(self.result_line())
-                .with_bounds(rect)
+                .with_bounds(bounds)
                 .with_live(Live::Polite),
         )
     }
@@ -291,15 +491,16 @@ impl Lab {
             return false;
         };
         if surface == STYLE_OPTIONS {
-            let slot = self
-                .story
-                .styles()
-                .iter()
-                .position(|style| style_part(*style) == occurrence.part.name());
+            let slot = self.story.as_ref().and_then(|story| {
+                story
+                    .styles()
+                    .iter()
+                    .position(|style| style_part(*style) == occurrence.part.name())
+            });
             return match (request.action, slot) {
                 (Action::Click, Some(slot)) => {
                     let focused = self.set_focus(engine, Some(control_key(Control::Style)));
-                    self.story.choose(slot) || focused
+                    self.story.as_mut().is_some_and(|story| story.choose(slot)) || focused
                 }
                 _ => false,
             };
@@ -308,15 +509,38 @@ impl Lab {
         let Some(laid) = self.laid.as_ref() else {
             return false;
         };
-        if !laid.frame.contains(key) {
+        let Some(node) = laid.frame.node(key) else {
             return false;
-        }
-        let stop = laid.stops().contains(&key);
+        };
+        // A control that is switched off does nothing when asked.
+        let disabled = node.disabled;
+        let stop = !disabled && self.takes_focus(key);
         match &request.action {
-            Action::Focus => stop && self.set_focus(engine, Some(key)),
-            Action::Click => {
+            Action::Focus => {
+                let focused = stop && self.set_focus(engine, Some(key));
+                if focused {
+                    // As Tab does: a control cut off by its viewport is
+                    // brought into it.
+                    self.reveal(key);
+                }
+                focused
+            }
+            Action::Click if !disabled => {
                 let focused = stop && self.set_focus(engine, Some(key));
                 self.activate(engine, key) || focused
+            }
+            Action::ScrollDown | Action::ScrollUp if VIEWPORTS.contains(&key) => {
+                let (_, viewport) = self.scroll_range(key).unwrap_or_default();
+                let screen = (viewport - LINE_STEP).max(LINE_STEP);
+                let offset = self.scroll_of(key);
+                self.scroll_to(
+                    key,
+                    if request.action == Action::ScrollDown {
+                        offset + screen
+                    } else {
+                        offset - screen
+                    },
+                )
             }
             Action::SetValue if key == control_key(Control::Label) => {
                 let Some(ActionData::Value(value)) = &request.data else {

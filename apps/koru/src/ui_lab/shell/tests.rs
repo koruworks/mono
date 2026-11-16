@@ -13,9 +13,9 @@ use winit::keyboard::{KeyCode, KeyLocation, PhysicalKey};
 
 use super::*;
 
-const SIZE: (f32, f32) = (1120.0, 720.0);
+pub(super) const SIZE: (f32, f32) = (1120.0, 720.0);
 /// The smallest window `--window-size` accepts.
-const SMALLEST: (f32, f32) = koru_workspace_host::settings::MIN_WINDOW_SIZE;
+pub(super) const SMALLEST: (f32, f32) = koru_workspace_host::settings::MIN_WINDOW_SIZE;
 
 fn button_entry() -> &'static Entry {
     registry::story(registry::BUTTON_DIALOG_STORY)
@@ -24,12 +24,12 @@ fn button_entry() -> &'static Entry {
 }
 
 /// Run `body` in English, on this thread only.
-fn english<T>(body: impl FnOnce() -> T) -> T {
+pub(super) fn english<T>(body: impl FnOnce() -> T) -> T {
     koru_i18n::with_current(koru_i18n::Lang::En, body)
 }
 
 /// A Lab that has drawn one frame at `size`.
-fn drawn(size: (f32, f32)) -> (Lab, TextEngine) {
+pub(super) fn drawn(size: (f32, f32)) -> (Lab, TextEngine) {
     let mut engine = TextEngine::new();
     let mut lab = Lab::new(
         &mut engine,
@@ -40,29 +40,53 @@ fn drawn(size: (f32, f32)) -> (Lab, TextEngine) {
     (lab, engine)
 }
 
-fn draw(lab: &mut Lab, engine: &mut TextEngine, size: (f32, f32)) {
+pub(super) fn draw(lab: &mut Lab, engine: &mut TextEngine, size: (f32, f32)) {
     let mut scene = Scene::new();
     lab.draw(&mut scene, engine, size.0, size.1);
 }
 
-fn frame(lab: &Lab) -> &Frame {
+pub(super) fn frame(lab: &Lab) -> &Frame {
     &lab.laid.as_ref().expect("the Lab has drawn").frame
 }
 
-fn field() -> Key {
+/// The story on show.
+pub(super) fn story(lab: &Lab) -> &ButtonStory {
+    lab.story.as_ref().expect("the record on show has a story")
+}
+
+/// A record of the gallery, by its catalog ID.
+pub(super) fn record(catalog_id: &str) -> &'static Entry {
+    registry::desktop()
+        .find(|entry| entry.catalog_id == catalog_id)
+        .unwrap_or_else(|| panic!("the gallery has no `{catalog_id}`"))
+}
+
+pub(super) fn entry_key(catalog_id: &str) -> Key {
+    Row::Entry(record(catalog_id)).key()
+}
+
+pub(super) fn group_key(family: Family) -> Key {
+    Row::Group(family).key()
+}
+
+/// A record the Lab lists and cannot run: the corner radius table waits for
+/// its story.
+pub(super) const NO_STORY: &str = "T-RADIUS";
+
+pub(super) fn field() -> Key {
     control_key(Control::Label)
 }
 
-fn style() -> Key {
+pub(super) fn style() -> Key {
     control_key(Control::Style)
 }
 
-fn centre(lab: &Lab, key: Key) -> (f32, f32) {
+pub(super) fn centre(lab: &Lab, key: Key) -> (f32, f32) {
     lab.rect(key).expect("the frame shows the control").centre()
 }
 
 /// Press the control and draw the frame the press asked for.
-fn press(lab: &mut Lab, engine: &mut TextEngine, key: Key) -> bool {
+pub(super) fn press(lab: &mut Lab, engine: &mut TextEngine, key: Key) -> bool {
     let (x, y) = centre(lab, key);
     let changed = lab.click(engine, x, y, false);
     lab.mouse_up();
@@ -70,21 +94,26 @@ fn press(lab: &mut Lab, engine: &mut TextEngine, key: Key) -> bool {
     changed
 }
 
-fn named(lab: &mut Lab, engine: &mut TextEngine, key: NamedKey, mods: ModifiersState) -> bool {
+pub(super) fn named(
+    lab: &mut Lab,
+    engine: &mut TextEngine,
+    key: NamedKey,
+    mods: ModifiersState,
+) -> bool {
     let changed = lab.key(engine, &KeyboardKey::Named(key), None, mods);
     draw(lab, engine, SIZE);
     changed
 }
 
-fn tab(lab: &mut Lab, engine: &mut TextEngine) -> bool {
+pub(super) fn tab(lab: &mut Lab, engine: &mut TextEngine) -> bool {
     named(lab, engine, NamedKey::Tab, ModifiersState::empty())
 }
 
-fn back_tab(lab: &mut Lab, engine: &mut TextEngine) -> bool {
+pub(super) fn back_tab(lab: &mut Lab, engine: &mut TextEngine) -> bool {
     named(lab, engine, NamedKey::Tab, ModifiersState::SHIFT)
 }
 
-fn type_text(lab: &mut Lab, engine: &mut TextEngine, typed: &str) {
+pub(super) fn type_text(lab: &mut Lab, engine: &mut TextEngine, typed: &str) {
     for character in typed.chars() {
         let text = character.to_string();
         let key = if character == ' ' {
@@ -107,7 +136,7 @@ fn control(lab: &Lab, action: caption::Action) -> (f32, f32) {
         .centre()
 }
 
-fn assert_sound(lab: &Lab, context: &str) {
+pub(super) fn assert_sound(lab: &Lab, context: &str) {
     let frame = frame(lab);
     assert!(
         frame.diagnostics.is_empty(),
@@ -178,53 +207,63 @@ fn the_three_regions_compose_in_every_language_and_at_the_smallest_size() {
     }
 }
 
-/// One entry, and it is the registered button, selected.
+/// The Lab opens on the record it was given, with its row in view and
+/// marked as the one on show.
 #[test]
-fn the_navigator_lists_the_one_registered_entry() {
+fn the_lab_opens_with_the_record_on_show_in_view() {
     english(|| {
-        let (lab, _) = drawn(SIZE);
-        let frame = frame(&lab);
-        let entries: Vec<_> = frame.named("Navigator entry").collect();
-        assert_eq!(entries.len(), registry::ENTRIES.len());
-        assert_eq!(entries.len(), 1);
-        let entry = entries[0];
-        assert_eq!(entry.key, Some(navigator_key(button_entry())));
-        assert_eq!(entry.selected, Some(true));
-        assert_eq!(
-            entry.label,
-            Some(el::Name::Key(koru_i18n::Key::UiLabButtonName))
-        );
-        // Its group's heading, and no heading for a group with nothing in it.
-        assert_eq!(frame.named("Family heading").count(), 1);
+        for size in [SIZE, SMALLEST] {
+            let (lab, _) = drawn(size);
+            let frame = frame(&lab);
+            let row = frame
+                .node(entry_key(registry::BUTTON))
+                .expect("the record on show is a row of the first frame");
+            assert_eq!(row.selected, Some(true));
+            assert_eq!(
+                row.label,
+                Some(el::Name::Key(koru_i18n::Key::UiLabButtonName))
+            );
+            let list = frame.node(LIST).unwrap().viewport.unwrap();
+            assert!(
+                row.rect.y >= list.y && row.rect.y + row.rect.h <= list.y + list.h,
+                "{size:?}: {:?} is outside {list:?}",
+                row.rect
+            );
+            let selected = frame
+                .named("Navigator entry")
+                .filter(|node| node.selected == Some(true))
+                .count();
+            assert_eq!(selected, 1);
+        }
     });
 }
 
-/// What the checkpoint deliberately does not have is not there in any form:
-/// the keyboard's stops are exactly the five controls of the trial, and no
-/// element stands in for search, a theme or width control, or the inspector.
+/// The keyboard's stops are the toolbar's Reset, one row of the navigator,
+/// the page, and the story's own controls. Nothing stands in for a control
+/// the Lab does not have yet.
 #[test]
-fn only_the_trials_controls_exist() {
+fn the_keyboard_stops_are_the_controls_that_exist() {
     english(|| {
         let (lab, _) = drawn(SIZE);
         assert_eq!(
             lab.laid.as_ref().unwrap().stops(),
             [
                 RESET,
-                navigator_key(button_entry()),
+                entry_key(registry::BUTTON),
+                PAGE,
                 SUBJECT,
                 field(),
                 style()
             ]
         );
-        for node in &frame(&lab).nodes {
-            let name = node.name.to_lowercase();
-            for absent in ["search", "theme", "width", "inspect", "story picker"] {
-                assert!(!name.contains(absent), "`{}` is on the surface", node.name);
-            }
-        }
-        // Every pointer target is one of those five, or nothing.
+        // Every pointer target can also be reached by the keyboard: it is a
+        // stop, a row of the navigator's one stop, or a scrollbar.
         for hit in frame(&lab).hits() {
-            assert!(lab.laid.as_ref().unwrap().stops().contains(&hit.key));
+            assert!(
+                lab.takes_focus(hit.key) || VIEWPORTS.contains(&hit.key),
+                "{:?} can be pressed and not reached",
+                hit.key
+            );
         }
     });
 }
@@ -237,7 +276,7 @@ fn pressing_the_button_is_counted_and_shown() {
         let (mut lab, mut engine) = drawn(SIZE);
         assert_eq!(lab.result_line(), "Not pressed yet");
         assert!(press(&mut lab, &mut engine, SUBJECT));
-        assert_eq!(lab.story.presses(), 1);
+        assert_eq!(story(&lab).presses(), 1);
         assert_eq!(lab.result_line(), "Presses: 1");
         assert_eq!(lab.focus, Some(SUBJECT), "a press takes the focus");
 
@@ -246,13 +285,13 @@ fn pressing_the_button_is_counted_and_shown() {
         let (x, y) = centre(&lab, SUBJECT);
         assert!(lab.click(&mut engine, x, y, false));
         assert!(lab.double_click(&mut engine, x, y));
-        assert_eq!(lab.story.presses(), 3);
+        assert_eq!(story(&lab).presses(), 3);
         assert_eq!(lab.result_line(), "Presses: 3");
 
         // A press beside it, on the stage, is not a press of it.
         let stage = lab.rect(STAGE).unwrap();
         assert!(lab.click(&mut engine, stage.x + 2.0, stage.y + 2.0, false));
-        assert_eq!(lab.story.presses(), 3);
+        assert_eq!(story(&lab).presses(), 3);
         assert_eq!(lab.focus, None, "a press on nothing gives the focus up");
     });
 }
@@ -278,7 +317,7 @@ fn typing_in_the_label_field_relabels_the_button() {
     english(|| {
         let (mut lab, mut engine) = drawn(SIZE);
         let before = lab.rect(SUBJECT).unwrap();
-        assert_eq!(lab.story.label(), "Save changes");
+        assert_eq!(story(&lab).label(), "Save changes");
 
         assert!(press(&mut lab, &mut engine, field()));
         assert_eq!(lab.focus, Some(field()));
@@ -290,21 +329,21 @@ fn typing_in_the_label_field_relabels_the_button() {
             ModifiersState::CONTROL,
         ));
         type_text(&mut lab, &mut engine, "Move 12 files to the shared archive");
-        assert_eq!(lab.story.label(), "Move 12 files to the shared archive");
-        assert_eq!(lab.label.raw_text(), lab.story.label());
-        assert_eq!(lab.story.presses(), 0, "typing a space is not a press");
+        assert_eq!(story(&lab).label(), "Move 12 files to the shared archive");
+        assert_eq!(lab.label.raw_text(), story(&lab).label());
+        assert_eq!(story(&lab).presses(), 0, "typing a space is not a press");
 
         // The button is measured from its new label, and is named by it.
         let after = lab.rect(SUBJECT).unwrap();
         assert!(after.w > before.w, "{after:?} is no wider than {before:?}");
         assert_eq!(
             frame(&lab).node(SUBJECT).unwrap().label,
-            Some(el::Name::Text(lab.story.label().to_owned()))
+            Some(el::Name::Text(story(&lab).label().to_owned()))
         );
         assert_sound(&lab, "a relabelled button");
 
         // Backspace edits it; an empty label is a real state, shown as one.
-        for _ in 0..lab.story.label().chars().count() {
+        for _ in 0..story(&lab).label().chars().count() {
             lab.key(
                 &mut engine,
                 &KeyboardKey::Named(NamedKey::Backspace),
@@ -313,7 +352,7 @@ fn typing_in_the_label_field_relabels_the_button() {
             );
         }
         draw(&mut lab, &mut engine, SIZE);
-        assert_eq!(lab.story.label(), "");
+        assert_eq!(story(&lab).label(), "");
         assert_eq!(lab.rect(SUBJECT).unwrap().w, button::MIN_W);
         assert_sound(&lab, "an unlabelled button");
     });
@@ -337,7 +376,7 @@ fn a_very_long_label_stays_inside_the_preview() {
             assert!(stage.x >= preview.x && stage.x + stage.w <= preview.x + preview.w);
             assert!(subject.x >= stage.x && subject.x + subject.w <= stage.x + stage.w);
             assert!(subject.w >= button::MIN_W);
-            assert_eq!(lab.story.label(), long, "the label itself is not cut");
+            assert_eq!(story(&lab).label(), long, "the label itself is not cut");
         }
     });
 }
@@ -346,7 +385,7 @@ fn a_very_long_label_stays_inside_the_preview() {
 fn choosing_a_segment_restyles_the_button() {
     english(|| {
         let (mut lab, mut engine) = drawn(SIZE);
-        assert_eq!(lab.story.style(), ButtonRole::Secondary);
+        assert_eq!(story(&lab).style(), ButtonRole::Secondary);
         let segments = lab.laid.as_ref().unwrap().segments.clone().unwrap();
         assert_eq!(segments.segments.len(), registry::DIALOG_STYLES.len());
         // The segments are drawn inside the control that is pressed for them.
@@ -359,10 +398,10 @@ fn choosing_a_segment_restyles_the_button() {
             assert_eq!(lab.style_hover, Some(slot));
             lab.click(&mut engine, x, y, false);
             draw(&mut lab, &mut engine, SIZE);
-            assert_eq!(lab.story.style(), expected);
+            assert_eq!(story(&lab).style(), expected);
             assert_eq!(lab.focus, Some(style()));
         }
-        assert_eq!(lab.story.presses(), 0, "choosing a style is not a press");
+        assert_eq!(story(&lab).presses(), 0, "choosing a style is not a press");
         // Leaving the control clears the segment hover.
         assert!(lab.pointer_moved(5.0, SIZE.1 - 5.0));
         assert_eq!(lab.style_hover, None);
@@ -390,15 +429,15 @@ fn reset_restores_the_label_the_style_and_the_click_result() {
             .centre();
         lab.click(&mut engine, x, y, false);
         draw(&mut lab, &mut engine, SIZE);
-        assert_ne!(lab.story.label(), "Save changes");
-        assert_eq!(lab.story.style(), ButtonRole::Destructive);
-        assert_eq!(lab.story.presses(), 1);
+        assert_ne!(story(&lab).label(), "Save changes");
+        assert_eq!(story(&lab).style(), ButtonRole::Destructive);
+        assert_eq!(story(&lab).presses(), 1);
 
         assert!(press(&mut lab, &mut engine, RESET));
-        assert!(lab.story.is_pristine());
-        assert_eq!(lab.story.label(), "Save changes");
+        assert!(story(&lab).is_pristine());
+        assert_eq!(story(&lab).label(), "Save changes");
         assert_eq!(lab.label.raw_text(), "Save changes", "the field follows");
-        assert_eq!(lab.story.style(), ButtonRole::Secondary);
+        assert_eq!(story(&lab).style(), ButtonRole::Secondary);
         assert_eq!(lab.result_line(), "Not pressed yet");
         assert_eq!(lab.focus, Some(RESET));
         // What Reset leaves alone: the entry on show.
@@ -469,27 +508,27 @@ fn the_trial_can_be_done_from_the_keyboard() {
         }
         assert!(named(&mut lab, &mut engine, NamedKey::Enter, none));
         assert!(named(&mut lab, &mut engine, NamedKey::Space, none));
-        assert_eq!(lab.story.presses(), 2);
+        assert_eq!(story(&lab).presses(), 2);
 
         // Arriving at the field by keyboard selects its text, so typing
         // replaces it.
         assert!(tab(&mut lab, &mut engine));
         assert_eq!(lab.focus, Some(field()));
         type_text(&mut lab, &mut engine, "Send now");
-        assert_eq!(lab.story.label(), "Send now");
+        assert_eq!(story(&lab).label(), "Send now");
         // Enter in the field is not a press of anything.
         assert!(!named(&mut lab, &mut engine, NamedKey::Enter, none));
-        assert_eq!(lab.story.presses(), 2);
+        assert_eq!(story(&lab).presses(), 2);
 
         assert!(tab(&mut lab, &mut engine));
         assert_eq!(lab.focus, Some(style()));
         assert!(named(&mut lab, &mut engine, NamedKey::ArrowRight, none));
-        assert_eq!(lab.story.style(), ButtonRole::Primary);
+        assert_eq!(story(&lab).style(), ButtonRole::Primary);
         assert!(named(&mut lab, &mut engine, NamedKey::ArrowRight, none));
-        assert_eq!(lab.story.style(), ButtonRole::Destructive);
+        assert_eq!(story(&lab).style(), ButtonRole::Destructive);
         assert!(!named(&mut lab, &mut engine, NamedKey::ArrowRight, none));
         assert!(named(&mut lab, &mut engine, NamedKey::ArrowLeft, none));
-        assert_eq!(lab.story.style(), ButtonRole::Primary);
+        assert_eq!(story(&lab).style(), ButtonRole::Primary);
         // Enter and Space do nothing on a choice.
         assert!(!named(&mut lab, &mut engine, NamedKey::Enter, none));
 
@@ -497,7 +536,7 @@ fn the_trial_can_be_done_from_the_keyboard() {
             assert!(back_tab(&mut lab, &mut engine));
         }
         assert!(named(&mut lab, &mut engine, NamedKey::Enter, none));
-        assert!(lab.story.is_pristine());
+        assert!(story(&lab).is_pristine());
         assert_eq!(lab.label.raw_text(), "Save changes");
         assert_sound(&lab, "after a keyboard reset");
     });
@@ -521,12 +560,12 @@ fn a_held_activation_key_presses_once() {
             modifiers: ModifiersState::empty(),
         };
         assert!(lab.rich_key(&mut engine, event(KeyState::Pressed, false)));
-        assert_eq!(lab.story.presses(), 2);
+        assert_eq!(story(&lab).presses(), 2);
         for _ in 0..5 {
             assert!(!lab.rich_key(&mut engine, event(KeyState::Pressed, true)));
         }
         assert!(!lab.rich_key(&mut engine, event(KeyState::Released, false)));
-        assert_eq!(lab.story.presses(), 2);
+        assert_eq!(story(&lab).presses(), 2);
     });
 }
 
@@ -561,7 +600,7 @@ fn composed_text_reaches_the_label_only_when_committed() {
         assert!(lab.wants_ime());
         // Nowhere to put it yet.
         assert!(!lab.ime(&mut engine, ImeEvent::Commit { text: "保存" }));
-        assert_eq!(lab.story.label(), "Save changes");
+        assert_eq!(story(&lab).label(), "Save changes");
 
         while lab.focus != Some(field()) {
             tab(&mut lab, &mut engine);
@@ -575,11 +614,11 @@ fn composed_text_reaches_the_label_only_when_committed() {
             },
         ));
         assert!(lab.label.is_composing());
-        assert_eq!(lab.story.label(), "Save changes", "not the label yet");
+        assert_eq!(story(&lab).label(), "Save changes", "not the label yet");
 
         assert!(lab.ime(&mut engine, ImeEvent::Commit { text: "保存" }));
         assert!(!lab.label.is_composing());
-        assert_eq!(lab.story.label(), "保存");
+        assert_eq!(story(&lab).label(), "保存");
         assert_eq!(lab.label.raw_text(), "保存");
         draw(&mut lab, &mut engine, SIZE);
         assert_sound(&lab, "a composed label");
@@ -594,7 +633,7 @@ fn composed_text_reaches_the_label_only_when_committed() {
         );
         assert!(tab(&mut lab, &mut engine));
         assert!(!lab.label.is_composing());
-        assert_eq!(lab.story.label(), "保存");
+        assert_eq!(story(&lab).label(), "保存");
     });
 }
 
@@ -716,7 +755,7 @@ fn a_resize_is_answered_from_the_new_frame() {
         assert!(!lab.click(&mut engine, old_x, y, false));
         assert!(!lab.click(&mut engine, bx, by, false));
         assert!(!lab.should_exit());
-        assert_eq!(lab.story.presses(), 0);
+        assert_eq!(story(&lab).presses(), 0);
 
         draw(&mut lab, &mut engine, (800.0, 600.0));
         let (new_x, _) = control(&lab, caption::Action::Close);
@@ -726,7 +765,7 @@ fn a_resize_is_answered_from_the_new_frame() {
         // And the story the resize left alone still answers there.
         let (x, y) = centre(&lab, SUBJECT);
         assert!(lab.click(&mut engine, x, y, false));
-        assert_eq!(lab.story.presses(), 1);
+        assert_eq!(story(&lab).presses(), 1);
     });
 }
 
@@ -777,10 +816,64 @@ fn the_sample_label_is_in_the_language_the_lab_opened_in() {
         koru_i18n::with_current(lang, || {
             let (lab, _) = drawn(SIZE);
             assert_eq!(
-                lab.story.label(),
+                story(&lab).label(),
                 koru_i18n::t(lang, koru_i18n::Key::UiLabButtonSampleLabel)
             );
-            assert_eq!(lab.label.raw_text(), lab.story.label());
+            assert_eq!(lab.label.raw_text(), story(&lab).label());
         });
     }
+}
+
+// ------------------------------------------------------- showing a record
+
+/// Showing another record drops the story that was running, with every edit
+/// made to it; coming back starts the story again at its defaults.
+#[test]
+fn showing_another_record_discards_the_storys_edits() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        press(&mut lab, &mut engine, SUBJECT);
+        press(&mut lab, &mut engine, field());
+        type_text(&mut lab, &mut engine, " now");
+        assert_eq!(story(&lab).presses(), 1);
+        assert_ne!(story(&lab).label(), "Save changes");
+
+        assert!(lab.show(&mut engine, record(NO_STORY)));
+        draw(&mut lab, &mut engine, SIZE);
+        assert!(lab.story.is_none());
+        assert_eq!(lab.focus, None, "the field it was on is gone");
+        assert!(!frame(&lab).contains(SUBJECT));
+        assert!(!frame(&lab).contains(field()));
+        assert_sound(&lab, "a record with no story");
+        // Nothing to reset, and nothing to press.
+        assert!(!lab.activate(&mut engine, RESET));
+        assert!(!lab.activate(&mut engine, SUBJECT));
+        assert!(!lab.show(&mut engine, record(NO_STORY)), "already shown");
+
+        assert!(lab.show(&mut engine, record(registry::BUTTON)));
+        draw(&mut lab, &mut engine, SIZE);
+        assert!(story(&lab).is_pristine());
+        assert_eq!(story(&lab).label(), "Save changes");
+        assert_eq!(lab.label.raw_text(), "Save changes");
+        assert_eq!(lab.result_line(), "Not pressed yet");
+    });
+}
+
+/// Reset puts the story back and leaves the rest of the window as it is:
+/// the record on show, what is folded and where the list is scrolled.
+#[test]
+fn reset_keeps_the_navigator_as_it_is() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        assert!(lab.fold(&mut engine, Family::Compositions, true));
+        draw(&mut lab, &mut engine, SIZE);
+        let scrolled = lab.nav.scroll;
+        assert!(scrolled > 0.0, "the list opened on the Button's row");
+        press(&mut lab, &mut engine, SUBJECT);
+        assert!(press(&mut lab, &mut engine, RESET));
+        assert!(story(&lab).is_pristine());
+        assert_eq!(lab.entry.catalog_id, registry::BUTTON);
+        assert_eq!(lab.nav.scroll, scrolled);
+        assert!(lab.nav.is_folded(Family::Compositions));
+    });
 }

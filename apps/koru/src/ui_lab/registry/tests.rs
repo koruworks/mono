@@ -149,25 +149,155 @@ fn a_recipe_without_a_story_is_listed_as_such() {
     assert_eq!(compact.a2ui, A2ui::HostStyled("Button"));
 }
 
-/// The navigator lists only what a story can run, and each such entry is the
-/// catalog's own record, not a second copy that could drift from it.
+/// **The gallery is desktop only, and the registry is not.** What the
+/// gallery shows drops every record written from the Android and iOS apps,
+/// keeps the desktop-only native ones, and loses nothing else; the registry
+/// itself still holds all of them.
 #[test]
-fn the_navigator_lists_the_catalogs_runnable_entries() {
-    for entry in ENTRIES {
-        assert_eq!(
-            catalog().find(|e| e.catalog_id == entry.catalog_id),
-            Some(entry),
-            "{} is listed but not catalogued as it is",
-            entry.catalog_id
-        );
-        assert!(
-            entry
-                .recipes
+fn the_gallery_shows_every_desktop_record_and_no_phone_record() {
+    let shown: Vec<&str> = desktop().map(|entry| entry.catalog_id).collect();
+    let listed = |records: &[Entry]| -> Vec<bool> {
+        records
+            .iter()
+            .map(|record| shown.contains(&record.catalog_id))
+            .collect()
+    };
+    assert!(!native::ANDROID.is_empty() && !native::IOS.is_empty());
+    assert!(
+        listed(native::ANDROID).iter().all(|shown| !shown),
+        "an Android record is in the gallery"
+    );
+    assert!(
+        listed(native::IOS).iter().all(|shown| !shown),
+        "an iOS record is in the gallery"
+    );
+    // Native, and on a desktop: the macOS share extension, the system
+    // surfaces the desktop app asks the operating system for.
+    assert!(!native::MACOS.is_empty() && !app::OS_SURFACES.is_empty());
+    assert!(listed(native::MACOS).iter().all(|shown| *shown));
+    assert!(listed(app::OS_SURFACES).iter().all(|shown| *shown));
+    // Nothing else is dropped: the gallery is the catalog less the two
+    // phones' own records, in the catalog's order.
+    let phones: Vec<&str> = native::ANDROID
+        .iter()
+        .chain(native::IOS)
+        .map(|record| record.catalog_id)
+        .collect();
+    let expected: Vec<&str> = catalog()
+        .map(|entry| entry.catalog_id)
+        .filter(|id| !phones.contains(id))
+        .collect();
+    assert_eq!(shown, expected);
+    assert_eq!(catalog().count(), shown.len() + phones.len());
+    // The filter reads the record's own platform cells, so a record with a
+    // phone cell beside its desktop ones stays.
+    assert!(button().on_desktop());
+    assert_ne!(
+        button().availability(Platform::Ios),
+        Availability::NotApplicable
+    );
+    // A story is looked up through the gallery, never past it.
+    for record in native::ANDROID.iter().chain(native::IOS) {
+        assert!(!record.on_desktop(), "{}", record.catalog_id);
+        for symbol in record.symbols() {
+            assert!(!matches!(symbol.story, Story::Available(_)));
+        }
+    }
+}
+
+/// A record's page states one status, one kind and one answer a platform,
+/// each in words: no status shares its wording with another, in any
+/// language.
+#[test]
+fn every_status_a_page_states_reads_differently() {
+    const KINDS: [Kind; 7] = [
+        Kind::Token,
+        Kind::Primitive,
+        Kind::Widget,
+        Kind::Support,
+        Kind::DomainComposition,
+        Kind::AppLocal,
+        Kind::NativeAdapter,
+    ];
+    const AVAILABILITY: [Availability; 9] = [
+        Availability::Available,
+        Availability::Existing,
+        Availability::SharedSourceUnverified,
+        Availability::NativePartial,
+        Availability::Planned,
+        Availability::Unavailable,
+        Availability::NotApplicable,
+        Availability::NativeOwned,
+        Availability::NotAudited,
+    ];
+    const STORIES: [Story; 5] = [
+        Story::Available("x"),
+        Story::NoStoryYet,
+        Story::Nonvisual,
+        Story::PlatformOnly,
+        Story::Boundary,
+    ];
+    const A2UI: [A2ui; 5] = [
+        A2ui::Component("Row"),
+        A2ui::HostStyled("Button"),
+        A2ui::Values {
+            property: "layout.gap",
+            mapped: &[],
+        },
+        A2ui::HostOnly,
+        A2ui::NotSupported,
+    ];
+    fn distinct(lang: koru_i18n::Lang, mut words: Vec<String>) {
+        let count = words.len();
+        assert!(words.iter().all(|word| !word.trim().is_empty()));
+        words.sort_unstable();
+        words.dedup();
+        assert_eq!(words.len(), count, "{lang:?}: {words:?}");
+    }
+    for lang in koru_i18n::Lang::ALL {
+        koru_i18n::with_current(lang, || {
+            let word = |key| koru_i18n::t(lang, key).to_owned();
+            distinct(lang, KINDS.map(|kind| word(kind.label())).to_vec());
+            distinct(lang, AVAILABILITY.map(|a| word(a.label())).to_vec());
+            distinct(lang, STORIES.map(|story| word(story.label())).to_vec());
+            let reasons: Vec<String> = STORIES
                 .iter()
-                .any(|recipe| matches!(recipe.story, Story::Available(_))),
-            "{} is listed with nothing to run",
-            entry.catalog_id
-        );
+                .filter_map(|story| story.reason().map(word))
+                .collect();
+            assert_eq!(reasons.len(), STORIES.len() - 1, "a story is not explained");
+            distinct(lang, reasons);
+            let sentences: Vec<String> = A2UI.iter().map(|status| status.sentence()).collect();
+            // The identifier is in the sentence as it is written.
+            assert!(sentences[0].contains("Row"), "{lang:?}");
+            assert!(sentences[1].contains("Button"), "{lang:?}");
+            assert!(sentences[2].contains("layout.gap"), "{lang:?}");
+            assert!(sentences.iter().all(|sentence| !sentence.contains("{}")));
+            distinct(lang, sentences);
+        });
+    }
+    let names: Vec<&str> = Platform::DESKTOP.map(Platform::name).to_vec();
+    assert_eq!(names, ["Windows", "macOS", "Linux"]);
+}
+
+/// A record's status is its symbols': the Button runs, a token table waits,
+/// and what several symbols say about A2UI is listed once each.
+#[test]
+fn a_records_status_is_what_its_symbols_add_up_to() {
+    assert_eq!(button().status(), Story::Available(BUTTON_DIALOG_STORY));
+    assert_eq!(
+        button().a2ui(),
+        [
+            A2ui::HostStyled("Button"),
+            A2ui::HostOnly,
+            A2ui::NotSupported
+        ]
+    );
+    assert_eq!(button().symbols().count(), 11);
+    for entry in catalog() {
+        let stories: Vec<Story> = entry.symbols().map(|symbol| symbol.story).collect();
+        let status = entry.status();
+        assert!(stories.contains(&status), "{}", entry.catalog_id);
+        assert!(!entry.a2ui().is_empty(), "{}", entry.catalog_id);
     }
 }
 

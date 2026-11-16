@@ -501,12 +501,16 @@ fn seated_node(windows: &LabWindows, part: &str) -> SemanticNode {
         .lab
         .window_semantics(access.slot(), access.view_slot(), 1.0)
         .unwrap();
-    semantics
-        .children
-        .iter()
-        .find(|node| node.occurrence.part.name() == part)
-        .cloned()
-        .unwrap_or_else(|| panic!("no `{part}` in the tree"))
+    fn find(nodes: &[SemanticNode], part: &str) -> Option<SemanticNode> {
+        nodes.iter().find_map(|node| {
+            if node.occurrence.part.name() == part {
+                Some(node.clone())
+            } else {
+                find(&node.children, part)
+            }
+        })
+    }
+    find(&semantics.children, part).unwrap_or_else(|| panic!("no `{part}` in the tree"))
 }
 
 #[test]

@@ -2007,8 +2007,8 @@ Settings correction on each). **Left `NotAudited`: 2 Android, 1 iOS** —
 but whether a Tasks page reaches either phone's document view was not
 established), and `C-BUTTON` on Android: Material's `Button`,
 `OutlinedButton` and `TextButton` (with an error-colored text button for
-destructive answers) would make it native partial, but the Button is the
-shell's one `ENTRIES` record and its cells are pinned by
+destructive answers) would make it native partial, but the Button was the
+Lab's one storied record and its cells are pinned by
 `ids_are_unique_and_every_platform_has_an_answer`, so the change is left
 to the Button's owner.
 

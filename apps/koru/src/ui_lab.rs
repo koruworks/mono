@@ -12,14 +12,19 @@
 //! takes. The components themselves stay with their owners; the Lab holds
 //! stories and fixtures only.
 //!
-//! This checkpoint is one trial: the shared dialog button in a three-region
-//! window ([`shell`]), with its label and style changed from the properties
-//! the registration lists, a visible result for pressing it, and Reset. Its
-//! state is [`story`]'s and lives in memory. F12 opens the same inspector
-//! the app has, in a window of its own ([`windows`]), over the Lab's own
-//! elements and the production button they hold. There is no search, theme
-//! or width control and no way to name a story on the command line; those
-//! arrive with the gallery, not as placeholders here.
+//! The window ([`shell`]) is a gallery in three regions. The navigator lists
+//! every record the registry has for a desktop platform, in three groups
+//! that fold; a record that exists only on a phone stays in the registry and
+//! is not listed. The centre is the page of the record on show: its story
+//! when it has one, and otherwise its status said in words, with nothing
+//! drawn in the component's place. The properties column states what is
+//! recorded about it and holds a story's inputs. The one story so far is the
+//! shared dialog button, with its label and style changed from the
+//! properties the registration lists, a visible result for pressing it, and
+//! Reset; its state is [`story`]'s and lives in memory. F12 opens the same
+//! inspector the app has, in a window of its own ([`windows`]), over the
+//! Lab's own elements and the production controls they hold. There is no
+//! way to name a story on the command line.
 //!
 //! ## What `run` starts, and what it must never start
 //!
@@ -57,9 +62,10 @@ pub(crate) fn run(command: UiCommand) {
     koru_i18n::set_current(koru_i18n::Lang::for_system(
         koru_window::system_locale::system_locale().as_deref(),
     ));
-    // The one story this checkpoint has. The registry's own tests hold it in
-    // place, so a missing record is a broken build rather than a state a
-    // person can reach; it still ends here and not in an empty window.
+    // The record the Lab opens on: the first story it had. The registry's
+    // own tests hold it in place, so a missing record is a broken build
+    // rather than a state a person can reach; it still ends here and not in
+    // an empty window.
     let Some((entry, _)) = registry::story(registry::BUTTON_DIALOG_STORY) else {
         eprintln!("Koru's UI Lab has no registered story to open");
         std::process::exit(1);
