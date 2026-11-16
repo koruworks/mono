@@ -12,10 +12,10 @@
 //!
 //! **The records are a hand-reviewed inventory, not a scan.** Each was written
 //! from the production source it names. `tests.rs` holds them to that source
-//! in memory: the module lists of `koru-ui` and `koru-draw`, the token tables,
-//! the inspector identities painters register, the option enums and the A2UI
-//! catalog, so a module, token, identity or option added or removed upstream
-//! fails until it is classified here. What no test can see — a new painter in
+//! in memory: the module lists of `koru-ui`, `koru-draw` and the domain UI
+//! crates, the token tables, the inspector identities painters register, the
+//! option enums and the A2UI catalogs, so a module, token, identity or option
+//! added or removed upstream fails until it is classified here. What no test can see — a new painter in
 //! an app, a native control — is the manifest's to reconcile by hand
 //! (`registry/MANIFEST.md`).
 //!

@@ -7,11 +7,14 @@
 //! without a record saying what it is.
 //!
 //! What these checks cover is bounded and named: the `pub mod` lists of
-//! `koru-ui` and `koru-draw` (and `koru-draw::theme`), the token tables, the
-//! component identities painters register, the option enums and constants a
-//! record lists, the symbols each record names, and the A2UI composition
-//! catalog. They do not discover a new painter in an app, a domain crate or
-//! a native platform; that is the manifest's hand-reviewed scope.
+//! `koru-ui` and `koru-draw` (and `koru-draw::theme`), the module lists of
+//! the thirteen domain UI crates' roots ([`domain`]), the token tables, the
+//! component identities painters register in any of those sources, the
+//! option enums and constants a record lists, the symbols each record names,
+//! and the A2UI composition catalog and the fixed catalog's search host.
+//! They do not discover a new painter in an app or a native platform, nor a
+//! new public item inside a module already classified; that is the
+//! manifest's hand-reviewed scope.
 
 use super::*;
 use koru_ai_core::mini_apps::composition as model;
@@ -383,6 +386,10 @@ const SOURCES: &[(&str, &str)] = &[
 
 /// The adapter that draws a composition, and the catalog it validates.
 const COMPOSITION_HOST: &str = include_str!("../../../mini_app/composition.rs");
+/// The fixed catalog's component vocabulary, and the mini-app chrome that
+/// hosts its search.
+const FIXED_CATALOG: &str = include_str!("../../../../../../crates/koru-ai-core/src/mini_apps.rs");
+const MINI_APP_CHROME: &str = include_str!("../../../mini_app/chrome.rs");
 const COMPOSITION_MODEL: &str =
     include_str!("../../../../../../crates/koru-ai-core/src/mini_apps/composition.rs");
 
@@ -390,9 +397,13 @@ const COMPOSITION_MODEL: &str =
 /// keeps true.
 const MANIFEST: &str = include_str!("../MANIFEST.md");
 
+/// Every compiled-in source: the shared crates' and the domain crates'.
+fn all_sources() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
+    SOURCES.iter().chain(domain::SOURCES)
+}
+
 fn source(path: &str) -> &'static str {
-    SOURCES
-        .iter()
+    all_sources()
         .find(|(file, _)| *file == path)
         .map(|(_, text)| *text)
         .unwrap_or_else(|| panic!("{path} is not compiled into the drift checks"))
@@ -858,21 +869,58 @@ fn every_option_set_is_its_source_declaration() {
 }
 
 /// Where a symbol under a crate's module may be declared: that module's own
-/// file and the files of its children.
+/// file and the files of its children. A symbol written at the crate root
+/// (`koru_voice_ui::VoiceHud`, `koru_ai_ui::ChatSurface::draw`) names an item
+/// `lib.rs` declares or re-exports from a private module: it may then be
+/// declared in any of the crate's files, and only if `lib.rs` names it.
 fn files_of(symbol: &str) -> Vec<&'static str> {
     let mut parts = symbol.split("::");
     let krate = parts.next().unwrap().replace('_', "-");
     let top = parts.next().unwrap_or("lib");
     let root = format!("crates/{krate}/src/");
-    SOURCES
-        .iter()
+    let module: Vec<&'static str> = all_sources()
         .filter(|(file, _)| {
             file.strip_prefix(&root).is_some_and(|rest| {
                 rest == format!("{top}.rs") || rest.starts_with(&format!("{top}/"))
             })
         })
         .map(|(_, text)| *text)
+        .collect();
+    if !module.is_empty() {
+        return module;
+    }
+    let lib = format!("{root}lib.rs");
+    let Some((_, lib_text)) = all_sources().find(|(file, _)| *file == lib) else {
+        return module;
+    };
+    if !(declares(lib_text, top) || reexports(lib_text).contains(&top)) {
+        return module;
+    }
+    all_sources()
+        .filter(|(file, _)| file.starts_with(&root))
+        .map(|(_, text)| *text)
         .collect()
+}
+
+/// The names a file's `pub use` statements re-export, a statement read whole
+/// even when its list runs over several lines.
+fn reexports(text: &'static str) -> Vec<&'static str> {
+    let mut names = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("\npub use ") {
+        let statement = &rest[at + 1..];
+        let end = statement.find(';').unwrap_or(statement.len());
+        let statement = &statement[..end];
+        // The last segment of each path the statement lists.
+        names.extend(
+            statement
+                .split(|c: char| c == ',' || c == '{' || c == '}' || c.is_whitespace())
+                .filter_map(|path| path.rsplit("::").next())
+                .filter(|name| !name.is_empty()),
+        );
+        rest = &rest[at + 1 + end..];
+    }
+    names
 }
 
 fn declares(text: &str, item: &str) -> bool {
@@ -932,7 +980,7 @@ fn every_symbol_is_declared_under_its_path() {
             assert!(found, "{}: {symbol} is not declared", entry.catalog_id);
         }
         assert!(
-            SOURCES.iter().any(|(file, _)| *file == entry.source.file),
+            all_sources().any(|(file, _)| *file == entry.source.file),
             "{}: {} is not a compiled-in source",
             entry.catalog_id,
             entry.source.file
@@ -944,7 +992,7 @@ fn every_symbol_is_declared_under_its_path() {
 /// the source passes them to `inspect::scope(…, "component", …)`, each once.
 fn registered_identities() -> Vec<&'static str> {
     let mut found = Vec::new();
-    for (_, text) in SOURCES {
+    for (_, text) in all_sources() {
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
         for pair in lines.windows(2) {
             if pair[1] == "\"component\","
@@ -1283,10 +1331,98 @@ fn only_the_catalogs_symbols_claim_a2ui_support() {
             "koru_draw::theme::Space",
             "koru_draw::theme::Surface",
             "koru_draw::theme::roles",
+            "koru_search_ui::EntitySearch",
+            "koru_search_ui::EntitySearch::new_at",
+            "koru_search_ui::EntitySearch::pending",
+            "koru_search_ui::EntitySearch::poll",
+            "koru_search_ui::EntitySearch::request",
+            "koru_search_ui::EntitySearchUpdate",
             "koru_ui::button::ActionButton",
             "koru_ui::button::ActionButton::draw_focused_elided",
         ]
     );
+}
+
+/// The fixed catalog's `DocumentSearch` is the mini-app chrome's own field
+/// and floating results (an app-local surface, recorded with the app); what
+/// it reads through is `koru-search-ui`'s entity search. Each symbol that
+/// says so is used there, as the host's source spells it, and the catalog
+/// still names the component.
+#[test]
+fn the_fixed_catalogs_document_search_reads_through_the_entity_search() {
+    assert!(
+        FIXED_CATALOG.contains("(\"search\", \"DocumentSearch\")"),
+        "the fixed catalog no longer names its search component"
+    );
+    let host_only: Vec<&str> = domain::CRATES
+        .iter()
+        .flat_map(|krate| catalog().filter(move |e| e.source.owner == krate.owner))
+        .flat_map(symbols)
+        .filter(|(_, a2ui, _)| *a2ui == A2ui::HostOnly)
+        .map(|(symbol, _, _)| symbol)
+        .collect();
+    let uses = [
+        (
+            "koru_search_ui::EntitySearch",
+            "Option<koru_search_ui::EntitySearch>",
+        ),
+        (
+            "koru_search_ui::EntitySearch::new_at",
+            "koru_search_ui::EntitySearch::new_at(",
+        ),
+        ("koru_search_ui::EntitySearch::request", "reader.request("),
+        ("koru_search_ui::EntitySearch::poll", "reader.poll()"),
+        ("koru_search_ui::EntitySearch::pending", "reader.pending()"),
+        (
+            "koru_search_ui::EntitySearchUpdate",
+            "result: koru_search_ui::EntitySearchUpdate",
+        ),
+    ];
+    assert_eq!(
+        host_only,
+        uses.map(|(symbol, _)| symbol),
+        "a domain symbol claims the fixed catalog's host, or lost it"
+    );
+    for (symbol, host) in uses {
+        assert!(
+            MINI_APP_CHROME.contains(host),
+            "the mini-app chrome no longer reads {symbol} (`{host}`)"
+        );
+    }
+}
+
+/// Each domain crate's `lib.rs` against its baseline in [`domain::CRATES`]:
+/// every module classified, every record of the crate reached from a module
+/// or from `lib.rs` itself, and no record left over.
+#[test]
+fn every_domain_module_is_classified() {
+    let mut owners = Vec::new();
+    for krate in domain::CRATES {
+        let mut ids = check_baseline(krate.lib, krate.modules, false);
+        for id in krate.root {
+            assert_eq!(entry(id).source.owner, krate.owner, "{id}");
+            ids.push(id);
+        }
+        for (_, module) in krate.modules {
+            if let Module::Records(records) = module {
+                for id in *records {
+                    assert_eq!(entry(id).source.owner, krate.owner, "{id}");
+                }
+            }
+        }
+        for record in catalog().filter(|e| e.source.owner == krate.owner) {
+            assert!(
+                ids.contains(&record.catalog_id),
+                "{} is a {} record no module of its lib.rs accounts for",
+                record.catalog_id,
+                krate.owner
+            );
+        }
+        owners.push(krate.owner);
+    }
+    owners.sort_unstable();
+    owners.dedup();
+    assert_eq!(owners.len(), 13, "the thirteen domain UI crates");
 }
 
 /// What one record's symbols add up to.
@@ -1325,6 +1461,20 @@ fn counts() -> Vec<(&'static str, usize)> {
     let ui = declared_modules(source("crates/koru-ui/src/lib.rs"));
     let draw = declared_modules(source("crates/koru-draw/src/lib.rs"));
     let theme = declared_modules(source("crates/koru-draw/src/theme.rs"));
+    let domain_modules: Vec<(&str, bool)> = domain::CRATES
+        .iter()
+        .flat_map(|krate| declared_modules(source(krate.lib)))
+        .collect();
+    let domain_excluded = domain::CRATES
+        .iter()
+        .flat_map(|krate| krate.modules)
+        .filter(|(_, module)| matches!(module, Module::Excluded(_)))
+        .count();
+    let domain_owned = |e: &&Entry| {
+        domain::CRATES
+            .iter()
+            .any(|krate| krate.owner == e.source.owner)
+    };
     let all_symbols: Vec<(&str, A2ui, Story)> = entries.iter().flat_map(|e| symbols(e)).collect();
     let option_members = |kind: Kind| -> usize {
         entries
@@ -1358,6 +1508,14 @@ fn counts() -> Vec<(&'static str, usize)> {
             "koru-draw theme public submodules",
             theme.iter().filter(|(_, p)| *p).count(),
         ),
+        ("domain crates", domain::CRATES.len()),
+        ("domain crate source files", domain::SOURCES.len()),
+        ("domain crate lib.rs modules", domain_modules.len()),
+        (
+            "domain crate lib.rs public modules",
+            domain_modules.iter().filter(|(_, p)| *p).count(),
+        ),
+        ("domain crate modules excluded", domain_excluded),
         ("records", entries.len()),
         (
             "records: foundations",
@@ -1371,10 +1529,15 @@ fn counts() -> Vec<(&'static str, usize)> {
             "records: application compositions",
             count(&|e| e.family == Family::Compositions),
         ),
+        ("records: domain crates", count(&domain_owned)),
         ("kind: token", count(&|e| e.kind == Kind::Token)),
         ("kind: primitive", count(&|e| e.kind == Kind::Primitive)),
         ("kind: widget", count(&|e| e.kind == Kind::Widget)),
         ("kind: support", count(&|e| e.kind == Kind::Support)),
+        (
+            "kind: domain composition",
+            count(&|e| e.kind == Kind::DomainComposition),
+        ),
         ("token values listed", option_members(Kind::Token)),
         ("symbols", all_symbols.len()),
         (
@@ -1458,3 +1621,5 @@ fn the_manifests_counts_are_the_registrations() {
         "the manifest's counts should read:\n{table}"
     );
 }
+
+mod domain;
