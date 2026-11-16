@@ -332,7 +332,7 @@ pub(crate) fn search(
     // fragment rows are one coherent generation even across two WAL
     // connections.
     let vocabulary = index.vocabulary.read();
-    prepare_evidence(connection, &vocabulary, &terms)?;
+    prepare_evidence(connection, &vocabulary, &terms, false)?;
 
     let mut values = vec![
         Value::Integer(lifecycle_code(query.lifecycle)),
@@ -759,6 +759,13 @@ const LIFECYCLE: &str = "?1=2
 /// from its own text, its workspace's name, or its document's title, in that
 /// order of preference.
 ///
+/// **"Its workspace's name" is said as `field='workspace'`**, not as *a
+/// fragment of this workspace with no document*. A task list's fragment has no
+/// document either, and under the old spelling a list named *Backlog* lent
+/// that word to every candidate in its workspace: *backlog budget* would have
+/// matched a paragraph holding only *budget*. The predicate is the one
+/// `fragments_workspace(workspace_id, field)` already indexes.
+///
 /// **The materialization hints are the plan, not decoration.** `qualified` is
 /// read twice — by the page and by [`READ_BEST`] — so it is `MATERIALIZED`:
 /// computed once. `coverage_raw` and `term_coverage` are `NOT MATERIALIZED` so
@@ -773,7 +780,7 @@ const COVERAGE: &str = "coverage_raw AS NOT MATERIALIZED (
            FROM candidates c
            JOIN fragments target ON target.id=c.id
            JOIN fragments ws
-             ON ws.workspace_id=target.workspace_id AND ws.document_id IS NULL
+             ON ws.workspace_id=target.workspace_id AND ws.field='workspace'
            JOIN search_query_evidence e ON e.fragment_id=ws.id
            UNION ALL
            SELECT c.id, e.term_ordinal, e.distance, 2
@@ -812,6 +819,7 @@ fn prepare_evidence(
     connection: &Connection,
     vocabulary: &crate::fuzzy::Vocabulary,
     terms: &[String],
+    include_lists: bool,
 ) -> SearchResult<()> {
     connection.execute_batch(
         "CREATE TEMP TABLE IF NOT EXISTS search_query_evidence (
@@ -830,7 +838,7 @@ fn prepare_evidence(
     )?;
     for (ordinal, term) in terms.iter().enumerate() {
         insert.execute(params![ordinal as i64, term, 0_i64, fts_term(term, true)])?;
-        for candidate in vocabulary.candidates(term) {
+        for candidate in vocabulary.candidates(term, include_lists) {
             insert.execute(params![
                 ordinal as i64,
                 candidate.term,
@@ -889,7 +897,7 @@ fn evidence_for(connection: &Connection, hit: &RawHit) -> SearchResult<HitEviden
          FROM search_query_evidence e
          JOIN fragments f ON f.id=e.fragment_id
          WHERE f.workspace_id=?1
-           AND (f.document_id IS NULL OR (f.document_id=?2 AND f.field='title'))
+           AND (f.field='workspace' OR (f.document_id=?2 AND f.field='title'))
          ORDER BY e.term_ordinal, e.distance, e.matched_term",
     )?;
     evidence.scope =

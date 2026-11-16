@@ -70,6 +70,9 @@ pub mod field {
     /// [`SearchHit::page`](super::SearchHit::page), never from a translated
     /// label.
     pub const READ: &str = "read";
+    /// A task list's own name. A fragment with no document: its node is the
+    /// list's id. Only a query that asks for lists is answered from these.
+    pub const TASK_LIST: &str = "task-list";
 
     /// `heading-1` … `heading-6`.
     pub fn heading(level: u8) -> String {
