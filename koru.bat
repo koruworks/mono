@@ -9,6 +9,7 @@ rem                     .env.production; --profile gives only
 rem                     the Koru workspace an explicit profile. Stops this
 rem                     checkout's stack first and, on the shared debug channel
 rem                     (no KORU_ROOT), every other checkout's debug stack too
+rem   koru.bat ui       open the UI Lab: Koru's components over synthetic data
 rem   koru.bat stop-all stop this worktree's Koru and services
 rem   koru.bat root     the same stack on one isolated root (.env.production too)
 rem   koru.bat build-root-signed  build/register a signed rooted Windows test
@@ -170,6 +171,7 @@ if /i "%SUB%"=="run"     goto do_run
 if /i "%SUB%"=="run-all" goto do_run_all
 if /i "%SUB%"=="stop-all" goto do_stop_all
 if /i "%SUB%"=="jank"    goto do_jank
+if /i "%SUB%"=="ui"      goto do_ui
 if /i "%SUB%"=="root"    goto do_root
 if /i "%SUB%"=="root-open" goto do_root_open
 if /i "%SUB%"=="root-stop" goto do_root_stop
@@ -390,6 +392,23 @@ REM Same launch with the stall watch on, writing where it can be attached to a
 REM report. A verb rather than "set these two variables" because the moment
 REM somebody needs this is the moment they are annoyed, and the log is only
 REM useful if it was already running when the freeze happened.
+REM The UI Lab: this binary as `koru --ui`, in its own process. It is not a kind
+REM of `run`, so it shares none of run's preparation. No .env.production is
+REM read and KORU_ROOT is not forwarded: the Lab opens no profile, Store or
+REM Cloud, and `--ui` refuses `--root` rather than ignore it. Nothing is stopped
+REM first either, because the Lab is meant to sit beside the Koru you are
+REM working in; if that Koru is this checkout's own debug build and the source
+REM has changed, cargo cannot replace the running exe and says so.
+REM Everything after the verb goes to the app, with or without a leading `--`:
+REM   koru.bat ui --window-size 1280x800
+:do_ui
+call :ensure_fonts || exit /b 1
+set "UI_ARGS=!ARGS!"
+if "!UI_ARGS!"==" --" set "UI_ARGS="
+if "!UI_ARGS:~0,4!"==" -- " set "UI_ARGS=!UI_ARGS:~3!"
+cargo run -- --ui!UI_ARGS!
+exit /b %ERRORLEVEL%
+
 :do_jank
 call :ensure_fonts || exit /b 1
 set "KORU_JANK=1"
@@ -857,6 +876,8 @@ echo              KORU_JANK) and logs Koru's output for a stall summary on exit
 echo              run, run-all and root with no .env.production start with Koru Cloud not configured
 echo   stop-all   stop this worktree's Koru, Agent and services
 echo   jank       ...with the stall watch on, logging to koru-jank.log
+echo   ui         open the UI Lab in its own window: Koru's real components over
+echo              synthetic data, no profile or services; ui [--window-size WxH]
 echo   root       build and start Agent + API Gateway + Koru on one isolated root;
 echo              root [path] [--mcp] also builds the sibling MCP bridge;
 echo              --mcp registers it with agent CLIs as koru_^<branch^>
