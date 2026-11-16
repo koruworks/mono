@@ -3678,13 +3678,27 @@ pub enum Key {
     UiLabVoiceSurfacePurpose,
     UiLabVoiceHudName,
     UiLabVoiceHudPurpose,
+    UiLabArtifactsColumnName,
+    UiLabArtifactsColumnPurpose,
+    UiLabArtifactTabName,
+    UiLabArtifactTabPurpose,
+    UiLabCanvasSurfaceName,
+    UiLabCanvasSurfacePurpose,
+    UiLabCanvasCameraName,
+    UiLabCanvasCameraPurpose,
+    UiLabCanvasObjectsName,
+    UiLabCanvasObjectsPurpose,
+    UiLabChatsListName,
+    UiLabChatsListPurpose,
+    UiLabChatStatusName,
+    UiLabChatStatusPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2705] = [
+    pub const ALL: [Key; 2719] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6390,6 +6404,20 @@ impl Key {
         Key::UiLabVoiceSurfacePurpose,
         Key::UiLabVoiceHudName,
         Key::UiLabVoiceHudPurpose,
+        Key::UiLabArtifactsColumnName,
+        Key::UiLabArtifactsColumnPurpose,
+        Key::UiLabArtifactTabName,
+        Key::UiLabArtifactTabPurpose,
+        Key::UiLabCanvasSurfaceName,
+        Key::UiLabCanvasSurfacePurpose,
+        Key::UiLabCanvasCameraName,
+        Key::UiLabCanvasCameraPurpose,
+        Key::UiLabCanvasObjectsName,
+        Key::UiLabCanvasObjectsPurpose,
+        Key::UiLabChatsListName,
+        Key::UiLabChatsListPurpose,
+        Key::UiLabChatStatusName,
+        Key::UiLabChatStatusPurpose,
     ];
 }
 
@@ -18264,4 +18292,18 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabVoiceSurfacePurpose, en: "Turns voice input on or off, picks its global shortcut and says whether it is listening.", es: "Activa o desactiva la entrada de voz, elige su atajo global e indica si está escuchando.", pt_br: "Liga ou desliga a entrada de voz, escolhe o atalho global e diz se está ouvindo.", de: "Schaltet die Spracheingabe ein oder aus, wählt ihr globales Tastenkürzel und zeigt, ob sie zuhört.", fr: "Active ou désactive la saisie vocale, choisit son raccourci global et indique si elle écoute.", ar: "تشغّل الإدخال الصوتي أو توقفه، وتختار اختصاره العام، وتبيّن إن كان يستمع.", zh_hans: "开启或关闭语音输入，选择全局快捷键，并显示是否正在聆听。", ja: "音声入力のオン・オフ、グローバルショートカットの選択、聞き取り中かどうかの表示を行います。" },
     Row { key: Key::UiLabVoiceHudName, en: "Voice status widget", es: "Indicador de voz", pt_br: "Indicador de voz", de: "Sprachstatusanzeige", fr: "Indicateur vocal", ar: "مؤشر حالة الصوت", zh_hans: "语音状态条", ja: "音声ステータス表示" },
     Row { key: Key::UiLabVoiceHudPurpose, en: "A small bar showing the microphone level while dictating, with a button to finish.", es: "Una barra pequeña que muestra el nivel del micrófono mientras se dicta, con un botón para terminar.", pt_br: "Uma barra pequena que mostra o nível do microfone durante o ditado, com um botão para terminar.", de: "Eine kleine Leiste mit dem Mikrofonpegel während des Diktierens und einem Knopf zum Beenden.", fr: "Une petite barre qui montre le niveau du micro pendant la dictée, avec un bouton pour terminer.", ar: "شريط صغير يعرض مستوى الميكروفون أثناء الإملاء، مع زر للإنهاء.", zh_hans: "听写时显示麦克风音量的小条，并带有结束按钮。", ja: "口述中にマイクの音量を示す小さなバーで、終了ボタンがあります。" },
+    Row { key: Key::UiLabArtifactsColumnName, en: "Artifacts column", es: "Columna de artefactos", pt_br: "Coluna de artefatos", de: "Artefaktspalte", fr: "Colonne des artefacts", ar: "عمود النواتج", zh_hans: "产物栏", ja: "成果物の列" },
+    Row { key: Key::UiLabArtifactsColumnPurpose, en: "What delegated runs produced for this workspace: result families and their versions, and what each run left behind.", es: "Lo que produjeron las ejecuciones delegadas de este espacio: familias de resultados con sus versiones y lo que dejó cada ejecución.", pt_br: "O que as execuções delegadas produziram neste espaço: famílias de resultados com suas versões e o que cada execução deixou.", de: "Was delegierte Läufe für diesen Arbeitsbereich erzeugt haben: Ergebnisfamilien mit Versionen und was jeder Lauf hinterließ.", fr: "Ce que les exécutions déléguées ont produit pour cet espace : familles de résultats avec leurs versions, et ce que chaque exécution a laissé.", ar: "ما أنتجته عمليات التشغيل المفوَّضة لمساحة العمل هذه: عائلات النتائج وإصداراتها، وما تركه كل تشغيل.", zh_hans: "本工作区委派运行的成果：结果系列及其版本，以及每次运行留下的内容。", ja: "このワークスペースで委任した実行が生んだもの。結果のまとまりとその版、各実行が残したもの。" },
+    Row { key: Key::UiLabArtifactTabName, en: "Result tab", es: "Pestaña de resultado", pt_br: "Aba de resultado", de: "Ergebnistab", fr: "Onglet de résultat", ar: "تبويب النتيجة", zh_hans: "结果标签页", ja: "結果タブ" },
+    Row { key: Key::UiLabArtifactTabPurpose, en: "One version of a run’s result open as a tab, read or edited and saved as the next version.", es: "Una versión del resultado de una ejecución abierta en una pestaña, para leerla o editarla y guardarla como la siguiente versión.", pt_br: "Uma versão do resultado de uma execução aberta como aba, para ler ou editar e salvar como a próxima versão.", de: "Eine Version des Ergebnisses eines Laufs als Tab, zum Lesen oder Bearbeiten und Speichern als nächste Version.", fr: "Une version du résultat d’une exécution ouverte dans un onglet, à lire ou modifier et enregistrer comme version suivante.", ar: "إصدار واحد من نتيجة تشغيل مفتوح في تبويب، للقراءة أو التحرير والحفظ كإصدار تالٍ.", zh_hans: "以标签页打开某次运行结果的一个版本，可阅读或编辑并另存为下一版本。", ja: "実行結果の一つの版をタブで開き、読んだり編集して次の版として保存したりします。" },
+    Row { key: Key::UiLabCanvasSurfaceName, en: "Canvas", es: "Lienzo", pt_br: "Tela de desenho", de: "Leinwand", fr: "Canevas", ar: "لوحة الرسم", zh_hans: "画布", ja: "キャンバス" },
+    Row { key: Key::UiLabCanvasSurfacePurpose, en: "An open plane to spread cards, images and workflow nodes on, link them with arrows and run agents from.", es: "Un plano abierto para repartir tarjetas, imágenes y nodos de flujo, unirlos con flechas y lanzar agentes.", pt_br: "Um plano aberto para espalhar cartões, imagens e nós de fluxo, ligá-los com setas e executar agentes.", de: "Eine offene Fläche, auf der Karten, Bilder und Ablaufknoten verteilt, mit Pfeilen verbunden und Agenten gestartet werden.", fr: "Un plan ouvert pour disposer des cartes, des images et des nœuds de flux, les relier par des flèches et lancer des agents.", ar: "مساحة مفتوحة لنشر البطاقات والصور وعقد سير العمل، وربطها بأسهم، وتشغيل الوكلاء منها.", zh_hans: "一个开放平面，可摆放卡片、图片和工作流节点，用箭头连接，并从中运行代理。", ja: "カード、画像、ワークフローのノードを並べ、矢印でつなぎ、エージェントを実行できる開かれた平面。" },
+    Row { key: Key::UiLabCanvasCameraName, en: "Canvas camera", es: "Cámara del lienzo", pt_br: "Câmera da tela de desenho", de: "Leinwandkamera", fr: "Caméra du canevas", ar: "كاميرا اللوحة", zh_hans: "画布视角", ja: "キャンバスのカメラ" },
+    Row { key: Key::UiLabCanvasCameraPurpose, en: "Where the person is looking on a canvas: the point in the middle of the view, the zoom, and the mapping between them.", es: "Hacia dónde mira la persona en el lienzo: el punto central de la vista, el zoom y la conversión entre ambos.", pt_br: "Para onde a pessoa olha na tela de desenho: o ponto no meio da vista, o zoom e a conversão entre eles.", de: "Wohin die Person auf der Leinwand schaut: der Punkt in der Mitte der Ansicht, der Zoom und die Umrechnung dazwischen.", fr: "Où la personne regarde sur le canevas : le point au centre de la vue, le zoom et la conversion entre les deux.", ar: "أين ينظر الشخص على اللوحة: النقطة في وسط العرض، ومستوى التكبير، والتحويل بينهما.", zh_hans: "人在画布上看的位置：视图中心点、缩放比例以及两者间的换算。", ja: "キャンバス上で見ている場所。ビュー中央の点、ズーム、両者の換算です。" },
+    Row { key: Key::UiLabCanvasObjectsName, en: "Canvas objects", es: "Objetos del lienzo", pt_br: "Objetos da tela de desenho", de: "Leinwandobjekte", fr: "Objets du canevas", ar: "عناصر اللوحة", zh_hans: "画布对象", ja: "キャンバスのオブジェクト" },
+    Row { key: Key::UiLabCanvasObjectsPurpose, en: "The cards, images, workflow nodes and arrows a canvas is handed, drawn as its own content.", es: "Las tarjetas, imágenes, nodos de flujo y flechas que recibe un lienzo y que dibuja como contenido propio.", pt_br: "Os cartões, imagens, nós de fluxo e setas que uma tela de desenho recebe e desenha como seu próprio conteúdo.", de: "Die Karten, Bilder, Ablaufknoten und Pfeile, die eine Leinwand erhält und als eigenen Inhalt zeichnet.", fr: "Les cartes, images, nœuds de flux et flèches qu’un canevas reçoit et dessine comme son propre contenu.", ar: "البطاقات والصور وعقد سير العمل والأسهم التي تتلقاها اللوحة وترسمها كمحتوى خاص بها.", zh_hans: "画布收到并作为自身内容绘制的卡片、图片、工作流节点和箭头。", ja: "キャンバスが受け取り、自身の内容として描くカード、画像、ワークフローのノード、矢印。" },
+    Row { key: Key::UiLabChatsListName, en: "Chats list", es: "Lista de chats", pt_br: "Lista de chats", de: "Chatliste", fr: "Liste des discussions", ar: "قائمة المحادثات", zh_hans: "聊天列表", ja: "チャット一覧" },
+    Row { key: Key::UiLabChatsListPurpose, en: "Every AI chat, newest first, with who answered it and when, opening a chat as a tab.", es: "Todos los chats de IA, del más reciente al más antiguo, con quién respondió y cuándo; cada uno se abre en una pestaña.", pt_br: "Todos os chats de IA, do mais recente ao mais antigo, com quem respondeu e quando; cada um abre como uma aba.", de: "Alle KI-Chats, die neuesten zuerst, mit wer und wann geantwortet hat; ein Chat öffnet sich als Tab.", fr: "Toutes les discussions avec l’IA, les plus récentes d’abord, avec qui a répondu et quand ; chacune s’ouvre dans un onglet.", ar: "كل محادثات الذكاء الاصطناعي، الأحدث أولًا، مع من أجاب ومتى، وتُفتح كل محادثة في تبويب.", zh_hans: "所有 AI 聊天，最新的在前，显示由谁回答及时间，点开后以标签页打开。", ja: "すべての AI チャットを新しい順に、誰がいつ答えたかと共に並べ、タブとして開きます。" },
+    Row { key: Key::UiLabChatStatusName, en: "Chat status", es: "Estado del chat", pt_br: "Status do chat", de: "Chatstatus", fr: "État de la discussion", ar: "حالة المحادثة", zh_hans: "聊天状态", ja: "チャットの状態" },
+    Row { key: Key::UiLabChatStatusPurpose, en: "Decides in one place whether a chat is working, needs the person, or holds something unread.", es: "Decide en un solo lugar si un chat está trabajando, necesita a la persona o tiene algo sin leer.", pt_br: "Decide em um só lugar se um chat está trabalhando, precisa da pessoa ou tem algo não lido.", de: "Entscheidet an einer Stelle, ob ein Chat arbeitet, die Person braucht oder Ungelesenes enthält.", fr: "Décide en un seul endroit si une discussion travaille, attend la personne ou contient du non-lu.", ar: "تقرر في مكان واحد إن كانت المحادثة تعمل، أو تحتاج الشخص، أو تحمل شيئًا غير مقروء.", zh_hans: "在同一处判定聊天是在工作、需要用户处理，还是有未读内容。", ja: "チャットが作業中か、人の対応待ちか、未読があるかを一か所で決めます。" },
 ];

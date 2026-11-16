@@ -14,11 +14,17 @@ use koru_i18n::Key;
 
 mod agents;
 mod appearance;
+mod artifacts;
+mod canvas;
+mod chats;
 mod shell_chrome;
 mod voice;
 
 pub(super) const AGENTS: &[Entry] = agents::RECORDS;
 pub(super) const APPEARANCE: &[Entry] = appearance::RECORDS;
+pub(super) const ARTIFACTS: &[Entry] = artifacts::RECORDS;
+pub(super) const CANVAS: &[Entry] = canvas::RECORDS;
+pub(super) const CHATS: &[Entry] = chats::RECORDS;
 pub(super) const SHELL_CHROME: &[Entry] = shell_chrome::RECORDS;
 pub(super) const VOICE: &[Entry] = voice::RECORDS;
 
@@ -78,4 +84,15 @@ const fn support(symbol: &'static str) -> Api {
 /// Nonvisual, with the production values it carries.
 const fn support_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
     plain_with(symbol, options, Story::Nonvisual)
+}
+
+/// Content a surface draws as its own — canvas objects, a document — shown
+/// through that surface rather than as a gallery story.
+const fn boundary(symbol: &'static str) -> Api {
+    plain(symbol, Story::Boundary)
+}
+
+/// Content, with the kinds of it the source declares.
+const fn boundary_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
+    plain_with(symbol, options, Story::Boundary)
 }
