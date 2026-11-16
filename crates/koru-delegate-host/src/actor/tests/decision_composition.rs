@@ -302,23 +302,47 @@ fn a_persistently_refused_publication_waits_a_tick_and_the_resume_driver_still_s
     server.join().unwrap();
 }
 
-/// O150 on the real actor loop: once the person allowed the edit and the
-/// successor's continuation was acknowledged, the approved edit is consumed
-/// and its positive Store outcome confirmed through the private Bot route,
-/// exactly as the shared native effect sends both (for Koru's own trigger
-/// and for the model's exact retry alike). The decision settles on that
-/// confirmation, the actor's own maintenance publishes the owed Control and
-/// settles the wait, and the Run's published classification is no longer
-/// waiting, all while the successor keeps running.
-#[test]
-fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn() {
+/// One actor turn as its loop runs it: a tick, then every wake, bounded.
+fn turn_once(actor: &mut Actor, inbox: &mpsc::Receiver<Command>) {
+    actor.maintenance_tick();
+    let drain_until = Instant::now() + Duration::from_millis(50);
+    while Instant::now() < drain_until {
+        let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+            break;
+        };
+        actor.handle(command);
+    }
+}
+
+fn ledger(actor: &mut Actor) -> &mut dyn koru_delegate_sqlite::BotLedger {
+    actor.orchestrator.ports_mut().store.bots().unwrap()
+}
+
+/// An actor whose Bot decision was allowed, resumed on its acknowledged
+/// successor, consumed and confirmed Durable through the private Bot route,
+/// exactly as the shared native effect sends both (for Koru's own trigger and
+/// for the model's exact retry alike). The decision is settled; its Control
+/// is still owed, so the wait is still open.
+struct Saved {
+    actor: Actor,
+    inbox: mpsc::Receiver<Command>,
+    prepared: koru_delegate_runtime::test_support::PreparedDecision,
+    sessions: Arc<std::sync::Mutex<koru_delegate_runtime::test_support::SessionScript>>,
+    waits: koru_delegate_runtime::test_support::PublishedWaits,
+    consumer: koru_delegate_core::BotExecutionFence,
+    creation: IdempotencyKey,
+    request: koru_delegate_core::PrepareNativeResult,
+    payload: koru_delegate_core::decisions::DecisionPayload,
+}
+
+fn saved() -> Saved {
     use koru_delegate_core::decisions::{
         DecisionAuthorization, DecisionBindingV1, DecisionClosureReason, DecisionPhase,
     };
     use koru_delegate_core::{
-        BotAdmissionState, BotExecutionFence, ConfirmNativeResult, NativeResultDisposition,
-        NativeResultKey, NativeResultKind, NativeResultObservation, NativeResultOperation,
-        NativeResultReference, NativeResultStage, PrepareNativeResult,
+        BotExecutionFence, ConfirmNativeResult, NativeResultDisposition, NativeResultKey,
+        NativeResultKind, NativeResultObservation, NativeResultOperation, NativeResultReference,
+        PrepareNativeResult,
     };
     let DecisionChain {
         orchestrator,
@@ -344,17 +368,6 @@ fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn(
             answering.enrolled_reply(request)
         });
     });
-    // One actor turn as its loop runs it: a tick, then every wake, bounded.
-    let turn_once = |actor: &mut Actor| {
-        actor.maintenance_tick();
-        let drain_until = Instant::now() + Duration::from_millis(50);
-        while Instant::now() < drain_until {
-            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
-                break;
-            };
-            actor.handle(command);
-        }
-    };
     let deadline = Instant::now() + Duration::from_secs(30);
     let mut allowed = false;
     while steps(&actor.resume_log).last() != Some(&Step::InputAcknowledged) {
@@ -363,7 +376,7 @@ fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn(
             "the chain did not reach the acknowledged successor: {:?}",
             steps(&actor.resume_log)
         );
-        turn_once(&mut actor);
+        turn_once(&mut actor, &inbox);
         if !allowed && steps(&actor.resume_log).contains(&Step::OriginStopped) {
             prepared.allow_once(&mut actor.orchestrator).unwrap();
             allowed = true;
@@ -382,9 +395,6 @@ fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn(
         turn: Some(turn),
         ..prepared.fence
     };
-    fn ledger(actor: &mut Actor) -> &mut dyn koru_delegate_sqlite::BotLedger {
-        actor.orchestrator.ports_mut().store.bots().unwrap()
-    }
     let record = ledger(&mut actor)
         .bot_decision(owner, run, prepared.decision)
         .unwrap()
@@ -459,48 +469,90 @@ fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn(
         ),
         "settled on the confirmed save"
     );
-
-    // The actor's own maintenance publishes the owed Control, settles the
-    // wait and republishes the Run's classification.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    while ledger(&mut actor)
-        .decision_wait_execution(owner, run)
-        .unwrap()
-        .is_some()
-    {
-        assert!(Instant::now() < deadline, "the wait did not settle");
-        turn_once(&mut actor);
+    let payload = binding.payload.clone();
+    Saved {
+        actor,
+        inbox,
+        prepared,
+        sessions,
+        waits,
+        consumer,
+        creation: keys.creation,
+        request,
+        payload,
     }
-    turn_once(&mut actor);
-    assert_eq!(
-        waits.get(run),
-        None,
-        "the Run no longer classifies as waiting"
-    );
-    assert!(!actor.orchestrator.run_publication_pending(run));
-    assert_eq!(
-        actor
+}
+
+impl Saved {
+    fn native_stage(&mut self) -> koru_delegate_core::NativeResultStage {
+        self.actor
             .orchestrator
             .ports_mut()
             .store
             .native_results()
             .unwrap()
-            .native_result(&request.key)
+            .native_result(&self.request.key)
             .unwrap()
             .unwrap()
-            .stage,
-        NativeResultStage::Registered
+            .stage
+    }
+
+    /// The model's exact retry of the consume never gets a second Execute.
+    fn replay_saves_nothing(&mut self) {
+        let replay = self.actor.bot_command(BotCommand::ConsumeDecisionEdit {
+            fence: self.consumer.clone(),
+            request: self.request.clone(),
+            payload: self.payload.clone(),
+            proof: self.prepared.proof.clone(),
+            boot: self.prepared.boot,
+        });
+        assert!(
+            !matches!(&replay, Ok(BotReply::NativeResult { intent })
+                if intent.disposition == koru_delegate_core::NativeResultDisposition::Execute),
+            "{replay:?}"
+        );
+    }
+}
+
+/// O150 on the real actor loop: the decision settles on the confirmation,
+/// the actor's own maintenance publishes the owed Control and settles the
+/// wait, and the Run's published classification is no longer waiting, all
+/// while the successor keeps running.
+#[test]
+fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn() {
+    use koru_delegate_core::{BotAdmissionState, NativeResultStage};
+    let mut s = saved();
+    let (owner, run) = (s.prepared.owner, s.prepared.run);
+    // The actor's own maintenance publishes the owed Control, settles the
+    // wait and republishes the Run's classification.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut s.actor)
+        .decision_wait_execution(owner, run)
+        .unwrap()
+        .is_some()
+    {
+        assert!(Instant::now() < deadline, "the wait did not settle");
+        turn_once(&mut s.actor, &s.inbox);
+    }
+    turn_once(&mut s.actor, &s.inbox);
+    assert_eq!(
+        s.waits.get(run),
+        None,
+        "the Run no longer classifies as waiting"
     );
+    assert!(!s.actor.orchestrator.run_publication_pending(run));
+    assert_eq!(s.native_stage(), NativeResultStage::Registered);
     // The successor is an ordinary executing attempt.
     assert_eq!(
-        ledger(&mut actor)
+        ledger(&mut s.actor)
             .bot_execution(run)
             .unwrap()
             .unwrap()
             .state,
         BotAdmissionState::Executing
     );
-    let row = actor
+    let row = s
+        .actor
         .orchestrator
         .ports_mut()
         .store
@@ -509,19 +561,82 @@ fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn(
         .unwrap();
     assert_eq!(
         (row.attempt, row.generation, row.retired),
-        (consumer.attempt, consumer.generation, false)
+        (s.consumer.attempt, s.consumer.generation, false)
     );
-    // The model's exact retry of the consume after settlement saves nothing.
-    let replay = actor.bot_command(BotCommand::ConsumeDecisionEdit {
-        fence: consumer,
-        request,
-        payload: binding.payload.clone(),
-        proof: prepared.proof.clone(),
-        boot: prepared.boot,
-    });
+    s.replay_saves_nothing();
+}
+
+/// O152 on the real actor loop: a person's Stop arriving after the
+/// settlement but before its Control applied finishes instead of staying on
+/// Stopping. The actor retires the successor, records the final cleanup with
+/// the Durable save, publishes, settles the wait, registers the save once and
+/// settles the admission, releasing its capacity.
+#[test]
+fn a_stop_after_the_settlement_finishes_on_the_real_tick() {
+    use koru_delegate_core::{BotAdmissionState, BotRunKey, NativeResultStage};
+    let mut s = saved();
+    let (owner, run) = (s.prepared.owner, s.prepared.run);
     assert!(
-        !matches!(&replay, Ok(BotReply::NativeResult { intent })
-            if intent.disposition == NativeResultDisposition::Execute),
-        "{replay:?}"
+        ledger(&mut s.actor)
+            .decision_wait_execution(owner, run)
+            .unwrap()
+            .is_some(),
+        "the settlement's Control is still owed"
     );
+    s.sessions.lock().unwrap().script_retirement(
+        s.creation,
+        koru_session_protocol::CreationLookup::NoEvidence,
+    );
+    let stopped = s.actor.bot_command(BotCommand::Stop {
+        key: BotRunKey {
+            owner,
+            bot: s.consumer.bot,
+            run,
+        },
+        fence: Some(s.consumer.clone()),
+    });
+    // The decision-managed Stop answers that publication is still owed.
+    assert!(stopped.is_err(), "{stopped:?}");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut s.actor)
+        .bot_execution(run)
+        .unwrap()
+        .unwrap()
+        .state
+        != BotAdmissionState::Settled
+    {
+        assert!(
+            Instant::now() < deadline,
+            "the Stop did not finish: wait {:?}",
+            ledger(&mut s.actor)
+                .decision_wait_execution(owner, run)
+                .unwrap()
+                .map(|execution| (execution.wait.phase, execution.wait.cleanup.is_some()))
+        );
+        turn_once(&mut s.actor, &s.inbox);
+        // The loop's own Bot budget deadline, as `run` serves it: every
+        // budget-tracked Run gets its tick (cleanup and terminal settlement).
+        for tracked in s.actor.orchestrator.bot_budget_runs() {
+            let _ = s.actor.orchestrator.bot_budget_tick(tracked);
+        }
+    }
+    assert!(
+        ledger(&mut s.actor)
+            .decision_wait_execution(owner, run)
+            .unwrap()
+            .is_none(),
+        "the wait settled"
+    );
+    assert_eq!(s.native_stage(), NativeResultStage::Registered);
+    assert_eq!(s.waits.get(run), None);
+    let device = owner.device;
+    assert_eq!(
+        ledger(&mut s.actor)
+            .bot_execution_inventory(device)
+            .unwrap()
+            .occupied,
+        0,
+        "capacity released"
+    );
+    s.replay_saves_nothing();
 }

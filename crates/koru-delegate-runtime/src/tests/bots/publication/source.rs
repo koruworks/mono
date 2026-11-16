@@ -953,6 +953,168 @@ fn decision_successor_delivery_is_accepted_after_the_acknowledged_continuation()
     ));
 }
 
+/// O152: the successor's ordinary end of turn after an early settlement
+/// delivers. A delivery that arrives while the settlement's Control is still
+/// owed is refused and writes nothing (the save's registration is owed); the
+/// AI's retry after the wait settled finishes it on the ordinary path, with
+/// the approved save registered once.
+#[test]
+fn decision_successor_delivers_on_the_ordinary_path_after_an_early_settlement() {
+    use koru_delegate_sqlite::test_support as build;
+    let (mut h, s, fence, proof, boot) = waiting_with(true, false, None);
+    let run = fence.run;
+    let device = fence.owner.device;
+    apply_next(&mut h, run);
+    let turn = AgentTurnId::mint();
+    let (record, session, attempt, generation) =
+        successor(&mut h, &fence, &proof, boot, Some(turn));
+    let consumer = BotExecutionFence {
+        attempt,
+        generation,
+        session,
+        turn: Some(turn),
+        ..fence
+    };
+    let DecisionBindingV1::KoruEdit(edit) = &record.receipt.binding else {
+        panic!("edit")
+    };
+    let request = build::consume_request(&record, &consumer).unwrap();
+    let consumed = h
+        .orchestrator
+        .bot_consume_decision_edit(
+            &consumer,
+            device,
+            &request,
+            edit.payload.as_slice(),
+            &proof,
+            boot,
+        )
+        .unwrap();
+    assert!(consumed.execute.is_some());
+    let durable = ConfirmNativeResult {
+        key: request.key.clone(),
+        request_fingerprint: request.request_fingerprint,
+        observation: NativeResultObservation::Durable {
+            evidence: NativeResultReference {
+                operation_id: request.key.operation_id,
+                workspace: request.destination,
+                document: request.target.unwrap(),
+                version: vec![7, 7, 7],
+                title: "Approved page".into(),
+                confirmed_at_ms: 1000,
+                kind: NativeResultKind::EditedPage,
+            },
+        },
+    };
+    assert_eq!(
+        h.orchestrator
+            .confirm_native_result(&durable, device)
+            .unwrap()
+            .stage,
+        NativeResultStage::Verified
+    );
+    let decided = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .bot_decision(fence.owner, run, record.receipt.decision)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decided.receipt.state.phase, DecisionPhase::Settled);
+    // The successor's turn completed natively.
+    {
+        let memory = h
+            .orchestrator
+            .runs
+            .get_mut(&run)
+            .unwrap()
+            .attempt
+            .as_mut()
+            .unwrap();
+        memory.orchestrator_turn = None;
+        memory.bot_terminal_turn = Some(turn);
+        let mut script = h.sessions.lock().unwrap();
+        let mut completed = summary(ManagedState::Completed, None);
+        completed.id = session;
+        script.summaries.insert(session, completed);
+        script.observation.events.clear();
+        script.observation.events.push(SequencedAgentEvent {
+            session_id: session,
+            sequence: StreamSequence::new(60).unwrap(),
+            event: AgentEvent::TurnCompleted { turn_id: turn },
+        });
+    }
+    let receipt = successor_receipt(&s, run, attempt, generation);
+    // Before the settlement's Control applied: refused, nothing recorded.
+    let before = latest(&h, &fence).identity.sequence;
+    let early = h
+        .orchestrator
+        .bot_acknowledge_delivery(&key(&s), device, &receipt)
+        .unwrap_err();
+    assert!(pending_code(early));
+    assert_eq!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .bot_admission(run)
+            .unwrap()
+            .unwrap()
+            .delivery_publication,
+        None,
+        "no delivery receipt while the save's registration is owed"
+    );
+    // The owed Controls publish and the wait settles on its ordinary path;
+    // the save is registered once the handle is ordinary again.
+    publish_owed(&mut h, run);
+    assert_eq!(
+        latest(&h, &fence).identity.sequence,
+        before,
+        "the refused delivery added no Control"
+    );
+    let _ = h.orchestrator.settle_publication_wait(run).unwrap();
+    assert!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .decision_wait_execution(fence.owner, run)
+            .unwrap()
+            .is_none()
+    );
+    assert!(!h.orchestrator.run_publication_pending(run));
+    assert!(!h.orchestrator.native_effects_pending(run).unwrap());
+    // The AI's retry of the same receipt now delivers on the ordinary path.
+    let delivered = h
+        .orchestrator
+        .bot_acknowledge_delivery(&key(&s), device, &receipt);
+    let header = h
+        .orchestrator
+        .open(run)
+        .unwrap()
+        .doc
+        .document()
+        .unwrap()
+        .header()
+        .unwrap();
+    assert_eq!(
+        header.chat_delivery.as_ref(),
+        Some(&receipt),
+        "{delivered:?}"
+    );
+    assert_eq!(header.status, RunStatus::Completed, "{delivered:?}");
+    let native = h
+        .schedule_store
+        .inner
+        .lock()
+        .unwrap()
+        .native_result(&request.key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(native.stage, NativeResultStage::Registered);
+}
+
 #[test]
 fn decision_successor_delivery_is_refused_while_its_input_is_unacknowledged() {
     let (mut h, s, fence, proof, boot) = waiting_with(true, false, None);

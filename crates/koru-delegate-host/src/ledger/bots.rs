@@ -54,6 +54,17 @@ impl BotLedger for SharedLedger {
             .unwrap()
             .decision_retained_effect(owner, run, decision)
     }
+    fn decision_other_effects_pending(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<bool, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .decision_other_effects_pending(owner, run, decision)
+    }
     fn bot_decision(
         &self,
         owner: BotOwner,

@@ -103,6 +103,13 @@ pub(super) fn request_on(
         let old = super::super::rows::read(tx, expected.owner, expected.run, decision.decision)?
             .ok_or(BotLedgerError::Stale)?;
         if old.receipt.state.phase == DecisionPhase::Settled {
+            // Once final cleanup is recorded nothing more can be requested
+            // (contract section 6). A later retry must not supersede the
+            // still-unpublished final Control with a new request; an open
+            // decision refuses the same way (`phase_on`, StopPending).
+            if observed.wait.cleanup.is_some() {
+                return Err(BotLedgerError::Stale);
+            }
             require(matches!(
                 cause,
                 DecisionClosureReason::Canceled | DecisionClosureReason::AuthorityChanged

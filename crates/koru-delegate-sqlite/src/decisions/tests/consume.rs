@@ -514,3 +514,71 @@ fn decision_durable_save_settles_once_replays_under_a_new_transition_and_has_no_
         settled.receipt
     );
 }
+
+/// O152: final cleanup may pass over exactly one pending native effect, this
+/// decision's own consumed save once its retained outcome is positively
+/// Durable. Its unresolved lease still blocks, and so does any other held or
+/// verified effect of the Run.
+#[test]
+fn decision_other_effects_pending_spares_only_the_decisions_own_durable_save() {
+    let (mut h, record, request, fence, payload) = ready();
+    let pending = |h: &Harness| {
+        h.db.decision_other_effects_pending(fence.owner, fence.run, record.receipt.decision)
+            .unwrap()
+    };
+    assert!(!pending(&h), "nothing consumed, nothing pending");
+    h.db.consume_decision_edit(
+        &expected(&record),
+        DecisionTransitionId::mint(),
+        &request,
+        &payload,
+        &fence,
+        &h.proof,
+        h.boot,
+    )
+    .unwrap();
+    assert!(pending(&h), "the consumed edit's lease is held: unresolved");
+    h.db.confirm_native_result(&ConfirmNativeResult {
+        key: request.key.clone(),
+        request_fingerprint: request.request_fingerprint,
+        observation: NativeResultObservation::Durable {
+            evidence: koru_delegate_core::NativeResultReference {
+                operation_id: request.key.operation_id,
+                workspace: request.destination,
+                document: request.target.unwrap(),
+                version: vec![7, 7, 7],
+                title: "Approved page".into(),
+                confirmed_at_ms: 1000,
+                kind: koru_delegate_core::NativeResultKind::EditedPage,
+            },
+        },
+    })
+    .unwrap();
+    // The ordinary reader still reports it: its registration is owed.
+    assert!(h.db.native_effects_pending(fence.run).unwrap());
+    assert!(!pending(&h), "the decision's own Durable save is spared");
+    // Another verified effect of the same Run, owing its registration.
+    h.db.conn()
+        .execute_batch(&format!(
+            "CREATE TEMP TABLE o152 AS SELECT * FROM native_result_intents WHERE run_id='{run}';
+             UPDATE o152 SET operation_id='{op}', store_request_id='{store}', lease_id='{lease}';
+             INSERT INTO native_result_intents SELECT * FROM o152;
+             DROP TABLE o152;",
+            run = fence.run.to_storage(),
+            op = uuid::Uuid::new_v4(),
+            store = uuid::Uuid::new_v4(),
+            lease = uuid::Uuid::new_v4(),
+        ))
+        .unwrap();
+    assert!(pending(&h), "any other verified effect still blocks");
+    // A held lease on another effect blocks as well.
+    h.db.conn()
+        .execute(
+            "UPDATE native_result_intents SET stage='prepared',lease_state='held',
+             verified_version=NULL,verified_title=NULL,confirmed_at_ms=NULL
+             WHERE run_id=?1 AND operation_id<>?2",
+            [fence.run.to_storage(), request.key.operation_id.to_string()],
+        )
+        .unwrap();
+    assert!(pending(&h), "any other held lease still blocks");
+}
