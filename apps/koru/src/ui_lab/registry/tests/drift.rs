@@ -990,21 +990,56 @@ fn every_symbol_is_declared_under_its_path() {
 
 /// The component names the shared painters register with the inspector, as
 /// the source passes them to `inspect::scope(…, "component", …)`, each once.
+///
+/// Three spellings are read, because the source uses three: the name on the
+/// line above `"component",` (almost every painter); the whole call on one
+/// line, `scope("Name", "component", …)`; and a name chosen by an `if` whose
+/// arms are bare literals, read back to the line that opens the scope. A
+/// chosen name counts once per literal: each is an identity the inspector
+/// can show.
 fn registered_identities() -> Vec<&'static str> {
     let mut found = Vec::new();
     for (_, text) in all_sources() {
         let lines: Vec<&str> = text.lines().map(str::trim).collect();
-        for pair in lines.windows(2) {
-            if pair[1] == "\"component\","
-                && let Some(name) = pair[0]
-                    .strip_prefix('"')
-                    .and_then(|rest| rest.strip_suffix("\","))
+        for (at, line) in lines.iter().enumerate() {
+            if let Some(name) = one_line_identity(line) {
+                found.push(name);
+                continue;
+            }
+            if *line != "\"component\"," || at == 0 {
+                continue;
+            }
+            let previous = lines[at - 1];
+            if let Some(name) = previous
+                .strip_prefix('"')
+                .and_then(|rest| rest.strip_suffix("\","))
             {
                 found.push(name);
+            } else if previous == "}," {
+                found.extend(
+                    lines[..at - 1]
+                        .iter()
+                        .rev()
+                        .take(8)
+                        .take_while(|earlier| !earlier.contains("scope("))
+                        .filter_map(|earlier| {
+                            earlier
+                                .strip_prefix('"')
+                                .and_then(|rest| rest.strip_suffix('"'))
+                        }),
+                );
             }
         }
     }
     found
+}
+
+/// `scope("Name", "component", …)` written on one line.
+fn one_line_identity(line: &'static str) -> Option<&'static str> {
+    let opening = "scope(\"";
+    let rest = &line[line.find(opening)? + opening.len()..];
+    let (name, rest) = rest.split_once('"')?;
+    rest.starts_with(", \"component\"").then_some(name)
 }
 
 /// Every component identity a shared painter registers belongs to exactly
