@@ -109,41 +109,41 @@ fail until this table says what they compute.
 | domain crate lib.rs public modules | 121 |
 | domain crate modules excluded | 73 |
 | app crates baselined | 1 |
-| app source files | 22 |
-| app files baselined | 3 |
-| app modules classified | 20 |
-| app modules excluded | 5 |
-| records: app crates | 7 |
-| records | 240 |
+| app source files | 95 |
+| app files baselined | 14 |
+| app modules classified | 56 |
+| app modules excluded | 16 |
+| records: app crates | 25 |
+| records | 258 |
 | records: foundations | 59 |
-| records: controls | 68 |
-| records: application compositions | 113 |
+| records: controls | 72 |
+| records: application compositions | 127 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 67 |
+| kind: support | 69 |
 | kind: domain composition | 57 |
-| kind: app-local | 6 |
+| kind: app-local | 22 |
 | token values listed | 174 |
-| symbols | 1940 |
+| symbols | 2032 |
 | symbols with typed recipes | 2 |
-| inspector identities | 54 |
-| inspector identity registration sites | 57 |
+| inspector identities | 57 |
+| inspector identity registration sites | 60 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 162 |
-| disposition: nonvisual | 60 |
+| disposition: no story yet | 178 |
+| disposition: nonvisual | 61 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 17 |
+| disposition: boundary | 18 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 346 |
-| symbol story: nonvisual | 1444 |
-| symbol story: boundary | 149 |
+| symbol story: no story yet | 383 |
+| symbol story: nonvisual | 1498 |
+| symbol story: boundary | 150 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 1888 |
+| A2UI: not supported | 1980 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1135,6 +1135,105 @@ the controls it outlines (`chrome.rs` 1019); no part of the mini app
 registers a component identity — its F12 ancestry is the element frame's
 node names ("Task document surface", "Composition"), which are inspector
 names, not translated text.
+
+### Part 2 — the app's own pages and tab views
+
+| Folder or file | Non-test files | Read in full | Declarations | Searched | Records | Identities |
+| --- | --- | --- | --- | --- | --- | --- |
+| `welcome/` | 7 | 7 | 0 | 0 | 1 | `KoruWelcome` |
+| `manage.rs`, `manage/` | 33 (+ `profiles/progress/fixtures.rs`, test-only) | 20 | 6 | 7 | 4 | `KoruManage` |
+| `manager_view.rs` | 1 | 0 | 1 | 0 | 2 | — |
+| `trash/` | 4 | 4 | 0 | 0 | 1 | — |
+| `support/` | 6 | 5 | 1 | 0 | 2 | — |
+| `whatsnew.rs`, `website.rs` | 2 | 2 | 0 | 0 | 0 | — |
+| `canvas_view.rs`, `canvas_view/` | 6 | 6 | 0 | 0 | 2 | `KoruCanvasTextDialog` |
+| `feedback.rs`, `feedback/` | 5 | 5 | 0 | 0 | 1 | — |
+| `diff/mod.rs`, `session_offer.rs`, `taskbar.rs` | 3 | 2 | 1 | 0 | 3 | — |
+| `settings_view.rs`, `settings_view/reminders.rs` | 2 | 2 | 0 | 0 | 1 | — |
+| `ai_chat_view.rs`, `search.rs`, `socials_view.rs`, `run_view.rs`, `result_view.rs`, `result_document.rs`, `session_tab.rs` | 7 | 7 | 0 | 0 | 1 | — |
+
+All by the delegated readers; `manage/profiles/` (orchestration) is the
+declarations and searched part, `manager_view.rs` was read 1–457, 650–824
+and 2505–2753 with the forwarding impls between searched, and the Windows
+half of `taskbar.rs` (182–540) was searched.
+
+Records (* minted): `C-APP-WELCOME`* (the Welcome tab; registers
+`KoruWelcome`), `C-MANAGE`* (the Manage tab — page shell on
+`koru_ui::PageShell`, nav, profile page, sign-in card, recovery lists, the
+new-profile page hosting `C-ONBOARDING`, its confirmations; registers
+`KoruManage`), `C-MANAGE-WORKSPACES`* (the Workspaces section, **drawn by
+the app over `koru-workspaces-ui`'s `WorkspacesController`**, used as data
+only), `C-MANAGE-DEVICES`*, `C-MANAGE-CLOUD`*, `C-TRASH-PAGE`*,
+`C-FEEDBACK-PAGE`*, `C-VERSION-COMPARE`*, `C-CANVAS-TAB`* (over
+`C-CANVAS-SURFACE`; its rename prompt is `C-DIALOG-FRAME`),
+`C-CANVAS-TEXT-DIALOG`* (registers `KoruCanvasTextDialog`),
+`C-SUPPORT-VIEW`* (hosts `C-WEB-SURFACE`; asks with `C-CHOICE-DIALOG`),
+`C-SUPPORT-FAB`* (its right-click is a `C-SYSTEM-MENUS` popup),
+`C-SESSION-OFFER`*, `C-REMINDER-SETTINGS`* (the host section drawn inside
+`C-SETTINGS-SURFACE`), `C-POPOUT-CLOSE-DIALOG`*, `H-MANAGER-VIEW`* (the
+`ManagerView` enum and `DocumentPane`, both `impl View`), `H-APP-TAB-HOSTS`*
+(the tabs that wrap `C-AI-CHAT-SURFACE`, `C-SEARCH-SURFACE` and
+`C-SEARCH-MODAL`, `C-SETTINGS-SURFACE`, `C-SOCIALS-SURFACE`,
+`C-RUNS-SURFACE`, `C-ARTIFACT-TAB` with a `Leaf` for the result document,
+and `C-SESSION-SURFACE`) and `C-JUMP-LIST`* (Windows `NativeOwned`; macOS
+and Linux `Unavailable`: every call is a stand-in and the module documents
+the Dock menu as not implemented).
+
+Excluded with a reason in `tests/drift/app.rs`: `welcome::{build, hints,
+mcp}`, `trash::menu`, `support::url` (data), `manage::profiles`,
+`canvas_view::perform` (orchestration), `feedback::{draft, logs, outbox,
+submit}` (data and io). `whatsnew.rs` and `website.rs` draw nothing.
+
+**`KoruWelcome` is the app's identity, not `koru-ui`'s.** The only scope
+that registers it is the app's Welcome tab (`welcome/draw.rs:55`), which
+does not draw through `koru_ui::welcome`; that module's scopes are
+`WelcomeContent`, `WelcomeSidebar`, `WelcomeCloudNote` and
+`WelcomeFailure`, and onboarding draws it. Batch 1's `C-WELCOME` keeps
+`KoruWelcome` as its KoruX public name from COMPONENTS.md and claims only
+the identities its source registers, so the two agree once this record
+claims the app's.
+
+Defects found here (not fixed):
+
+- **Local painters duplicating shared controls**: the pop-out close
+  question (`manager_view.rs` 2513–2720, UI-010) draws its own scrim,
+  panel, rounded-rect buttons and checkbox, opens no scope and is English
+  ("Close this window?", "Restore tab", "Close", "Remember my choice");
+  the feedback form draws its own checkbox, radio buttons, kind cards,
+  close button and disclosure (`feedback.rs` `draw_check`, `paint_kinds`,
+  `paint_kind_fields`, `paint_shot_close`); the canvas text dialog builds
+  its own frame while the rename prompt beside it uses `KoruDialogFrame`;
+  the support button's badge, the Welcome tick, command field and links,
+  and Manage's platform badge, disclosure triangle and focus rings are
+  local paint.
+- **Hard-coded English a person reads**: the whole feedback form
+  (`feedback.rs`, about forty strings; `feedback/submit.rs` 42–45); every
+  Welcome row (`welcome/mod.rs` 69–123); Manage's nav, dialogs, profile
+  page, sign-in card, workspaces, devices, history and Cloud constants
+  (`manage/nav.rs` 54–58, `dialogs.rs` 129–399, `profile_page.rs` 356–600,
+  `sign_in.rs` 40–461, `workspaces.rs` 75–503, `devices.rs` 83–1024,
+  `devices/history.rs` 27–340, `cloud.rs` 93–938, `profiles/{removal,
+  intent, creation, results}.rs`); the Trash title, columns and fallbacks
+  (`trash/view.rs` 108–304, `trash/draw.rs` 89, 225); the Jump List's
+  titles and categories (`taskbar.rs` 556–836); Settings rows the app
+  hands to `koru-settings-ui` (`settings_view.rs` 70–898); the Agent
+  link's trouble lines shown through search (`agent.rs` 3163–3294). Fixed
+  separators join translated words in `manage/` and `trash/view.rs` 347;
+  `manage/accessibility.rs` 674 names the hidden-profiles row in English
+  while the painted line is keyed.
+- **Docs and source disagree**: `manage/dialogs.rs` 29–30 and
+  `manage/cloud.rs` 33, 968–969, 1227 describe a D258 Cloud question that
+  `profiles/cloud.rs` 6–11 says is gone; `welcome/mod.rs` 3 says the page
+  greets the owner and nothing draws the owner; `support/view.rs:277`
+  returns the hand cursor against the rule `welcome/mod.rs:660` states;
+  `run_view.rs:16` cites `workspaces.rs` (it is `manage/workspaces.rs`);
+  `search.rs:5` calls `koru-search-ui` 3,600 lines (about 11,600);
+  `taskbar.rs`'s module doc says two Jump List categories (three) and a
+  Recent entry carries `--profile` (it does not); `settings_view.rs` 47–51
+  says `VoiceOff` has two variants (three).
+- **Missing identities**: no Manage page below `KoruManage`, and no Trash,
+  feedback, comparison, support or pop-out surface, registers a component
+  identity.
 
 ### What batches 2a and 2b left for this batch
 

@@ -610,6 +610,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     app::MINI_APP,
     app::TASKS_VIEW,
     app::LEAF,
+    app::PAGES,
 ];
 
 /// Every record, flattened.

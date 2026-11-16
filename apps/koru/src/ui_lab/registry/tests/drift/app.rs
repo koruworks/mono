@@ -22,8 +22,192 @@ use super::*;
 /// out; the manifest lists them.
 pub(super) const SOURCES: &[(&str, &str)] = &[
     (
+        "apps/koru/src/ai_chat_view.rs",
+        include_str!("../../../../../../../apps/koru/src/ai_chat_view.rs"),
+    ),
+    (
+        "apps/koru/src/canvas_view.rs",
+        include_str!("../../../../../../../apps/koru/src/canvas_view.rs"),
+    ),
+    (
+        "apps/koru/src/canvas_view/accessibility.rs",
+        include_str!("../../../../../../../apps/koru/src/canvas_view/accessibility.rs"),
+    ),
+    (
+        "apps/koru/src/canvas_view/agents.rs",
+        include_str!("../../../../../../../apps/koru/src/canvas_view/agents.rs"),
+    ),
+    (
+        "apps/koru/src/canvas_view/decor.rs",
+        include_str!("../../../../../../../apps/koru/src/canvas_view/decor.rs"),
+    ),
+    (
+        "apps/koru/src/canvas_view/dialog.rs",
+        include_str!("../../../../../../../apps/koru/src/canvas_view/dialog.rs"),
+    ),
+    (
+        "apps/koru/src/canvas_view/perform.rs",
+        include_str!("../../../../../../../apps/koru/src/canvas_view/perform.rs"),
+    ),
+    (
+        "apps/koru/src/diff/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/diff/mod.rs"),
+    ),
+    (
+        "apps/koru/src/feedback.rs",
+        include_str!("../../../../../../../apps/koru/src/feedback.rs"),
+    ),
+    (
+        "apps/koru/src/feedback/draft.rs",
+        include_str!("../../../../../../../apps/koru/src/feedback/draft.rs"),
+    ),
+    (
+        "apps/koru/src/feedback/logs.rs",
+        include_str!("../../../../../../../apps/koru/src/feedback/logs.rs"),
+    ),
+    (
+        "apps/koru/src/feedback/outbox.rs",
+        include_str!("../../../../../../../apps/koru/src/feedback/outbox.rs"),
+    ),
+    (
+        "apps/koru/src/feedback/submit.rs",
+        include_str!("../../../../../../../apps/koru/src/feedback/submit.rs"),
+    ),
+    (
         "apps/koru/src/leaf.rs",
         include_str!("../../../../../../../apps/koru/src/leaf.rs"),
+    ),
+    (
+        "apps/koru/src/manage.rs",
+        include_str!("../../../../../../../apps/koru/src/manage.rs"),
+    ),
+    (
+        "apps/koru/src/manage/accessibility.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/accessibility.rs"),
+    ),
+    (
+        "apps/koru/src/manage/cloud.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/cloud.rs"),
+    ),
+    (
+        "apps/koru/src/manage/cloud/copy.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/cloud/copy.rs"),
+    ),
+    (
+        "apps/koru/src/manage/cloud/inventory.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/cloud/inventory.rs"),
+    ),
+    (
+        "apps/koru/src/manage/cloud/progress.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/cloud/progress.rs"),
+    ),
+    (
+        "apps/koru/src/manage/devices.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/devices.rs"),
+    ),
+    (
+        "apps/koru/src/manage/devices/history.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/devices/history.rs"),
+    ),
+    (
+        "apps/koru/src/manage/dialogs.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/dialogs.rs"),
+    ),
+    (
+        "apps/koru/src/manage/nav.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/nav.rs"),
+    ),
+    (
+        "apps/koru/src/manage/new_profile.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/new_profile.rs"),
+    ),
+    (
+        "apps/koru/src/manage/page.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/page.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profile_page.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profile_page.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profile_page/paint.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profile_page/paint.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/attach.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/attach.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/cloud.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/cloud.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/cloud/inspection.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/cloud/inspection.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/cloud/inventory.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/cloud/inventory.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/cloud/storage.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/cloud/storage.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/creation.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/creation.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/effect.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/effect.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/inline_connect.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/inline_connect.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/intent.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/intent.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/progress.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/progress.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/removal.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/removal.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/results.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/results.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/scopes.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/scopes.rs"),
+    ),
+    (
+        "apps/koru/src/manage/profiles/surface.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/surface.rs"),
+    ),
+    (
+        "apps/koru/src/manage/recovery.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/recovery.rs"),
+    ),
+    (
+        "apps/koru/src/manage/sign_in.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/sign_in.rs"),
+    ),
+    (
+        "apps/koru/src/manage/workspaces.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/workspaces.rs"),
+    ),
+    (
+        "apps/koru/src/manager_view.rs",
+        include_str!("../../../../../../../apps/koru/src/manager_view.rs"),
     ),
     (
         "apps/koru/src/mini_app.rs",
@@ -52,6 +236,70 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/mini_app/refinement.rs",
         include_str!("../../../../../../../apps/koru/src/mini_app/refinement.rs"),
+    ),
+    (
+        "apps/koru/src/result_document.rs",
+        include_str!("../../../../../../../apps/koru/src/result_document.rs"),
+    ),
+    (
+        "apps/koru/src/result_view.rs",
+        include_str!("../../../../../../../apps/koru/src/result_view.rs"),
+    ),
+    (
+        "apps/koru/src/run_view.rs",
+        include_str!("../../../../../../../apps/koru/src/run_view.rs"),
+    ),
+    (
+        "apps/koru/src/search.rs",
+        include_str!("../../../../../../../apps/koru/src/search.rs"),
+    ),
+    (
+        "apps/koru/src/session_offer.rs",
+        include_str!("../../../../../../../apps/koru/src/session_offer.rs"),
+    ),
+    (
+        "apps/koru/src/session_tab.rs",
+        include_str!("../../../../../../../apps/koru/src/session_tab.rs"),
+    ),
+    (
+        "apps/koru/src/settings_view.rs",
+        include_str!("../../../../../../../apps/koru/src/settings_view.rs"),
+    ),
+    (
+        "apps/koru/src/settings_view/reminders.rs",
+        include_str!("../../../../../../../apps/koru/src/settings_view/reminders.rs"),
+    ),
+    (
+        "apps/koru/src/socials_view.rs",
+        include_str!("../../../../../../../apps/koru/src/socials_view.rs"),
+    ),
+    (
+        "apps/koru/src/support/fab.rs",
+        include_str!("../../../../../../../apps/koru/src/support/fab.rs"),
+    ),
+    (
+        "apps/koru/src/support/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/support/mod.rs"),
+    ),
+    (
+        "apps/koru/src/support/session.rs",
+        include_str!("../../../../../../../apps/koru/src/support/session.rs"),
+    ),
+    (
+        "apps/koru/src/support/surface.rs",
+        include_str!("../../../../../../../apps/koru/src/support/surface.rs"),
+    ),
+    (
+        "apps/koru/src/support/url.rs",
+        include_str!("../../../../../../../apps/koru/src/support/url.rs"),
+    ),
+    (
+        "apps/koru/src/support/view.rs",
+        include_str!("../../../../../../../apps/koru/src/support/view.rs"),
+    ),
+    (
+        "apps/koru/src/taskbar.rs",
+        include_str!("../../../../../../../apps/koru/src/taskbar.rs"),
     ),
     (
         "apps/koru/src/tasks_view/accessibility.rs",
@@ -108,6 +356,50 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/tasks_view/view.rs",
         include_str!("../../../../../../../apps/koru/src/tasks_view/view.rs"),
+    ),
+    (
+        "apps/koru/src/trash/draw.rs",
+        include_str!("../../../../../../../apps/koru/src/trash/draw.rs"),
+    ),
+    (
+        "apps/koru/src/trash/menu.rs",
+        include_str!("../../../../../../../apps/koru/src/trash/menu.rs"),
+    ),
+    (
+        "apps/koru/src/trash/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/trash/mod.rs"),
+    ),
+    (
+        "apps/koru/src/trash/view.rs",
+        include_str!("../../../../../../../apps/koru/src/trash/view.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/build.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/build.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/draw.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/draw.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/hints.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/hints.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/layout.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/layout.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/mcp.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/mcp.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/mod.rs"),
+    ),
+    (
+        "apps/koru/src/welcome/rows.rs",
+        include_str!("../../../../../../../apps/koru/src/welcome/rows.rs"),
     ),
 ];
 
@@ -276,6 +568,162 @@ pub(super) struct Root {
 
 /// The baselines, an app file at a time.
 pub(super) const ROOTS: &[Root] = &[
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/welcome/mod.rs",
+        own: &["C-APP-WELCOME"],
+        modules: &[
+            (
+                "build",
+                Module::Excluded(
+                    "data: the build facts (release date, channel notes) the update surface reads; the page does not draw them",
+                ),
+            ),
+            ("draw", Module::Records(&["C-APP-WELCOME"])),
+            (
+                "hints",
+                Module::Excluded(
+                    "data: the shortcut hint words of the Learn row, which is hidden in the product",
+                ),
+            ),
+            ("layout", Module::Records(&["C-APP-WELCOME"])),
+            (
+                "mcp",
+                Module::Excluded(
+                    "data: the MCP command text and the agent choices the page's command field shows",
+                ),
+            ),
+            ("rows", Module::Records(&["C-APP-WELCOME"])),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/manage.rs",
+        own: &["C-MANAGE"],
+        modules: &[
+            ("accessibility", Module::Records(&["C-MANAGE"])),
+            ("cloud", Module::Records(&["C-MANAGE-CLOUD"])),
+            ("devices", Module::Records(&["C-MANAGE-DEVICES"])),
+            ("dialogs", Module::Records(&["C-MANAGE"])),
+            ("nav", Module::Records(&["C-MANAGE"])),
+            ("new_profile", Module::Records(&["C-MANAGE"])),
+            ("page", Module::Records(&["C-MANAGE"])),
+            ("profile_page", Module::Records(&["C-MANAGE"])),
+            (
+                "profiles",
+                Module::Excluded(
+                    "orchestration: ProfilesController, the Manage tab's Profile state, intents, effects and results; the words it produces are painted by the page records",
+                ),
+            ),
+            ("recovery", Module::Records(&["C-MANAGE"])),
+            ("sign_in", Module::Records(&["C-MANAGE"])),
+            ("workspaces", Module::Records(&["C-MANAGE-WORKSPACES"])),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/trash/mod.rs",
+        own: &["C-TRASH-PAGE"],
+        modules: &[
+            ("draw", Module::Records(&["C-TRASH-PAGE"])),
+            (
+                "menu",
+                Module::Excluded(
+                    "data: the Trash rows' and header's menu items, drawn by the container's context menu",
+                ),
+            ),
+            ("view", Module::Records(&["C-TRASH-PAGE"])),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/feedback.rs",
+        own: &["C-FEEDBACK-PAGE"],
+        modules: &[
+            (
+                "draft",
+                Module::Excluded("data: the unsent report kept for the session"),
+            ),
+            (
+                "logs",
+                Module::Excluded("io: zips the recent application logs"),
+            ),
+            (
+                "outbox",
+                Module::Excluded("io: the background send and its retry deadline"),
+            ),
+            (
+                "submit",
+                Module::Excluded(
+                    "io: payload validation, screenshot compression and the HTTP transport",
+                ),
+            ),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/diff/mod.rs",
+        own: &["C-VERSION-COMPARE"],
+        modules: &[],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/canvas_view.rs",
+        own: &["C-CANVAS-TAB"],
+        modules: &[
+            ("accessibility", Module::Records(&["C-CANVAS-TAB"])),
+            ("agents", Module::Records(&["C-CANVAS-TAB"])),
+            ("decor", Module::Records(&["C-CANVAS-TAB"])),
+            ("dialog", Module::Records(&["C-CANVAS-TEXT-DIALOG"])),
+            (
+                "perform",
+                Module::Excluded(
+                    "orchestration: applies the canvas surface's requests to the canvas document",
+                ),
+            ),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/support/mod.rs",
+        own: &[],
+        modules: &[
+            ("fab", Module::Records(&["C-SUPPORT-FAB"])),
+            ("session", Module::Records(&["C-SUPPORT-VIEW"])),
+            ("surface", Module::Records(&["C-SUPPORT-VIEW"])),
+            (
+                "url",
+                Module::Excluded(
+                    "data: the support page's URL, its navigation policy and the web engine's data directory",
+                ),
+            ),
+            ("view", Module::Records(&["C-SUPPORT-VIEW"])),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/session_offer.rs",
+        own: &["C-SESSION-OFFER"],
+        modules: &[],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/settings_view.rs",
+        own: &["H-APP-TAB-HOSTS"],
+        modules: &[("reminders", Module::Records(&["C-REMINDER-SETTINGS"]))],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/manager_view.rs",
+        own: &["C-POPOUT-CLOSE-DIALOG", "H-MANAGER-VIEW"],
+        modules: &[],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/taskbar.rs",
+        own: &["C-JUMP-LIST"],
+        modules: &[],
+    },
     Root {
         owner: "koru",
         file: "apps/koru/src/mini_app.rs",

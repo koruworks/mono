@@ -26,6 +26,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/app/mini_app.rs"),
     ),
     (
+        "ui_lab/registry/app/pages.rs",
+        include_str!("registry/app/pages.rs"),
+    ),
+    (
         "ui_lab/registry/app/tasks_view.rs",
         include_str!("registry/app/tasks_view.rs"),
     ),
@@ -290,6 +294,7 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/app.rs",
     "ui_lab/registry/app/leaf.rs",
     "ui_lab/registry/app/mini_app.rs",
+    "ui_lab/registry/app/pages.rs",
     "ui_lab/registry/app/tasks_view.rs",
     "ui_lab/registry/compositions.rs",
     "ui_lab/registry/controls.rs",

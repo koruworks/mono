@@ -24,16 +24,18 @@
 //! data — have no record; the module baselines in `tests/drift/app.rs` and
 //! `MANIFEST.md` say why each was left out.
 
-use super::domain::{host_only, painter, record, source, support, support_with};
+use super::domain::{boundary, host_only, painter, record, source, support, support_with};
 use super::*;
 use koru_i18n::Key;
 
 mod leaf;
 mod mini_app;
+mod pages;
 mod tasks_view;
 
 pub(super) const LEAF: &[Entry] = leaf::RECORDS;
 pub(super) const MINI_APP: &[Entry] = mini_app::RECORDS;
+pub(super) const PAGES: &[Entry] = pages::RECORDS;
 pub(super) const TASKS_VIEW: &[Entry] = tasks_view::RECORDS;
 
 /// The workspace app's owner name, as its manifest spells it.
