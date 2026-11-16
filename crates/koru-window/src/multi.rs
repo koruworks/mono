@@ -34,6 +34,23 @@
 //! `windows.conf` itself. A host keeps one
 //! [`WindowRowWriter`](crate::WindowRowWriter) per key — the row name and the
 //! value schema are its own, which is what lets two hosts share one file.
+//!
+//! ## Three opt-in hooks, for an app whose windows talk to each other
+//!
+//! Each is a defaulted method, and an app that names none of them is run
+//! exactly as before; the single-window runner has none of them.
+//!
+//! - [`MultiWindowApp::raw_event`] shows the app a window's event as winit
+//!   delivered it, before the discipline translates it. The translation drops
+//!   `is_synthetic`, which is the only thing that tells a deliberate key press
+//!   from the replay winit sends a window that gains focus with the key held —
+//!   and an app that opens a second window on a key needs to tell them apart.
+//! - [`MultiWindowApp::accessibility_wake`] and
+//!   [`MultiWindowApp::accessibility_seated`] give a window a native
+//!   accessibility provider at the one moment one can be installed. What the
+//!   provider publishes stays the app's; see [`crate::accessibility`].
+//! - [`MultiWindowApp::ime_cursor_area`] tells the OS where the caret is, so
+//!   an input method's candidate list opens beside it.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -353,6 +370,87 @@ pub trait MultiWindowApp {
     fn draw(&mut self, key: WindowKey, scene: &mut Scene, engine: &mut TextEngine, w: f32, h: f32);
 
     fn presented(&mut self, _key: WindowKey) {}
+
+    /// One of this window's events exactly as winit delivered it, **before**
+    /// the discipline runs over it.
+    ///
+    /// **Observe only.** Nothing is consumed here: the discipline runs next
+    /// and calls the ordinary methods as it always does, so an app that wants
+    /// to withhold an event from its own content remembers that here and
+    /// answers the ordinary method accordingly. Events for a window that has
+    /// already been dropped are not delivered.
+    ///
+    /// It exists for the two things the translated methods cannot carry:
+    ///
+    /// - **`KeyboardInput::is_synthetic`.** Moving focus between two windows
+    ///   of one app replays a held key into the window that gains it, with
+    ///   `repeat == false`, so a toggle that opens a second window needs the
+    ///   flag to tell a deliberate press from the replay
+    ///   (`guide/contributing/deps/WINIT.md`).
+    /// - **A native accessibility provider**, which must see every window
+    ///   event before the application does
+    ///   ([`AccessibilityProvider::process_event`](crate::AccessibilityProvider::process_event)),
+    ///   and takes the `Window` to do it.
+    ///
+    /// `window` is lent for those reads. Moving, sizing, focusing and closing
+    /// stay the runner's: ask through
+    /// [`take_window_request`](Self::take_window_request),
+    /// [`take_activation_request`](Self::take_activation_request) and
+    /// [`windows`](Self::windows).
+    ///
+    /// The default does nothing, and an app that leaves it alone is
+    /// dispatched exactly as before.
+    fn raw_event(&mut self, _key: WindowKey, _window: &Window, _event: &WindowEvent) {}
+
+    /// Opt this window into a native accessibility provider by answering how
+    /// to wake the loop.
+    ///
+    /// Asked once, when the window is created. `Some(wake)` installs a
+    /// [`WindowBridge`] on the still-hidden window and hands it to
+    /// [`accessibility_seated`](Self::accessibility_seated). The closure is
+    /// called from whichever thread the platform chose when a screen reader
+    /// attaches or asks for an action; it should send an
+    /// [`Event`](Self::Event) through the proxy from
+    /// [`attach`](Self::attach), so the loop settles and the app drains the
+    /// provider in [`maintain`](Self::maintain).
+    ///
+    /// **A window that opts in must also answer `true` from
+    /// [`paint_before_showing`](Self::paint_before_showing)**: the provider
+    /// can only be installed on a window that has never been visible, and
+    /// that is the path that creates one hidden. Otherwise no provider is
+    /// installed, which is said once on the error log.
+    ///
+    /// `None`, the default, installs nothing and costs nothing.
+    fn accessibility_wake(
+        &self,
+        _key: WindowKey,
+    ) -> Option<std::sync::Arc<dyn Fn() + Send + Sync>> {
+        None
+    }
+
+    /// The provider installed for `key`, handed over once, before the window
+    /// is first shown and before [`seated`](Self::seated).
+    ///
+    /// Only called for a window whose
+    /// [`accessibility_wake`](Self::accessibility_wake) answered `Some`.
+    /// `None` means the platform gave none or the window was already visible;
+    /// the window still works and is simply not on the accessibility tree.
+    /// The app owns the provider from here: it feeds it from
+    /// [`raw_event`](Self::raw_event) and drops it when the window closes.
+    fn accessibility_seated(&mut self, _key: WindowKey, _provider: Option<crate::WindowBridge>) {}
+
+    /// Where the text being composed in this window is, in the window's
+    /// **logical** pixels, so an input method opens its candidate list beside
+    /// the caret rather than at the OS's default place.
+    ///
+    /// Asked after each event delivered to a window whose
+    /// [`wants_ime`](Self::wants_ime) is `true` — for a redraw, after the
+    /// frame has been drawn. The runner hands the area to the OS only when it
+    /// differs from the last one it applied. `None`, the default, leaves the
+    /// area as it is — which is the behaviour before this method existed.
+    fn ime_cursor_area(&self, _key: WindowKey) -> Option<koru_draw::geometry::Rect> {
+        None
+    }
 }
 
 /// One window of a [`MultiWindowApp`], as the dispatch core sees it.
@@ -533,6 +631,15 @@ impl<M: MultiWindowApp> DispatchApp for WindowTarget<'_, M> {
 
     fn presented(&mut self) {
         self.app.presented(self.key);
+    }
+
+    fn created(&mut self, events: &ActiveEventLoop, window: &std::sync::Arc<Window>) {
+        // Only for a window that asked. `before_first_reveal` refuses, and
+        // says so, when the window is already visible.
+        if let Some(wake) = self.app.accessibility_wake(self.key) {
+            let provider = crate::WindowBridge::before_first_reveal(events, window, wake);
+            self.app.accessibility_seated(self.key, provider);
+        }
     }
 }
 
@@ -790,6 +897,11 @@ impl<M: MultiWindowApp> ApplicationHandler<M::Event> for Windows<M> {
         let Some(&key) = self.ids.get(&id) else {
             return;
         };
+        // The app's look at the untranslated event. See
+        // `MultiWindowApp::raw_event`: observe only, a no-op by default.
+        if let Some(live) = self.live.get(&key) {
+            self.app.raw_event(key, &live.window, &event);
+        }
         let after = {
             let Self {
                 quarantine,
@@ -815,6 +927,17 @@ impl<M: MultiWindowApp> ApplicationHandler<M::Event> for Windows<M> {
             FrameWork::None => {}
             FrameWork::Redraw => self.redraw(key),
             FrameWork::Resize(size) => self.resize(key, size),
+        }
+        // After the event and any frame it drew, and before a settle that may
+        // drop the window. Asked only of a window that takes composed text.
+        if self.app.wants_ime(key)
+            && let Some(state) = self.input.get_mut(&key)
+        {
+            dispatch::sync_ime_area(
+                state,
+                self.live.get(&key).map(|live| &live.window),
+                self.app.ime_cursor_area(key),
+            );
         }
         if after.settle {
             self.settle(events);

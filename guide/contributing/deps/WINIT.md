@@ -140,6 +140,15 @@ non-synthetic initial presses. The inspector's controls also ignore synthetic
 keyboard events, so held Enter/Space/Escape cannot activate on focus transfer.
 There is no time-based debounce; the next deliberate press remains immediate.
 
+`koru-window`'s runners translate a `KeyboardInput` before an application sees
+it, and the translated record has `repeat` but not `is_synthetic`. An
+application on the multi-window runner that opens or closes a window on a key
+therefore reads the flag from `MultiWindowApp::raw_event`, which is handed the
+untranslated event first. Read from the source rather than measured: the key
+quarantine would not cover this case, because it ends on any release of the
+key, and the window losing focus is sent a synthetic *release* before the
+synthetic press reaches the window gaining it.
+
 ### Queued keyboard modifiers are not the keys held now
 
 The M3 reminder run delivered Ctrl+A as a literal `a`: the native batch was

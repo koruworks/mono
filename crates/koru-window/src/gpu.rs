@@ -149,6 +149,10 @@ impl Gpu {
         #[cfg(windows)]
         let attributes = attributes.with_transparent(false);
         let window = Arc::new(events.create_window(attributes).expect("create window"));
+        // Before anything below can show the window: a native accessibility
+        // provider can only be installed on a window that has never been
+        // visible. A no-op for every app that has not opted in.
+        app.created(events, &window);
         if transparent && !crate::rounded_region::apply(&window) {
             window.set_visible(false);
             tracing::error!(

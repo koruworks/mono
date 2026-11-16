@@ -33,10 +33,11 @@ use std::time::{Duration, Instant};
 use vello::Scene;
 use winit::dpi::{PhysicalPosition, PhysicalSize};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, StartCause, WindowEvent};
-use winit::event_loop::ControlFlow;
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{Key, KeyCode, KeyLocation, ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, ResizeDirection, Window, WindowAttributes};
 
+use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
 use koru_draw::theme;
 
@@ -103,6 +104,10 @@ pub(crate) trait WindowHandle {
     /// rect the moment an edge reaches the screen.
     fn apply_frame(&self, square: bool);
     fn place(&self, what: Placement, default_size: (u32, u32));
+    /// Tell the OS where the text being composed is, in this window's
+    /// **logical** pixels, so an input method opens its candidate list beside
+    /// the caret. Defaulted to nothing so a recorder need not answer it.
+    fn set_ime_cursor_area(&self, _area: Rect) {}
     /// Bring the whole application forward, which `focus_window` cannot do on
     /// macOS. Process-global rather than window-scoped, and overridable only so
     /// a test can see that it happened.
@@ -173,6 +178,16 @@ impl WindowHandle for std::sync::Arc<Window> {
 
     fn place(&self, what: Placement, default_size: (u32, u32)) {
         crate::snap::place(self, what, default_size);
+    }
+
+    fn set_ime_cursor_area(&self, area: Rect) {
+        // A zero-sized area is legal to winit but leaves some input methods
+        // with nothing to anchor to, so the caret is at least a pixel.
+        Window::set_ime_cursor_area(
+            self,
+            winit::dpi::LogicalPosition::new(f64::from(area.x), f64::from(area.y)),
+            winit::dpi::LogicalSize::new(f64::from(area.w.max(1.0)), f64::from(area.h.max(1.0))),
+        );
     }
 }
 
@@ -245,6 +260,15 @@ pub(crate) trait DispatchApp {
 
     fn draw(&mut self, scene: &mut Scene, engine: &mut TextEngine, w: f32, h: f32);
     fn presented(&mut self);
+
+    /// The native window exists and nothing has shown it yet.
+    ///
+    /// Called once per window by [`crate::gpu::Gpu::open`], straight after
+    /// `create_window`. It is the only moment a native accessibility provider
+    /// can be installed (see [`crate::accessibility`]), which is all the
+    /// multi-window runner uses it for. Defaulted to nothing, so the
+    /// single-window runner opens a window exactly as it did before.
+    fn created(&mut self, _events: &ActiveEventLoop, _window: &std::sync::Arc<Window>) {}
 }
 
 /// The single-window runner's view of its one application.
@@ -452,6 +476,10 @@ pub(crate) struct WindowInput {
     pub cursor_icon: CursorIcon,
     /// Whether this window is currently above the others.
     pub pinned: bool,
+    /// The composition area last handed to the OS, so [`sync_ime_area`] makes
+    /// a native call only when the caret has actually moved. A fact about a
+    /// live window, cleared by [`seat`](Self::seat).
+    pub ime_area: Option<Rect>,
 }
 
 impl WindowInput {
@@ -460,6 +488,7 @@ impl WindowInput {
         self.resize_edge = None;
         self.cursor_icon = CursorIcon::Default;
         self.pinned = pinned;
+        self.ime_area = None;
     }
 
     /// The window went away while the process lives on.
@@ -1099,6 +1128,26 @@ pub(crate) fn perform_request<T: DispatchApp, H: WindowHandle>(
 pub(crate) fn invalidate<H: WindowHandle>(handle: Option<&H>, changed: bool) {
     if changed && let Some(handle) = handle {
         handle.request_redraw();
+    }
+}
+
+/// Hand the OS the composition area an app named, when it is news.
+///
+/// `wanted` is where the caret is, in the window's logical pixels; `None`
+/// means the app has no opinion and the area is left as it is. The last area
+/// applied is remembered in `state`, so a pointer move over a window whose
+/// caret has not moved costs one comparison and no native call.
+pub(crate) fn sync_ime_area<H: WindowHandle>(
+    state: &mut WindowInput,
+    handle: Option<&H>,
+    wanted: Option<Rect>,
+) {
+    let (Some(handle), Some(area)) = (handle, wanted) else {
+        return;
+    };
+    if state.ime_area != Some(area) {
+        handle.set_ime_cursor_area(area);
+        state.ime_area = Some(area);
     }
 }
 
