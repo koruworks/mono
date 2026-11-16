@@ -43,17 +43,12 @@ fn button() -> &'static Entry {
 
 /// Every symbol of an entry, story-driven or not, with what it says about
 /// A2UI and stories.
-fn symbols(entry: &'static Entry) -> impl Iterator<Item = (&'static str, A2ui, Story)> {
-    entry
-        .recipes
+fn symbols(entry: &Entry) -> impl Iterator<Item = (&'static str, A2ui, Story)> + use<> {
+    let (recipes, apis) = (entry.recipes, entry.apis);
+    recipes
         .iter()
         .map(|recipe| (recipe.symbol, recipe.a2ui, recipe.story))
-        .chain(
-            entry
-                .apis
-                .iter()
-                .map(|api| (api.symbol, api.a2ui, api.story)),
-        )
+        .chain(apis.iter().map(|api| (api.symbol, api.a2ui, api.story)))
 }
 
 #[test]
@@ -372,3 +367,5 @@ fn every_displayed_string_is_translated_and_identifiers_are_not() {
     }
     assert_ne!(Control::Label.part(), Control::Style.part());
 }
+
+mod drift;
