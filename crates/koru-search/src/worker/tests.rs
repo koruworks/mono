@@ -10,6 +10,8 @@ use super::*;
 use koru_projection::model::{DocumentProjection, ListedDocument, ProjectedNode};
 use koru_store_core::ids::{DocumentId, WorkspaceId};
 
+mod lists_and_tasks;
+
 fn a_node(text: &str) -> ProjectedNode {
     ProjectedNode {
         id: "n1".to_owned(),

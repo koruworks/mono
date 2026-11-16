@@ -46,6 +46,7 @@
 
 pub mod fragments;
 mod fuzzy;
+pub mod lists;
 pub mod model;
 mod normalize;
 mod query;
@@ -65,6 +66,7 @@ pub use model::{
     PreviewBlock, ReadingCounts, RecentQuery, SearchError, SearchFacet, SearchFacets, SearchHit,
     SearchPage, SearchPreview, SearchQuery, SearchResult, SearchSort, field,
 };
+pub use lists::{ListNames, ListRow};
 pub use readings::{NoReadings, ReadingText, Readings};
 pub use storage::{Listed, SEARCH_SCHEMA_VERSION, SearchIndex};
 pub use tags::{KIND_SYSTEM, TAG_ROLE, TagNames, TagTable};

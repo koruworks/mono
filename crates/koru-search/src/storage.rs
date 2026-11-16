@@ -55,6 +55,7 @@ use crate::model::{
     SearchFacet, SearchFacets, SearchPage, SearchPreview, SearchQuery, SearchResult, field,
 };
 use crate::fuzzy::Part;
+use crate::lists::ListRow;
 use crate::normalize::{normalize, term_counts};
 
 /// The shape of everything below, **and what the text in it means**. A change
@@ -392,6 +393,115 @@ impl SearchIndex {
         Ok(())
     }
 
+    /// Replace one workspace's task lists: the mirrored rows and one
+    /// fragment per list, in one transaction. Answers whether anything was
+    /// written.
+    ///
+    /// **This writer owns exactly the `list:` keys of one workspace**
+    /// ([`LIST_OWNED`]) and touches nothing else, so renaming, nesting or
+    /// deleting a list re-indexes no document. A table that has not changed
+    /// is not rewritten: the system document reprojects for a new tag or an
+    /// attribute definition too, and none of those is a list.
+    ///
+    /// A list's fragment has no document; its node is the list's id, which is
+    /// what keeps two lists' highlights and spelling corrections apart.
+    pub fn refresh_lists(&mut self, workspace: &str, lists: &[ListRow]) -> SearchResult<bool> {
+        let mut wanted = lists.to_vec();
+        wanted.sort_by(|a, b| a.id.cmp(&b.id));
+        if self.lists_in(workspace)? == wanted {
+            return Ok(false);
+        }
+        let old = self.texts_where(LIST_OWNED, params![workspace])?;
+        let delta = term_delta(
+            term_counts(old.iter().map(String::as_str)),
+            term_counts(lists.iter().map(|list| list.name.as_str())),
+        );
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "DELETE FROM task_lists WHERE workspace_id = ?1",
+            params![workspace],
+        )?;
+        tx.execute(
+            &format!("DELETE FROM fragments WHERE {LIST_OWNED}"),
+            params![workspace],
+        )?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO task_lists (workspace_id, list_id, parent_id, ordinal, name, color)
+                 VALUES (?1,?2,?3,?4,?5,?6)",
+            )?;
+            for list in lists {
+                insert.execute(params![
+                    workspace,
+                    list.id,
+                    list.parent,
+                    list.ordinal as i64,
+                    list.name,
+                    list.color,
+                ])?;
+            }
+        }
+        for list in lists {
+            if let Some(fragment) = crate::fragments::list_fragment(workspace, &list.id, &list.name)
+            {
+                insert_fragment(&tx, &fragment)?;
+            }
+        }
+        let mut vocabulary = self.vocabulary.write();
+        tx.commit()?;
+        vocabulary.apply_delta(delta, Part::Lists);
+        Ok(true)
+    }
+
+    /// One workspace's mirrored lists, in a stable order.
+    pub fn lists_in(&self, workspace: &str) -> SearchResult<Vec<ListRow>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT list_id, parent_id, ordinal, name, color FROM task_lists
+             WHERE workspace_id = ?1 ORDER BY list_id",
+        )?;
+        let rows = stmt.query_map(params![workspace], |row| {
+            Ok(ListRow {
+                id: row.get(0)?,
+                parent: row.get(1)?,
+                ordinal: row.get::<_, i64>(2)?.max(0) as usize,
+                name: row.get(3)?,
+                color: row.get(4)?,
+            })
+        })?;
+        let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    /// The mirrored lists of several workspaces, by workspace and then list
+    /// id — what a page of hits assembles list paths from.
+    pub(crate) fn lists_of(
+        &self,
+        workspaces: &[String],
+    ) -> SearchResult<HashMap<(String, String), ListRow>> {
+        let mut out = HashMap::new();
+        for workspace in workspaces {
+            for list in self.lists_in(workspace)? {
+                out.insert((workspace.clone(), list.id.clone()), list);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `document` carries the generated row that marks its root as a
+    /// task ([`ROOT_TASK_KIND`](crate::fragments::ROOT_TASK_KIND)).
+    pub fn has_root_task_marker(&self, document: &str) -> SearchResult<bool> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM attr_values WHERE document_id = ?1 AND kind = '@root-task' LIMIT 1",
+                params![document],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
+    }
+
     /// A workspace the store no longer holds.
     pub fn remove_workspace(&mut self, workspace: &str) -> SearchResult<()> {
         // Read in two groups, because the vocabulary keeps the lists' words
@@ -409,6 +519,7 @@ impl SearchIndex {
             "DELETE FROM documents WHERE workspace_id = ?1",
             "DELETE FROM listing WHERE workspace_id = ?1",
             "DELETE FROM workspaces WHERE workspace_id = ?1",
+            "DELETE FROM task_lists WHERE workspace_id = ?1",
             "DELETE FROM recent_targets WHERE workspace_id = ?1",
         ] {
             tx.execute(sql, params![workspace])?;
@@ -839,6 +950,8 @@ impl SearchIndex {
                 workspace_last_used_at_ms: None,
                 page: None,
                 picture_name: None,
+                list: None,
+                task: None,
             });
         }
         let has_more = hits.len() > page_size;
@@ -1015,6 +1128,26 @@ CREATE TABLE IF NOT EXISTS listing (
     trashed_by   TEXT
 );
 CREATE INDEX IF NOT EXISTS listing_workspace ON listing(workspace_id);
+
+-- **The workspace's task lists, mirrored.** A list lives in the system
+-- document's registry, not in any document's tree, so the host hands the rows
+-- over and this is where a list hit's path and swatch are read from at query
+-- time — the `listing` table's idea, for lists. `parent_id` is the list it is
+-- *drawn* under, already repaired by the host.
+--
+-- **No version bump**: `IF NOT EXISTS` in a schema that runs on every open
+-- means an existing index gains the table in place, and an index is not
+-- content. An index that predates it is filled by the indexer's first
+-- reconcile, with no rebuild.
+CREATE TABLE IF NOT EXISTS task_lists (
+    workspace_id TEXT NOT NULL,
+    list_id      TEXT NOT NULL,
+    parent_id    TEXT,
+    ordinal      INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    color        TEXT,
+    PRIMARY KEY (workspace_id, list_id)
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS workspaces (
     workspace_id   TEXT PRIMARY KEY,
