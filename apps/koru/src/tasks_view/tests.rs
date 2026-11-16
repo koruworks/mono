@@ -5185,11 +5185,21 @@ fn a_task_the_page_does_not_list_is_shown_in_the_from_search_band() {
     view.catch_up(&doc);
     assert_eq!(
         rules_and_rows(&view),
-        (true, vec!["done 40 days ago".into(), "recently done".into()])
+        (
+            true,
+            vec!["done 40 days ago".into(), "recently done".into()]
+        )
     );
-    assert_eq!(view.lines[0], super::view::Line::FromSearch, "labelled, at the very top");
+    assert_eq!(
+        view.lines[0],
+        super::view::Line::FromSearch,
+        "labelled, at the very top"
+    );
     assert_eq!(view.lines[1], super::view::Line::Task(0));
-    assert!(view.reveal_task(key.0, key.1), "and it can be lit like any row");
+    assert!(
+        view.reveal_task(key.0, key.1),
+        "and it can be lit like any row"
+    );
 
     // Dismissed: the page is what it lists again.
     assert!(view.clear_from_search());
@@ -5218,7 +5228,9 @@ fn leaving_the_page_puts_the_band_away() {
     let mut view = view_answered(RailTarget::Bucket(Bucket::Later), Vec::new());
     let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
     let filters = view.filters;
-    view.set_from_search(TaskEntry::of(&wire_row("elsewhere", Vec::new()), today(), now_ms()).unwrap());
+    view.set_from_search(
+        TaskEntry::of(&wire_row("elsewhere", Vec::new()), today(), now_ms()).unwrap(),
+    );
     view.catch_up(&doc);
     assert!(view.shows_from_search());
     assert_eq!(view.filters, filters);
@@ -5236,8 +5248,13 @@ fn no_band_before_the_page_has_answered() {
     view.set_viewport(1000.0, 700.0);
     let doc = koru_core::schema::WorkspaceDoc::create(WorkspaceId::new(), "Test").unwrap();
     koru_workspace_host::View::adopt(&mut view, &doc);
-    view.set_from_search(TaskEntry::of(&wire_row("pending", Vec::new()), today(), now_ms()).unwrap());
+    view.set_from_search(
+        TaskEntry::of(&wire_row("pending", Vec::new()), today(), now_ms()).unwrap(),
+    );
     view.catch_up(&doc);
     assert!(!view.shows_from_search());
-    assert!(view.from_search.is_some(), "it is kept for when the page answers");
+    assert!(
+        view.from_search.is_some(),
+        "it is kept for when the page answers"
+    );
 }

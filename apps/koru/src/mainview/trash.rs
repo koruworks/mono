@@ -776,9 +776,10 @@ impl MainView {
             // through `apply_tasks_rail`, so a list's deletion travels the one
             // vocabulary every other list gesture does.
             ConfirmSubject::DeleteList { id, inside } => {
-                self.apply_tasks_rail(
-                    crate::panes::explore::rail::TasksRailRequest::DeleteList { id, inside },
-                );
+                self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::DeleteList {
+                    id,
+                    inside,
+                });
             }
             // The whole gesture was agreed to, so every one of them queues —
             // and none asks again, because the question was about the set.

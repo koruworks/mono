@@ -9053,11 +9053,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // A list or a task opens in Tasks; where that cannot be done from
         // this process it opens the workspace or the task's own document,
         // through everything below.
-        let target = match self.navigate_to_tasks(event_loop, source, target, &match_text, disposition)
-        {
-            Some(fallback) => fallback,
-            None => return,
-        };
+        let target =
+            match self.navigate_to_tasks(event_loop, source, target, &match_text, disposition) {
+                Some(fallback) => fallback,
+                None => return,
+            };
         match &target {
             crate::NavigationTarget::TaskList { .. } | crate::NavigationTarget::Task { .. } => {}
             crate::NavigationTarget::Workspace { profile, workspace } => tracing::info!(

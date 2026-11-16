@@ -91,7 +91,8 @@ fn the_same_name_is_one_list_under_one_parent_and_two_under_two() {
     assert!(backlog.created());
 
     assert_eq!(
-        sys.create_list_under(Some(top3), "BACKLOG", None, 2).unwrap(),
+        sys.create_list_under(Some(top3), "BACKLOG", None, 2)
+            .unwrap(),
         ListCreation::Existing(backlog.id()),
         "the same name twice under one parent answers the sibling"
     );
@@ -348,7 +349,11 @@ fn a_ten_thousand_deep_chain_builds_in_one_pass() {
     let tree = ListTree::build(records);
     assert_eq!(tree.nodes().len(), N);
     assert_eq!(tree.node(ids[N - 1]).unwrap().depth, N - 1);
-    assert!(tree.steps() <= 6 * N, "{} steps for {N} lists", tree.steps());
+    assert!(
+        tree.steps() <= 6 * N,
+        "{} steps for {N} lists",
+        tree.steps()
+    );
 }
 
 /// The worst table a merge can leave: every list in one ring.
@@ -370,7 +375,11 @@ fn a_cycle_of_every_list_builds_in_one_pass_and_breaks_at_the_lowest_id() {
         tree.nodes().iter().filter(|n| n.parent.is_none()).count(),
         1
     );
-    assert!(tree.steps() <= 6 * N, "{} steps for {N} lists", tree.steps());
+    assert!(
+        tree.steps() <= 6 * N,
+        "{} steps for {N} lists",
+        tree.steps()
+    );
 }
 
 /// A long run of tombstones above many live lists is walked once, through
@@ -397,7 +406,11 @@ fn a_dead_chain_above_many_lists_is_resolved_once() {
     );
     assert_eq!(tree.repairs.dead_parents, LIVE);
     let n = DEAD + LIVE + 1;
-    assert!(tree.steps() <= 6 * n, "{} steps for {n} records", tree.steps());
+    assert!(
+        tree.steps() <= 6 * n,
+        "{} steps for {n} records",
+        tree.steps()
+    );
 }
 
 /// A ring made only of tombstones leads nowhere live: the list under it is
@@ -435,7 +448,11 @@ fn a_shared_name_gets_a_path_and_nothing_else_does() {
         None,
         "the top-level namesake has nothing above it to show"
     );
-    assert_eq!(paths.get(&alone), None, "a name nobody shares needs no path");
+    assert_eq!(
+        paths.get(&alone),
+        None,
+        "a name nobody shares needs no path"
+    );
     assert_eq!(paths.len(), 1);
 
     // A parent's rename changes the path shown and nothing else.

@@ -2080,12 +2080,7 @@ impl TasksView {
     /// square at the row's right-hand inset, as tall as the label.
     pub(super) fn from_search_dismiss(r: Rect) -> Rect {
         let side = r.h.min(FROM_SEARCH_DISMISS);
-        Rect::new(
-            r.x + r.w - PAD - side,
-            r.y + (r.h - side) * 0.5,
-            side,
-            side,
-        )
+        Rect::new(r.x + r.w - PAD - side, r.y + (r.h - side) * 0.5, side, side)
     }
 
     pub(super) fn bands(&self) -> Vec<Band> {

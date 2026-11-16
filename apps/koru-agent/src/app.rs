@@ -6713,8 +6713,7 @@ fn from_wire(target: koru_agent_wire::Target) -> Option<koru_search_ui::Target> 
 
 fn to_wire(target: koru_search_ui::Target) -> koru_agent_wire::Target {
     use koru_agent_wire::TargetKind;
-    let new_window =
-        |disposition| matches!(disposition, koru_search_ui::Disposition::NewWindow);
+    let new_window = |disposition| matches!(disposition, koru_search_ui::Disposition::NewWindow);
     match target {
         koru_search_ui::Target::Store {
             profile,

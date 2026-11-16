@@ -715,11 +715,7 @@ pub const KIND_TASK_LIST: &str = "task_list";
 ///
 /// Bounded by the table's own size, the breadcrumb's rule: the host hands
 /// over a repaired tree, but a hung query is worse than a short path.
-fn list_path(
-    workspace: &str,
-    id: &str,
-    lists: &HashMap<(String, String), ListRow>,
-) -> Vec<String> {
+fn list_path(workspace: &str, id: &str, lists: &HashMap<(String, String), ListRow>) -> Vec<String> {
     let mut path = Vec::new();
     let key = |id: &str| (workspace.to_owned(), id.to_owned());
     let mut at = lists.get(&key(id)).and_then(|list| list.parent.clone());
@@ -753,9 +749,11 @@ fn task_state(connection: &Connection, document: &str, node: &str) -> SearchResu
 fn task_text(connection: &Connection, document: &str, node: &str) -> SearchResult<Option<String>> {
     let key = format!("node:{document}:{node}:primary");
     let text: Option<String> = connection
-        .query_row("SELECT text FROM fragments WHERE stable_key = ?1", [key], |r| {
-            r.get(0)
-        })
+        .query_row(
+            "SELECT text FROM fragments WHERE stable_key = ?1",
+            [key],
+            |r| r.get(0),
+        )
         .optional()?;
     Ok(text.filter(|text| !text.trim().is_empty()))
 }

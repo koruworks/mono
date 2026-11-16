@@ -421,7 +421,10 @@ mod tests {
             HashMap::from([("boot".into(), 1)]),
             1,
         );
-        assert_eq!(terms(&shared.read().candidates("book", false)), vec![("cook", 1)]);
+        assert_eq!(
+            terms(&shared.read().candidates("book", false)),
+            vec![("cook", 1)]
+        );
 
         // Enough churn to earn a compaction.
         let churn: Vec<String> = (0..COMPACT_MIN_INACTIVE + 10)
@@ -436,7 +439,10 @@ mod tests {
             Part::Rest,
         );
         assert!(shared.compact_if_needed(2));
-        assert_eq!(terms(&shared.read().candidates("book", false)), vec![("cook", 1)]);
+        assert_eq!(
+            terms(&shared.read().candidates("book", false)),
+            vec![("cook", 1)]
+        );
         assert_eq!(shared.read().candidates("book", true).len(), 2);
     }
 

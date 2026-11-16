@@ -1896,7 +1896,11 @@ impl Projections {
             })?;
             conditions.push(bucket_sql(bucket, windows, &mut params, recently)?);
         }
-        if let Some(day) = query.completed_on_or_after.as_ref().filter(|_| selected.is_none()) {
+        if let Some(day) = query
+            .completed_on_or_after
+            .as_ref()
+            .filter(|_| selected.is_none())
+        {
             conditions.push(completed_window_sql());
             params.push(day.clone());
         }

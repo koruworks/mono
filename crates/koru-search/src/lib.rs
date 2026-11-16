@@ -61,12 +61,12 @@ use std::sync::Mutex;
 use koru_projection::worker::Sweeps;
 use koru_store_core::ids::WorkspaceId;
 
+pub use lists::{ListNames, ListRow};
 pub use model::{
     Fragment, FuzzyIndexState, FuzzyIndexStats, IndexStats, Lifecycle, LifecycleFilter, MatchSpan,
     PreviewBlock, ReadingCounts, RecentQuery, SearchError, SearchFacet, SearchFacets, SearchHit,
     SearchPage, SearchPreview, SearchQuery, SearchResult, SearchSort, field,
 };
-pub use lists::{ListNames, ListRow};
 pub use readings::{NoReadings, ReadingText, Readings};
 pub use storage::{Listed, SEARCH_SCHEMA_VERSION, SearchIndex};
 pub use tags::{KIND_SYSTEM, TAG_ROLE, TagNames, TagTable};

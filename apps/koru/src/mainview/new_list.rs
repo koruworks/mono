@@ -214,19 +214,18 @@ impl NewList {
         } else {
             InputStyle::inline()
         };
-        self.input
-            .draw(
-                scene,
-                root,
-                engine,
-                field,
-                style,
-                Some(koru_i18n::t(
-                    crate::format::lang(),
-                    koru_i18n::Key::TaskListNameHint,
-                )),
-                true,
-            );
+        self.input.draw(
+            scene,
+            root,
+            engine,
+            field,
+            style,
+            Some(koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::TaskListNameHint,
+            )),
+            true,
+        );
         if let Some(hint) = self.hint() {
             let label = engine.simple_layout(hint, theme::role::hint());
             scene::draw_layout_first_line(

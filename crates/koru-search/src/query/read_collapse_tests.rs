@@ -757,9 +757,8 @@ fn marked_pictures() -> SearchIndex {
         .read("scan", "file", 5, Some(2), "invoice totals")
         .read("scan", "file", 5, Some(3), "appendix to the invoice")
         .value("scan", "koru.task", "bool", "true");
-    let pdf = Doc::file(2, "Statement.pdf", 9).pages(
-        (1..=4).map(|page| format!("invoice line {page}")),
-    );
+    let pdf =
+        Doc::file(2, "Statement.pdf", 9).pages((1..=4).map(|page| format!("invoice line {page}")));
     corpus(vec![(ws(1), "Acme", vec![page, pdf])])
 }
 

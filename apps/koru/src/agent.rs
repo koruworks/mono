@@ -2260,18 +2260,14 @@ impl AgentLink {
                                         // Which kind, and where; never which
                                         // list or which task.
                                         koru_search_ui::Target::List {
-                                            profile,
-                                            workspace,
-                                            ..
+                                            profile, workspace, ..
                                         } => format!(
                                             "open task-list profile={} workspace={}",
                                             profile.to_storage(),
                                             workspace.to_storage()
                                         ),
                                         koru_search_ui::Target::Task {
-                                            profile,
-                                            workspace,
-                                            ..
+                                            profile, workspace, ..
                                         } => format!(
                                             "open task profile={} workspace={}",
                                             profile.to_storage(),

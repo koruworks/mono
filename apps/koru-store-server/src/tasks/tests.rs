@@ -356,9 +356,8 @@ fn selecting(only: Vec<wire::TaskRef>) -> wire::TaskQuery {
 fn a_selector_is_refused_beside_any_filter_it_would_override() {
     assert!(translate(&selecting(vec![a_ref()])).is_ok());
 
-    let refused = |query: wire::TaskQuery| {
-        matches!(translate(&query), Err(TaskServiceError::Invalid(_)))
-    };
+    let refused =
+        |query: wire::TaskQuery| matches!(translate(&query), Err(TaskServiceError::Invalid(_)));
     assert!(refused(selecting(Vec::new())), "an empty selector");
     assert!(
         refused(selecting((0..=wire::MAX_ONLY).map(|_| a_ref()).collect())),
@@ -395,9 +394,15 @@ fn a_selector_is_refused_beside_any_filter_it_would_override() {
     };
     for (what, query) in [
         ("bucket", with(|q| q.bucket = Some("today".into()))),
-        ("list", with(|q| q.list = Some(koru_core::ids::ListId::new().to_storage()))),
+        (
+            "list",
+            with(|q| q.list = Some(koru_core::ids::ListId::new().to_storage())),
+        ),
         ("priority", with(|q| q.priority = Some("high".into()))),
-        ("min_priority", with(|q| q.min_priority = Some("high".into()))),
+        (
+            "min_priority",
+            with(|q| q.min_priority = Some("high".into())),
+        ),
         ("tags", with(|q| q.tags = vec!["fun".into()])),
         ("has", with(|q| q.has = Some("koru.due".into()))),
         ("missing", with(|q| q.missing = Some("koru.due".into()))),

@@ -4412,7 +4412,13 @@ fn drawing_the_rail_leaves_the_scene_balanced() {
         completed: 122,
     });
     v.rail_mut().set_lists(vec![
-        rail::RailList::flat(koru_core::ids::ListId::new(), "Wedding", Some("pink"), 14, 0),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Wedding",
+            Some("pink"),
+            14,
+            0,
+        ),
         rail::RailList::flat(
             koru_core::ids::ListId::new(),
             "Bike Project",
