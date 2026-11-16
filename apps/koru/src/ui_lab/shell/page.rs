@@ -29,6 +29,7 @@
 //! record: the tree draws it and the screen reader's tree reads it, so the
 //! two cannot say different things.
 
+use super::settings::PreviewWidth;
 use super::*;
 
 /// The centre's viewport: the key the wheel, the scrollbar and the keyboard
@@ -172,7 +173,9 @@ impl Lab {
     /// not, and under either every symbol the record names.
     pub(super) fn page(&self, engine: &mut TextEngine, width: f32) -> El {
         let entry = self.entry;
-        let room = self.page_room(width);
+        // The preview is as wide as its setting says, and never wider than
+        // the column: what would not fit is not drawn over a neighbour.
+        let room = self.width.within(self.page_room(width));
         let mut page = el::scroll_y("Preview")
             .id(PAGE)
             .fill()
@@ -244,6 +247,7 @@ impl Lab {
         )
         .semantic()
         .id(SUBJECT)
+        .align_self(Align::Centre)
         .max_w(Length::Runtime(
             inside.max(button::MIN_W),
             "preview column less its insets",
@@ -254,13 +258,19 @@ impl Lab {
         .name_text(story.label())
         .action(el::Action::Click)
         .action(el::Action::Focus);
-        el::col("Preview stage")
+        let stage = el::col("Preview stage")
             .id(STAGE)
             .align_self(Align::Centre)
             .pad(STAGE_INSET)
             .bg(Surface::Raised)
             .radius(Radius::L)
-            .child(subject)
+            .child(subject);
+        match self.width {
+            // As wide as the component needs.
+            PreviewWidth::Fit => stage,
+            // Exactly the width asked for, so the component is seen in it.
+            PreviewWidth::Fixed(_) => stage.w(Length::Runtime(room, "the preview width setting")),
+        }
     }
 
     /// The right column: what the record is, what is recorded about it, and

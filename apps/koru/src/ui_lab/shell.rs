@@ -18,7 +18,7 @@
 //! ```text
 //! col  UI Lab                         the window, on the ground surface
 //!   row  Caption                      the title; the shared window controls
-//!   row  Toolbar                      the record's name; Reset
+//!   row  Toolbar                      the record's name; theme, width, language; Reset
 //!   row  Workbench
 //!     col  Navigator                  the catalog              (navigator.rs)
 //!     scroll  Preview                 the record's page        (page.rs)
@@ -61,6 +61,7 @@ use winit::window::{CursorIcon, ResizeDirection, WindowAttributes};
 
 use self::navigator::{LIST, Navigator, RESET_SEARCH, Row, SEARCH};
 use self::page::{PAGE, PANEL};
+use self::settings::{OpenMenu, PreviewWidth, Setting};
 use super::placement::Placement;
 use super::registry::{self, Control, Entry, Family};
 use super::story::ButtonStory;
@@ -121,6 +122,18 @@ static FRAME_STATES: StateRecipe = StateRecipe {
     disabled: Look::NONE,
     focus: Some(Ring::Line(Line::Focus)),
 };
+
+/// A control that draws no focus state of its own, in a box that wears the
+/// focus ring while `key` has the keyboard. The control keeps its own key,
+/// rectangle and press; the box is only the mark.
+fn ringed(name: &'static str, key: Key, control: El) -> El {
+    el::boxed(name)
+        .pad(FOCUS_INSET)
+        .radius(Radius::M)
+        .states(&FRAME_STATES)
+        .activity([key])
+        .child(control)
+}
 
 /// **A slot for a production control**: it takes the control's own measured
 /// size in the layout and paints nothing. The window draws the real control
@@ -217,6 +230,17 @@ pub(crate) struct Lab {
     /// selection, undo, composition — and whoever the text is for is told
     /// after each edit ([`Lab::adopt`]).
     fields: Vec<(Key, TextInput)>,
+    /// The language the Lab is shown in: the one it opened in until the
+    /// toolbar's setting changes it. Every entry point reads its strings in
+    /// this language, whatever the rest of the process is set to.
+    lang: koru_i18n::Lang,
+    /// How wide the preview is.
+    width: PreviewWidth,
+    /// The list that is open, over the window, and the field it hangs from.
+    menu: Option<OpenMenu>,
+    /// The theme or the language changed and the process's other window has
+    /// not been told.
+    appearance_changed: bool,
     /// Where the centre and the properties column are scrolled.
     page_scroll: f32,
     panel_scroll: f32,
@@ -251,6 +275,10 @@ impl Lab {
             entry,
             story,
             fields,
+            lang: koru_i18n::current(),
+            width: PreviewWidth::Fit,
+            menu: None,
+            appearance_changed: false,
             page_scroll: 0.0,
             panel_scroll: 0.0,
             cache: TextCache::default(),
@@ -492,6 +520,8 @@ impl Lab {
             self.reset(engine)
         } else if key == RESET_SEARCH {
             self.reset_search(engine)
+        } else if self.is_dropdown(key) {
+            self.open_menu(engine, key)
         } else {
             match self.nav.row_of(key) {
                 Some(Row::Group(family)) => {
@@ -632,6 +662,11 @@ impl Lab {
     /// A press at a point of the last frame: focus follows it, then it does
     /// whatever that control does.
     fn press_at(&mut self, engine: &mut TextEngine, x: f32, y: f32, double: bool) -> bool {
+        // An open list takes every press: one outside it closes it and is
+        // not also a press on whatever was under it.
+        if self.menu.is_some() {
+            return self.menu_press(engine, x, y);
+        }
         match self.caption_action_at(x, y) {
             Some(caption::Action::Minimise) => {
                 self.request = Some(WindowRequest::Minimise);
@@ -784,6 +819,9 @@ impl Lab {
         mods: ModifiersState,
         repeat: bool,
     ) -> bool {
+        if self.menu.is_some() {
+            return self.menu_key(engine, key, repeat);
+        }
         // Ctrl+I arrives as Tab on Windows; only a bare or shifted Tab moves
         // the focus.
         let chord = mods.control_key() || mods.alt_key() || mods.super_key();
@@ -816,6 +854,15 @@ impl Lab {
         }
         if focus == PAGE {
             return self.page_key(engine, key);
+        }
+        // The arrows open a dropdown's list, as Enter and Space do.
+        if self.is_dropdown(focus)
+            && matches!(
+                key,
+                KeyboardKey::Named(NamedKey::ArrowDown | NamedKey::ArrowUp)
+            )
+        {
+            return self.open_menu(engine, focus);
         }
         if focus == control_key(Control::Style) {
             let Some(story) = self.story.as_mut() else {
@@ -876,6 +923,7 @@ impl Lab {
                     .fill()
                     .truncate(),
             )
+            .children(self.settings(engine))
             .child(
                 el::leaf(
                     "Reset",
@@ -926,34 +974,28 @@ impl Lab {
                     .role(roles::POPOVER_HEADING)
                     .truncate(),
             )
-            // The shared search box draws no focus state of its own: the box
-            // round it wears the ring while the field has the keyboard.
-            .child(
-                el::boxed("Search")
-                    .pad(FOCUS_INSET)
-                    .radius(Radius::M)
-                    .states(&FRAME_STATES)
-                    .activity([SEARCH])
-                    .child(
-                        el::leaf(
-                            "Search field",
-                            Slot {
-                                width: 0.0,
-                                height: FIELD_HEIGHT.value,
-                            },
-                        )
-                        .semantic()
-                        .h(FIELD_HEIGHT)
-                        .id(SEARCH)
-                        .hit()
-                        .focusable()
-                        // Published as a text field with its value, like a
-                        // property's.
-                        .semantics(Role::Group)
-                        .name(koru_i18n::Key::UiLabSearch)
-                        .action(el::Action::Focus),
-                    ),
-            );
+            // The shared search box draws no focus state of its own.
+            .child(ringed(
+                "Search",
+                SEARCH,
+                el::leaf(
+                    "Search field",
+                    Slot {
+                        width: 0.0,
+                        height: FIELD_HEIGHT.value,
+                    },
+                )
+                .semantic()
+                .h(FIELD_HEIGHT)
+                .id(SEARCH)
+                .hit()
+                .focusable()
+                // Published as a text field with its value, like a
+                // property's.
+                .semantics(Role::Group)
+                .name(koru_i18n::Key::UiLabSearch)
+                .action(el::Action::Focus),
+            ));
         if self.nav.rows().is_empty() {
             column.child(navigator::nothing_found(engine, self.query()))
         } else {
@@ -1047,7 +1089,9 @@ impl WindowApp for Lab {
     type Event = ();
 
     fn window(&self) -> WindowAttributes {
-        self.placement.attributes(text(koru_i18n::Key::UiLabTitle))
+        Self::in_language(self.lang, || {
+            self.placement.attributes(text(koru_i18n::Key::UiLabTitle))
+        })
     }
 
     fn should_exit(&self) -> bool {
@@ -1094,6 +1138,8 @@ impl WindowApp for Lab {
         self.style_hover = None;
         self.caption_hover = None;
         self.scroll_drag = None;
+        // A list hangs from where its field was.
+        self.menu = None;
     }
 
     fn paint_before_showing(&self) -> bool {
@@ -1121,6 +1167,7 @@ impl WindowApp for Lab {
                 field.release();
             }
             self.scroll_drag = None;
+            self.menu = None;
         }
         true
     }
@@ -1133,6 +1180,11 @@ impl WindowApp for Lab {
 
     fn pointer_moved(&mut self, x: f32, y: f32) -> bool {
         self.pointer = Some((x, y));
+        // Over an open list the pointer lights an option and nothing under
+        // the list.
+        if self.menu.is_some() {
+            return self.menu_hover(x, y);
+        }
         let caption = self.caption_action_at(x, y);
         let hot = self.hit_at(x, y);
         let segment = (hot == Some(control_key(Control::Style)))
@@ -1157,14 +1209,14 @@ impl WindowApp for Lab {
     }
 
     fn click(&mut self, engine: &mut TextEngine, x: f32, y: f32, _ctrl: bool) -> bool {
-        self.press_at(engine, x, y, false)
+        Self::in_language(self.lang, || self.press_at(engine, x, y, false))
     }
 
     /// The second of two quick presses. In the label field it selects the
     /// word; anywhere else it is simply another press, so pressing the button
     /// twice quickly counts twice.
     fn double_click(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
-        self.press_at(engine, x, y, true)
+        Self::in_language(self.lang, || self.press_at(engine, x, y, true))
     }
 
     fn drag(&mut self, engine: &mut TextEngine, x: f32, y: f32) -> bool {
@@ -1198,6 +1250,10 @@ impl WindowApp for Lab {
     /// A wheel notch scrolls the viewport under the pointer, and nothing
     /// when the pointer is over none.
     fn scroll_by(&mut self, delta: f32, _mods: ModifiersState) -> bool {
+        // Nothing scrolls under an open list.
+        if self.menu.is_some() {
+            return false;
+        }
         let Some((x, y)) = self.pointer else {
             return false;
         };
@@ -1215,20 +1271,22 @@ impl WindowApp for Lab {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
-        self.key_down(engine, key, text, mods, false)
+        Self::in_language(self.lang, || self.key_down(engine, key, text, mods, false))
     }
 
     fn rich_key(&mut self, engine: &mut TextEngine, event: RichKeyEvent<'_>) -> bool {
         if !event.state.is_pressed() {
             return false;
         }
-        self.key_down(
-            engine,
-            event.logical_key,
-            event.text,
-            event.modifiers,
-            event.repeat,
-        )
+        Self::in_language(self.lang, || {
+            self.key_down(
+                engine,
+                event.logical_key,
+                event.text,
+                event.modifiers,
+                event.repeat,
+            )
+        })
     }
 
     fn wants_ime(&self) -> bool {
@@ -1247,10 +1305,18 @@ impl WindowApp for Lab {
         let changed = field.ime(engine, &composition(event));
         // A composition in progress is not the text yet: the field's
         // authored text only changes when one is committed.
-        self.adopt(focus) || changed
+        Self::in_language(self.lang, || self.adopt(focus)) || changed
     }
 
     fn draw(&mut self, scene: &mut Scene, engine: &mut TextEngine, w: f32, h: f32) {
+        Self::in_language(self.lang, || self.paint(scene, engine, w, h));
+    }
+}
+
+impl Lab {
+    /// One frame: lay the window out, paint it, and keep the layout for the
+    /// events that follow.
+    fn paint(&mut self, scene: &mut Scene, engine: &mut TextEngine, w: f32, h: f32) {
         // Once, as a rule. Again when the layout clamped the navigator's
         // offset, because its rows were chosen for the offset it had before;
         // when what is under a pointer that has not moved is no longer what
@@ -1280,6 +1346,7 @@ impl WindowApp for Lab {
             }
             if let Some((x, y)) = self.pointer
                 && self.scroll_drag.is_none()
+                && self.menu.is_none()
             {
                 let hot = frame.hit_at(x, y);
                 settled &= hot == self.hot;
@@ -1310,6 +1377,19 @@ impl WindowApp for Lab {
         let reset = text(koru_i18n::Key::UiLabReset);
         let reset_search = text(koru_i18n::Key::UiLabResetSearch);
         let search = text(koru_i18n::Key::UiLabSearch);
+        // Each dropdown's value in force, and whether its list is open.
+        let dropdowns: Vec<(Key, String, bool)> = Setting::ALL
+            .into_iter()
+            .map(|setting| setting.key())
+            .filter(|key| frame.contains(*key))
+            .map(|key| {
+                let value = self
+                    .chosen(key)
+                    .map_or(String::new(), |choice| choice.label);
+                let open = self.menu.as_ref().is_some_and(|open| open.owner == key);
+                (key, value, open)
+            })
+            .collect();
         let Self {
             story,
             fields,
@@ -1364,6 +1444,10 @@ impl WindowApp for Lab {
                         state.focused,
                     );
                     scene.pop_layer();
+                } else if let Some((_, value, open)) =
+                    dropdowns.iter().find(|(owner, _, _)| *owner == key)
+                {
+                    Self::draw_dropdown(value, *open, scene, root, engine, rect, state.hovered);
                 } else if key == RESET_SEARCH {
                     ActionButton::new(reset_search, ActionStyle::Secondary, None).draw_focused(
                         scene,
@@ -1400,6 +1484,12 @@ impl WindowApp for Lab {
                 }
             },
         );
+        // The open list, over everything the window drew.
+        if let Some(open) = &self.menu {
+            let enabled = vec![true; open.choices.len()];
+            open.menu
+                .draw(scene, Affine::IDENTITY, engine, (w, h), &enabled);
+        }
         self.laid = Some(Laid {
             frame,
             segments,
@@ -1411,6 +1501,7 @@ impl WindowApp for Lab {
 mod navigator;
 mod page;
 mod semantics;
+mod settings;
 
 #[cfg(test)]
 mod tests;

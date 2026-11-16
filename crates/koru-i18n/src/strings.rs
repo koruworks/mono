@@ -4127,13 +4127,20 @@ pub enum Key {
     UiLabSearch,
     UiLabNoResults,
     UiLabResetSearch,
+    UiLabTheme,
+    UiLabThemeLight,
+    UiLabThemeDark,
+    UiLabPreviewWidth,
+    UiLabWidthFit,
+    UiLabWidthPixels,
+    UiLabLanguage,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3154] = [
+    pub const ALL: [Key; 3161] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7288,6 +7295,13 @@ impl Key {
         Key::UiLabSearch,
         Key::UiLabNoResults,
         Key::UiLabResetSearch,
+        Key::UiLabTheme,
+        Key::UiLabThemeLight,
+        Key::UiLabThemeDark,
+        Key::UiLabPreviewWidth,
+        Key::UiLabWidthFit,
+        Key::UiLabWidthPixels,
+        Key::UiLabLanguage,
     ];
 }
 
@@ -19611,4 +19625,11 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabSearch, en: "Search components", es: "Buscar componentes", pt_br: "Buscar componentes", de: "Komponenten suchen", fr: "Rechercher des composants", ar: "البحث في المكوّنات", zh_hans: "搜索组件", ja: "コンポーネントを検索" },
     Row { key: Key::UiLabNoResults, en: "Nothing matches “{}”.", es: "Nada coincide con «{}».", pt_br: "Nada corresponde a “{}”.", de: "Nichts passt zu „{}“.", fr: "Rien ne correspond à « {} ».", ar: "لا شيء يطابق «{}».", zh_hans: "没有与“{}”匹配的内容。", ja: "「{}」に一致するものはありません。" },
     Row { key: Key::UiLabResetSearch, en: "Reset search", es: "Restablecer la búsqueda", pt_br: "Redefinir a busca", de: "Suche zurücksetzen", fr: "Réinitialiser la recherche", ar: "إعادة تعيين البحث", zh_hans: "重置搜索", ja: "検索をリセット" },
+    Row { key: Key::UiLabTheme, en: "Theme", es: "Tema", pt_br: "Tema", de: "Design", fr: "Thème", ar: "السمة", zh_hans: "主题", ja: "テーマ" },
+    Row { key: Key::UiLabThemeLight, en: "Light", es: "Claro", pt_br: "Claro", de: "Hell", fr: "Clair", ar: "فاتح", zh_hans: "浅色", ja: "ライト" },
+    Row { key: Key::UiLabThemeDark, en: "Dark", es: "Oscuro", pt_br: "Escuro", de: "Dunkel", fr: "Sombre", ar: "داكن", zh_hans: "深色", ja: "ダーク" },
+    Row { key: Key::UiLabPreviewWidth, en: "Preview width", es: "Ancho de la vista previa", pt_br: "Largura da prévia", de: "Vorschaubreite", fr: "Largeur de l’aperçu", ar: "عرض المعاينة", zh_hans: "预览宽度", ja: "プレビューの幅" },
+    Row { key: Key::UiLabWidthFit, en: "Full width", es: "Ancho completo", pt_br: "Largura total", de: "Volle Breite", fr: "Pleine largeur", ar: "العرض الكامل", zh_hans: "全宽", ja: "全幅" },
+    Row { key: Key::UiLabWidthPixels, en: "{} px", es: "{} px", pt_br: "{} px", de: "{} px", fr: "{} px", ar: "{} بكسل", zh_hans: "{} 像素", ja: "{} px" },
+    Row { key: Key::UiLabLanguage, en: "Language", es: "Idioma", pt_br: "Idioma", de: "Sprache", fr: "Langue", ar: "اللغة", zh_hans: "语言", ja: "言語" },
 ];

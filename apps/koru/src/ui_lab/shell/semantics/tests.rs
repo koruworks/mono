@@ -141,6 +141,21 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     NativeRole::Button,
                     Some("Close window")
                 ),
+                (
+                    "s:ui-lab.setting#theme".to_owned(),
+                    NativeRole::ComboBox,
+                    Some("Theme")
+                ),
+                (
+                    "s:ui-lab.setting#width".to_owned(),
+                    NativeRole::ComboBox,
+                    Some("Preview width")
+                ),
+                (
+                    "s:ui-lab.setting#language".to_owned(),
+                    NativeRole::ComboBox,
+                    Some("Language")
+                ),
                 (RESET_AT.to_owned(), NativeRole::Button, Some("Reset")),
                 (
                     SEARCH_AT.to_owned(),
@@ -852,5 +867,184 @@ fn the_search_field_is_announced_and_can_be_set() {
             semantics.focus,
             Some(find(&semantics, SEARCH_AT).occurrence)
         );
+    });
+}
+
+/// A setting is a combo box that says its value; asking for it opens its
+/// list, which is a menu of radio items with the one in force checked, and
+/// asking for an item chooses it and closes the list.
+#[test]
+fn a_setting_is_a_combo_box_and_its_list_a_menu() {
+    english(|| {
+        let (mut lab, mut engine) = drawn();
+        const WIDTH_AT: &str = "s:ui-lab.setting#width";
+        const MENU_AT: &str = "s:ui-lab#menu";
+        let semantics = tree(&lab);
+        let width = find(&semantics, WIDTH_AT);
+        assert_eq!(width.value.as_deref(), Some("Full width"));
+        assert_eq!(width.actions, [Action::Click, Action::Focus]);
+        assert_eq!(
+            find(&semantics, "s:ui-lab.setting#language")
+                .value
+                .as_deref(),
+            Some("English")
+        );
+        assert!(
+            flat(&semantics.children)
+                .iter()
+                .all(|node| tail(&node.occurrence) != MENU_AT),
+            "no list is open"
+        );
+
+        let closed = lab.semantics_revision();
+        assert!(ask(&mut lab, &mut engine, WIDTH_AT, Action::Click));
+        assert_ne!(lab.semantics_revision(), closed);
+        let semantics = tree(&lab);
+        assert_eq!(semantics.focus, Some(find(&semantics, WIDTH_AT).occurrence));
+        let menu = find(&semantics, MENU_AT);
+        assert_eq!(menu.role, NativeRole::Menu);
+        assert_eq!(menu.label.as_deref(), Some("Preview width"));
+        let options: Vec<(String, NativeRole, Option<&str>, Option<Toggled>)> = menu
+            .children
+            .iter()
+            .map(|node| {
+                (
+                    tail(&node.occurrence),
+                    node.role,
+                    node.label.as_deref(),
+                    node.toggled,
+                )
+            })
+            .collect();
+        let radio = NativeRole::MenuItemRadio;
+        assert_eq!(
+            options,
+            [
+                (
+                    "s:ui-lab.option#fit".to_owned(),
+                    radio,
+                    Some("Full width"),
+                    Some(Toggled::True)
+                ),
+                (
+                    "s:ui-lab.option#320".to_owned(),
+                    radio,
+                    Some("320 px"),
+                    Some(Toggled::False)
+                ),
+                (
+                    "s:ui-lab.option#480".to_owned(),
+                    radio,
+                    Some("480 px"),
+                    Some(Toggled::False)
+                ),
+                (
+                    "s:ui-lab.option#640".to_owned(),
+                    radio,
+                    Some("640 px"),
+                    Some(Toggled::False)
+                ),
+                (
+                    "s:ui-lab.option#800".to_owned(),
+                    radio,
+                    Some("800 px"),
+                    Some(Toggled::False)
+                ),
+            ]
+        );
+        // Each option is where the shared menu draws and presses it.
+        let panel = menu.bounds.unwrap();
+        for option in &menu.children {
+            let bounds = option.bounds.unwrap();
+            assert!(bounds.y >= panel.y && bounds.y + bounds.h <= panel.y + panel.h);
+            assert_eq!(option.actions, [Action::Click]);
+        }
+
+        assert!(ask(
+            &mut lab,
+            &mut engine,
+            "s:ui-lab.option#480",
+            Action::Click
+        ));
+        let semantics = tree(&lab);
+        assert_eq!(find(&semantics, WIDTH_AT).value.as_deref(), Some("480 px"));
+        assert!(
+            flat(&semantics.children)
+                .iter()
+                .all(|node| tail(&node.occurrence) != MENU_AT),
+            "choosing closed the list"
+        );
+        // An option of a list that is not open cannot be asked for.
+        let stale = Resolved {
+            occurrence: Occurrence::surface(WINDOW, VIEW, "ui-lab.option", ControlPart::new("640")),
+            action: Action::Click,
+            data: None,
+        };
+        assert!(!lab.accessibility_action(&mut engine, &stale));
+        // A request for the window under an open list closes the list first.
+        assert!(ask(&mut lab, &mut engine, WIDTH_AT, Action::Click));
+        assert!(ask(&mut lab, &mut engine, SUBJECT_AT, Action::Click));
+        assert_eq!(story(&lab).presses(), 1);
+        assert!(
+            flat(&tree(&lab).children)
+                .iter()
+                .all(|node| tail(&node.occurrence) != MENU_AT)
+        );
+    });
+}
+
+/// The tree is published in the language the Lab is shown in.
+#[test]
+fn the_tree_is_published_in_the_labs_language() {
+    english(|| {
+        let (mut lab, mut engine) = drawn();
+        assert!(ask(
+            &mut lab,
+            &mut engine,
+            "s:ui-lab.setting#language",
+            Action::Click
+        ));
+        assert!(ask(
+            &mut lab,
+            &mut engine,
+            "s:ui-lab.option#ja",
+            Action::Click
+        ));
+        let semantics = tree(&lab);
+        let japanese = |key| koru_i18n::t(koru_i18n::Lang::Ja, key);
+        assert_eq!(semantics.label, japanese(koru_i18n::Key::UiLabTitle));
+        assert_eq!(
+            find(&semantics, RESET_AT).label.as_deref(),
+            Some(japanese(koru_i18n::Key::UiLabReset))
+        );
+        assert_eq!(
+            find(&semantics, "s:ui-lab.setting#language")
+                .value
+                .as_deref(),
+            Some("日本語")
+        );
+        assert_eq!(
+            find(&semantics, "s:window#close").label.as_deref(),
+            {
+                let lang = koru_i18n::Lang::Ja;
+                let commands = window_commands(
+                    WINDOW,
+                    false,
+                    lang,
+                    CaptionGeometry {
+                        minimize: None,
+                        maximize: None,
+                        close: None,
+                    },
+                );
+                commands
+                    .iter()
+                    .find(|command| command.occurrence.part == part::CLOSE)
+                    .and_then(|command| command.label.clone())
+            }
+            .as_deref()
+        );
+        // The identities are what they were in English.
+        assert!(find(&semantics, SUBJECT_AT).label.is_some());
     });
 }

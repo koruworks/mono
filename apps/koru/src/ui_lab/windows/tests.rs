@@ -614,3 +614,58 @@ fn without_a_loop_there_is_no_provider_to_ask_for() {
     assert!(windows.accessibility_wake(LAB).is_none());
     assert!(windows.accessibility_wake(PANEL).is_none());
 }
+
+// ------------------------------------------------------------ appearance
+
+/// The theme is process-wide, so the inspector's panel is drawn in whatever
+/// the Lab's toolbar chose. Nothing of the panel's own says so: the Lab's
+/// window tells it to draw again. With the panel closed there is nobody to
+/// tell.
+#[test]
+fn a_theme_chosen_in_the_lab_redraws_the_inspectors_panel() {
+    use koru_draw::theme::themes;
+    // The theme lock for as long as this runs, and the theme put back.
+    struct Restore(&'static themes::Theme);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            themes::set_active(self.0);
+        }
+    }
+    let _lock = crate::tests::lock_theme();
+    let _restore = Restore(themes::active());
+    themes::set_active(&themes::LIGHT_THEME);
+    english(|| {
+        let (mut windows, mut engine) = opened();
+        let choose = |windows: &mut LabWindows, engine: &mut TextEngine, theme: &str| {
+            let field = centre(windows, "theme");
+            point(windows, field);
+            press(windows, engine, field);
+            frame(windows, engine);
+            let option = centre(windows, theme);
+            point(windows, option);
+            press(windows, engine, option);
+            frame(windows, engine);
+        };
+        // Closed: the choice is made and nothing is owed to a panel.
+        choose(&mut windows, &mut engine, "dark");
+        assert!(std::ptr::eq(themes::active(), &themes::DARK_THEME));
+        assert!(!windows.panel_seat.stale);
+
+        // Open, and past the pick that opening starts with.
+        f12(&mut windows);
+        let subject = centre(&windows, "subject");
+        point(&mut windows, subject);
+        frame(&mut windows, &mut engine);
+        press(&mut windows, &mut engine, subject);
+        frame(&mut windows, &mut engine);
+        panel_frame(&mut windows, &mut engine);
+        windows.panel_seat.stale = false;
+
+        choose(&mut windows, &mut engine, "light");
+        assert!(std::ptr::eq(themes::active(), &themes::LIGHT_THEME));
+        assert!(
+            windows.panel_seat.stale,
+            "the panel is asked to draw in the new theme"
+        );
+    });
+}

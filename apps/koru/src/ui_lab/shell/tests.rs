@@ -243,8 +243,8 @@ fn the_lab_opens_with_the_record_on_show_in_view() {
     });
 }
 
-/// The keyboard's stops are the toolbar's Reset, the search, one row of the
-/// navigator, the page, and the story's own controls. Nothing stands in for a control
+/// The keyboard's stops are the toolbar's settings and Reset, the search,
+/// one row of the navigator, the page, and the story's own controls. Nothing stands in for a control
 /// the Lab does not have yet.
 #[test]
 fn the_keyboard_stops_are_the_controls_that_exist() {
@@ -253,6 +253,9 @@ fn the_keyboard_stops_are_the_controls_that_exist() {
         assert_eq!(
             lab.laid.as_ref().unwrap().stops(),
             [
+                Setting::Theme.key(),
+                Setting::Width.key(),
+                Setting::Language.key(),
                 RESET,
                 SEARCH,
                 entry_key(registry::BUTTON),
@@ -799,10 +802,14 @@ fn focus_is_drawn_only_while_the_window_has_the_keyboard() {
 #[test]
 fn the_window_is_titled_in_the_display_language() {
     let mut engine = TextEngine::new();
-    let lab = Lab::new(&mut engine, Placement::in_memory(None), button_entry());
     let mut titles = Vec::new();
+    let mut lab = english(|| Lab::new(&mut engine, Placement::in_memory(None), button_entry()));
     for lang in koru_i18n::Lang::ALL {
-        let title = koru_i18n::with_current(lang, || lab.window().title);
+        // The window is titled in the language the Lab opened in.
+        lab = koru_i18n::with_current(lang, || {
+            Lab::new(&mut engine, Placement::in_memory(None), button_entry())
+        });
+        let title = lab.window().title;
         assert_eq!(title, koru_i18n::t(lang, koru_i18n::Key::UiLabTitle));
         assert!(title.contains("Koru"), "{lang:?}: {title}");
         titles.push(title);

@@ -296,7 +296,18 @@ impl LabWindows {
     /// the event was left to it, and nothing when the inspector took it.
     fn lab_input(&mut self, act: impl FnOnce(&mut Lab) -> bool) -> bool {
         let changed = !self.withheld && act(&mut self.lab);
+        self.follow_appearance();
         self.take_stale(LAB) || changed
+    }
+
+    /// The Lab's theme or language changed: the inspector's panel is drawn
+    /// in the same process-wide theme and language, and no event of its own
+    /// has told it to draw again.
+    fn follow_appearance(&mut self) {
+        if self.lab.take_appearance_changed() && self.inspector.is_open() {
+            self.panel_seat.stale = true;
+            self.queue_settle();
+        }
     }
 }
 
@@ -597,6 +608,7 @@ impl MultiWindowApp for LabWindows {
             for request in std::mem::take(&mut self.requests) {
                 self.lab.accessibility_action(engine, &request);
             }
+            self.follow_appearance();
             // What they changed is published when the loop next settles.
             self.queue_settle();
         }

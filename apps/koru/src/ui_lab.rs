@@ -21,7 +21,9 @@
 //! recorded about it and holds a story's inputs. The one story so far is the
 //! shared dialog button, with its label and style changed from the
 //! properties the registration lists, a visible result for pressing it, and
-//! Reset; its state is [`story`]'s and lives in memory. F12 opens the same
+//! Reset; its state is [`story`]'s and lives in memory. The toolbar sets the
+//! theme, how wide the preview is and the display language, for this
+//! process only and in memory only. F12 opens the same
 //! inspector the app has, in a window of its own ([`windows`]), over the
 //! Lab's own elements and the production controls they hold. There is no
 //! way to name a story on the command line.
@@ -37,6 +39,8 @@
 //! open. It reads no Koru preference, so the theme, font and density are the
 //! built-in defaults whatever the working app is set to, and the element
 //! layer's fixture theme is never pinned here even when its variable is set.
+//! The theme and the language the toolbar then chooses are set on this
+//! process's own drawing and translation state and written nowhere.
 //! Neither window's size or position is read from or written to a file.
 //!
 //! No type can hold that ordering, so `tests.rs` pins it by reading the

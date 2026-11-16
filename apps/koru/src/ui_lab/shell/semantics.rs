@@ -13,6 +13,7 @@
 //! ```text
 //! Window        UI Lab                       s:window#window
 //! ├── Button    Minimize / Maximize / Close  s:window#minimize, #maximize, #close
+//! ├── ComboBox  Theme, Preview width, Language  s:ui-lab.setting#<setting>   value = the one in force
 //! ├── Button    Reset                        s:ui-lab#reset
 //! ├── TextInput Search components            s:ui-lab#search           value = the query
 //! ├── Label     nothing was found            s:ui-lab#no-results       spoken when it changes
@@ -33,6 +34,8 @@
 //!     ├── Group     Style                    s:ui-lab.control#style
 //!     │   └── RadioButton  a style           s:ui-lab.style#<style>     checked on the one worn
 //!     └── Label     each fact recorded       s:ui-lab.fact#<fact>
+//! └── Menu      the list that is open        s:ui-lab#menu             named for its field
+//!     └── MenuItemRadio  an option           s:ui-lab.option#<option>  checked on the one in force
 //! ```
 //!
 //! Identity is the element's own key, a code keyword and never a label, so a
@@ -57,6 +60,7 @@ use koru_workspace_host::accessibility::{
 
 use super::navigator::NOTHING_FOUND;
 use super::page::{NAME, PURPOSE, REASON, STATUS, SYMBOL, facts, option_line, symbol_status};
+use super::settings::{MENU, OPTION};
 use super::*;
 
 /// The surface the style control's options are identified under.
@@ -143,6 +147,19 @@ impl Lab {
             .str(self.query())
             .bool(self.maximised)
             .bool(self.active);
+        // The settings: what each is, and the list that is open.
+        for setting in Setting::ALL {
+            if let Some(choice) = self.chosen(setting.key()) {
+                revision.str(choice.part);
+            }
+        }
+        match &self.menu {
+            Some(open) => revision
+                .byte(1)
+                .str(open.owner.part)
+                .u64(open.menu.hover.map_or(u64::MAX, |slot| slot as u64)),
+            None => revision.byte(0),
+        };
         match &self.story {
             Some(story) => revision
                 .byte(1)
@@ -180,6 +197,10 @@ impl Lab {
         view: ViewSlot,
         scale: f64,
     ) -> Option<WindowSemantics> {
+        Self::in_language(self.lang, || self.published(window, view, scale))
+    }
+
+    fn published(&self, window: WindowSlot, view: ViewSlot, scale: f64) -> Option<WindowSemantics> {
         let laid = self.laid.as_ref()?;
         let place = Place { window, view };
         let mut children = self.caption_commands(window);
@@ -191,6 +212,7 @@ impl Lab {
                 children.extend(self.nothing_found_node(place, laid));
             }
         }
+        children.extend(self.menu_node(place));
         Some(WindowSemantics {
             window,
             label: text(koru_i18n::Key::UiLabTitle).to_owned(),
@@ -218,6 +240,40 @@ impl Lab {
                 .with_bounds(rect)
                 .with_live(Live::Polite),
         )
+    }
+
+    /// The list that is open: a menu named for the field it hangs from, each
+    /// option where the shared menu draws it, the one in force checked.
+    fn menu_node(&self, place: Place) -> Option<SemanticNode> {
+        let open = self.menu.as_ref()?;
+        let viewport = self.frame_size()?;
+        let options = open
+            .choices
+            .iter()
+            .enumerate()
+            .map(|(slot, choice)| {
+                SemanticNode::new(
+                    Occurrence::surface(
+                        place.window,
+                        place.view,
+                        OPTION,
+                        ControlPart::new(choice.part),
+                    ),
+                    NativeRole::MenuItemRadio,
+                )
+                .with_label(choice.label.clone())
+                .with_bounds(open.menu.item_rect(viewport, slot))
+                .with_toggled(choice.selected)
+                .with_action(Action::Click)
+            })
+            .collect();
+        let mut menu = SemanticNode::new(place.of(MENU)?, NativeRole::Menu)
+            .with_bounds(open.menu.panel(viewport))
+            .with_children(options);
+        if let Some(setting) = Setting::of(open.owner) {
+            menu = menu.with_label(text(setting.name()));
+        }
+        Some(menu)
     }
 
     /// The window's own three controls, where the shared caption draws them.
@@ -254,8 +310,12 @@ impl Lab {
         let key = node.key?;
         let field = self.field(key);
         let row = self.nav.row_of(key);
+        let dropdown = self.is_dropdown(key);
         let role = if field.is_some() {
             NativeRole::TextInput
+        } else if dropdown {
+            // A field that shows one value and opens the list of the rest.
+            NativeRole::ComboBox
         } else if key == LIST {
             // A list one of whose items is the selected one.
             NativeRole::ListBox
@@ -300,6 +360,9 @@ impl Lab {
             result = result
                 .with_value(field.raw_text())
                 .with_action(Action::SetValue);
+        }
+        if dropdown && let Some(choice) = self.chosen(key) {
+            result = result.with_value(choice.label);
         }
         match row {
             // Selected or not is said of every record's row, and where it
@@ -497,6 +560,10 @@ impl Lab {
         engine: &mut TextEngine,
         request: &Resolved,
     ) -> bool {
+        Self::in_language(self.lang, || self.requested(engine, request))
+    }
+
+    fn requested(&mut self, engine: &mut TextEngine, request: &Resolved) -> bool {
         let occurrence = request.occurrence;
         if occurrence == Occurrence::window_command(occurrence.window, part::CLOSE) {
             if request.action == Action::Click {
@@ -508,6 +575,21 @@ impl Lab {
         let ObjectKey::Surface(surface) = occurrence.object else {
             return false;
         };
+        if surface == OPTION {
+            // An option of the list that is open, and of no other.
+            let slot = self.menu.as_ref().and_then(|open| {
+                open.choices
+                    .iter()
+                    .position(|choice| choice.part == occurrence.part.name())
+            });
+            return match (request.action, slot) {
+                (Action::Click, Some(slot)) => self.choose_from_menu(engine, slot),
+                _ => false,
+            };
+        }
+        // Any other request is for the window under an open list: the list
+        // closes first, as it does for a press outside it.
+        self.close_menu();
         if surface == STYLE_OPTIONS {
             let slot = self.story.as_ref().and_then(|story| {
                 story
