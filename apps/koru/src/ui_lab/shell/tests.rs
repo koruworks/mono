@@ -1094,8 +1094,10 @@ fn a_closing_column_hands_the_keyboard_to_its_toggle() {
         let ring = frame(&lab)
             .named("Column toggle")
             .find(|node| node.state.focused)
-            .expect("the box round the toggle is lit");
-        assert!(ring.ring.is_some());
+            .expect("the toggle is the one marked");
+        // The shared icon button draws the ring: the slot has none.
+        assert_eq!(ring.key, Some(PROPERTIES_TOGGLE));
+        assert!(ring.ring.is_none());
         // Enter on it opens the column again, where the story was left.
         let none = ModifiersState::empty();
         assert!(lab.key(
@@ -1626,60 +1628,132 @@ fn a_column_chord_in_a_narrow_window_keeps_the_preview() {
     });
 }
 
-/// A column's toggle says its column shows by its glyph's filled form and by
-/// nothing else: at rest it has no plate and its glyph has the caption's
-/// ordinary ink, whether the column shows or not. Under the pointer it has
-/// the ordinary hover plate. The state still reaches a screen reader, which
-/// is tested with the tree.
+/// The inspector's records of one frame of the Lab: what each production
+/// component says it drew, and where.
+pub(super) fn inspected(
+    lab: &mut Lab,
+    engine: &mut TextEngine,
+    size: (f32, f32),
+) -> Vec<koru_draw::inspect::Record> {
+    let capture = koru_draw::inspect::Frame::begin(
+        1,
+        Affine::IDENTITY,
+        scene::rect(0.0, 0.0, size.0, size.1),
+    );
+    draw(lab, engine, size);
+    capture.finish().records
+}
+
+/// The component called `name` that was drawn exactly in `rect`.
+pub(super) fn component_at<'a>(
+    records: &'a [koru_draw::inspect::Record],
+    name: &str,
+    rect: Rect,
+) -> &'a koru_draw::inspect::Record {
+    let at = [rect.x, rect.y, rect.x + rect.w, rect.y + rect.h].map(f64::from);
+    records
+        .iter()
+        .find(|record| {
+            record.name == name
+                && record.kind == "component"
+                && record
+                    .bounds
+                    .iter()
+                    .zip(at)
+                    .all(|(drawn, slot)| (drawn - slot).abs() < 0.01)
+        })
+        .unwrap_or_else(|| panic!("no `{name}` was drawn in {rect:?}"))
+}
+
+/// What a component's record says under `name`.
+pub(super) fn property<'a>(record: &'a koru_draw::inspect::Record, name: &str) -> &'a str {
+    record
+        .properties
+        .iter()
+        .find(|property| property.name == name)
+        .map_or("", |property| property.value.as_str())
+}
+
+/// A column's toggle is the shared icon button in its quiet tone: its
+/// column showing is said by the glyph's filled form and by nothing else,
+/// whatever the pointer is doing. The state still reaches a screen reader,
+/// which is tested with the tree.
 #[test]
-fn a_column_toggle_is_lit_by_nothing_but_its_glyph() {
+fn a_column_toggle_is_the_shared_icon_button_lit_by_nothing_but_its_glyph() {
     english(|| {
         let (mut lab, mut engine) = drawn(SIZE);
-        // The toggle's own look, and its glyph's: the first child.
-        let looks = |lab: &Lab, key: Key| {
-            let frame = frame(lab);
-            let at = frame
-                .nodes
-                .iter()
-                .position(|node| node.key == Some(key))
-                .unwrap();
-            (frame.nodes[at].look, frame.nodes[at + 1].look)
+        // What the production component says it was asked to draw.
+        let drawn_as = |lab: &mut Lab, engine: &mut TextEngine| {
+            let records = inspected(lab, engine, SIZE);
+            let slot = lab.rect(PROPERTIES_TOGGLE).unwrap();
+            let button = component_at(&records, "KoruIconButton", slot);
+            assert_eq!(property(button, "tone"), "Quiet", "never the accent");
+            assert!(property(button, "icon name").contains("PANEL_RIGHT"));
+            property(button, "state").to_owned()
         };
-        let shown = looks(&lab, PROPERTIES_TOGGLE);
-        assert_eq!(shown, (Look::NONE, Look::NONE), "no plate, no tint");
+        let state = |hovered: bool, active: bool| {
+            format!("State {{ hovered: {hovered}, active: {active}, disabled: false }}")
+        };
+        assert_eq!(drawn_as(&mut lab, &mut engine), state(false, true));
         assert_eq!(
             frame(&lab).node(PROPERTIES_TOGGLE).unwrap().selected,
             Some(true)
         );
-        // Hidden: exactly the same paint. Only the glyph's form differs.
+        // Hidden: the same button, off.
         lab.set_column(Side::Properties, false);
-        draw(&mut lab, &mut engine, SIZE);
-        assert_eq!(looks(&lab, PROPERTIES_TOGGLE), shown);
+        assert_eq!(drawn_as(&mut lab, &mut engine), state(false, false));
         assert_eq!(
             frame(&lab).node(PROPERTIES_TOGGLE).unwrap().selected,
             Some(false)
         );
-        // Under the pointer: the ordinary hover plate and the text ink, on
-        // or off, and never the accent.
+        // Under the pointer it is the hovered button, on or off.
         for open in [false, true] {
             lab.set_column(Side::Properties, open);
             draw(&mut lab, &mut engine, SIZE);
             let (x, y) = centre(&lab, PROPERTIES_TOGGLE);
             lab.pointer_moved(x, y);
-            draw(&mut lab, &mut engine, SIZE);
-            let (plate, glyph) = looks(&lab, PROPERTIES_TOGGLE);
-            assert_eq!(plate.bg, Some(Surface::Hover), "open: {open}");
-            assert_eq!(glyph.ink, Some(Ink::Primary), "open: {open}");
-            assert_eq!(glyph.bg, None);
+            assert_eq!(drawn_as(&mut lab, &mut engine), state(true, open));
             lab.pointer_left();
         }
-        // The keyboard's mark is the ring, on the toggle itself.
+        // The keyboard's mark is the button's own ring: the slot it is
+        // drawn in is told it is focused and draws nothing itself.
         lab.set_focus(&mut engine, Some(NAVIGATOR_TOGGLE));
         draw(&mut lab, &mut engine, SIZE);
         let toggle = frame(&lab).node(NAVIGATOR_TOGGLE).unwrap();
-        assert!(toggle.state.focused && toggle.ring.is_some());
+        assert!(toggle.state.focused && toggle.ring.is_none());
         assert_eq!(toggle.look, Look::NONE);
-        assert_eq!(toggle.rect.w, TOGGLE_SIZE.value);
-        assert!(toggle.rect.h <= theme::CAPTION_H);
+    });
+}
+
+/// The controls the window is made of are the production components, each
+/// drawn in the slot that is pressed and focused for it, with no box of the
+/// Lab's round it: a setting is the shared dropdown, a choice among a few
+/// the shared segmented control.
+#[test]
+fn a_dropdown_and_a_choice_are_the_shared_controls_with_nothing_round_them() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        for setting in Setting::ALL {
+            let slot = lab.rect(setting.key()).unwrap();
+            let field = component_at(&records, "KoruDropdown", slot);
+            assert_eq!(
+                property(field, "value"),
+                lab.chosen(setting.key()).unwrap().label
+            );
+        }
+        let choice = lab.rect(style()).unwrap();
+        let segmented = component_at(&records, "KoruSegmented", choice);
+        assert_eq!(property(segmented, "segments"), "3");
+        // The slot is the Tab stop, and is told when the keyboard is on it.
+        for key in [Setting::Theme.key(), style()] {
+            lab.set_focus(&mut engine, Some(key));
+            draw(&mut lab, &mut engine, SIZE);
+            let node = frame(&lab).node(key).unwrap();
+            assert!(node.focusable && node.state.focused && node.ring.is_none());
+        }
+        for wrapper in ["Setting", "Property choice"] {
+            assert!(frame(&lab).named(wrapper).next().is_none(), "{wrapper}");
+        }
     });
 }

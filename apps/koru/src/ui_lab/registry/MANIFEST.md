@@ -195,6 +195,15 @@ One list, deduplicated; each batch's section below has the lines.
   offers" creation and the README's "iOS editor foundation remains
   disabled" against iOS's creation and editing controls, and the README's
   "equivalent Koru semantic tokens" against the phones' different accents.
+- **The keyboard's mark on shared controls** (found by the gallery; see
+  *L4b batch 1* below for what was fixed): `ActionButton::draw_focused`
+  rings in the accent at a border's weight, two pixels outside the button;
+  the dialog button rings in `focus_ring` at twice that weight, also
+  outside; `Chip`, `Toggle`, `Segmented`, `Dropdown` and the icon button
+  stroke their own edge in `focus_ring` at twice a border's weight. Three
+  spellings of one idea. The shared search box (`InputStyle::search`)
+  draws no focus state at all, so the Lab still rings its search field
+  itself.
 - **Controls with nothing behind them**: every create and edit control in
   the iOS app (the store services refuse each one) and its Add image,
   which inserts a fixed 1×1 picture; `SearchSurface::is_global_search`
@@ -2404,6 +2413,33 @@ listed above.
   languages, and the painter it records now also shows extracted readings.
 - The OCR tab draws its toolbar buttons through a private element leaf
   round `ActionButton::draw_focused` rather than a shared button element.
+
+## L4b batch 1 — shared action and choice widgets
+
+Added 16 November 2026 (ROADMAP.final.md's plan L4b, first batch).
+
+### Shared fixes that came first
+
+The user approved fixing the focus state in the shared widgets ("ok, fix
+focus state"). Each is additive: the older entry point calls the new one
+with `false`, a test in `koru-ui` holds the two to the same paint path for
+path, and no inspector record gained a property.
+
+| Widget | What was missing | What was added |
+| --- | --- | --- |
+| `koru_ui::segmented::Segmented` | no keyboard-focus state | `draw_focused(…, focused, alpha)`: the track's own edge in `focus_ring` |
+| `koru_ui::dropdown::Dropdown` | no keyboard-focus state | `draw_focused(…, hovered, focused, alpha)`: the field's border in `focus_ring` |
+| `koru_ui::icon_button` | no keyboard-focus state; an on state that was accent plate, accent ink and filled glyph together | `draw_focused(…, metrics, tone, focused)`: the chip ringed; `Tone::Quiet`: on is the filled glyph alone |
+
+All three stroke through one crate-private `button::focus_stroke`, the
+mark `Chip` and `Toggle` already drew. With them the Lab's own wrappers
+went: the box round each dropdown, the box round a segmented choice, and
+the element-built pane toggles in the caption, which are the shared icon
+button again (`Tone::Quiet`, `Metrics::INLINE`). The search field keeps
+its box: the shared search input is the next batch's.
+
+No caller in the ordinary app passes focus yet; that was left alone on
+purpose.
 
 ## Keeping the inventory true
 

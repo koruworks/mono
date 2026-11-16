@@ -355,30 +355,23 @@ impl Lab {
                 .collect()
         });
         let labels: Vec<&str> = labels.iter().map(String::as_str).collect();
-        // The shared segmented control draws no focus state: the box that
-        // holds it wears the frame's, and is the control that is pressed.
-        el::boxed("Property choice")
-            .align_self(Align::Start)
-            .pad(FOCUS_INSET)
-            .radius(Radius::M)
-            .states(&FRAME_STATES)
-            .id(key)
-            .hit()
-            .focusable()
-            .semantics(Role::Group)
-            .name(control.name())
-            .action(el::Action::Focus)
-            .child(
-                el::leaf(
-                    "Property segments",
-                    Slot {
-                        width: Segmented::width(engine, &labels),
-                        height: Segmented::H,
-                    },
-                )
-                .decorative()
-                .id(segments_key(control)),
-            )
+        // The shared segmented control, in a slot its own size: it is the
+        // control that is pressed, and it rings itself under the keyboard.
+        el::leaf(
+            "Property segments",
+            Slot {
+                width: Segmented::width(engine, &labels),
+                height: Segmented::H,
+            },
+        )
+        .semantic()
+        .align_self(Align::Start)
+        .id(key)
+        .hit()
+        .focusable()
+        .semantics(Role::Group)
+        .name(control.name())
+        .action(el::Action::Focus)
     }
 }
 

@@ -72,7 +72,7 @@ use koru_draw::scene;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Ink, Line, Profile, Radius, Surface, alias, roles};
 use koru_ui::button::{self, ActionButton, ActionStyle};
-use koru_ui::{InputStyle, Segmented, TextInput, Toggle, Typed, caption};
+use koru_ui::{InputStyle, Segmented, TextInput, Toggle, Typed, caption, icon_button};
 use koru_window::{ImeEvent, RichKeyEvent, WindowApp, WindowRequest};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -102,13 +102,6 @@ const SUBJECT: Key = Key::surface("ui-lab", "subject");
 /// The surface a part of the component under test is identified under: a
 /// split button's two halves, a stepper's two buttons.
 const PART: &str = "ui-lab.part";
-
-/// The segments inside a choice: where the shared segmented control is
-/// drawn. The control's own key, the one that is pressed and focused, is
-/// [`control_key`] of the input it chooses.
-fn segments_key(control: Control) -> Key {
-    Key::surface("ui-lab.segments", control.part())
-}
 
 /// One of the two columns beside the preview.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -235,45 +228,10 @@ static ENTRY_STATES: StateRecipe = StateRecipe {
     focus: Some(Ring::Line(Line::Focus)),
 };
 
-/// **A column toggle's states**: nothing at rest, whether its column shows
-/// or not; the hover plate under the pointer; the focus ring while the
-/// keyboard is on it. A shown column is said by the glyph's filled form and
-/// by nothing else: no accent, no lit plate.
-static TOGGLE_STATES: StateRecipe = StateRecipe {
-    name: "ui lab column toggle",
-    base: Look::NONE,
-    selected: Look::NONE,
-    hover: Look::bg(Surface::Hover),
-    pressed: Look::bg(Surface::Hover),
-    selected_hover: Look::bg(Surface::Hover),
-    selected_pressed: Look::bg(Surface::Hover),
-    disabled: Look::NONE,
-    focus: Some(Ring::Line(Line::Focus)),
-};
-
-/// **A column toggle's glyph**: the caption's ordinary icon ink at rest and
-/// the text ink under the pointer, the same whether its column shows or not.
-static TOGGLE_INK: StateRecipe = StateRecipe {
-    name: "ui lab column toggle glyph",
-    base: Look::NONE,
-    selected: Look::NONE,
-    hover: Look {
-        bg: None,
-        ink: Some(Ink::Primary),
-    },
-    pressed: Look {
-        bg: None,
-        ink: Some(Ink::Primary),
-    },
-    selected_hover: Look::NONE,
-    selected_pressed: Look::NONE,
-    disabled: Look::NONE,
-    focus: None,
-};
-
 /// **A frame that only shows the keyboard**: nothing of its own but the
-/// focus ring. The shared segmented control and the scroll viewport draw no
-/// focus state, so the element that holds each wears the frame's.
+/// focus ring. The shared search box and the scroll viewport draw no focus
+/// state, so the element that holds each wears the frame's. Every other
+/// control in the window draws its own.
 static FRAME_STATES: StateRecipe = StateRecipe {
     name: "ui lab focus frame",
     base: Look::NONE,
@@ -1254,32 +1212,30 @@ impl Lab {
     /// view.
     fn tree(&self, engine: &mut TextEngine, width: f32, height: f32) -> El {
         let columns = self.columns(width);
-        // A column's toggle, as elements: a square that lights under the
-        // pointer and wears the focus ring, holding the pane glyph. The
-        // glyph is filled while the column shows and outlined while it does
-        // not, in the same ink either way.
+        // A column's toggle: a slot for the shared icon button in its quiet
+        // tone, which says a shown column by the pane glyph's filled form
+        // and by nothing else, lights under the pointer and rings itself
+        // under the keyboard.
         let toggle = |side: Side| {
-            let shown = columns.shows(side);
-            let glyph = el::icon(side.glyph(), koru_draw::theme::IconSize::Caption)
-                .decorative()
-                .fill()
-                .activity([side.toggle()])
-                .states(&TOGGLE_INK);
-            el::boxed("Column toggle")
-                .w(TOGGLE_SIZE)
-                .h(TOGGLE_SIZE)
-                .radius(Radius::M)
-                .states(&TOGGLE_STATES)
-                .id(side.toggle())
-                .hit()
-                .focusable()
-                // Published as a button that is on while its column shows.
-                .semantics(Role::Button)
-                .name(side.name())
-                .selected(shown)
-                .action(el::Action::Click)
-                .action(el::Action::Focus)
-                .child(if shown { glyph.filled() } else { glyph })
+            el::leaf(
+                "Column toggle",
+                Slot {
+                    width: TOGGLE_SIZE.value,
+                    height: TOGGLE_SIZE.value,
+                },
+            )
+            .semantic()
+            .w(TOGGLE_SIZE)
+            .h(TOGGLE_SIZE)
+            .id(side.toggle())
+            .hit()
+            .focusable()
+            // Published as a button that is on while its column shows.
+            .semantics(Role::Button)
+            .name(side.name())
+            .selected(columns.shows(side))
+            .action(el::Action::Click)
+            .action(el::Action::Focus)
         };
         // The caption, as the ordinary Koru window leads its own: the Koru
         // mark in the leading slot, one caption square wide, then the title,
@@ -1358,10 +1314,9 @@ impl Lab {
         let reset = text(koru_i18n::Key::UiLabReset);
         let reset_width = ActionButton::new(reset, ActionStyle::Secondary, None).width(engine);
         let gap = TOOLBAR_GAP.token.px(profile);
-        let ring = 2.0 * FOCUS_INSET.token.px(profile);
         let settings: f32 = Setting::ALL
             .into_iter()
-            .map(|setting| self.dropdown_width(engine, setting.key()) + ring + gap)
+            .map(|setting| self.dropdown_width(engine, setting.key()) + gap)
             .sum();
         let one_row = centre
             >= 2.0 * TOOLBAR_INSET_X.token.px(profile)
@@ -1847,7 +1802,7 @@ impl Lab {
             .segmented_controls()
             .into_iter()
             .filter_map(|(control, options)| {
-                let node = frame.node(segments_key(control))?;
+                let node = frame.node(control_key(control))?;
                 let labels: Vec<String> = options
                     .iter()
                     .map(|option| preview::option_text(&option.label))
@@ -2035,7 +1990,7 @@ impl Lab {
                 } else if let Some((_, value, open)) =
                     dropdowns.iter().find(|(owner, _, _)| *owner == key)
                 {
-                    Self::draw_dropdown(value, *open, scene, root, engine, rect, state.hovered);
+                    Self::draw_dropdown(value, *open, scene, root, engine, rect, state);
                 } else if key == RESET_SEARCH {
                     ActionButton::new(reset_search, ActionStyle::Secondary, None).draw_focused(
                         scene,
@@ -2063,13 +2018,40 @@ impl Lab {
                     field.draw(scene, root, engine, rect, style, hint, state.focused);
                 } else if let Some((control, labels, chosen, measured)) = segments
                     .iter()
-                    .find(|(control, ..)| segments_key(*control) == key)
+                    .find(|(control, ..)| control_key(*control) == key)
                 {
                     let words: Vec<&str> = labels.iter().map(String::as_str).collect();
                     let hovered = style_hover
                         .filter(|(owner, _)| owner == control)
                         .map(|(_, slot)| slot);
-                    measured.draw(scene, root, engine, &words, *chosen, hovered, 1.0);
+                    measured.draw_focused(
+                        scene,
+                        root,
+                        engine,
+                        &words,
+                        *chosen,
+                        hovered,
+                        state.focused,
+                        1.0,
+                    );
+                } else if let Some(side) = Side::ALL.into_iter().find(|side| side.toggle() == key) {
+                    // Quiet: no accent on a column that shows, only the
+                    // filled glyph.
+                    icon_button::draw_focused(
+                        scene,
+                        root,
+                        engine,
+                        rect,
+                        side.glyph(),
+                        icon_button::State {
+                            hovered: state.hovered,
+                            active: state.selected,
+                            disabled: false,
+                        },
+                        icon_button::Metrics::INLINE,
+                        icon_button::Tone::Quiet,
+                        state.focused,
+                    );
                 }
             },
         );

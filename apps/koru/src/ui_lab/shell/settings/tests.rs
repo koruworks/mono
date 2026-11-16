@@ -233,12 +233,12 @@ fn a_setting_is_chosen_from_the_keyboard() {
         while lab.focus != Some(width) {
             assert!(tab(&mut lab, &mut engine));
         }
-        // The box round the field wears the focus ring.
-        let ring = frame(&lab)
-            .named("Setting")
-            .find(|node| node.state.focused)
-            .expect("the focused setting is marked");
-        assert!(ring.ring.is_some());
+        // The field itself is what is marked: the shared dropdown draws its
+        // own ring, and no box of the Lab's stands round it.
+        let marked = frame(&lab).node(width).expect("the setting is shown");
+        assert!(marked.state.focused);
+        assert_eq!(marked.name, "Setting field");
+        assert!(frame(&lab).named("Setting").next().is_none());
 
         assert!(key(&mut lab, &mut engine, NamedKey::Enter));
         let open = lab.menu.as_ref().unwrap();

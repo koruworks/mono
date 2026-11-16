@@ -5,8 +5,7 @@
 //! dropdown in the window opens.
 //!
 //! ```text
-//! box  Setting                        wears the focus ring
-//!   Setting field                     the shared dropdown, showing the value in force
+//! Setting field                       the shared dropdown, showing the value in force
 //! Menu                                the shared menu, over the window, while one is open
 //! ```
 //!
@@ -446,29 +445,25 @@ impl Lab {
         Dropdown::width_for(engine, &options)
     }
 
-    /// A dropdown's field in the tree: a slot at its full width, in a box
-    /// that wears the focus ring.
+    /// A dropdown's field in the tree: a slot at its full width. The shared
+    /// dropdown drawn in it rings itself under the keyboard.
     pub(super) fn dropdown(&self, engine: &mut TextEngine, owner: Key, name: koru_i18n::Key) -> El {
-        ringed(
-            "Setting",
-            owner,
-            el::leaf(
-                "Setting field",
-                Slot {
-                    width: self.dropdown_width(engine, owner),
-                    height: Dropdown::H,
-                },
-            )
-            .semantic()
-            .id(owner)
-            .hit()
-            .focusable()
-            // Published as a combo box with its value.
-            .semantics(Role::Button)
-            .name(name)
-            .action(el::Action::Click)
-            .action(el::Action::Focus),
+        el::leaf(
+            "Setting field",
+            Slot {
+                width: self.dropdown_width(engine, owner),
+                height: Dropdown::H,
+            },
         )
+        .semantic()
+        .id(owner)
+        .hit()
+        .focusable()
+        // Published as a combo box with its value.
+        .semantics(Role::Button)
+        .name(name)
+        .action(el::Action::Click)
+        .action(el::Action::Focus)
     }
 
     /// The three settings, as the toolbar holds them. `shared` is a row the
@@ -476,13 +471,12 @@ impl Lab {
     /// equal share of it, up to its full width and no further, and the shared
     /// dropdown clips its value before its chevron.
     pub(super) fn settings(&self, engine: &mut TextEngine, shared: bool) -> Vec<El> {
-        let ring = 2.0 * FOCUS_INSET.token.px(Profile::Desktop);
         Setting::ALL
             .into_iter()
             .map(|setting| {
                 let field = self.dropdown(engine, setting.key(), setting.name());
                 if shared {
-                    let full = self.dropdown_width(engine, setting.key()) + ring;
+                    let full = self.dropdown_width(engine, setting.key());
                     field
                         .fill()
                         .max_w(Length::Runtime(full, "the setting's widest option"))
@@ -494,7 +488,7 @@ impl Lab {
     }
 
     /// Paint `owner`'s field: the shared dropdown, showing the value in
-    /// force and whether its list is open.
+    /// force, whether its list is open and whether the keyboard is on it.
     pub(super) fn draw_dropdown(
         value: &str,
         open: bool,
@@ -502,11 +496,17 @@ impl Lab {
         root: Affine,
         engine: &mut TextEngine,
         rect: Rect,
-        hovered: bool,
+        state: el::ElState,
     ) {
-        Dropdown::new(value)
-            .open(open)
-            .draw(scene, root, engine, rect, hovered, 1.0);
+        Dropdown::new(value).open(open).draw_focused(
+            scene,
+            root,
+            engine,
+            rect,
+            state.hovered,
+            state.focused,
+            1.0,
+        );
     }
 
     /// Whether `key` is a dropdown's field: a setting's, or a choice of the
