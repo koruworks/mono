@@ -2,7 +2,7 @@
 
 use super::*;
 
-fn prepared_document() -> (ScheduleDocument, RoutinePrepared) {
+pub(super) fn prepared_document() -> (ScheduleDocument, RoutinePrepared) {
     let doc = ScheduleDocument::create(&routine_header()).unwrap();
     doc.set_lifecycle(device(5), 1, ScheduleLifecycle::Active, 2000)
         .unwrap();

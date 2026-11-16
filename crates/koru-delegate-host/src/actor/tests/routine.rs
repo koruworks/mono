@@ -379,3 +379,57 @@ fn routine_actor_rechecks_cancellation_after_refreshed_scope_arbitration() {
     assert!(answer.recv().unwrap().is_err());
     assert!(!f.held());
 }
+
+/// IPC 17. The owner control and the owner Test belong to the scheduler
+/// coordinator. The actor's arms exist only because its match is exhaustive:
+/// they refuse and leave the document, the ledger and the lease untouched.
+#[test]
+fn routine_control_actor_arms_refuse_and_write_nothing() {
+    use koru_delegate_api::bots::{BotCommand, RoutineControlAction};
+    let mut f = Fixture::new();
+    // Well formed and owned by this device, so only the arms can refuse it.
+    let route = RoutineRouteIdentity {
+        owner: f.prepared.slot.owner,
+        bot: f.prepared.slot.bot,
+        schedule: f.prepared.slot.schedule,
+        workspace: f.prepared.submission.workspace,
+        creation_request: BotRequestId::mint(),
+        seed_hash: RoutineDigest32::from_bytes([4; 32]),
+        created_at_ms: 0,
+    };
+    assert!(route.valid());
+    let slot = RoutineSlot {
+        occurrence_ms: 60_000,
+        ..f.prepared.slot
+    };
+    for command in [
+        BotCommand::ControlRoutine {
+            route: route.clone(),
+            expected_revision: 1,
+            action: RoutineControlAction::Enable {},
+        },
+        BotCommand::ControlRoutine {
+            route: route.clone(),
+            expected_revision: 1,
+            action: RoutineControlAction::Pause {},
+        },
+        BotCommand::TestRoutine {
+            route: route.clone(),
+            expected_revision: 1,
+            occurrence_ms: 60_000,
+        },
+    ] {
+        let failure = f.actor.bot_command(command).unwrap_err();
+        assert_eq!(failure.code, "schedule_unavailable");
+        assert!(failure.retryable);
+    }
+    assert!(!f.held());
+    assert!(matches!(
+        f.actor
+            .bot_command(BotCommand::ReadRoutineClaim { slot })
+            .unwrap(),
+        koru_delegate_api::bots::BotReply::RoutineClaim {
+            observation: RoutineClaimObservation::Absent { .. }
+        }
+    ));
+}

@@ -35,6 +35,7 @@ const REPAIR_BACKOFF: Duration = Duration::from_secs(1);
 const SCHEDULER_RECONCILE_BATCH: usize = 1;
 const EVENT_PUBLISHER_STOP_BOUND: Duration = Duration::from_secs(8);
 mod routine;
+mod routine_control;
 
 #[derive(Default)]
 struct LoopState {
@@ -97,6 +98,21 @@ enum Command {
         reply: mpsc::SyncSender<Result<u64, Failure>>,
     },
     CancelWatch(u64),
+    /// IPC 17: one owner control of a Bot Routine. Served here because the
+    /// Schedule document write belongs to this thread.
+    ControlRoutine {
+        route: koru_delegate_core::RoutineRouteIdentity,
+        expected_revision: u32,
+        action: koru_delegate_api::bots::RoutineControlAction,
+        reply: routine_control::RoutineReply,
+    },
+    /// IPC 17: acceptance of one owner Test. The claim is a later pass.
+    TestRoutine {
+        route: koru_delegate_core::RoutineRouteIdentity,
+        expected_revision: u32,
+        occurrence_ms: i64,
+        reply: routine_control::RoutineReply,
+    },
     #[cfg(feature = "test-support")]
     FixtureWake(mpsc::SyncSender<Result<(), String>>),
     Stop,
@@ -1036,6 +1052,59 @@ fn run(
             }
             Ok(Command::CancelWatch(watcher)) => {
                 cancel_watcher(&mut watchers, watcher);
+            }
+            Ok(Command::ControlRoutine {
+                route,
+                expected_revision,
+                action,
+                reply,
+            }) => {
+                let zone = koru_time_zone::SystemZone::detect();
+                let result = {
+                    let Some(_authority) = authority_gate.enter() else {
+                        break;
+                    };
+                    routine_control::controlled(coordinator.control_routine(
+                        &route,
+                        expected_revision,
+                        routine_control::request(action),
+                        wall_now_ms(),
+                        &zone,
+                    ))
+                };
+                // Answered only after the Store acknowledged the commit and
+                // the prepared event was made Ready, in that order.
+                let changed = answer_then_publish(reply, result, &publisher_wake);
+                if changed {
+                    generation.generation = generation.generation.saturating_add(1);
+                    notify_watchers(&mut watchers, &generation);
+                    wake.signal();
+                }
+            }
+            Ok(Command::TestRoutine {
+                route,
+                expected_revision,
+                occurrence_ms,
+                reply,
+            }) => {
+                let result = {
+                    let Some(_authority) = authority_gate.enter() else {
+                        break;
+                    };
+                    routine_control::accepted(coordinator.accept_routine_test(
+                        &route,
+                        expected_revision,
+                        occurrence_ms,
+                        wall_now_ms(),
+                    ))
+                };
+                let accepted = result.is_ok();
+                let _ = reply.send(result);
+                if accepted {
+                    // The next pass runs the Test candidate. Acceptance wrote
+                    // nothing, so there is nothing to publish.
+                    wake.signal();
+                }
             }
             #[cfg(feature = "test-support")]
             Ok(Command::FixtureWake(completed)) => fixture_completions.push(completed),

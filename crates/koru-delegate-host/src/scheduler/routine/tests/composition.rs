@@ -15,7 +15,7 @@ use koru_delegate_runtime::*;
 use koru_delegate_schedule::*;
 use std::sync::atomic::AtomicUsize;
 
-struct Clock;
+pub(in crate::scheduler) struct Clock;
 impl koru_delegate_sqlite::Clock for Clock {
     fn now_ms(&self) -> i64 {
         61_000
@@ -27,11 +27,11 @@ impl ScheduleClock for Clock {
     }
 }
 #[derive(Clone)]
-struct Docs {
-    workspace: WorkspaceId,
-    document: DocumentId,
-    snapshot: Arc<Mutex<Vec<u8>>>,
-    handles: Arc<AtomicUsize>,
+pub(in crate::scheduler) struct Docs {
+    pub(in crate::scheduler) workspace: WorkspaceId,
+    pub(in crate::scheduler) document: DocumentId,
+    pub(in crate::scheduler) snapshot: Arc<Mutex<Vec<u8>>>,
+    pub(in crate::scheduler) handles: Arc<AtomicUsize>,
 }
 struct Doc {
     source: Docs,
@@ -66,6 +66,19 @@ impl ScheduleDocumentHandle for Doc {
     ) -> PortResult<Option<RoutineExpiryAuthority>> {
         self.document
             .expired_routine_authority(self.source.workspace, device, plan)
+            .map_err(Into::into)
+    }
+    fn test_claim_authority(
+        &self,
+        device: DeviceId,
+        prepared: RoutinePrepared,
+    ) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
+        assert_eq!(
+            self.source.document.as_uuid(),
+            prepared.slot.schedule.as_uuid()
+        );
+        self.document
+            .test_claim_authority(self.source.workspace, device, prepared)
             .map_err(Into::into)
     }
     fn absorb(&mut self) -> PortResult<bool> {
@@ -132,7 +145,9 @@ impl ScheduleDocuments for Docs {
         Ok(Box::new(Watch))
     }
 }
-struct Preparation(koru_delegate_scope::ScopeIdentity);
+pub(in crate::scheduler) struct Preparation(
+    pub(in crate::scheduler) koru_delegate_scope::ScopeIdentity,
+);
 impl SchedulePreparation for Preparation {
     fn profile_delegatable(&mut self, _: &SessionProfileKey) -> PortResult<bool> {
         panic!("provider gate")

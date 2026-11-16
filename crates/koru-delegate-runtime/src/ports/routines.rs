@@ -92,6 +92,18 @@ pub enum RoutineCandidate {
         route: RoutineRouteIdentity,
         record: RoutineClaimRecord,
     },
+    /// The one outstanding owner Test. It is created only from the slot an
+    /// accepted `TestRoutine` left in memory, never from the catalog, the
+    /// recurrence planner or the attempted-slot cursor, and its header is the
+    /// paused definition the Test was accepted under.
+    Test {
+        route: RoutineRouteIdentity,
+        location: ScheduleEventRef,
+        header: ScheduleHeader,
+        owner_handoff: Option<HandoffId>,
+        slot: RoutineSlot,
+        semantic_hash: RoutineDigest32,
+    },
 }
 impl std::fmt::Debug for RoutineWork {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

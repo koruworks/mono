@@ -8,7 +8,9 @@ use koru_delegate_core::{
     RoutineLinkAcknowledgement, RoutineLinkOutcome, RoutinePrepared, RoutineSlot,
     RoutineTerminalReason, WorkspaceId, WorkspaceScope,
 };
-use koru_delegate_schedule::{ScheduleContextPointer, ScheduleDefinition, ScheduleLifecycle};
+use koru_delegate_schedule::{
+    ScheduleContextPointer, ScheduleDefinition, ScheduleLifecycle, SchedulePauseReason,
+};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -185,7 +187,17 @@ payload!(PrepareOccurrence, self, {
         && association.home == self.workspace
         && self.schedule_definition.revision > 0
         && self.schedule_definition.effective_at_ms <= self.slot.occurrence_ms
-        && self.schedule_definition.lifecycle == ScheduleLifecycle::Active
+        // Envelope 1, no new field: a paused definition is well formed for an
+        // owner Test only, and only when the owner paused it. This is shape,
+        // not acceptance: the owning service still refuses a paused
+        // preparation it did not expect, and every other pause reason.
+        && matches!(
+            self.schedule_definition.lifecycle,
+            ScheduleLifecycle::Active
+                | ScheduleLifecycle::Paused {
+                    reason: SchedulePauseReason::Manual
+                }
+        )
         && self.owner_handoff.is_none_or(|id| v4(id.as_uuid()))
         && matches!(template.scope, WorkspaceScope::BotFolder { .. })
         && template.grants.len() == 1

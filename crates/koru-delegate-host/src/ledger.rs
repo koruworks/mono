@@ -265,6 +265,40 @@ impl koru_delegate_runtime::RoutineLedger for SharedLedger {
             fresh,
         )
     }
+    fn claim_bot_routine_test(
+        &mut self,
+        authority: koru_delegate_document::RoutineTestAuthority,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
+        fresh: &koru_delegate_core::FreshBotPolicyProof,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        // As above: the writer is held before the Test authority is consumed,
+        // so nothing can change the ledger between its revalidation and the
+        // claim transaction.
+        koru_delegate_runtime::RoutineLedger::claim_bot_routine_test(
+            &mut *self.0.lock().unwrap(),
+            authority,
+            admission,
+            fresh,
+        )
+    }
+    fn bot_admission_barrier(
+        &self,
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+    ) -> Result<Option<koru_delegate_core::BotAdmissionBarrier>, koru_delegate_sqlite::BotLedgerError>
+    {
+        koru_delegate_runtime::RoutineLedger::bot_admission_barrier(
+            &*self.0.lock().unwrap(),
+            owner,
+            bot,
+        )
+    }
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,

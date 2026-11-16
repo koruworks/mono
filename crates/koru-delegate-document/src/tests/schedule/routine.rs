@@ -3,6 +3,7 @@
 use super::*;
 mod claim;
 mod expiry;
+mod test_claim;
 
 fn association() -> RoutineAssociation {
     RoutineAssociation::new(

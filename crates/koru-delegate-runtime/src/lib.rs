@@ -97,8 +97,9 @@ pub use ports::{
     schedule_definition_event,
 };
 pub use scheduler::{
-    PlannedAction, ScheduleAdmission, ScheduleCoordinator, ScheduleEffects, ScheduleEvaluation,
-    ScheduleList, ScheduleListing, ScheduleNext, SchedulePlan, plan_schedule,
+    PlannedAction, RoutineControl, RoutineControlled, RoutineTestAccepted, ScheduleAdmission,
+    ScheduleCoordinator, ScheduleEffects, ScheduleEvaluation, ScheduleList, ScheduleListing,
+    ScheduleNext, SchedulePlan, plan_schedule,
 };
 
 // The vocabulary a host names when it composes this crate, re-exported so

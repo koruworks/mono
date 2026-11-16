@@ -117,6 +117,35 @@ impl crate::RoutineLedger for RunsDb {
             .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
         RunsDb::claim_bot_routine(self, facts, admission, fresh)
     }
+    fn claim_bot_routine_test(
+        &mut self,
+        authority: koru_delegate_document::RoutineTestAuthority,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
+        fresh: &koru_delegate_core::FreshBotPolicyProof,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    > {
+        // The sole production conversion of an owner Test. The Test authority
+        // revalidates the paused definition itself; it is consumed here, under
+        // the host's writer mutex, with nothing between it and the same claim
+        // transaction every Routine occurrence uses.
+        let facts = authority
+            .into_bot_routine_test()
+            .map_err(|_| LedgerError::InvalidScheduleAuthority)?;
+        RunsDb::claim_bot_routine(self, facts, admission, fresh)
+    }
+    fn bot_admission_barrier(
+        &self,
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+    ) -> Result<Option<koru_delegate_core::BotAdmissionBarrier>, koru_delegate_sqlite::BotLedgerError>
+    {
+        koru_delegate_sqlite::BotLedger::bot_barrier(self, owner, bot)
+    }
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,

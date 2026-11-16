@@ -24,6 +24,7 @@ use crate::{
 };
 
 mod routines;
+pub use routines::{RoutineControl, RoutineControlled, RoutineTestAccepted};
 
 /// One bounded action from an evaluation. A month of missed minute slots is
 /// represented by one `Missed` action whose durable observation cursor skips

@@ -68,9 +68,9 @@ pub use document::RunDocument;
 pub use document::projection::{AppliedRunProjection, RunProjectionIntent, RunProjectionStaging};
 pub use document::source::{DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage};
 pub use schedule::{
-    RoutineDetailProjection, RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOverview,
-    ScheduleClaimAuthority, ScheduleClaimPlan, ScheduleDocument, ScheduleDocumentError,
-    ScheduleRunClaim, ScheduleSkipClaim, ScheduleWrite,
+    RoutineDetailProjection, RoutineExpiryAuthority, RoutineExpiryPlan, RoutineOccurrenceLifecycle,
+    RoutineOverview, RoutineTestAuthority, ScheduleClaimAuthority, ScheduleClaimPlan,
+    ScheduleDocument, ScheduleDocumentError, ScheduleRunClaim, ScheduleSkipClaim, ScheduleWrite,
 };
 
 /// The manifest kind token a run is registered under. A **stored name**: it

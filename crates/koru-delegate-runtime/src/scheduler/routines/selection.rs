@@ -149,14 +149,35 @@ impl ScheduleCoordinator {
             routines.due_after = Some(inspected_schedule);
         }
         report.next_deadline_ms = min_option(report.next_deadline_ms, routines.due_deadline_ms);
-        let had_both = recovery.is_some() && due.is_some();
-        let use_recovery = recovery.is_some() && (due.is_none() || routines.prefer_recovery);
-        if inspected < due_rows || (use_recovery && due.is_some()) {
+        // The owner Test is not a due candidate. It comes only from the slot
+        // an accepted TestRoutine left in memory, and it is forgotten, with no
+        // write, once its minute can no longer be claimed.
+        if routines
+            .test
+            .as_ref()
+            .is_some_and(|test| control::test_window_closed(now_ms, test.slot.occurrence_ms))
+        {
+            routines.test = None;
+        }
+        let other_work = recovery.is_some() || due.is_some();
+        let use_test = routines.test.is_some() && (!other_work || !routines.test_yielded);
+        if routines.test.is_some() {
+            // Alternate with due and recovery work. Whatever was not chosen
+            // keeps its cursor and is selected again by the next pass.
+            routines.test_yielded = use_test && other_work;
+            continue_later(report, now_ms);
+        }
+        let had_both = !use_test && recovery.is_some() && due.is_some();
+        let use_recovery =
+            !use_test && recovery.is_some() && (due.is_none() || routines.prefer_recovery);
+        if inspected < due_rows || ((use_recovery || use_test) && due.is_some()) {
             continue_later(report, now_ms);
         } else {
             routines.due_scanning = false;
         }
-        let chosen = if use_recovery {
+        let chosen = if use_test {
+            routines.test.as_ref().map(|test| test.candidate())
+        } else if use_recovery {
             recovery.map(|selected| {
                 match selected.cursor {
                     RecoveryCursor::Held(cursor) => routines.held_after = Some(cursor),

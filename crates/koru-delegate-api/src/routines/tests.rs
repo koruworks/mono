@@ -151,6 +151,57 @@ where
     );
 }
 
+/// P4.3 wire rule, envelope 1 unchanged: a paused definition is a well-formed
+/// `PrepareOccurrence` only when the owner paused it (the owner Test). No
+/// field is added, and every other pause reason stays malformed.
+#[test]
+fn routine_control_bridge_admits_a_manually_paused_definition_and_no_other_pause() {
+    use koru_delegate_schedule::{ScheduleContextFailureStage, SchedulePauseReason};
+    let p = prepared();
+    let active = prepare(&p);
+    assert!(active.valid());
+    let mut manual = prepare(&p);
+    manual.schedule_definition.lifecycle = ScheduleLifecycle::Paused {
+        reason: SchedulePauseReason::Manual,
+    };
+    assert!(manual.valid());
+    // Same envelope, same fields: only the lifecycle value differs.
+    let active_wire = serde_json::to_value(RoutineBridgeEnvelope::new(active).unwrap()).unwrap();
+    let envelope = RoutineBridgeEnvelope::new(manual.clone()).unwrap();
+    roundtrip(&envelope);
+    let manual_wire = serde_json::to_value(&envelope).unwrap();
+    assert_eq!(manual_wire["version"], 1);
+    let keys = |value: &serde_json::Value, pointer: &str| {
+        value
+            .pointer(pointer)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    for pointer in ["", "/payload", "/payload/schedule_definition"] {
+        assert_eq!(keys(&manual_wire, pointer), keys(&active_wire, pointer));
+    }
+    for reason in [
+        SchedulePauseReason::ProviderNotDelegatable,
+        SchedulePauseReason::ScopeUnavailable,
+        SchedulePauseReason::ContextUnavailable {
+            item: 0,
+            stage: ScheduleContextFailureStage::Resolve,
+        },
+    ] {
+        let mut automatic = prepare(&p);
+        automatic.schedule_definition.lifecycle = ScheduleLifecycle::Paused { reason };
+        assert!(!automatic.valid());
+        assert!(RoutineBridgeEnvelope::new(automatic).is_err());
+    }
+    // The effective-time rule is not relaxed for a paused definition.
+    manual.schedule_definition.effective_at_ms = manual.slot.occurrence_ms + 1;
+    assert!(!manual.valid());
+}
+
 #[test]
 fn routine_bridge_envelope_routes_version_and_canonical_request_identity_are_exact() {
     assert_eq!(ROUTINE_BRIDGE_METHOD, "POST");

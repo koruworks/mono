@@ -44,7 +44,8 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 15 registers retained Routine routes through the private Bot port.
 // Version 16 adds Bot decisions (prepare, answer, edit consume, wait read with
 // its resume) and a stable request key on the native approval answer.
-pub const WIRE_VERSION: u8 = 16;
+// Version 17 adds the owner control and the owner Test of one Bot Routine.
+pub const WIRE_VERSION: u8 = 17;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

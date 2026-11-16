@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 use crate::actor::tests::routine::Fixture;
-mod composition;
+pub(in crate::scheduler) mod composition;
 
 fn effects() -> (ActorEffects, mpsc::Receiver<ActorCommand>) {
     let (actor, inbox) = mpsc::channel();

@@ -59,6 +59,21 @@ impl RoutineLedger for Routes {
     ) -> Result<(RoutineClaimObservation, Option<RoutineSkippedClaim>), BotLedgerError> {
         RoutineLedger::claim_bot_routine(&mut self.db, a, b, p)
     }
+    fn claim_bot_routine_test(
+        &mut self,
+        _: koru_delegate_document::RoutineTestAuthority,
+        _: &BotAdmissionBarrier,
+        _: &FreshBotPolicyProof,
+    ) -> Result<(RoutineClaimObservation, Option<RoutineSkippedClaim>), BotLedgerError> {
+        panic!("an ordinary mutation never claims a Test")
+    }
+    fn bot_admission_barrier(
+        &self,
+        o: BotOwner,
+        b: BotId,
+    ) -> Result<Option<BotAdmissionBarrier>, BotLedgerError> {
+        RoutineLedger::bot_admission_barrier(&self.db, o, b)
+    }
     fn read_routine_claim(
         &self,
         s: &RoutineSlot,

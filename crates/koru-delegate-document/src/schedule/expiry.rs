@@ -20,6 +20,14 @@ pub struct RoutineExpiryPlan {
 /// fn executable(_: ScheduleClaimAuthority) {}
 /// fn wrong_phase(expiry: RoutineExpiryAuthority) { executable(expiry); }
 /// ```
+///
+/// Nor can it be passed where the owner Test authority is expected:
+///
+/// ```compile_fail
+/// use koru_delegate_document::{RoutineExpiryAuthority, RoutineTestAuthority};
+/// fn owner_test(_: RoutineTestAuthority) {}
+/// fn wrong_phase(expiry: RoutineExpiryAuthority) { owner_test(expiry); }
+/// ```
 pub struct RoutineExpiryAuthority {
     inner: ScheduleClaimAuthority,
 }

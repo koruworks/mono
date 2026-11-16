@@ -18,6 +18,27 @@ impl ScheduleCoordinator {
             RoutineCandidate::Recover { route, record } => {
                 self.recover_routine(routines, &route, record, deadline, report)
             }
+            // The owner Test has its own handler. It shares nothing below:
+            // no expiry, no attempted-slot cursor, no ordinary authority.
+            RoutineCandidate::Test {
+                route,
+                location,
+                header,
+                owner_handoff,
+                slot,
+                semantic_hash,
+            } => self.run_routine_test(
+                routines,
+                route,
+                location,
+                header,
+                owner_handoff,
+                slot,
+                semantic_hash,
+                effects,
+                deadline,
+                report,
+            ),
             RoutineCandidate::Due {
                 route,
                 location,
@@ -272,7 +293,7 @@ impl ScheduleCoordinator {
         self.routine_observation(routines, route, observed, deadline, report)
     }
 
-    fn routine_observation(
+    pub(super) fn routine_observation(
         &mut self,
         routines: &mut Routines,
         route: &RoutineRouteIdentity,

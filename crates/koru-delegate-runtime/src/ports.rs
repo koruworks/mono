@@ -352,6 +352,29 @@ pub trait RoutineLedger: Send {
         ),
         koru_delegate_sqlite::BotLedgerError,
     >;
+    /// The owner Test's claim. It takes its own authority type, so nothing
+    /// minted for the due or the expiry path can reach it, and a Test
+    /// authority cannot reach [`Self::claim_bot_routine`]. Not on the wire.
+    fn claim_bot_routine_test(
+        &mut self,
+        authority: koru_delegate_document::RoutineTestAuthority,
+        admission: &koru_delegate_core::BotAdmissionBarrier,
+        fresh: &koru_delegate_core::FreshBotPolicyProof,
+    ) -> Result<
+        (
+            koru_delegate_core::RoutineClaimObservation,
+            Option<koru_delegate_core::RoutineSkippedClaim>,
+        ),
+        koru_delegate_sqlite::BotLedgerError,
+    >;
+    /// The Bot's current admission barrier, read from the ledger inside one
+    /// owner command. `None` is positive absence: the AI owner has never
+    /// synchronized this Bot. It is not readiness. Not on the wire.
+    fn bot_admission_barrier(
+        &self,
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+    ) -> Result<Option<koru_delegate_core::BotAdmissionBarrier>, koru_delegate_sqlite::BotLedgerError>;
     fn read_routine_claim(
         &self,
         slot: &koru_delegate_core::RoutineSlot,
@@ -781,6 +804,22 @@ pub trait ScheduleDocumentHandle: Send {
         device: koru_delegate_core::DeviceId,
         plan: ScheduleClaimPlan,
     ) -> PortResult<Option<ScheduleClaimAuthority>>;
+    /// The owner Test's live authority for one prepared occurrence of a
+    /// Routine that is exactly Paused(Manual). Like the two above, an
+    /// implementation must bind its real Store workspace and its physical
+    /// DocumentId to the prepared ScheduleId. A handle that does not serve
+    /// owner Tests refuses: no handle mints this by default.
+    fn test_claim_authority(
+        &self,
+        _device: koru_delegate_core::DeviceId,
+        _prepared: koru_delegate_core::RoutinePrepared,
+    ) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
+        Err(PortError::new(
+            Port::Schedules,
+            "routine_test_authority_unavailable",
+            "this Schedule handle does not serve an owner Test",
+        ))
+    }
     fn commit(
         &mut self,
         write: &mut dyn FnMut(&ScheduleDocument) -> Result<(), ScheduleDocumentError>,

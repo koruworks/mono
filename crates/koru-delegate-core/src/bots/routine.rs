@@ -8,10 +8,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 mod claim;
+mod control;
 mod digest;
 mod evidence;
 mod expiry;
 pub use claim::*;
+pub use control::*;
 mod policy;
 pub use digest::{RoutineDigestError, routine_digest_json};
 pub use evidence::*;

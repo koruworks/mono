@@ -11,9 +11,12 @@ use koru_delegate_core::*;
 use koru_delegate_sqlite::{RoutineHeldCursor, RoutineQueuedCursor, RoutineSlotCursor};
 use std::time::{Duration, Instant};
 
+mod control;
 mod execution;
+mod owner_test;
 mod publication;
 mod selection;
+pub use control::{RoutineControl, RoutineControlled, RoutineTestAccepted};
 
 const PAGE: usize = 16;
 const CLEANUP_BUDGET: Duration = Duration::from_secs(5);
@@ -33,6 +36,12 @@ pub(super) struct Routines {
     // One attempted slot, not a draft/retry queue. It only lets the owning
     // recurrence planner revisit exact expiry after unknown preparation.
     attempted_slot: Option<RoutineSlot>,
+    // The one outstanding owner Test. Memory only: a restart forgets it and
+    // nothing fires. It is never derived from the catalog or the planner.
+    test: Option<control::OutstandingTest>,
+    // Fairness only: a Test that keeps retrying inside its minute gives every
+    // other pass to due and recovery work, so it cannot make them late.
+    test_yielded: bool,
     held_after: Option<RoutineHeldCursor>,
     queued_after: Option<RoutineQueuedCursor>,
     repair: Repair,
@@ -112,6 +121,22 @@ fn route_location(route: &RoutineRouteIdentity) -> ScheduleEventRef {
         workspace: route.workspace,
         document: DocumentId::from_uuid(route.schedule.as_uuid()),
     }
+}
+fn definition_identity(
+    definition: &ScheduleDefinition,
+    workspace: WorkspaceId,
+    owner_handoff: Option<HandoffId>,
+) -> PortResult<RoutineDefinitionIdentity> {
+    Ok(RoutineDefinitionIdentity {
+        revision: definition.revision,
+        digest: koru_delegate_schedule::routine_definition_digest(
+            definition,
+            workspace,
+            owner_handoff,
+        )
+        .map_err(|_| refused("routine_definition_identity"))?,
+        owner_handoff,
+    })
 }
 fn route_header(
     route: &RoutineRouteIdentity,
@@ -195,6 +220,8 @@ impl Routines {
             due_scanning: false,
             due_deadline_ms: None,
             attempted_slot: None,
+            test: None,
+            test_yielded: false,
             held_after: None,
             queued_after: None,
             repair: Repair::default(),

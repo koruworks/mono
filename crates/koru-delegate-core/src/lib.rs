@@ -130,6 +130,12 @@ pub use bots::{
     RoutineRepresentativeMiss, RoutineRouteIdentity, RoutineSkipOutcome, RoutineSkippedClaim,
     RoutineSlot, RoutineTerminalReason, routine_digest_json,
 };
+// Delegate IPC 17: the neutral owner-control and owner-Test vocabulary.
+pub use bots::{
+    ROUTINE_CONTROL_WIRE_LIMIT, ROUTINE_TEST_CLAIM_MARGIN_MS, ROUTINE_TEST_MINUTE_MS,
+    RoutineControlLifecycle, RoutineControlOutcome, routine_control_revision_valid,
+    routine_control_within_wire_limit, routine_test_minute_of, routine_test_minute_valid,
+};
 pub use koru_device::DeviceId;
 pub use koru_events::EventId;
 pub use koru_session_protocol::{

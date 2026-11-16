@@ -24,7 +24,14 @@ pub use koru_delegate_core::{
 use serde::{Deserialize, Serialize};
 
 mod decisions;
+mod routine_control;
 pub use decisions::{DecisionAnswerRequest, DecisionEditProposal, DecisionReceiptView};
+pub use koru_delegate_core::{
+    ROUTINE_CONTROL_WIRE_LIMIT, RoutineControlLifecycle, RoutineControlOutcome,
+};
+pub use routine_control::{
+    ROUTINE_CONTROL_FRAME_LIMIT, RoutineControlAction, routine_control_frame_oversized,
+};
 
 /// Per-Agent-run secret passed only through trusted bootstrap. Not an owner
 /// identity and not persisted with an operation or Run. Same-account process
@@ -312,8 +319,50 @@ pub enum BotCommand {
         wait_id: koru_delegate_core::decisions::BotWaitId,
         decision_id: koru_delegate_core::decisions::DecisionId,
     },
+    /// IPC 17: one synchronous, revision-checked commit of a Bot Routine's
+    /// Schedule definition (enable, pause, or edit of timing and name). The
+    /// scheduler coordinator serves it; the actor never does. `route` is
+    /// compared with the route retained in the ledger and with the live
+    /// header at its exact document; it grants nothing by being decoded.
+    ControlRoutine {
+        route: koru_delegate_core::RoutineRouteIdentity,
+        expected_revision: u32,
+        action: RoutineControlAction,
+    },
+    /// IPC 17: the owner Test of a Routine that is exactly Paused(Manual).
+    /// Accepted at once; it completes later as one occurrence of the
+    /// delegate's current minute, claimed through its own authority.
+    TestRoutine {
+        route: koru_delegate_core::RoutineRouteIdentity,
+        expected_revision: u32,
+        occurrence_ms: i64,
+    },
 }
 impl BotCommand {
+    /// IPC 17 owner controls only: whether the command is well formed and
+    /// within its 4 KiB encoded bound. `None` for every other command. The
+    /// sender checks it while encoding and the delegate before it acts.
+    pub fn routine_control_valid(&self) -> Option<bool> {
+        let (route, expected_revision, minute) = match self {
+            Self::ControlRoutine {
+                route,
+                expected_revision,
+                ..
+            } => (route, *expected_revision, None),
+            Self::TestRoutine {
+                route,
+                expected_revision,
+                occurrence_ms,
+            } => (route, *expected_revision, Some(*occurrence_ms)),
+            _ => return None,
+        };
+        Some(
+            route.valid()
+                && koru_delegate_core::routine_control_revision_valid(expected_revision)
+                && minute.is_none_or(koru_delegate_core::routine_test_minute_valid)
+                && routine_control::within_wire_limit(self),
+        )
+    }
     /// The explicit owner asserted by the trusted AI owner. Native-result
     /// commands instead resolve their immutable Run binding inside the actor.
     pub fn owner(&self) -> Option<&koru_delegate_core::BotOwner> {
@@ -355,6 +404,9 @@ impl BotCommand {
             | Self::ConsumeDecisionEdit { fence, .. } => Some(&fence.owner),
             Self::AnswerDecision { answer, .. } => Some(&answer.owner),
             Self::ReadBotDecisionWait { owner, .. } => Some(owner),
+            Self::ControlRoutine { route, .. } | Self::TestRoutine { route, .. } => {
+                Some(&route.owner)
+            }
             Self::SynchronizePolicy { barrier } => Some(&barrier.key.owner),
             Self::SynchronizeRoutinePolicy { barrier } => Some(&barrier.owner),
             Self::ReconcilePolicyBarrier { key } => Some(&key.owner),
@@ -470,6 +522,42 @@ pub enum BotReply {
         observation: koru_delegate_core::decisions::BotDecisionWaitObservation,
         resume: Option<koru_delegate_core::decisions::DecisionResume>,
     },
+    /// IPC 17: the Routine after one control. `applied` is answered only
+    /// after the Store acknowledged the commit and its event was made Ready;
+    /// `already_applied` is the exact replay of that commit. Every field is
+    /// always present.
+    RoutineControlled {
+        route: koru_delegate_core::RoutineRouteIdentity,
+        outcome: RoutineControlOutcome,
+        name: koru_delegate_schedule::ScheduleName,
+        definition: koru_delegate_core::RoutineDefinitionIdentity,
+        effective_at_ms: i64,
+        lifecycle: RoutineControlLifecycle,
+    },
+    /// IPC 17: a Test was accepted for this slot under this paused
+    /// definition. It is not a claim: the claim is read separately.
+    RoutineTestAccepted {
+        slot: koru_delegate_core::RoutineSlot,
+        definition: koru_delegate_core::RoutineDefinitionIdentity,
+    },
+}
+impl BotReply {
+    /// IPC 17 owner-control replies only: well formed and within the 4 KiB
+    /// encoded bound. `None` for every other reply.
+    pub fn routine_control_valid(&self) -> Option<bool> {
+        let formed = match self {
+            Self::RoutineControlled {
+                route, definition, ..
+            } => route.valid() && definition.valid(),
+            Self::RoutineTestAccepted { slot, definition } => {
+                slot.valid()
+                    && definition.valid()
+                    && koru_delegate_core::routine_test_minute_valid(slot.occurrence_ms)
+            }
+            _ => return None,
+        };
+        Some(formed && routine_control::within_wire_limit(self))
+    }
 }
 impl std::fmt::Debug for BotReply {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -633,9 +721,23 @@ impl LocalBotDelegate {
     }
 }
 impl LocalBotDelegate {
+    /// An owner control over its bound, or malformed, is refused before a
+    /// frame is written. Every other command is unaffected.
+    fn encodable(command: &BotCommand) -> Result<(), crate::Failure> {
+        if command.routine_control_valid() == Some(false) {
+            return Err(crate::Failure::new(
+                "invalid_request",
+                "The Routine control request is malformed or too large.",
+                false,
+            ));
+        }
+        Ok(())
+    }
     fn answer(response: crate::ipc::Response) -> Result<BotReply, crate::Failure> {
         match response {
-            crate::ipc::Response::Bot(reply) => Ok(reply),
+            crate::ipc::Response::Bot(reply) if reply.routine_control_valid() != Some(false) => {
+                Ok(reply)
+            }
             crate::ipc::Response::Failure(failure) => Err(failure),
             _ => Err(crate::Failure::new(
                 "delegate_unexpected_response",
@@ -647,6 +749,7 @@ impl LocalBotDelegate {
 }
 impl BotDelegatePort for LocalBotDelegate {
     fn execute(&self, command: BotCommand) -> Result<BotReply, crate::Failure> {
+        Self::encodable(&command)?;
         Self::answer(self.transport.call(&crate::ipc::Request::Bot {
             authority: self.authority.clone(),
             command,
@@ -657,6 +760,7 @@ impl BotDelegatePort for LocalBotDelegate {
         command: BotCommand,
         within: std::time::Duration,
     ) -> Result<BotReply, crate::Failure> {
+        Self::encodable(&command)?;
         Self::answer(self.transport.call_within(
             &crate::ipc::Request::Bot {
                 authority: self.authority.clone(),

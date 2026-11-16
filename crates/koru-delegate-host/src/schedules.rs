@@ -202,6 +202,14 @@ impl ScheduleDocumentHandle for StoreScheduleHandle {
             .map_err(Into::into)
     }
 
+    fn test_claim_authority(
+        &self,
+        device: koru_delegate_core::DeviceId,
+        prepared: koru_delegate_core::RoutinePrepared,
+    ) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
+        test_claim_authority_at(self.document, self.workspace, &self.doc, device, prepared)
+    }
+
     fn absorb(&mut self) -> PortResult<bool> {
         self.link.absorb(&self.doc).map_err(schedule_link_error)
     }
@@ -234,6 +242,22 @@ fn expired_routine_authority_at(
 ) -> PortResult<Option<koru_delegate_document::RoutineExpiryAuthority>> {
     routine_claim_location(physical, Some(doc.header()?.schedule))?;
     doc.expired_routine_authority(workspace, device, plan)
+        .map_err(Into::into)
+}
+
+/// The owner Test's production binding. Like the two above it pins the
+/// physical Store DocumentId to the prepared ScheduleId and the handle's real
+/// workspace; the document then requires exactly Paused(Manual).
+fn test_claim_authority_at(
+    physical: DocumentId,
+    workspace: WorkspaceId,
+    doc: &ScheduleDocument,
+    device: koru_delegate_core::DeviceId,
+    prepared: koru_delegate_core::RoutinePrepared,
+) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
+    routine_claim_location(physical, Some(prepared.slot.schedule))?;
+    routine_claim_location(physical, Some(doc.header()?.schedule))?;
+    doc.test_claim_authority(workspace, device, prepared)
         .map_err(Into::into)
 }
 

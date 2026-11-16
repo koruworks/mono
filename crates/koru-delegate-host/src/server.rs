@@ -177,6 +177,17 @@ fn handle(
                 write(&stream, &response);
                 return;
             }
+            // IPC 17: the owner control and the owner Test are admitted with
+            // the Bot authority above, like every Bot command, and then go to
+            // the scheduler thread, which owns the Schedule document write.
+            // The actor never sees them and never waits on a Store commit.
+            let command = match serve_routine_control(&scheduler, command) {
+                Ok(response) => {
+                    write(&stream, &response);
+                    return;
+                }
+                Err(command) => command,
+            };
             Command::Bot {
                 command,
                 reply: reply_tx,
@@ -440,11 +451,55 @@ fn wake_schedules(
     Ok(false)
 }
 
+/// Serve an admitted IPC 17 owner control through the scheduler, or hand any
+/// other Bot command back for the actor. A control that is malformed or over
+/// its 4 KiB bound is refused here, before the coordinator sees it.
+fn serve_routine_control(
+    scheduler: &crate::scheduler::Control,
+    command: koru_delegate_api::bots::BotCommand,
+) -> Result<Response, koru_delegate_api::bots::BotCommand> {
+    use koru_delegate_api::bots::BotCommand;
+    match command.routine_control_valid() {
+        None => return Err(command),
+        Some(false) => {
+            return Ok(Response::Failure(Failure::new(
+                "invalid_request",
+                "The Routine control request is malformed or too large.",
+                false,
+            )));
+        }
+        Some(true) => {}
+    }
+    let answer = match command {
+        BotCommand::ControlRoutine {
+            route,
+            expected_revision,
+            action,
+        } => scheduler.control_routine(route, expected_revision, action),
+        BotCommand::TestRoutine {
+            route,
+            expected_revision,
+            occurrence_ms,
+        } => scheduler.test_routine(route, expected_revision, occurrence_ms),
+        other => return Err(other),
+    };
+    Ok(match answer {
+        Ok(reply) => Response::Bot(reply),
+        Err(failure) => Response::Failure(failure),
+    })
+}
+
 /// Do not turn a stale frame into an actor command: an old worker can parse
 /// the request while silently losing the model choice in its run header.
 fn read_current_request(reader: &mut impl std::io::Read) -> std::io::Result<Option<Request>> {
     let (version, body) = frame::read_raw(reader)?;
     if version != WIRE_VERSION {
+        return Ok(None);
+    }
+    // An owner control over its bound is dropped before its content is
+    // decoded, like any malformed frame: unanswered, so nothing about it is
+    // told to a peer whose authority was never checked.
+    if koru_delegate_api::bots::routine_control_frame_oversized(&body) {
         return Ok(None);
     }
     frame::decode(&body).map(Some)

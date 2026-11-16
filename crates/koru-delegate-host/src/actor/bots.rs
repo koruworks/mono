@@ -118,6 +118,18 @@ impl Actor {
         }
         let device = self.device;
         let reply = match command {
+            // IPC 17 owner controls belong to the scheduler coordinator, which
+            // owns the Schedule document write; the server routes them there
+            // before this actor is reached. These arms exist because the match
+            // is exhaustive. They refuse, write nothing, and never wait on a
+            // Store commit.
+            BotCommand::ControlRoutine { .. } | BotCommand::TestRoutine { .. } => {
+                return Err(Failure::new(
+                    "schedule_unavailable",
+                    "Routine controls are served by the schedule coordinator.",
+                    true,
+                ));
+            }
             BotCommand::ReadRoutineClaim { slot } => BotReply::RoutineClaim {
                 observation: self
                     .orchestrator

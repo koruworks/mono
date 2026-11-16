@@ -235,3 +235,64 @@ fn routine_addition_preserves_legacy_provenance_json_bytes() {
     assert_eq!(serde_json::to_string(&p).unwrap(), golden);
     assert_eq!(serde_json::from_str::<BotProvenance>(golden).unwrap(), p);
 }
+
+#[test]
+fn routine_control_outcome_and_lifecycle_have_one_wire_spelling_each() {
+    for (value, text) in [
+        (RoutineControlOutcome::Applied, "\"applied\""),
+        (RoutineControlOutcome::AlreadyApplied, "\"already_applied\""),
+    ] {
+        assert_eq!(serde_json::to_string(&value).unwrap(), text);
+        assert_eq!(
+            serde_json::from_str::<RoutineControlOutcome>(text).unwrap(),
+            value
+        );
+    }
+    for (value, text) in [
+        (RoutineControlLifecycle::Active, "\"active\""),
+        (RoutineControlLifecycle::Paused, "\"paused\""),
+    ] {
+        assert_eq!(serde_json::to_string(&value).unwrap(), text);
+        assert_eq!(
+            serde_json::from_str::<RoutineControlLifecycle>(text).unwrap(),
+            value
+        );
+    }
+    for unknown in ["\"Applied\"", "\"retired\"", "\"\"", "1", "null"] {
+        assert!(serde_json::from_str::<RoutineControlOutcome>(unknown).is_err());
+        assert!(serde_json::from_str::<RoutineControlLifecycle>(unknown).is_err());
+    }
+}
+
+#[test]
+fn routine_control_revision_and_test_minute_reject_what_no_owner_may_name() {
+    assert!(!routine_control_revision_valid(0));
+    assert!(routine_control_revision_valid(1));
+    assert!(routine_control_revision_valid(u32::MAX));
+    for whole in [0, 60_000, 120_000, 1_767_225_600_000] {
+        assert!(routine_test_minute_valid(whole));
+        assert_eq!(routine_test_minute_of(whole), whole);
+        assert_eq!(routine_test_minute_of(whole + 59_999), whole);
+    }
+    for partial in [1, 59_999, 60_001, -60_000, -1, i64::MIN, i64::MAX] {
+        assert!(!routine_test_minute_valid(partial));
+    }
+    // The delegate never rounds a negative clock into a later minute.
+    assert_eq!(routine_test_minute_of(-1), -60_000);
+    assert!(
+        ROUTINE_TEST_CLAIM_MARGIN_MS > 0 && ROUTINE_TEST_CLAIM_MARGIN_MS < ROUTINE_TEST_MINUTE_MS
+    );
+}
+
+#[test]
+fn routine_control_wire_limit_is_enforced_while_encoding() {
+    assert_eq!(ROUTINE_CONTROL_WIRE_LIMIT, 4096);
+    // Two quotes are part of the encoding, so the bound is on encoded bytes.
+    assert!(routine_control_within_wire_limit(&"a".repeat(4094)));
+    assert!(!routine_control_within_wire_limit(&"a".repeat(4095)));
+    assert!(!routine_control_within_wire_limit(
+        &"a".repeat(8 * 1024 * 1024)
+    ));
+    let route = prepared();
+    assert!(routine_control_within_wire_limit(&route.slot));
+}

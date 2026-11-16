@@ -9,8 +9,11 @@ mod expiry;
 mod occurrence;
 mod overview;
 mod seed;
+mod test_claim;
 pub use expiry::{RoutineExpiryAuthority, RoutineExpiryPlan};
+pub use occurrence::RoutineOccurrenceLifecycle;
 pub use overview::{RoutineDetailProjection, RoutineOverview};
+pub use test_claim::RoutineTestAuthority;
 
 use koru_delegate_core::{
     DelegationRequest, DeviceId, HandoffId, RoutineClaimFacts, RoutineDefinitionIdentity,

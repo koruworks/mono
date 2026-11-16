@@ -5,9 +5,24 @@ use super::*;
 use std::time::{Duration, Instant};
 
 mod cases;
+mod control;
 
 #[derive(Default)]
 struct Probe {
+    /// Which claim method and barrier read the coordinator reached, in order.
+    ledger: Vec<&'static str>,
+    /// The lifecycle of each definition offered to `prepare`: true for paused.
+    prepared_paused: Vec<bool>,
+    /// Answer "no barrier recorded" for the Bot, whatever the ledger holds.
+    no_barrier: bool,
+    /// Report one unreadable workspace beside the Routine's own.
+    partial_catalog: bool,
+    /// List no Schedule document at all.
+    empty_catalog: bool,
+    /// Move the shared clock here while the Test authority is minted: after
+    /// the candidate's own margin check, before the ledger's transaction.
+    late_mint_ms: Option<i64>,
+    clock: Option<Arc<AtomicI64>>,
     handles: usize,
     gate: bool,
     lease: Option<RunId>,
@@ -77,6 +92,26 @@ impl ScheduleDocumentHandle for Handle {
         assert!(self.docs.probe.lock().unwrap().gate);
         self.live
             .expired_routine_authority(self.docs.workspace, device, plan)
+            .map_err(Into::into)
+    }
+    fn test_claim_authority(
+        &self,
+        device: DeviceId,
+        prepared: RoutinePrepared,
+    ) -> PortResult<koru_delegate_document::RoutineTestAuthority> {
+        {
+            let probe = self.docs.probe.lock().unwrap();
+            assert!(probe.gate);
+            if let (Some(late), Some(clock)) = (probe.late_mint_ms, &probe.clock) {
+                clock.store(late, Ordering::SeqCst);
+            }
+        }
+        assert_eq!(
+            self.docs.document.as_uuid(),
+            prepared.slot.schedule.as_uuid()
+        );
+        self.live
+            .test_claim_authority(self.docs.workspace, device, prepared)
             .map_err(Into::into)
     }
     fn absorb(&mut self) -> PortResult<bool> {
@@ -166,12 +201,20 @@ impl ScheduleDocuments for Documents {
             alias.document = DocumentId::from_uuid(v4(1));
             schedules.insert(0, alias);
         }
+        let partial = self.probe.lock().unwrap().partial_catalog;
+        if self.probe.lock().unwrap().empty_catalog {
+            schedules.clear();
+        }
         Ok(ScheduleCatalog {
             schedules,
             workspaces: vec![self.workspace],
-            failed_workspaces: vec![],
+            failed_workspaces: if partial {
+                vec![WorkspaceId::from_uuid(v4(0xfe))]
+            } else {
+                vec![]
+            },
             unavailable_documents: vec![],
-            failures: 0,
+            failures: u32::from(partial),
         })
     }
     fn discover_identities(&mut self) -> PortResult<ScheduleCatalog> {
@@ -293,7 +336,7 @@ impl ScheduleEffects for Effects {
 }
 
 #[derive(Clone)]
-struct Ledger(RecordingStore);
+struct Ledger(RecordingStore, SharedProbe);
 impl RoutineLedger for Ledger {
     fn routine_firing(&self, slot: &RoutineSlot) -> Result<Option<SlotClaim>, BotLedgerError> {
         self.0.inner.lock().unwrap().routine_firing(slot)
@@ -345,12 +388,40 @@ impl RoutineLedger for Ledger {
         admission: &BotAdmissionBarrier,
         proof: &FreshBotPolicyProof,
     ) -> Result<(RoutineClaimObservation, Option<RoutineSkippedClaim>), BotLedgerError> {
+        self.1.lock().unwrap().ledger.push("claim");
         RoutineLedger::claim_bot_routine(
             &mut *self.0.inner.lock().unwrap(),
             authority,
             admission,
             proof,
         )
+    }
+    fn claim_bot_routine_test(
+        &mut self,
+        authority: koru_delegate_document::RoutineTestAuthority,
+        admission: &BotAdmissionBarrier,
+        proof: &FreshBotPolicyProof,
+    ) -> Result<(RoutineClaimObservation, Option<RoutineSkippedClaim>), BotLedgerError> {
+        self.1.lock().unwrap().ledger.push("claim_test");
+        RoutineLedger::claim_bot_routine_test(
+            &mut *self.0.inner.lock().unwrap(),
+            authority,
+            admission,
+            proof,
+        )
+    }
+    fn bot_admission_barrier(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+    ) -> Result<Option<BotAdmissionBarrier>, BotLedgerError> {
+        let mut probe = self.1.lock().unwrap();
+        probe.ledger.push("barrier");
+        if probe.no_barrier {
+            return Ok(None);
+        }
+        drop(probe);
+        RoutineLedger::bot_admission_barrier(&*self.0.inner.lock().unwrap(), owner, bot)
     }
     fn read_routine_claim(
         &self,
@@ -416,12 +487,14 @@ impl RoutineBridge for Bridge {
         &mut self,
         _: &RoutineSlot,
         _: WorkspaceId,
-        _: &ScheduleDefinition,
+        definition: &ScheduleDefinition,
         _: Option<HandoffId>,
         _: Instant,
     ) -> RoutineBridgeResult<RoutinePreparedReply> {
         self.call("prepare")?;
         let mut p = self.probe.lock().unwrap();
+        p.prepared_paused
+            .push(definition.lifecycle != ScheduleLifecycle::Active);
         p.missing = false;
         if p.unknown_prepare {
             p.unknown_prepare = false;
@@ -484,7 +557,21 @@ impl Composition {
         Self::configured(|_, _| {})
     }
     fn configured(configure: impl FnOnce(&mut Documents, &RecordingStore)) -> Self {
+        Self::assembled(true, None, |_, _, _, _| {}, configure)
+    }
+    /// `active` false leaves the Routine as creation seeds it: revision 1,
+    /// exactly Paused(Manual), with the prepared occurrence bound to that
+    /// paused definition. `seed` runs against the fixture's own Active
+    /// document before anything is rebound, so a case can retain an earlier
+    /// ordinary claim for the same Bot.
+    fn assembled(
+        active: bool,
+        events: Option<Box<dyn ScheduleEvents>>,
+        seed: impl FnOnce(&Harness, &ScheduleDocument, &RoutinePrepared, &FreshBotPolicyProof),
+        configure: impl FnOnce(&mut Documents, &RecordingStore),
+    ) -> Self {
         let (h, doc, mut prepared, proof) = fixture();
+        seed(&h, &doc, &prepared, &proof);
         let mut header = doc.header().unwrap();
         header.definition.revision = 1;
         header.definition.effective_at_ms = 0;
@@ -494,8 +581,16 @@ impl Composition {
         header.definition.template.scope = prepared.submission.request.scope.clone();
         header.definition.template.grants = [prepared.submission.workspace].into_iter().collect();
         let doc = ScheduleDocument::create(&header).unwrap();
-        doc.set_lifecycle(prepared.slot.owner.device, 1, ScheduleLifecycle::Active, 1)
-            .unwrap();
+        if active {
+            doc.set_lifecycle(prepared.slot.owner.device, 1, ScheduleLifecycle::Active, 1)
+                .unwrap();
+        } else {
+            replace_candidate(&mut prepared);
+            prepared.definition.revision = 1;
+            if let RunOrigin::Scheduled { revision, .. } = &mut prepared.submission.request.origin {
+                *revision = 1;
+            }
+        }
         prepared.definition.digest = routine_definition_digest(
             &doc.header().unwrap().definition,
             prepared.submission.workspace,
@@ -539,15 +634,21 @@ impl Composition {
             others: vec![],
         };
         configure(&mut docs, &h.schedule_store);
+        assert!(prepared.valid());
+        probe.lock().unwrap().clock = Some(h.schedule_clock.clone());
         let coordinator = ScheduleCoordinator::new(
             Box::new(docs.clone()),
             Box::new(h.schedule_store.clone()),
             Box::new(Preparation),
             Box::new(SharedScheduleClock(h.schedule_clock.clone())),
             prepared.slot.owner.device,
-        )
+        );
+        let coordinator = match events {
+            Some(events) => coordinator.with_events(events),
+            None => coordinator,
+        }
         .with_routines(
-            Box::new(Ledger(h.schedule_store.clone())),
+            Box::new(Ledger(h.schedule_store.clone(), probe.clone())),
             Box::new(Bridge {
                 probe: probe.clone(),
                 prepared: prepared.clone(),
