@@ -13,6 +13,7 @@ use super::*;
 use koru_i18n::Key;
 
 mod agents;
+mod ai;
 mod appearance;
 mod artifacts;
 mod canvas;
@@ -25,6 +26,7 @@ mod socials;
 mod voice;
 
 pub(super) const AGENTS: &[Entry] = agents::RECORDS;
+pub(super) const AI: &[Entry] = ai::RECORDS;
 pub(super) const APPEARANCE: &[Entry] = appearance::RECORDS;
 pub(super) const ARTIFACTS: &[Entry] = artifacts::RECORDS;
 pub(super) const CANVAS: &[Entry] = canvas::RECORDS;

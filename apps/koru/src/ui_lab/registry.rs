@@ -596,6 +596,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     controls::RECORDS,
     compositions::RECORDS,
     domain::AGENTS,
+    domain::AI,
     domain::APPEARANCE,
     domain::ARTIFACTS,
     domain::CANVAS,
