@@ -193,6 +193,7 @@ impl Fixture {
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         };
         let provenance = BotProvenance {
             routine: None,

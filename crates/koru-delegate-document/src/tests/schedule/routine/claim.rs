@@ -73,6 +73,7 @@ pub(super) fn prepared_document() -> (ScheduleDocument, RoutinePrepared) {
                 destination: association.home,
                 access: BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             workspace: association.home,
             input: PendingInput {

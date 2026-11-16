@@ -73,6 +73,7 @@ pub fn bot_native_policy_from(
             BotAccess::Workspace => koru_delegate_core::BotAccess::Workspace,
         },
         selected_pages: pages.iter().map(|p| p.document).collect(),
+        connections: Default::default(),
     }
 }
 

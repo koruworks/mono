@@ -19,22 +19,13 @@ pub(super) fn retained(
     owner(conn, f.owner, f.run)?;
     routines::bounded_admission(conn, f.run)?;
     let admitted = routines::native_admission(conn, f.run)?;
-    let (submission, policy, workspace, human, routine) = match binding {
-        DecisionBindingV1::KoruEdit(v) => (
-            v.submission,
-            &v.captured_policy,
-            v.workspace,
-            v.human_profile,
-            &v.routine,
-        ),
-        DecisionBindingV1::NativeApproval(v) => (
-            v.submission,
-            &v.captured_policy,
-            v.workspace,
-            v.human_profile,
-            &v.routine,
-        ),
-    };
+    let (submission, policy, workspace, human, routine) = (
+        binding.submission(),
+        binding.captured_policy(),
+        binding.workspace(),
+        binding.human_profile(),
+        binding.routine(),
+    );
     let s = &admitted.submission;
     let (intent, request) = crate::intents::retained_bounded(conn, f.run)?;
     require(
@@ -52,10 +43,7 @@ pub(super) fn retained(
             && s.workspace == workspace
             && s.request.requested_by == ActorRef::Person { profile: human },
     )?;
-    let (global, routine_policy) = match binding {
-        DecisionBindingV1::KoruEdit(v) => (&v.global_policy, &v.routine_policy),
-        DecisionBindingV1::NativeApproval(v) => (&v.global_policy, &v.routine_policy),
-    };
+    let (global, routine_policy) = (binding.global_policy(), binding.routine_policy());
     check_policy_bounds(conn, f.owner, f.bot, Some(global.key.request))?;
     let retained = crate::native_results::retained_policy_on(conn, &global.key)?
         .ok_or_else(|| corrupt("bot_decisions", "historical_policy"))?;
@@ -160,10 +148,7 @@ pub(super) fn current_policy(
     let f = binding.origin();
     check_policy_bounds(conn, f.owner, f.bot, None)?;
     let (global, routine) = crate::native_results::current_composite(conn, &admitted, proof)?;
-    let (g, r) = match binding {
-        DecisionBindingV1::KoruEdit(v) => (&v.global_policy, &v.routine_policy),
-        DecisionBindingV1::NativeApproval(v) => (&v.global_policy, &v.routine_policy),
-    };
+    let (g, r) = (binding.global_policy(), binding.routine_policy());
     require(
         g.key == global.key
             && g.config_revision.get() == global.config_revision
@@ -222,8 +207,12 @@ pub(super) fn selected_denial(
     proof: &FreshBotPolicyProof,
     admitted: &BotAdmissionRecord,
 ) -> Result<(), BotLedgerError> {
-    let DecisionBindingV1::KoruEdit(v) = binding else {
-        return Ok(());
+    let v = match binding {
+        DecisionBindingV1::KoruEdit(v) => v,
+        DecisionBindingV1::NativeApproval(_) => return Ok(()),
+        DecisionBindingV1::PrivateOperation(v) => {
+            return super::private::grant_denial(v, proof);
+        }
     };
     // A Routine Run's captured and current policy is the Routine's own grant
     // (v2), never the Bot's ordinary-chat access: the question is judged

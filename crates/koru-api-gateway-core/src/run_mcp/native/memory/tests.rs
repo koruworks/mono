@@ -150,6 +150,7 @@ fn fixture() -> (Port, RunAuthorityRecord, BotProvenance, CapturedBotPolicy) {
         destination: workspace,
         access: BotAccess::Default,
         selected_pages: Default::default(),
+        connections: Default::default(),
     };
     let evidence = NativePolicyEvidence {
         profile: koru_ai_core::ProfileId::new(),

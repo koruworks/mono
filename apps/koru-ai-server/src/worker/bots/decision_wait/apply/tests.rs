@@ -315,6 +315,7 @@ impl Fixture {
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         };
         let proof = FreshBotPolicyProof {
             routine: None,

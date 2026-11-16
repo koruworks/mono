@@ -60,7 +60,7 @@ fn state(
                 valid(&state)?;
                 if let Some(request) = &wait.enrollment_request {
                     c.same(
-                        state.kind == DecisionKind::KoruEdit
+                        state.kind.resumes_by_successor()
                             && request.key.decision_revision <= state.revision,
                     )?;
                 }
@@ -129,7 +129,7 @@ pub(crate) fn inventory(
                             )
                         };
                         require(
-                            state.kind == DecisionKind::KoruEdit
+                            state.kind.resumes_by_successor()
                                 && phase_matches
                                 && execution.state == BotAdmissionState::Executing
                                 && execution.active_since_ms.is_none(),

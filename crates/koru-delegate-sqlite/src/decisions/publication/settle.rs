@@ -40,7 +40,7 @@ impl RunsDb {
                     cleanup_required=record.wait.cleanup.is_some() || record.wait.phase==BotWaitPhase::CleanupPending
                         || match record.receipt.state.kind {
                             DecisionKind::NativeApproval=>!matches!(record.native_response,Some(DecisionNativeResponse::Acknowledged {..})),
-                            DecisionKind::KoruEdit=>!matches!(record.receipt.closure.as_ref().map(|c|c.reason),Some(DecisionClosureReason::Completed|DecisionClosureReason::EffectNotApplied)),
+                            DecisionKind::KoruEdit|DecisionKind::PrivateOperation=>!matches!(record.receipt.closure.as_ref().map(|c|c.reason),Some(DecisionClosureReason::Completed|DecisionClosureReason::EffectNotApplied)),
                         };
                 }
                 (BotWaitReason::Capacity {}|BotWaitReason::NativeExpired {}|BotWaitReason::OverlappingPrompt {},None,None)=>{}

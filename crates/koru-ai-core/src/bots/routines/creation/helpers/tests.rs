@@ -39,6 +39,7 @@ fn fixture() -> (BotRoutineCreate, BotRoutineCreationSource) {
             destination: home,
             access: BotAccess::Default,
             selected_pages: [DocumentId::from_uuid(id(10)), DocumentId::from_uuid(id(9))].into(),
+            connections: Default::default(),
         },
     };
     (command, source)

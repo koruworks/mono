@@ -28,6 +28,7 @@ fn launch_selection_allows_thirteen_bot_tools_and_preserves_six_ordinary_tools()
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
     };
     let ordinary = allowlist();

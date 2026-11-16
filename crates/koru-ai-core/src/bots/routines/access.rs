@@ -135,6 +135,7 @@ impl BotRoutineAccessUpdate {
                     .iter()
                     .map(|page| page.document)
                     .collect(),
+                connections: Default::default(),
             },
             digest: RoutineDigest32::from_bytes([0; 32]),
         };

@@ -174,7 +174,7 @@ pub(super) fn correlate(
         }
     }
     if let Some(request) = &wait.enrollment_request {
-        if receipt.state.kind != DecisionKind::KoruEdit
+        if !receipt.state.kind.resumes_by_successor()
             || request.key.decision_revision > receipt.state.revision
         {
             return Err(bad());

@@ -17,6 +17,7 @@ mod effect;
 pub(crate) use effect::validate_native_on;
 mod observation;
 mod occupancy;
+mod private;
 pub(crate) use occupancy::inventory as execution_inventory_on;
 mod publication;
 mod rows;

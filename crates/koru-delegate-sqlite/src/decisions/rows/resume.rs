@@ -93,7 +93,7 @@ pub(in crate::decisions) fn accepted_input(
                     session: Some(session),
                 }),
     )?;
-    let settled:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_decisions WHERE decision_id=?1 AND run_id=?2 AND user_scope=?3 AND device_id=?4 AND bot_id=?5 AND kind='koru_edit' AND phase='settled')",
+    let settled:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM bot_decisions WHERE decision_id=?1 AND run_id=?2 AND user_scope=?3 AND device_id=?4 AND bot_id=?5 AND kind IN ('koru_edit','private_operation') AND phase='settled')",
         params![decision.to_storage(),run.to_storage(),owner.user_scope.to_storage(),owner.device.to_storage(),bot.to_storage()],|r|r.get(0)).map_err(sql)?;
     require(cursor.next().map_err(sql)?.is_none())?;
     Ok(settled)
@@ -110,7 +110,7 @@ fn decode(
     c.check()?;
     let origin = receipt.binding.origin();
     c.same(
-        receipt.state.kind == DecisionKind::KoruEdit
+        receipt.state.kind.resumes_by_successor()
             && c.id::<DecisionId>("decision_id")? == receipt.decision
             && c.id::<RunId>("run_id")? == origin.run
             && c.id::<RunAttemptId>("origin_attempt_id")? == origin.attempt

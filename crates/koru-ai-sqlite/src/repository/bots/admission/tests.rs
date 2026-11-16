@@ -238,6 +238,7 @@ fn intent(bot: &Bot) -> BotSubmissionIntent {
                 destination: bot.home_workspace,
                 access: d::BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             request: d::DelegationRequest {
                 run: d::RunId::mint(),

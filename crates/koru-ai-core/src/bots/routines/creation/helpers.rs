@@ -132,6 +132,7 @@ impl BotRoutineCreationSource {
             destination: self.home,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         })
     }
     /// The grant a creation prepared before D4a froze: a copy of the Bot's

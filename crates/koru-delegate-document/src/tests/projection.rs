@@ -971,3 +971,60 @@ fn decision_usage_full_envelope_only_from_the_exact_applied_marker() {
         RecoveredDecisionUsage::FullEnvelope { .. }
     ));
 }
+
+/// Cohort `m5_run_format_unchanged`: the Run document carries no decision
+/// kind. The same waiting Control projected for an edit decision and for a
+/// private-operation decision (M5) leaves a Bot Run at format 5 with the same
+/// header and the same timeline; only the ledger's own retained target, which
+/// is not part of the document, names the kind.
+#[test]
+fn m5_run_format_unchanged_for_a_private_decisions_projection() {
+    let project = |kind: DecisionKind| {
+        let doc = bot5(false);
+        let mut intent = intent(&doc);
+        let decision: DecisionId = id(73);
+        let RunProjectionTargetV1::Control {
+            disposition,
+            reason,
+            ..
+        } = &mut intent.target
+        else {
+            unreachable!()
+        };
+        *disposition = Some(DecisionDisposition::Open {
+            state: DecisionState {
+                kind,
+                authorization: DecisionAuthorization::Pending,
+                phase: DecisionPhase::Publishing,
+                revision: rev(1),
+            },
+        });
+        *reason = BotWaitReason::Decision { decision };
+        intent.identity.decision = Some(DecisionProjectionRevision {
+            decision,
+            revision: rev(1),
+        });
+        intent.identity.target_digest = intent.target.digest().unwrap();
+        let mut stage = RunProjectionStaging::default();
+        let prepared = stage.prepare(&doc, &intent).unwrap();
+        let receipt = applied(&mut stage, &doc, &prepared);
+        assert_eq!(receipt.identity(), &intent.identity);
+        assert_eq!(doc.schema_version(), Some(5));
+        assert!(doc.compatibility().writable());
+        (
+            doc.header().unwrap(),
+            doc.timeline_len(),
+            intent.target.digest().unwrap(),
+        )
+    };
+    let (edit_header, edit_timeline, edit_target) = project(DecisionKind::KoruEdit);
+    let (mut private_header, private_timeline, private_target) =
+        project(DecisionKind::PrivateOperation);
+    // The fixture mints a fresh owner scope per document; nothing else may differ.
+    private_header.bot.as_mut().unwrap().owner.user_scope =
+        edit_header.bot.as_ref().unwrap().owner.user_scope;
+    assert_eq!(private_header, edit_header);
+    assert_eq!(private_timeline, edit_timeline);
+    // The retained target differs, so the test is not vacuous.
+    assert_ne!(private_target, edit_target);
+}

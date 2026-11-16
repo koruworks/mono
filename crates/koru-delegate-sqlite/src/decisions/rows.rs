@@ -158,12 +158,38 @@ pub(super) fn operation(
         params![run.to_storage(),operation.to_string()],|r|Ok(r.get::<_,String>(0)?)).optional().map_err(sql)?
         .map(|s|s.parse().map_err(|_|corrupt("bot_decisions","decision_id"))).transpose()
 }
+/// The private sibling of [`operation`]: the decision that asked for one
+/// private read, by its operation id.
+pub(super) fn private_operation(
+    conn: &Connection,
+    run: RunId,
+    operation: uuid::Uuid,
+) -> Result<Option<DecisionId>, BotLedgerError> {
+    conn.query_row("SELECT CASE WHEN typeof(decision_id)='text' AND length(CAST(decision_id AS BLOB))=36 THEN decision_id END FROM bot_decisions WHERE run_id=?1 AND operation_id=?2 AND kind='private_operation'",
+        params![run.to_storage(),operation.to_string()],|r|Ok(r.get::<_,String>(0)?)).optional().map_err(sql)?
+        .map(|s|s.parse().map_err(|_|corrupt("bot_decisions","decision_id"))).transpose()
+}
+/// Whichever decision holds this operation id, of any operation-keyed kind.
+/// `bot_decisions_operation` makes it at most one row per Run.
+pub(super) fn operation_keyed(
+    conn: &Connection,
+    run: RunId,
+    operation: uuid::Uuid,
+) -> Result<Option<DecisionId>, BotLedgerError> {
+    conn.query_row("SELECT CASE WHEN typeof(decision_id)='text' AND length(CAST(decision_id AS BLOB))=36 THEN decision_id END FROM bot_decisions WHERE run_id=?1 AND operation_id=?2",
+        params![run.to_storage(),operation.to_string()],|r|Ok(r.get::<_,String>(0)?)).optional().map_err(sql)?
+        .map(|s|s.parse().map_err(|_|corrupt("bot_decisions","decision_id"))).transpose()
+}
 pub(super) fn matching(
     conn: &Connection,
     binding: &DecisionBindingV1,
 ) -> Result<Option<DecisionId>, BotLedgerError> {
     match binding {
-        DecisionBindingV1::KoruEdit(v)=>operation(conn,v.run,v.operation_id),
+        // An operation-keyed binding replays whatever decision holds its
+        // operation id; the caller compares the whole binding, so the same id
+        // under another kind is a conflict rather than a second row.
+        DecisionBindingV1::KoruEdit(v)=>operation_keyed(conn,v.run,v.operation_id),
+        DecisionBindingV1::PrivateOperation(v)=>operation_keyed(conn,v.run,v.operation_id),
         DecisionBindingV1::NativeApproval(v)=>conn.query_row("SELECT CASE WHEN typeof(decision_id)='text' AND length(CAST(decision_id AS BLOB))=36 THEN decision_id END FROM bot_decisions WHERE run_id=?1 AND origin_session_id=?2 AND origin_turn_id=?3 AND native_prompt_id=?4 AND kind='native_approval'",
             params![v.run.to_storage(),v.origin_session.to_string(),v.origin_turn.to_string(),v.prompt.to_string()],|r|r.get::<_,String>(0)).optional().map_err(sql)?
             .map(|s|s.parse().map_err(|_|corrupt("bot_decisions","decision_id"))).transpose(),
@@ -207,6 +233,7 @@ pub(super) fn read(
     )?;
     companions(&receipt, &wait, resume.as_ref(), native_response.as_ref())?;
     super::effect::retained_key(conn, &receipt, resume.as_ref())?;
+    super::private::retained_effect(conn, &receipt, resume.as_ref())?;
     Ok(Some(DecisionRecord {
         receipt,
         wait,
@@ -266,9 +293,10 @@ fn decode(row: &Row<'_>) -> Result<DecisionReceipt, BotLedgerError> {
             && origin.turn == c.id("origin_turn_id")?
             && c.get::<i64>("binding_version")? == 1,
     )?;
-    let (human, operation, prompt) = match &binding {
-        DecisionBindingV1::KoruEdit(v) => (v.human_profile, Some(v.operation_id), None),
-        DecisionBindingV1::NativeApproval(v) => (v.human_profile, None, Some(v.prompt)),
+    let (human, operation) = (binding.human_profile(), binding.operation_id());
+    let prompt = match &binding {
+        DecisionBindingV1::NativeApproval(v) => Some(v.prompt),
+        DecisionBindingV1::KoruEdit(_) | DecisionBindingV1::PrivateOperation(_) => None,
     };
     c.same(
         human == c.id("human_profile_id")?

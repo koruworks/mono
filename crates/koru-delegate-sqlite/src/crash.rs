@@ -22,6 +22,12 @@ use crate::LedgerError;
 /// A consequential write. One per repository method that changes a row.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum WriteOp {
+    /// Closing another dispatcher instance's open private effects (M5).
+    ResolvePrivateDispatcher,
+    /// The intent of a granted private operation, with no decision (M5).
+    PreparePrivateEffect,
+    /// The row's own dispatcher recording a private effect's stage (M5).
+    AdvancePrivateEffect,
     RecordDecisionProjection,
     PrepareDecisionProjection,
     AcknowledgeDecisionProjection,
@@ -82,7 +88,10 @@ pub enum WriteOp {
 }
 
 impl WriteOp {
-    pub const ALL: [Self; 53] = [
+    pub const ALL: [Self; 56] = [
+        Self::ResolvePrivateDispatcher,
+        Self::PreparePrivateEffect,
+        Self::AdvancePrivateEffect,
         Self::RecordDecisionProjection,
         Self::PrepareDecisionProjection,
         Self::AcknowledgeDecisionProjection,

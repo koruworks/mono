@@ -121,6 +121,9 @@ pub(in crate::worker) fn card_choice(
         DecisionBindingV1::NativeApproval(native) => Ok(DecisionAnswerChoice::Native {
             offered: native_choice(native.choices.as_slice(), choice, approve)?,
         }),
+        // M5 piece A: a private-operation card is not answerable until the AI
+        // worker's piece (F) composes its owner. Refuse; nothing is forwarded.
+        DecisionBindingV1::PrivateOperation(_) => Err(tool_decision_conflict()),
     }
 }
 
@@ -312,11 +315,7 @@ impl WorkerState {
         bot: &Bot,
         binding: &DecisionBindingV1,
     ) -> ApiResult<Option<koru_delegate_core::RoutinePolicyBarrier>> {
-        let subject = match binding {
-            DecisionBindingV1::KoruEdit(v) => v.routine.as_ref(),
-            DecisionBindingV1::NativeApproval(v) => v.routine.as_ref(),
-        };
-        let Some(subject) = subject else {
+        let Some(subject) = binding.routine() else {
             return Ok(None);
         };
         routine_grant_barrier(&self.repository, bot, subject.provenance.schedule).map(Some)
@@ -356,6 +355,8 @@ impl WorkerState {
                 v.routine.is_some(),
                 false,
             ),
+            // M5 piece A: refused until the AI worker's piece (F) owns it.
+            DecisionBindingV1::PrivateOperation(_) => return Err(tool_decision_conflict()),
         };
         if receipt.decision != card.decision
             || bot_id != bot.id

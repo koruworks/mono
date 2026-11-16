@@ -280,6 +280,69 @@ pub enum DecisionRetainedEffect {
         key: NativeResultKey,
         drain: NativeEffectDrainReceipt,
     },
+    /// A consumed private read that was not performed (M5). The three private
+    /// variants name the decision's own `bot_private_effects` row, which is
+    /// final when they are written, so evidence and row can never disagree.
+    PrivateNotApplied {
+        key: crate::PrivateEffectKey,
+        code: crate::PrivateEffectRefusal,
+    },
+    PrivateConfirmed {
+        key: crate::PrivateEffectKey,
+        outcome_bytes: u32,
+        withheld: bool,
+    },
+    PrivateUnknown {
+        key: crate::PrivateEffectKey,
+    },
+}
+impl DecisionRetainedEffect {
+    /// Run, operation, attempt, generation and turn of the retained key,
+    /// whichever effect table owns it.
+    pub fn consumer(
+        &self,
+    ) -> (
+        crate::RunId,
+        uuid::Uuid,
+        crate::RunAttemptId,
+        crate::AttemptGeneration,
+        crate::AgentTurnId,
+    ) {
+        match self {
+            Self::NotApplied { key, .. }
+            | Self::Durable { key, .. }
+            | Self::DrainedUnknown { key, .. } => (
+                key.run,
+                key.operation_id,
+                key.attempt,
+                key.generation,
+                key.turn,
+            ),
+            Self::PrivateNotApplied { key, .. }
+            | Self::PrivateConfirmed { key, .. }
+            | Self::PrivateUnknown { key } => (
+                key.run,
+                key.operation_id,
+                key.attempt,
+                key.generation,
+                key.turn,
+            ),
+        }
+    }
+    /// The closure a settled decision records for this outcome.
+    pub fn closure_reason(&self) -> DecisionClosureReason {
+        match self {
+            Self::Durable { .. } | Self::PrivateConfirmed { .. } => {
+                DecisionClosureReason::Completed
+            }
+            Self::NotApplied { .. } | Self::PrivateNotApplied { .. } => {
+                DecisionClosureReason::EffectNotApplied
+            }
+            Self::DrainedUnknown { .. } | Self::PrivateUnknown { .. } => {
+                DecisionClosureReason::EffectUnknown
+            }
+        }
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "origin_stop", rename_all = "snake_case", deny_unknown_fields)]
@@ -343,32 +406,32 @@ impl DecisionValidate for ConsumerCleanup {
                             .all(|e| e.binding.user_scope == target.origin().owner.user_scope),
                 )?;
                 if let Some(effect) = retained_effect_outcome {
-                    let key = match effect {
-                        DecisionRetainedEffect::NotApplied { key, .. }
-                        | DecisionRetainedEffect::Durable { key, .. }
-                        | DecisionRetainedEffect::DrainedUnknown { key, .. } => key,
-                    };
+                    let (key_run, key_operation, key_attempt, key_generation, key_turn) =
+                        effect.consumer();
                     let turn = match target {
                         DecisionCleanupTarget::Origin { fence, .. } => Some(fence.turn),
                         DecisionCleanupTarget::Consumer { accepted_turn, .. } => *accepted_turn,
                     };
                     require(
-                        key.run == target.origin().run
-                            && key.attempt == attempt
-                            && key.generation == generation
-                            && Some(key.turn) == turn
-                            && identity::v4(key.operation_id),
+                        key_run == target.origin().run
+                            && key_attempt == attempt
+                            && key_generation == generation
+                            && Some(key_turn) == turn
+                            && identity::v4(key_operation),
                     )?;
                     match effect {
-                        DecisionRetainedEffect::Durable { reference, .. } => require(
-                            reference.valid() && reference.operation_id == key.operation_id,
-                        )?,
+                        DecisionRetainedEffect::Durable { reference, .. } => {
+                            require(reference.valid() && reference.operation_id == key_operation)?
+                        }
                         DecisionRetainedEffect::DrainedUnknown { drain, .. } => require(
                             drain.binding.valid()
                                 && drain.drained_at >= drain.fenced_at
                                 && drain.binding.user_scope == target.origin().owner.user_scope,
                         )?,
-                        DecisionRetainedEffect::NotApplied { .. } => {}
+                        DecisionRetainedEffect::NotApplied { .. }
+                        | DecisionRetainedEffect::PrivateNotApplied { .. }
+                        | DecisionRetainedEffect::PrivateConfirmed { .. }
+                        | DecisionRetainedEffect::PrivateUnknown { .. } => {}
                     }
                 }
             }
@@ -411,9 +474,7 @@ impl DecisionValidate for BotDecisionWaitObservation {
                 state
             }
         };
-        require(
-            state.kind == DecisionKind::KoruEdit && state.revision >= self.key.decision_revision,
-        )?;
+        require(state.kind.resumes_by_successor() && state.revision >= self.key.decision_revision)?;
         if let OriginWaitStop::Confirmed {
             origin_fence,
             wait_id,

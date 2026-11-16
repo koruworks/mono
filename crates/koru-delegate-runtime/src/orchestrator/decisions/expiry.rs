@@ -44,8 +44,8 @@
 use super::*;
 use crate::orchestrator::state::DecisionDeadlineWatch;
 use koru_delegate_core::decisions::{
-    BotWaitPhase, DecisionAuthorization, DecisionClosureReason, DecisionDeadline, DecisionKind,
-    DecisionPhase,
+    BotWaitPhase, DecisionAuthorization, DecisionClosureReason, DecisionDeadline, DecisionPhase,
+    DecisionState,
 };
 use koru_delegate_sqlite::DecisionWaitExecution;
 use std::time::{Duration, Instant};
@@ -73,11 +73,27 @@ pub(super) fn deadline_cause(
     monotonic_elapsed.then_some(DecisionClosureReason::ClockUncertain)
 }
 
-/// Whether the deadline may still close this wait: an open Koru edit decision
-/// that is Pending or Granted and whose cleanup nobody owns yet.
+/// Whether the deadline may still close this wait: an open Koru decision (an
+/// edit or, since M5, a private operation) that is Pending or Granted and
+/// whose cleanup nobody owns yet.
 pub(super) fn deadline_applies(execution: &DecisionWaitExecution) -> bool {
-    execution.decision_state.as_ref().is_some_and(|state| {
-        state.kind == DecisionKind::KoruEdit
+    deadline_applies_to(
+        execution.decision_state.as_ref(),
+        execution.wait.phase,
+        execution.wait.cleanup.is_some(),
+    )
+}
+
+/// [`deadline_applies`] on the three facts it reads.
+pub(super) fn deadline_applies_to(
+    state: Option<&DecisionState>,
+    wait: BotWaitPhase,
+    cleanup_recorded: bool,
+) -> bool {
+    state.is_some_and(|state| {
+        // Every Koru decision has this deadline. A native prompt keeps its
+        // own fallback (`decisions/publication/fallback.rs`).
+        state.kind.resumes_by_successor()
             && matches!(
                 state.authorization,
                 DecisionAuthorization::Pending | DecisionAuthorization::Granted
@@ -86,8 +102,8 @@ pub(super) fn deadline_applies(execution: &DecisionWaitExecution) -> bool {
                 state.phase,
                 DecisionPhase::Settled | DecisionPhase::StopPending
             )
-    }) && execution.wait.phase != BotWaitPhase::CleanupPending
-        && execution.wait.cleanup.is_none()
+    }) && wait != BotWaitPhase::CleanupPending
+        && !cleanup_recorded
 }
 
 impl Orchestrator {

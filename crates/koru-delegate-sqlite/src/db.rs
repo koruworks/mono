@@ -28,8 +28,10 @@ pub use koru_sqlite::OpenError;
 /// schema 7 retains exact Store drain proofs separately from result certainty;
 /// schema 8 separates Memory effects and their stable allocation identities;
 /// schema 9 retains Routine routing, linkage and independent policy defenses;
-/// schema 10 adds decision, wait, resume and exact publication receipt storage.
-pub const RUNS_SCHEMA_VERSION: i64 = 10;
+/// schema 10 adds decision, wait, resume and exact publication receipt storage;
+/// schema 11 recreates the provably empty `bot_decisions` with the kinds
+/// `private_operation` and `browser_origin`, and adds `bot_private_effects`.
+pub const RUNS_SCHEMA_VERSION: i64 = 11;
 /// The file's name inside the delegate root.
 pub const DATABASE_NAME: &str = "runs.db";
 
@@ -94,6 +96,12 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/029_runs_bot_decisions.sql"),
         columns: &[],
     },
+    Migration {
+        to: 11,
+        name: "030_runs_private_operations.sql",
+        sql: include_str!("../migrations/030_runs_private_operations.sql"),
+        columns: &[],
+    },
 ];
 
 const SCHEMA: Schema = Schema {
@@ -109,7 +117,48 @@ pub fn runs_db_path(store_root: &Path) -> PathBuf {
 }
 
 pub(crate) fn open(path: &Path) -> Result<Connection, OpenError> {
-    koru_sqlite::open(&SCHEMA, path)
+    koru_sqlite::open_with_preflight(&SCHEMA, path, refuse_retained_decisions)
+}
+
+/// The whole open sequence on a connection already opened, with the same
+/// preflight a file open runs.
+#[cfg(test)]
+pub(crate) fn prepare(connection: &mut Connection) -> Result<(), OpenError> {
+    koru_sqlite::prepare_with_preflight(&SCHEMA, connection, refuse_retained_decisions)
+}
+
+/// The `operation` of the [`OpenError::Storage`] that refuses a `runs.db`
+/// at schema 10 which holds a Bot decision.
+pub const RETAINED_DECISIONS_UPGRADE: &str = "upgrade";
+/// Its fixed detail. No row, id or path is interpolated.
+pub const RETAINED_DECISIONS_DETAIL: &str = "runs.db holds Bot decisions written by a development build. This build cannot upgrade it. Nothing was changed.";
+
+/// Schema 11 recreates `bot_decisions`, which is possible only while the
+/// table is empty: its five child tables reference it by name and a decision
+/// is retained for ever (`bot_decisions_retain`). No released build writes a
+/// decision at schema 10, so a row there comes from a local development build
+/// with decisions switched on. This read-only check runs before any pragma or
+/// step and refuses that database in words. It changes nothing: the build that
+/// wrote the file still opens it, and the delegate does not start for that
+/// root. Nothing carries the rows over; the supported answer is a fresh
+/// isolated root. The migration's own SQL guard repeats the test, so a path
+/// that skips this check still cannot drop a row.
+fn refuse_retained_decisions(connection: &Connection) -> Result<(), OpenError> {
+    if user_version(connection)? != 10 {
+        return Ok(());
+    }
+    let storage = |detail: String| OpenError::Storage {
+        database: DATABASE_NAME,
+        operation: RETAINED_DECISIONS_UPGRADE,
+        detail,
+    };
+    let retained: i64 = connection
+        .query_row("SELECT count(*) FROM bot_decisions", [], |row| row.get(0))
+        .map_err(|error| storage(error.to_string()))?;
+    if retained != 0 {
+        return Err(storage(RETAINED_DECISIONS_DETAIL.to_owned()));
+    }
+    Ok(())
 }
 
 pub(crate) fn user_version(connection: &Connection) -> Result<i64, OpenError> {

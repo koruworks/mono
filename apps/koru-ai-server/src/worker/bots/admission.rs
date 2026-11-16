@@ -975,6 +975,7 @@ pub(super) fn make_library_intent(
                     BotAccess::Workspace => d::BotAccess::Workspace,
                 },
                 selected_pages: bot.selected_pages.iter().map(|p| p.document).collect(),
+                connections: Default::default(),
             },
             request: d::DelegationRequest {
                 run: RunId::mint(),

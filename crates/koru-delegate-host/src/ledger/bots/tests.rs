@@ -27,6 +27,7 @@ fn submission() -> BotSubmission {
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
         workspace,
         request: DelegationRequest {

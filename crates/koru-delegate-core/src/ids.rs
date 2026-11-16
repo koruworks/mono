@@ -198,6 +198,26 @@ uuid_id!(
     HandoffId,
     "handoff"
 );
+uuid_id!(
+    /// One signed-in account at one vendor, owned by a person on one computer
+    /// (M5). The AI owner mints it; here it is only a reference inside a grant,
+    /// a decision binding and an effect row. It names no account and no secret.
+    ConnectionId,
+    "connection"
+);
+uuid_id!(
+    /// One item a person picked on a connection (M5). Koru's own id, never the
+    /// vendor's reference, which stays with the AI owner.
+    ConnectionItemId,
+    "connection-item"
+);
+uuid_id!(
+    /// One process that may call a vendor for a private operation (M5). Minted
+    /// once per process and never persisted by that process; the ledger keeps
+    /// it on each effect row so a later process can close what this one left.
+    PrivateDispatcherId,
+    "dispatcher"
+);
 
 /// Which attempt of a run is current — the fence §7.5 and §7.6 rely on.
 ///

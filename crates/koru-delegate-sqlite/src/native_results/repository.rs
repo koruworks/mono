@@ -69,7 +69,7 @@ pub(super) fn same_request(record: &NativeIntentRecord, request: &PrepareNativeR
             NativeResultOperation::EditPage => request.target == Some(record.target),
         }
 }
-pub(super) fn fresh_policy(
+pub(crate) fn fresh_policy(
     conn: &Connection,
     key: &NativeResultKey,
     admitted: &BotAdmissionRecord,
@@ -334,6 +334,11 @@ impl NativeResultLedger for RunsDb {
         let admitted = admission(self, request.key.run)?;
         self.write_with_error(WriteOp::PrepareNativeResult, |tx, now| {
             if memory::exists(tx, request.key.run, request.key.operation_id)? {
+                return Err(BotLedgerError::Conflict);
+            }
+            // One operation id, one meaning (M5): a private effect under this
+            // id belongs to another kind of operation.
+            if crate::private_effects::exists_on(tx, request.key.run, request.key.operation_id)? {
                 return Err(BotLedgerError::Conflict);
             }
             if let Some(old) = read(tx, &request.key)? {

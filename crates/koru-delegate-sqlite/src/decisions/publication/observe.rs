@@ -36,7 +36,7 @@ fn observe(
     };
     let key = &request.key;
     require(
-        record.receipt.state.kind == DecisionKind::KoruEdit
+        record.receipt.state.kind.resumes_by_successor()
             && key.owner == owner
             && key.bot == bot
             && key.run == run

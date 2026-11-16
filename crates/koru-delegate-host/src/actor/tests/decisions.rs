@@ -39,6 +39,7 @@ fn commands(owner: BotOwner) -> Vec<BotCommand> {
                 destination: WorkspaceId::new(),
                 access: BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             effects_allowed: true,
         },

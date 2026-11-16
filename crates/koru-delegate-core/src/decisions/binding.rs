@@ -3,9 +3,10 @@
 use super::*;
 use crate::{
     AgentTurnId, ApprovalChoiceId, ApprovalId, AttemptGeneration, BotId, BotOwner,
-    BotPolicyBarrierKey, BotRequestId, CapturedBotPolicy, DocumentId, NativePolicyRequestId,
-    ProfileId, RoutineClaimIdentity, RoutineProvenance, RoutineRouteIdentity, RunAttemptId, RunId,
-    ScheduleId, SessionId, WorkspaceId,
+    BotPolicyBarrierKey, BotRequestId, CapturedBotPolicy, ConnectionId, ConnectionItemId,
+    DocumentId, NativePolicyRequestId, PrivateOperationKind, PrivateOperationProposal, ProfileId,
+    RoutineClaimIdentity, RoutineProvenance, RoutineRouteIdentity, RunAttemptId, RunId, ScheduleId,
+    SessionId, WorkspaceId,
 };
 use koru_session_protocol::{ApprovalDecision, ApprovalIntent};
 use serde::ser::SerializeMap;
@@ -147,6 +148,35 @@ binding_record!(DecisionNativeBinding {
     native_deadline_at_ms: Option<i64>,
 });
 
+// One read of one picked item on a private connection (M5). A read is fully
+// described by its scalars: identifiers and digests only, with no account
+// label, title, vendor reference, link or secret, and no payload.
+binding_record!(DecisionPrivateBinding {
+    connection: ConnectionId,
+    connection_revision: DecisionRevision,
+    account: DecisionDigest,
+    item: ConnectionItemId,
+    item_ref: DecisionDigest,
+    operation: PrivateOperationKind,
+    operation_id: Uuid,
+    request_fingerprint: [u8; 32],
+});
+impl DecisionPrivateBinding {
+    /// The operation exactly as it was proposed and bound.
+    pub fn proposal(&self) -> PrivateOperationProposal {
+        PrivateOperationProposal {
+            operation_id: self.operation_id,
+            connection: self.connection,
+            connection_revision: self.connection_revision,
+            account: self.account,
+            item: self.item,
+            item_ref: self.item_ref,
+            operation: self.operation,
+            request_fingerprint: self.request_fingerprint,
+        }
+    }
+}
+
 /// Koru and native inputs are closed alternatives. No nullable edit/prompt bag.
 /// Serialization below is the canonical digest-free encoding itself.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -154,19 +184,63 @@ binding_record!(DecisionNativeBinding {
 pub enum DecisionBindingV1 {
     KoruEdit(DecisionEditBinding),
     NativeApproval(DecisionNativeBinding),
+    PrivateOperation(DecisionPrivateBinding),
+}
+// The fields every binding record shares, read without naming a kind.
+macro_rules! shared {
+    ($self:ident, $v:ident => $e:expr) => {
+        match $self {
+            Self::KoruEdit($v) => $e,
+            Self::NativeApproval($v) => $e,
+            Self::PrivateOperation($v) => $e,
+        }
+    };
 }
 impl DecisionBindingV1 {
     pub fn kind(&self) -> DecisionKind {
         match self {
             Self::KoruEdit(_) => DecisionKind::KoruEdit,
             Self::NativeApproval(_) => DecisionKind::NativeApproval,
+            Self::PrivateOperation(_) => DecisionKind::PrivateOperation,
         }
     }
     pub fn origin(&self) -> DecisionFence {
+        shared!(self, v => v.origin())
+    }
+    pub fn human_profile(&self) -> ProfileId {
+        shared!(self, v => v.human_profile)
+    }
+    pub fn submission(&self) -> BotRequestId {
+        shared!(self, v => v.submission)
+    }
+    pub fn workspace(&self) -> WorkspaceId {
+        shared!(self, v => v.workspace)
+    }
+    pub fn captured_policy(&self) -> &CapturedBotPolicy {
+        shared!(self, v => &v.captured_policy)
+    }
+    pub fn global_policy(&self) -> &DecisionGlobalPolicy {
+        shared!(self, v => &v.global_policy)
+    }
+    pub fn routine(&self) -> Option<&DecisionRoutineSubject> {
+        shared!(self, v => v.routine.as_ref())
+    }
+    pub fn routine_policy(&self) -> Option<&DecisionRoutinePolicy> {
+        shared!(self, v => v.routine_policy.as_ref())
+    }
+    /// The operation id of an operation-keyed decision; `None` for a native
+    /// prompt, which is keyed by its prompt.
+    pub fn operation_id(&self) -> Option<Uuid> {
         match self {
-            Self::KoruEdit(v) => v.origin(),
-            Self::NativeApproval(v) => v.origin(),
+            Self::KoruEdit(v) => Some(v.operation_id),
+            Self::PrivateOperation(v) => Some(v.operation_id),
+            Self::NativeApproval(_) => None,
         }
+    }
+    /// Exact comparison of a retained private binding with a proposal,
+    /// including the connection revision it was planned against.
+    pub fn matches_private(&self, proposal: &PrivateOperationProposal) -> bool {
+        matches!(self, Self::PrivateOperation(v) if v.proposal() == *proposal)
     }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, DecisionError> {
         self.validate()?;
@@ -204,13 +278,22 @@ impl DecisionValidate for DecisionBindingV1 {
                 let mut ids = std::collections::BTreeSet::new();
                 require(!choices.is_empty() && choices.iter().all(|c| ids.insert(c.id)))
             }
+            Self::PrivateOperation(v) => {
+                v.valid_subject()?;
+                // The fingerprint is recomputed from the binding's own fields;
+                // it is never a caller's assertion.
+                require(v.proposal().valid())
+            }
         }
     }
 }
 impl Serialize for DecisionBindingV1 {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let mut m = s.serialize_map(None)?;
-        // Fixed field order, no self-digest, maps, skipped defaults or locale.
+        // Fixed field order, no self-digest, maps or locale. No skipped defaults, with
+        // one exception: `captured_policy.connections` is omitted when it is empty, so
+        // a policy without connection grants keeps its pre-M5 bytes and digest. No
+        // other field may ever be skipped.
         // Version precedes kind even though serde's tagged derive emits kind first.
         macro_rules! subject {
             ($v:ident) => {
@@ -253,6 +336,18 @@ impl Serialize for DecisionBindingV1 {
                 m.serialize_entry("prompt", &v.prompt)?;
                 m.serialize_entry("choices", &v.choices)?;
                 m.serialize_entry("native_deadline_at_ms", &v.native_deadline_at_ms)?;
+                policy!(v);
+            }
+            Self::PrivateOperation(v) => {
+                subject!(v);
+                m.serialize_entry("connection", &v.connection)?;
+                m.serialize_entry("connection_revision", &v.connection_revision)?;
+                m.serialize_entry("account", &v.account)?;
+                m.serialize_entry("item", &v.item)?;
+                m.serialize_entry("item_ref", &v.item_ref)?;
+                m.serialize_entry("operation", &v.operation)?;
+                m.serialize_entry("operation_id", &v.operation_id)?;
+                m.serialize_entry("request_fingerprint", &v.request_fingerprint)?;
                 policy!(v);
             }
         }

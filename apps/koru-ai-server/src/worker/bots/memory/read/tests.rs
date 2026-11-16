@@ -167,6 +167,7 @@ fn full_fixture(
             destination: bot.home_workspace,
             access: koru_delegate_core::BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
         cancellation: cancellation.clone(),
         operation: operation.clone(),

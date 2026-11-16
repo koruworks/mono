@@ -105,6 +105,7 @@ fn enabled_memory_commands_still_refuse_missing_authority_and_manage_permission(
             access: koru_delegate_core::BotAccess::Default,
             selected_pages: Default::default(),
             destination: workspace,
+            connections: Default::default(),
         },
         cancellation: Cancellation::default(),
         operation: MemoryReadOperation::List {

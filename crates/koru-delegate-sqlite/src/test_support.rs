@@ -166,9 +166,11 @@ pub fn bind_successor(
     proof: &FreshBotPolicyProof,
     boot: DelegateBootId,
 ) -> Result<DecisionRecord, BotLedgerError> {
-    let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
+    // Any Koru decision (an edit, a private read) is answered AllowOnce by
+    // the binding's human; a native prompt has its own offered choices.
+    if !record.receipt.state.kind.resumes_by_successor() {
         return Err(BotLedgerError::Invalid);
-    };
+    }
     let answer = AnswerDecision {
         owner: record.wait.origin.owner,
         run: record.wait.origin.run,
@@ -176,7 +178,7 @@ pub fn bind_successor(
         expected_revision: record.receipt.state.revision,
         binding_digest: record.receipt.binding_digest,
         request: DecisionAnswerId::mint(),
-        human: binding.human_profile,
+        human: record.receipt.binding.human_profile(),
         choice: DecisionAnswerChoice::AllowOnce {},
         authority_digest: DecisionDigest::from_bytes([9; 32]),
     };

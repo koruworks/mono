@@ -68,6 +68,7 @@ fn bot(record: &RunAuthorityRecord) -> RunToolAuthority {
             destination: record.workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
     }
 }

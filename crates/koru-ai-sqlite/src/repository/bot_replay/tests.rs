@@ -83,6 +83,7 @@ fn fixture(repo: &mut Repository) -> (Bot, PendingTurn, BotSubmission) {
             destination: workspace,
             access: delegate::BotAccess::Default,
             selected_pages: BTreeSet::new(),
+            connections: Default::default(),
         },
         request: delegate::DelegationRequest {
             run: RunId::mint(),

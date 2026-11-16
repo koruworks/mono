@@ -75,6 +75,7 @@ pub(super) fn prepared() -> RoutinePrepared {
                 destination: workspace,
                 access: BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             workspace,
             request,

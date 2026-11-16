@@ -538,6 +538,7 @@ fn bot_submission() -> koru_delegate_core::BotSubmission {
             destination: c.workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
         workspace: c.workspace,
         request,

@@ -95,6 +95,11 @@ impl WorkerState {
             let (owner, bot, run) = match &view.receipt.binding {
                 DecisionBindingV1::KoruEdit(v) => (v.owner, v.bot, v.run),
                 DecisionBindingV1::NativeApproval(v) => (v.owner, v.bot, v.run),
+                // M5 piece A: no private-operation card is recorded until the
+                // AI worker's piece (F) composes its owner.
+                DecisionBindingV1::PrivateOperation(_) => {
+                    return Err(bot_failure(BotError::Invalid));
+                }
             };
             // The receipt's Run must be one this AI owns, through its sole
             // admission decoder; a foreign or unknown Run is refused.

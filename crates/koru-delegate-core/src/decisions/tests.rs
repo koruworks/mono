@@ -10,6 +10,7 @@ mod codec;
 mod golden;
 mod lifecycle;
 mod outcome;
+mod private;
 mod projection;
 mod publication;
 
@@ -54,6 +55,7 @@ fn edit() -> DecisionEditBinding {
             access: BotAccess::Default,
             selected_pages: BTreeSet::new(),
             destination: workspace,
+            connections: Default::default(),
         },
         global_policy: DecisionGlobalPolicy {
             key: BotPolicyBarrierKey {

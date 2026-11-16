@@ -220,6 +220,7 @@ pub(super) fn source(
                 _ => return Err(BotError::Storage),
             },
             selected_pages: selected,
+            connections: Default::default(),
         },
     })
 }

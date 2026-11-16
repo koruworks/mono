@@ -623,6 +623,7 @@ impl Fixture {
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         };
         let subject = MemoryEditSubjectV1 {
             version: 1,

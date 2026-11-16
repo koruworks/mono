@@ -24,6 +24,7 @@ fn case() -> Case {
         destination: workspace,
         access: BotAccess::Default,
         selected_pages: Default::default(),
+        connections: Default::default(),
     };
     Case {
         provenance: BotProvenance {

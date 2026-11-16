@@ -88,10 +88,17 @@ pub(super) fn retained_outcome_on(
     let Some(record) = rows::read(conn, owner, run, decision)? else {
         return Ok(None);
     };
-    if record.receipt.state.kind != DecisionKind::KoruEdit
-        || record.receipt.state.authorization != DecisionAuthorization::Consumed
-    {
+    if record.receipt.state.authorization != DecisionAuthorization::Consumed {
         return Ok(None);
+    }
+    match record.receipt.state.kind {
+        DecisionKind::KoruEdit => {}
+        // A consumed private read's outcome is its own effect row; an open
+        // row is Fenced, exactly as an unresolved page effect is.
+        DecisionKind::PrivateOperation => {
+            return super::private::retained_outcome(conn, &record).map(Some);
+        }
+        DecisionKind::NativeApproval => return Ok(None),
     }
     let key = retained_key(conn, &record.receipt, record.resume.as_ref())?
         .ok_or_else(|| corrupt("native_decision_leases", "consumed"))?;

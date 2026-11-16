@@ -15,6 +15,40 @@ impl RunsDb {
     ) -> Result<DecisionRecord, BotLedgerError> {
         self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
             let mutation = super::super::write::prepare_on(tx, binding, proof, boot, now)?;
+            commit_initial_on(tx, mutation, binding, base, now)
+        })
+    }
+
+    /// `PreparePrivateDecision` (M5): the question "may this Bot read this
+    /// item once". The same owner entry as [`Self::prepare_bot_decision`],
+    /// after the private refusals that have a code of their own. A Routine
+    /// Run, a grant both policies hold, an open effect and an owned Run each
+    /// refuse before anything is written.
+    pub fn prepare_private_decision(
+        &mut self,
+        binding: &DecisionBindingV1,
+        proof: &FreshBotPolicyProof,
+        boot: DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<DecisionRecord, crate::PrivateLedgerError> {
+        self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
+            let mutation = super::super::private::prepare_on(tx, binding, proof, boot, now)?;
+            Ok(commit_initial_on(tx, mutation, binding, base, now)?)
+        })
+    }
+}
+
+/// The initial Control of a freshly prepared decision, in the transaction
+/// that wrote the decision and its wait. A replay records nothing.
+fn commit_initial_on(
+    tx: &Transaction<'_>,
+    mutation: super::super::write::DecisionMutation,
+    binding: &DecisionBindingV1,
+    base: &DecisionPublicationBase,
+    now: i64,
+) -> Result<DecisionRecord, BotLedgerError> {
+    {
+        {
             if mutation.outcome == crate::WriteOutcome::AlreadyApplied {
                 // Exact receipt lookup precedes canonical base/configuration
                 // freshness and does not allocate another transition identity.
@@ -58,7 +92,7 @@ impl RunsDb {
                 now,
             )?;
             Ok(record)
-        })
+        }
     }
 }
 

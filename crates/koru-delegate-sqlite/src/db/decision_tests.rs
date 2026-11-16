@@ -5,6 +5,7 @@ use rusqlite::{params_from_iter, types::Value};
 use std::collections::BTreeMap;
 
 mod constraints;
+mod private;
 mod publication;
 
 type Row = BTreeMap<&'static str, Value>;
@@ -230,7 +231,7 @@ fn decision_migration_runs10_preserves_populated_runs9_objects_rows_and_foreign_
     let before = snapshot(&c);
     koru_sqlite::prepare(&SCHEMA, &mut c).unwrap();
     println!("Rust-linked SQLite {}", rusqlite::version());
-    assert_eq!(user_version(&c).unwrap(), 10);
+    assert_eq!(user_version(&c).unwrap(), RUNS_SCHEMA_VERSION);
     let after = snapshot(&c);
     for (name, value) in before {
         assert_eq!(after[&name], value, "changed old object/bytes: {name}");
@@ -302,13 +303,13 @@ fn decision_migration_runs9_refuses10_before_preflight_or_configuration() {
             Ok(())
         }),
         Err(OpenError::SchemaTooNew {
-            discovered: 10,
+            discovered: RUNS_SCHEMA_VERSION,
             supported: 9,
             ..
         })
     ));
     assert!(!called.get());
-    assert_eq!(user_version(&c).unwrap(), 10);
+    assert_eq!(user_version(&c).unwrap(), RUNS_SCHEMA_VERSION);
     assert_eq!(snapshot(&c), before);
     for pragma in ["PRAGMA foreign_keys", "PRAGMA synchronous"] {
         assert_eq!(c.query_row(pragma, [], |r| r.get::<_, i64>(0)).unwrap(), 0);

@@ -4,7 +4,7 @@
 use super::super::write as mutation;
 use super::*;
 
-fn commit_control(
+pub(super) fn commit_control(
     tx: &Transaction<'_>,
     transition: DecisionTransitionId,
     mutation: mutation::DecisionMutation,
@@ -37,7 +37,7 @@ fn commit_control(
             action = cleanup_owner::action(&origin)
         } else {
             require(
-                record.receipt.state.kind == DecisionKind::KoruEdit
+                record.receipt.state.kind.resumes_by_successor()
                     && record.receipt.state.authorization == DecisionAuthorization::Denied,
             )?;
         }
@@ -261,6 +261,42 @@ impl RunsDb {
             Ok(outcome)
         })
     }
+    /// `ConsumePrivateDecision` (M5): the acknowledged consumer spends the
+    /// one-use answer. Resolution of other dispatcher instances' rows commits
+    /// first, in its own transaction. The consume, its effect row at
+    /// `prepared` and its Control then commit together or not at all; the
+    /// first fresh commit answers the one `Execute`, every replay
+    /// `ReconcileOnly` with no new projection.
+    pub fn consume_private_decision(
+        &mut self,
+        expected: &DecisionExpected,
+        transition: DecisionTransitionId,
+        dispatcher: PrivateDispatcherId,
+        proposal: &PrivateOperationProposal,
+        fence: &BotExecutionFence,
+        proof: &FreshBotPolicyProof,
+        boot: DelegateBootId,
+    ) -> Result<crate::PrivateResolved<crate::PrivateEffectOutcome>, crate::PrivateLedgerError>
+    {
+        let resolved = self.resolve_private_others(expected.owner, dispatcher)?;
+        let outcome = self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
+            let (mutation, outcome) = super::super::private::consume_on(
+                tx, expected, dispatcher, proposal, fence, proof, boot, now,
+            )?;
+            if mutation.outcome == crate::WriteOutcome::AlreadyApplied {
+                return Ok(outcome);
+            }
+            commit_control(
+                tx,
+                transition,
+                mutation,
+                DecisionControlAction::Preserve {},
+                now,
+            )?;
+            Ok::<_, crate::PrivateLedgerError>(outcome)
+        });
+        Ok(crate::PrivateResolved { resolved, outcome })
+    }
     pub fn settle_decision_effect(
         &mut self,
         expected: &DecisionExpected,
@@ -326,12 +362,7 @@ impl RunsDb {
             let mut record=result.record;
             if record.receipt.state.phase!=DecisionPhase::Settled {
                 require(record.receipt.state.phase==DecisionPhase::StopPending)?;
-                let reason=match retained_effect_outcome {
-                    Some(DecisionRetainedEffect::Durable {..})=>DecisionClosureReason::Completed,
-                    Some(DecisionRetainedEffect::NotApplied {..})=>DecisionClosureReason::EffectNotApplied,
-                    Some(DecisionRetainedEffect::DrainedUnknown {..})=>DecisionClosureReason::EffectUnknown,
-                    None=>cause,
-                };
+                let reason=retained_effect_outcome.as_ref().map_or(cause,DecisionRetainedEffect::closure_reason);
                 tx.execute("UPDATE bot_decisions SET phase='settled',revision=?2,closure_reason=?3,settled_at_ms=?4,updated_at_ms=?4 WHERE decision_id=?1 AND revision=?5",
                     params![record.receipt.decision.to_storage(),next(record.receipt.state.revision)?.get(),token(reason)?,now.max(record.receipt.updated_at_ms),record.receipt.state.revision.get()]).map_err(sql)?;
                 record=super::super::rows::read(tx,expected.owner,expected.run,record.receipt.decision)?.ok_or(BotLedgerError::Stale)?;

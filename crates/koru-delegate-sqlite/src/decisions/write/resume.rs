@@ -33,7 +33,7 @@ pub(crate) fn reserve_successor_on(
     }
     require(
         old.receipt.state.revision == expected.revision
-            && old.receipt.state.kind == DecisionKind::KoruEdit
+            && old.receipt.state.kind.resumes_by_successor()
             && old.receipt.state.authorization == DecisionAuthorization::Granted
             && old.receipt.state.phase == DecisionPhase::Held
             && old.wait.phase == BotWaitPhase::Retired,

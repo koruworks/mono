@@ -55,6 +55,7 @@ pub(super) fn submission(n: u8) -> BotSubmission {
             destination: fixtures::workspace(0xa2),
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
         workspace: fixtures::workspace(0xa2),
         request,

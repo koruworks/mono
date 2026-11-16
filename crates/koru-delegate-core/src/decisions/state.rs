@@ -7,6 +7,19 @@ use super::*;
 pub enum DecisionKind {
     KoruEdit,
     NativeApproval,
+    PrivateOperation,
+}
+impl DecisionKind {
+    /// Whether a decision of this kind is a Koru decision: it waits by
+    /// stopping its origin and resumes in a recorded successor, never through
+    /// a native prompt. Every "is this a Koru wait" site asks this one
+    /// predicate rather than naming a kind (M5 contract 8.4).
+    pub fn resumes_by_successor(self) -> bool {
+        match self {
+            Self::KoruEdit | Self::PrivateOperation => true,
+            Self::NativeApproval => false,
+        }
+    }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -87,7 +100,7 @@ impl DecisionValidate for DecisionState {
         };
         require(
             pair && match self.kind {
-                DecisionKind::KoruEdit => !matches!(
+                DecisionKind::KoruEdit | DecisionKind::PrivateOperation => !matches!(
                     self.phase,
                     P::NativeWait | P::NativeDispatch | P::NativeUnknown
                 ),
@@ -169,7 +182,10 @@ pub enum DecisionAnswerChoice {
 impl DecisionAnswerChoice {
     pub fn matches_binding(&self, binding: &DecisionBindingV1) -> bool {
         match (self, binding) {
-            (Self::AllowOnce {} | Self::Deny {}, DecisionBindingV1::KoruEdit(_)) => true,
+            (
+                Self::AllowOnce {} | Self::Deny {},
+                DecisionBindingV1::KoruEdit(_) | DecisionBindingV1::PrivateOperation(_),
+            ) => true,
             (Self::Native { offered }, DecisionBindingV1::NativeApproval(v)) => {
                 v.choices.as_slice().contains(offered)
             }
@@ -260,7 +276,7 @@ impl DecisionValidate for DecisionReceipt {
                     == self.consumed_at_ms.is_some(),
         )?;
         match &self.binding {
-            DecisionBindingV1::KoruEdit(_) => {
+            DecisionBindingV1::KoruEdit(_) | DecisionBindingV1::PrivateOperation(_) => {
                 require(self.deadline.native_deadline_at_ms.is_none())?
             }
             DecisionBindingV1::NativeApproval(v) => {
@@ -282,11 +298,7 @@ impl DecisionValidate for DecisionReceipt {
                     && answer.choice.matches_binding(&self.binding)
                     && answer.committed_revision <= self.state.revision,
             )?;
-            let human = match &self.binding {
-                DecisionBindingV1::KoruEdit(v) => v.human_profile,
-                DecisionBindingV1::NativeApproval(v) => v.human_profile,
-            };
-            require(answer.human_profile == human)?;
+            require(answer.human_profile == self.binding.human_profile())?;
             let grants = match &answer.choice {
                 DecisionAnswerChoice::AllowOnce {} => true,
                 DecisionAnswerChoice::Deny {} => false,

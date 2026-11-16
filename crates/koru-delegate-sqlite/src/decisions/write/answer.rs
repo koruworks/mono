@@ -67,11 +67,7 @@ pub(crate) fn answer_on(
     clock(&old.receipt, boot, now)?;
     let admitted = authority::fresh(tx, &old.receipt.binding, proof, native)?;
     authority::selected_denial(tx, &old.receipt.binding, proof, &admitted)?;
-    let human = match &old.receipt.binding {
-        DecisionBindingV1::KoruEdit(v) => v.human_profile,
-        DecisionBindingV1::NativeApproval(v) => v.human_profile,
-    };
-    require(input.human == human)?;
+    require(input.human == old.receipt.binding.human_profile())?;
     let answer = DecisionAnswerReceipt {
         decision: input.decision,
         request: input.request,

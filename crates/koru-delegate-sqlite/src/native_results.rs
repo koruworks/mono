@@ -13,6 +13,7 @@ mod repository;
 mod routine;
 mod rows;
 pub(crate) use drain::held_routine;
+pub(crate) use repository::fresh_policy as fresh_policy_on;
 pub(crate) use repository::{current_composite, policy_digest};
 pub(crate) use repository::{hold_lease_on, insert_prepared_on};
 pub(crate) use rows::created as created_page_on;

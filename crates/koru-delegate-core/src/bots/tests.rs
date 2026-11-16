@@ -60,6 +60,7 @@ fn private_submission_closes_nested_intent_and_input_without_changing_ordinary_t
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: BTreeSet::new(),
+            connections: Default::default(),
         },
         request,
         workspace,

@@ -18,6 +18,7 @@ mod native_completion;
 mod observation;
 mod occupancy;
 mod preparation;
+mod private;
 mod projection;
 mod resume;
 mod resume_runs;
@@ -149,6 +150,46 @@ impl Harness {
             routine_policy: v.routine_policy,
         });
     }
+    /// Ask for one private read instead of the fixture edit: the same subject,
+    /// policy and origin, with the read's own scalars. The fixture policy
+    /// holds no connection grant, so the read is a question.
+    fn private(&mut self) {
+        let DecisionBindingV1::KoruEdit(v) = self.binding.clone() else {
+            panic!("fixture edit")
+        };
+        let proposal = crate::private_effects::tests::proposal(uuid::Uuid::new_v4());
+        self.binding = DecisionBindingV1::PrivateOperation(DecisionPrivateBinding {
+            version: v.version,
+            owner: v.owner,
+            bot: v.bot,
+            run: v.run,
+            origin_attempt: v.origin_attempt,
+            origin_generation: v.origin_generation,
+            origin_session: v.origin_session,
+            origin_turn: v.origin_turn,
+            submission: v.submission,
+            routine: v.routine,
+            human_profile: v.human_profile,
+            workspace: v.workspace,
+            connection: proposal.connection,
+            connection_revision: proposal.connection_revision,
+            account: proposal.account,
+            item: proposal.item,
+            item_ref: proposal.item_ref,
+            operation: proposal.operation,
+            operation_id: proposal.operation_id,
+            request_fingerprint: proposal.request_fingerprint,
+            captured_policy: v.captured_policy,
+            global_policy: v.global_policy,
+            routine_policy: v.routine_policy,
+        });
+    }
+    fn proposal(&self) -> PrivateOperationProposal {
+        let DecisionBindingV1::PrivateOperation(v) = &self.binding else {
+            panic!("fixture private read")
+        };
+        v.proposal()
+    }
     fn routine(&mut self, linked: bool) {
         let f = self.origin();
         let mut s = self.db.bot_admission(f.run).unwrap().unwrap().submission;
@@ -190,6 +231,10 @@ impl Harness {
                 v.routine = Some(subject);
                 v.routine_policy = Some(rp);
             }
+            DecisionBindingV1::PrivateOperation(v) => {
+                v.routine = Some(subject);
+                v.routine_policy = Some(rp);
+            }
         }
         self.proof.routine = Some(policy);
     }
@@ -224,8 +269,8 @@ impl Harness {
     }
     fn answer_input(&self, record: &DecisionRecord, allow: bool) -> AnswerDecision {
         let (human, choice) = match &self.binding {
-            DecisionBindingV1::KoruEdit(v) => (
-                v.human_profile,
+            DecisionBindingV1::KoruEdit(_) | DecisionBindingV1::PrivateOperation(_) => (
+                self.binding.human_profile(),
                 if allow {
                     DecisionAnswerChoice::AllowOnce {}
                 } else {

@@ -90,6 +90,7 @@ fn creation() -> BotRoutineCreationIdentity {
                 destination: home,
                 access: BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             digest: digest(3),
         },

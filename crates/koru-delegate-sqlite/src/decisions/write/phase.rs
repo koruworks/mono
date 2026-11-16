@@ -95,7 +95,7 @@ pub(crate) fn enroll_on(
     if old.receipt.state.revision != expected || old.wait.revision != wait_revision {
         return Err(BotLedgerError::Stale);
     }
-    if old.receipt.state.kind != DecisionKind::KoruEdit
+    if !old.receipt.state.kind.resumes_by_successor()
         || old.receipt.state.authorization != DecisionAuthorization::Pending
         || old.receipt.state.phase != DecisionPhase::Holding
         || old.wait.phase != BotWaitPhase::Fenced

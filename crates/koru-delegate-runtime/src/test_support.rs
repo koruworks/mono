@@ -146,6 +146,7 @@ pub fn bot_submission(n: u8) -> BotSubmission {
             destination: workspace,
             access: BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
         workspace,
         request,

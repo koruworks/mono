@@ -230,10 +230,24 @@ pub struct CapturedBotPolicy {
     pub selected_pages: BTreeSet<DocumentId>,
     /// Explicit accepted destination, never inferred from the Run's location.
     pub destination: WorkspaceId,
+    /// Private connection grants (M5). **Omitted from the serialized form
+    /// whenever it is empty**, so a policy without a grant keeps exactly its
+    /// pre-M5 bytes and every digest computed over them (both policy
+    /// barriers, a Routine grant, a decision binding, a stored submission).
+    /// This is the only field of this type that may ever be skipped.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub connections: BTreeSet<crate::ConnectionGrantRef>,
 }
 impl CapturedBotPolicy {
     pub fn valid(&self) -> bool {
-        self.workspace == self.destination && self.selected_pages.len() <= 1024
+        self.workspace == self.destination
+            && self.selected_pages.len() <= 1024
+            && self.connections.len() <= crate::CONNECTION_GRANT_LIMIT
+    }
+    /// Whether this policy holds the grant. A reference only: the connection's
+    /// current state is its owner's to check at use time.
+    pub fn grants_connection(&self, grant: &crate::ConnectionGrantRef) -> bool {
+        self.connections.contains(grant)
     }
 }
 

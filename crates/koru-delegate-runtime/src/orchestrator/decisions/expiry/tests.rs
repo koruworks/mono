@@ -464,3 +464,74 @@ fn decision_expiry_after_a_delegate_restart_is_clock_uncertain_at_once() {
     assert!(chain.orchestrator.runs[&run].decision_cleanup.is_some());
     assert_eq!(advance(&mut chain), Step::Waiting("bot_cleanup_owned"));
 }
+
+/// M5: the deadline covers a private-operation decision exactly as it covers
+/// an edit, and still leaves a native prompt to its own fallback.
+#[test]
+fn m5_decision_expiry_applies_to_a_private_operation_as_to_an_edit() {
+    use koru_delegate_core::decisions::{DecisionKind, DecisionRevision, DecisionState};
+    let authorizations = [
+        DecisionAuthorization::Pending,
+        DecisionAuthorization::Granted,
+        DecisionAuthorization::Consumed,
+        DecisionAuthorization::Denied,
+        DecisionAuthorization::Canceled,
+        DecisionAuthorization::Expired,
+    ];
+    let phases = [
+        DecisionPhase::Publishing,
+        DecisionPhase::Holding,
+        DecisionPhase::Held,
+        DecisionPhase::ResumePrepared,
+        DecisionPhase::AwaitRetry,
+        DecisionPhase::Effect,
+        DecisionPhase::StopPending,
+        DecisionPhase::Settled,
+    ];
+    let mut covered = 0;
+    for authorization in authorizations {
+        for phase in phases {
+            let state = |kind| DecisionState {
+                kind,
+                authorization,
+                phase,
+                revision: DecisionRevision::new(1).unwrap(),
+            };
+            let applies =
+                |kind, wait, cleanup| super::deadline_applies_to(Some(&state(kind)), wait, cleanup);
+            let private = applies(DecisionKind::PrivateOperation, BotWaitPhase::Held, false);
+            assert_eq!(
+                private,
+                applies(DecisionKind::KoruEdit, BotWaitPhase::Held, false),
+                "{authorization:?}/{phase:?}"
+            );
+            assert_eq!(
+                private,
+                matches!(
+                    authorization,
+                    DecisionAuthorization::Pending | DecisionAuthorization::Granted
+                ) && !matches!(phase, DecisionPhase::Settled | DecisionPhase::StopPending)
+            );
+            covered += usize::from(private);
+            // A native prompt is never closed by this deadline.
+            assert!(!applies(
+                DecisionKind::NativeApproval,
+                BotWaitPhase::Fenced,
+                false
+            ));
+            // An owned or recorded cleanup is left to its owner.
+            assert!(!applies(
+                DecisionKind::PrivateOperation,
+                BotWaitPhase::CleanupPending,
+                false
+            ));
+            assert!(!applies(
+                DecisionKind::PrivateOperation,
+                BotWaitPhase::Held,
+                true
+            ));
+        }
+    }
+    assert_eq!(covered, 12);
+    assert!(!super::deadline_applies_to(None, BotWaitPhase::Held, false));
+}

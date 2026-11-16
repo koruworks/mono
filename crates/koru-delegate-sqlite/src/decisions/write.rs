@@ -123,30 +123,35 @@ pub(crate) fn prepare_on(
     encoded(&(binding, proof), DECISION_FRAME_BYTES)?;
     let admitted = authority::fresh(tx, binding, proof, true)?;
     authority::selected_denial(tx, binding, proof, &admitted)?;
-    if let DecisionBindingV1::KoruEdit(edit) = binding {
-        let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND operation_id=?2)",params![f.run.to_storage(),edit.operation_id.to_string()],|r|r.get(0)).map_err(sql)?;
-        if exists {
-            return Err(BotLedgerError::Conflict);
+    // One operation id, one meaning. An edit refuses an id a page intent or a
+    // private effect already holds; a private read also refuses one a Memory
+    // allocation holds.
+    match binding {
+        DecisionBindingV1::KoruEdit(edit) => {
+            let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND operation_id=?2) OR EXISTS(SELECT 1 FROM bot_private_effects WHERE run_id=?1 AND operation_id=?2)",params![f.run.to_storage(),edit.operation_id.to_string()],|r|r.get(0)).map_err(sql)?;
+            if exists {
+                return Err(BotLedgerError::Conflict);
+            }
         }
+        DecisionBindingV1::PrivateOperation(private) => {
+            if crate::private_effects::operation_id_taken_on(tx, f.run, private.operation_id)? {
+                return Err(BotLedgerError::Conflict);
+            }
+        }
+        DecisionBindingV1::NativeApproval(_) => {}
     }
     let open:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM bot_wait_runtime WHERE run_id=?1 AND phase<>'settled') OR EXISTS(SELECT 1 FROM bot_decisions WHERE run_id=?1 AND phase<>'settled')",[f.run.to_storage()],|r|r.get(0)).map_err(sql)?;
     if open {
         return Err(BotLedgerError::Conflict);
     }
     cap(tx, f.owner)?;
-    let (human, operation, prompt, native_deadline) = match binding {
-        DecisionBindingV1::KoruEdit(v) => (
-            v.human_profile,
-            Some(v.operation_id.to_string()),
-            None,
-            None,
-        ),
-        DecisionBindingV1::NativeApproval(v) => (
-            v.human_profile,
-            None,
-            Some(v.prompt.to_string()),
-            v.native_deadline_at_ms,
-        ),
+    let human = binding.human_profile();
+    let operation = binding.operation_id().map(|id| id.to_string());
+    let (prompt, native_deadline) = match binding {
+        DecisionBindingV1::NativeApproval(v) => {
+            (Some(v.prompt.to_string()), v.native_deadline_at_ms)
+        }
+        DecisionBindingV1::KoruEdit(_) | DecisionBindingV1::PrivateOperation(_) => (None, None),
     };
     let full = now
         .checked_add(DECISION_WAIT_MILLIS)
@@ -221,7 +226,11 @@ pub(crate) fn prepare_on(
     done(tx, f.owner, f.run, id, crate::WriteOutcome::Applied)
 }
 
-fn clock(receipt: &DecisionReceipt, boot: DelegateBootId, now: i64) -> Result<(), BotLedgerError> {
+pub(super) fn clock(
+    receipt: &DecisionReceipt,
+    boot: DelegateBootId,
+    now: i64,
+) -> Result<(), BotLedgerError> {
     if receipt.deadline.created_boot != boot
         || now < receipt.last_observed_at_ms
         || now < receipt.deadline.created_at_ms

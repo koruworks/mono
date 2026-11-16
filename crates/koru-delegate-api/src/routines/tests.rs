@@ -63,6 +63,7 @@ fn prepared() -> RoutinePrepared {
                 destination: workspace,
                 access: BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             request: DelegationRequest {
                 run: ids.run,

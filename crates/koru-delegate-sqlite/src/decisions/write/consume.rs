@@ -63,7 +63,9 @@ pub(crate) fn consume_on(
     }
     // No adoption: even an unleased legacy Prepared intent retains its original
     // owner and Store request. The one-use path only creates an absent intent.
-    let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND operation_id=?2) OR EXISTS(SELECT 1 FROM bot_memory_edit_allocations WHERE run_id=?1 AND operation_id=?2)",params![expected.run.to_storage(),request.key.operation_id.to_string()],|r|r.get(0)).map_err(sql)?;
+    // One operation id, one meaning: a page intent, a Memory allocation or a
+    // private effect under this id belongs to another kind of operation.
+    let exists:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1 AND operation_id=?2) OR EXISTS(SELECT 1 FROM bot_memory_edit_allocations WHERE run_id=?1 AND operation_id=?2) OR EXISTS(SELECT 1 FROM bot_private_effects WHERE run_id=?1 AND operation_id=?2)",params![expected.run.to_storage(),request.key.operation_id.to_string()],|r|r.get(0)).map_err(sql)?;
     if exists {
         return Err(BotLedgerError::Conflict);
     }
@@ -174,14 +176,16 @@ pub(crate) fn settle_effect_on(
     let old = required(tx, expected.owner, expected.run, expected.decision)?;
     require(
         old.receipt.binding_digest == expected.binding_digest
-            && old.receipt.state.kind == DecisionKind::KoruEdit
+            && old.receipt.state.kind.resumes_by_successor()
             && old.receipt.state.authorization == DecisionAuthorization::Consumed,
     )?;
     cleanup::effect_outcome(tx, &old, Some(outcome))?;
+    // An unknown outcome never takes this normal exit, whichever effect table
+    // owns it: it settles at cleanup only.
     let reason = match outcome {
-        DecisionRetainedEffect::Durable { .. } => DecisionClosureReason::Completed,
-        DecisionRetainedEffect::NotApplied { .. } => DecisionClosureReason::EffectNotApplied,
-        DecisionRetainedEffect::DrainedUnknown { .. } => return Err(BotLedgerError::Fenced),
+        DecisionRetainedEffect::DrainedUnknown { .. }
+        | DecisionRetainedEffect::PrivateUnknown { .. } => return Err(BotLedgerError::Fenced),
+        positive => positive.closure_reason(),
     };
     if old.receipt.state.phase == DecisionPhase::Settled {
         require(

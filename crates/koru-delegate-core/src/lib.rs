@@ -35,6 +35,7 @@ mod attempt;
 #[doc(hidden)]
 pub mod bot_wire;
 mod bots;
+mod connections;
 mod context;
 pub mod decisions;
 mod deletion;
@@ -80,6 +81,12 @@ pub use bots::{
     NativeResultReference, NativeResultRefusal, NativeResultStage, PrepareNativeResult,
     RunToolAuthority, native_store_scope,
 };
+pub use connections::{
+    CONNECTION_GRANT_LIMIT, ConnectionGrantRef, PrivateEffectDisposition, PrivateEffectKey,
+    PrivateEffectRefusal, PrivateEffectStage, PrivateEffectTransition, PrivateEffectView,
+    PrivateOperationKind, PrivateOperationProposal, PrivateRoutineBinding,
+    private_request_fingerprint,
+};
 pub use context::{BlobKind, RunContextItem};
 pub use deletion::{ArtifactDisposition, FolderOutcome};
 pub use economics::{
@@ -91,9 +98,9 @@ pub use facts::{RunFact, UsageReport};
 pub use failure::RunFailureReason;
 pub use header::{DelegatedRun, Rating, ResultReference, RunHeader, RunRating};
 pub use ids::{
-    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, DelegateBootId,
-    HandoffId, IdParseError, ModelRef, RunAttemptId, RunId, ScheduleId, TimelineEntryId,
-    UsageFactId,
+    ArtifactVersionId, AttemptGeneration, BlockNodeId, BotId, BotRequestId, ConnectionId,
+    ConnectionItemId, DelegateBootId, HandoffId, IdParseError, ModelRef, PrivateDispatcherId,
+    RunAttemptId, RunId, ScheduleId, TimelineEntryId, UsageFactId,
 };
 pub use name::RunName;
 pub use pin::ContextState;

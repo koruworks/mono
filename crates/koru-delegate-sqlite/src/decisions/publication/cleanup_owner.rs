@@ -48,7 +48,7 @@ pub(super) fn origin(
                 let Some(DecisionDisposition::Open { state }) = disposition else {
                     return Ok(None);
                 };
-                if state.kind != DecisionKind::KoruEdit
+                if !state.kind.resumes_by_successor()
                     || state.authorization != DecisionAuthorization::Denied
                     || state.phase != DecisionPhase::StopPending
                 {

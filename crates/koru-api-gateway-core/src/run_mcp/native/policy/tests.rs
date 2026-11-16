@@ -38,6 +38,7 @@ fn fixture() -> (BotProvenance, CapturedBotPolicy, FreshBotPolicyProof) {
         destination: workspace,
         access: BotAccess::Default,
         selected_pages: Default::default(),
+        connections: Default::default(),
     };
     let proof = FreshBotPolicyProof {
         global: BotPolicyBarrier {

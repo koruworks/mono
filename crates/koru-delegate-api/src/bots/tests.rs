@@ -142,6 +142,7 @@ fn ipc13_boot_commands_roundtrip_and_ipc12_is_rejected() {
             destination: WorkspaceId::from_uuid(Uuid::new_v4()),
             access: koru_delegate_core::BotAccess::Default,
             selected_pages: Default::default(),
+            connections: Default::default(),
         },
         effects_allowed: true,
     };

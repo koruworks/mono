@@ -50,6 +50,7 @@ mod inspect;
 mod intents;
 mod ledger;
 mod native_results;
+mod private_effects;
 mod publications;
 mod restart;
 mod schedule_publications;
@@ -67,7 +68,10 @@ pub use clock::{Clock, SystemClock};
 pub use crash::WriteOp;
 #[cfg(any(test, feature = "crash-points"))]
 pub use crash::{CrashPoint, Moment};
-pub use db::{DATABASE_NAME, OpenError, RUNS_SCHEMA_VERSION, runs_db_path};
+pub use db::{
+    DATABASE_NAME, OpenError, RETAINED_DECISIONS_DETAIL, RETAINED_DECISIONS_UPGRADE,
+    RUNS_SCHEMA_VERSION, runs_db_path,
+};
 pub use decisions::{
     AnswerDecision, DECISION_RESUME_RUN_PAGE, DecisionAcknowledgedContinuation,
     DecisionCleanupOrigin, DecisionCleanupOwnership, DecisionRecord, DecisionWaitExecution,
@@ -86,6 +90,10 @@ pub use ledger::{RunsDb, WriteOutcome};
 pub use native_results::{
     NativeEffectLease, NativeIntentRecord, NativeLeaseOutcome, NativeLeaseState,
     NativePolicyRecord, NativeRecoveryCursor, NativeResultLedger, PendingNativeResult,
+};
+pub use private_effects::{
+    PRIVATE_RESOLUTION_LIMIT, PrivateEffectOutcome, PrivateEffectRecord, PrivateLedgerError,
+    PrivateResolved, PrivateRoutineFence,
 };
 pub use publications::{
     DECISION_PROJECTION_RUN_PAGE, OpenPublication, PendingPublicationRunCursor, PendingPublicationRunSeek, PublicationBody,

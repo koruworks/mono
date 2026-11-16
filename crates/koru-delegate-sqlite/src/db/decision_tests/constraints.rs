@@ -4,7 +4,14 @@ use super::*;
 #[test]
 fn decision_migration_runs10_closed_kind_authorization_phase_matrix_and_signed_times() {
     let c = current();
-    for kind in ["koru_edit", "native_approval"] {
+    // `private_operation` (M5) and `browser_origin` (admitted for M7, O158)
+    // are operation-keyed Koru kinds: the same matrix as `koru_edit`.
+    for kind in [
+        "koru_edit",
+        "native_approval",
+        "private_operation",
+        "browser_origin",
+    ] {
         for auth in [
             "pending", "granted", "denied", "canceled", "expired", "consumed",
         ] {
@@ -47,7 +54,7 @@ fn decision_migration_runs10_closed_kind_authorization_phase_matrix_and_signed_t
                     _ => &["stop_pending", "settled"],
                 };
                 let allowed = auth_phases.contains(&phase)
-                    && !(kind == "koru_edit"
+                    && !(kind != "native_approval"
                         && ["native_wait", "native_dispatch", "native_unknown"].contains(&phase))
                     && !(kind == "native_approval"
                         && ["resume_prepared", "await_retry", "effect"].contains(&phase));

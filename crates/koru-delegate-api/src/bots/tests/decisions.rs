@@ -42,6 +42,7 @@ fn proof(fence: &BotExecutionFence) -> FreshBotPolicyProof {
                 destination: WorkspaceId::from_uuid(Uuid::new_v4()),
                 access: BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             effects_allowed: true,
         },

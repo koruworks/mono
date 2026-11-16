@@ -163,7 +163,8 @@ fn migrations_are_one_step_per_version_ending_at_the_constant() {
         assert!(
             migration.name.ends_with("_migration.sql")
                 || (migration.to == 9 && migration.name == "028_runs_bot_routines.sql")
-                || (migration.to == 10 && migration.name == "029_runs_bot_decisions.sql"),
+                || (migration.to == 10 && migration.name == "029_runs_bot_decisions.sql")
+                || (migration.to == 11 && migration.name == "030_runs_private_operations.sql"),
             "{}",
             migration.name
         );

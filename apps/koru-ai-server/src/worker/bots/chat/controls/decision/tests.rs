@@ -94,6 +94,7 @@ fn case(profile_matches: bool, replay: bool) -> Case {
         access: d::BotAccess::Default,
         selected_pages: Default::default(),
         destination: d::WorkspaceId::from_uuid(home.as_uuid()),
+        connections: Default::default(),
     };
     let global =
         crate::worker::bots::policy::global_barrier(owner, fence.bot, 3, 4, captured).unwrap();

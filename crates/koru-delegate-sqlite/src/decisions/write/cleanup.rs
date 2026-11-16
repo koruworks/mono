@@ -21,7 +21,7 @@ pub(crate) fn origin_stop_on(
     }
     require(
         old.receipt.state.revision == expected.revision
-            && old.receipt.state.kind == DecisionKind::KoruEdit
+            && old.receipt.state.kind.resumes_by_successor()
             && old.resume.is_none()
             && old.wait.enrollment.is_some()
             && matches!(
@@ -166,19 +166,28 @@ pub(super) fn effect_outcome(
     record: &DecisionRecord,
     outcome: Option<&DecisionRetainedEffect>,
 ) -> Result<(), BotLedgerError> {
-    if record.receipt.state.kind != DecisionKind::KoruEdit
+    if !record.receipt.state.kind.resumes_by_successor()
         || record.receipt.state.authorization != DecisionAuthorization::Consumed
     {
         return require(outcome.is_none());
     }
     let outcome = outcome.ok_or(BotLedgerError::Fenced)?;
+    let binding = match &record.receipt.binding {
+        DecisionBindingV1::KoruEdit(binding) => binding,
+        // A consumed private read names its own final effect row.
+        DecisionBindingV1::PrivateOperation(_) => {
+            return super::super::private::effect_outcome(conn, record, outcome);
+        }
+        DecisionBindingV1::NativeApproval(_) => return Err(BotLedgerError::Invalid),
+    };
     let key = match outcome {
         DecisionRetainedEffect::NotApplied { key, .. }
         | DecisionRetainedEffect::Durable { key, .. }
         | DecisionRetainedEffect::DrainedUnknown { key, .. } => key,
-    };
-    let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
-        return Err(BotLedgerError::Invalid);
+        // A page edit is never settled by a private outcome.
+        DecisionRetainedEffect::PrivateNotApplied { .. }
+        | DecisionRetainedEffect::PrivateConfirmed { .. }
+        | DecisionRetainedEffect::PrivateUnknown { .. } => return Err(BotLedgerError::Conflict),
     };
     let resume = record.resume.as_ref().ok_or(BotLedgerError::Fenced)?;
     let (attempt, generation, _, _) = resume.consumer_identity();
@@ -224,5 +233,8 @@ pub(super) fn effect_outcome(
             retained.drain.as_ref() == Some(drain)
                 && retained.stage == NativeResultStage::SettledUnknown
         }
+        DecisionRetainedEffect::PrivateNotApplied { .. }
+        | DecisionRetainedEffect::PrivateConfirmed { .. }
+        | DecisionRetainedEffect::PrivateUnknown { .. } => false,
     })
 }

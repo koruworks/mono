@@ -46,6 +46,7 @@ fn intent(
                 destination: workspace,
                 access: d::BotAccess::Default,
                 selected_pages: Default::default(),
+                connections: Default::default(),
             },
             request: d::DelegationRequest {
                 run: d::RunId::mint(),
