@@ -28,6 +28,7 @@ use super::domain::{boundary, host_only, painter, record, source, support, suppo
 use super::*;
 use koru_i18n::Key;
 
+mod companion_apps;
 mod leaf;
 mod mainview;
 mod mini_app;
@@ -35,6 +36,7 @@ mod pages;
 mod panes;
 mod tasks_view;
 
+pub(super) const COMPANION_APPS: &[Entry] = companion_apps::RECORDS;
 pub(super) const LEAF: &[Entry] = leaf::RECORDS;
 pub(super) const MAINVIEW: &[Entry] = mainview::RECORDS;
 pub(super) const MINI_APP: &[Entry] = mini_app::RECORDS;

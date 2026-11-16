@@ -613,6 +613,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     app::PAGES,
     app::MAINVIEW,
     app::PANES,
+    app::COMPANION_APPS,
 ];
 
 /// Every record, flattened.

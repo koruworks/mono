@@ -108,42 +108,42 @@ fail until this table says what they compute.
 | domain crate lib.rs modules | 247 |
 | domain crate lib.rs public modules | 121 |
 | domain crate modules excluded | 73 |
-| app crates baselined | 1 |
-| app source files | 216 |
-| app files baselined | 18 |
-| app modules classified | 151 |
-| app modules excluded | 59 |
-| records: app crates | 52 |
-| records | 285 |
+| app crates baselined | 3 |
+| app source files | 308 |
+| app files baselined | 21 |
+| app modules classified | 245 |
+| app modules excluded | 117 |
+| records: app crates | 60 |
+| records | 293 |
 | records: foundations | 59 |
-| records: controls | 77 |
-| records: application compositions | 149 |
+| records: controls | 80 |
+| records: application compositions | 154 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 70 |
+| kind: support | 71 |
 | kind: domain composition | 57 |
-| kind: app-local | 48 |
+| kind: app-local | 55 |
 | token values listed | 174 |
-| symbols | 2141 |
+| symbols | 2170 |
 | symbols with typed recipes | 2 |
 | inspector identities | 60 |
 | inspector identity registration sites | 63 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 205 |
-| disposition: nonvisual | 61 |
+| disposition: no story yet | 211 |
+| disposition: nonvisual | 62 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 18 |
+| disposition: boundary | 19 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 437 |
-| symbol story: nonvisual | 1553 |
-| symbol story: boundary | 150 |
+| symbol story: no story yet | 451 |
+| symbol story: nonvisual | 1567 |
+| symbol story: boundary | 151 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2089 |
+| A2UI: not supported | 2118 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1040,9 +1040,20 @@ nothing in the app it could call.
 
 ### Drift checks added
 
-- `tests/drift/app.rs` compiles in the non-test files of each app folder
-  recorded so far (the `SOURCES` list grows a folder per commit), so the
-  symbol, option and identity checks cover them; `all_sources` reads them.
+- `tests/drift/app.rs` compiles in every non-test file of `apps/koru`
+  (without the Lab), `apps/koru-document` and `apps/koru-agent` — 308
+  files; the list grew a folder per commit of this batch — so the symbol,
+  option and identity checks cover them and **every component identity an
+  app painter registers must be claimed**; `all_sources` reads them.
+  Test-only modules under ordinary names (`perf.rs`, `tasks_view/perf.rs`,
+  `mainview/harness.rs`, `mainview/accessibility/{integration,
+  document/native}.rs`, `manage/profiles/progress/fixtures.rs`,
+  `panes/explore/popover_baseline.rs`) and the undeclared
+  `mainview/shell_conformance.rs` are left out.
+- 22 app files' `mod` lists are baselined: `main.rs` and every folder
+  root of the workspace app that declares children, and the two other
+  crates' `lib.rs`. Deeper modules are covered by their parent's
+  classification.
 - `every_app_module_is_classified`: each baselined app file's `mod` list,
   whatever its visibility (test modules named as such left out), against
   its classification; every app record reached from one, of kind
@@ -1336,6 +1347,74 @@ already draws `koru_ui::icon_button::draw_with`; the profile switcher row
 described in COMPONENTS.md is stale against `popover_elements/profiles.rs`;
 `explore/rail.rs` is the Tasks rail, not the apps rail; there is no
 `impl View` for `ExploreView`, a chrome pane drawn by inherent methods.
+
+### Part 5 — the app's roots, the document app and the Agent
+
+`apps/koru/src/main.rs` (read in full) and the 25 remaining root files
+(`agent.rs`, `app_menu.rs`, `build_stamp.rs`, `chat_diagrams.rs`,
+`console.rs`, `format.rs`, `input_engine.rs`, `reminder_settings.rs`,
+`reopen_claim.rs`, `schedule_index.rs`, `schedule_words.rs`,
+`terminal_prefs.rs`, `tasks.rs`, `whatsnew.rs`, `website.rs` and the
+recorded ones above; `agent.rs`, `reminder_settings.rs` and
+`schedule_index.rs` searched, `taskbar.rs` by declarations, the rest in
+full). `main.rs`'s 40 modules are baselined, so every top-level module of
+the workspace app now has a disposition; `H-APP-HOST`* records the app's
+`impl Host for Manager` (`main.rs` 133).
+
+`apps/koru-document` (16 files; `lib.rs`, `view.rs`, `search.rs`,
+`context_menu.rs`, `docview.rs` by declarations, `spelling.rs` and
+`structure.rs` searched, the rest in full): `C-DOCUMENT-WINDOW`*
+(`BuiltInDocument`, its window chrome, confirmations on `C-CONFIRM` and
+the lifted `C-MEDIA-VIEWER`), `C-FORMAT-BUBBLE`*, `C-DOCUMENT-MENUS`*,
+`C-FIND-REPLACE`*. No identity. `apps/koru-agent` (59 files; `app.rs`,
+`run.rs`, `service.rs`, `update.rs` searched with their window and dialog
+code read, `tray.rs` by declarations, `voice_window.rs` in full, the rest
+classified from declarations): `C-AGENT-SEARCH-WINDOW`* (hosts
+`C-SEARCH-SURFACE` under a local drag rail), `C-AGENT-VOICE-WINDOWS`*
+(hosts `C-VOICE-SURFACE` and `C-VOICE-HUD`), `C-AGENT-TRAY`*
+(`NativeOwned` on all three desktops: tray-icon on Windows and macOS,
+ksni on Linux). Both crates' `lib.rs` are baselined; the workspace app
+does not depend on `koru-agent`.
+
+The other app crates, by their `Cargo.toml` and a search of their source
+for any painter, window or menu: `koru-demo` (a UI Automation runner; its
+only winit use is `NamedKey`), `koru-voice` (the voice worker),
+`koru-ai-server`, `koru-events-server`, `koru-mcp`, `koru-relay` and
+`koru-com-notification` draw nothing. `koru-store-server` owns only
+operating-system surfaces — a tray icon and menu (`src/tray.rs`, Windows)
+and a fatal message box (`src/log.rs`) — and `koru-notification-owner`
+only titles macOS notification actions; they are not compiled into the
+checks and have no record, a disposition the native audit can revisit.
+`apps/macos/KoruShare/ShareViewController.swift` is the macOS share
+extension (AppKit), left to batch 4.
+
+Defects found here (not fixed):
+
+- **Hard-coded English a person reads**: `koru-document`'s confirmations
+  (`lib.rs` 1955–1998), "Title" and "Untitled", the bubble's tooltips
+  (`bubble.rs` 106–108) and `docview::Command::tooltip`'s literal
+  `Ctrl+` chords on every platform (149–173), the page, block, window and
+  right-click menus (`page_menu.rs`, `blockmenu.rs`, `window_menu.rs`,
+  `context_menu.rs`), the find bar (`search.rs` 932–1666); the Agent's
+  window titles, search warnings (`app.rs` 5668, 8522–8524) and most of
+  its tray menu (`tray.rs`), its Store backup and update dialogs
+  (`service.rs`, `update.rs`); `koru-store-server`'s whole tray menu and
+  dialogs (the crate has no `koru-i18n`); the share extension's "Saving to
+  Koru…".
+- **Local painters beside shared ones**: `koru-document`'s `menu::Menu`
+  is a second floating-menu implementation (with its own toggle and
+  swatches) beside `koru_ui::menu`; the bubble's buttons and tooltip are
+  local, not `C-ICON-BUTTON` / `C-TOOLTIP`; the find bar's option
+  checkboxes are local; `page_menu::draw_button` (COMPONENTS.md's
+  page-menu ellipsis, UI-012) **has no caller** — the live title `…` is
+  drawn by `koru-editor` (`draw.rs` 373–395), neither through
+  `KoruIconButton`.
+- **Docs and source disagree**: `koru-document`'s `lib.rs` 84–86 and
+  `caption.rs` describe a pin button and a toolbar under the caption that
+  are gone; `menu.rs` says four menus (nine use it); the Agent's
+  `tray.rs` 2148–2149 says every menu string is English (several are
+  keyed); `koru-store-server`'s `tray.rs` 401 has `set_start_on_login`'s
+  doc on `backup_store`.
 
 ### What batches 2a and 2b left for this batch
 

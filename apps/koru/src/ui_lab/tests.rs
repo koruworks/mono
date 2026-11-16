@@ -18,6 +18,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
     ("ui_lab/registry.rs", include_str!("registry.rs")),
     ("ui_lab/registry/app.rs", include_str!("registry/app.rs")),
     (
+        "ui_lab/registry/app/companion_apps.rs",
+        include_str!("registry/app/companion_apps.rs"),
+    ),
+    (
         "ui_lab/registry/app/leaf.rs",
         include_str!("registry/app/leaf.rs"),
     ),
@@ -300,6 +304,7 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
 /// with the Button and the shell-facing functions — is scanned whole.
 const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/app.rs",
+    "ui_lab/registry/app/companion_apps.rs",
     "ui_lab/registry/app/leaf.rs",
     "ui_lab/registry/app/mainview.rs",
     "ui_lab/registry/app/mini_app.rs",

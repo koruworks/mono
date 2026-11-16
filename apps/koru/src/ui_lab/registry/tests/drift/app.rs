@@ -22,8 +22,24 @@ use super::*;
 /// out; the manifest lists them.
 pub(super) const SOURCES: &[(&str, &str)] = &[
     (
+        "apps/koru/src/agent.rs",
+        include_str!("../../../../../../../apps/koru/src/agent.rs"),
+    ),
+    (
+        "apps/koru/src/agent/account_admission.rs",
+        include_str!("../../../../../../../apps/koru/src/agent/account_admission.rs"),
+    ),
+    (
         "apps/koru/src/ai_chat_view.rs",
         include_str!("../../../../../../../apps/koru/src/ai_chat_view.rs"),
+    ),
+    (
+        "apps/koru/src/app_menu.rs",
+        include_str!("../../../../../../../apps/koru/src/app_menu.rs"),
+    ),
+    (
+        "apps/koru/src/build_stamp.rs",
+        include_str!("../../../../../../../apps/koru/src/build_stamp.rs"),
     ),
     (
         "apps/koru/src/canvas_view.rs",
@@ -50,6 +66,14 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/canvas_view/perform.rs"),
     ),
     (
+        "apps/koru/src/chat_diagrams.rs",
+        include_str!("../../../../../../../apps/koru/src/chat_diagrams.rs"),
+    ),
+    (
+        "apps/koru/src/console.rs",
+        include_str!("../../../../../../../apps/koru/src/console.rs"),
+    ),
+    (
         "apps/koru/src/diff/mod.rs",
         include_str!("../../../../../../../apps/koru/src/diff/mod.rs"),
     ),
@@ -74,8 +98,20 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/feedback/submit.rs"),
     ),
     (
+        "apps/koru/src/format.rs",
+        include_str!("../../../../../../../apps/koru/src/format.rs"),
+    ),
+    (
+        "apps/koru/src/input_engine.rs",
+        include_str!("../../../../../../../apps/koru/src/input_engine.rs"),
+    ),
+    (
         "apps/koru/src/leaf.rs",
         include_str!("../../../../../../../apps/koru/src/leaf.rs"),
+    ),
+    (
+        "apps/koru/src/main.rs",
+        include_str!("../../../../../../../apps/koru/src/main.rs"),
     ),
     (
         "apps/koru/src/mainview/accessibility.rs",
@@ -726,6 +762,14 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/panes/sidebar/rail_order.rs"),
     ),
     (
+        "apps/koru/src/reminder_settings.rs",
+        include_str!("../../../../../../../apps/koru/src/reminder_settings.rs"),
+    ),
+    (
+        "apps/koru/src/reopen_claim.rs",
+        include_str!("../../../../../../../apps/koru/src/reopen_claim.rs"),
+    ),
+    (
         "apps/koru/src/result_document.rs",
         include_str!("../../../../../../../apps/koru/src/result_document.rs"),
     ),
@@ -736,6 +780,14 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/run_view.rs",
         include_str!("../../../../../../../apps/koru/src/run_view.rs"),
+    ),
+    (
+        "apps/koru/src/schedule_index.rs",
+        include_str!("../../../../../../../apps/koru/src/schedule_index.rs"),
+    ),
+    (
+        "apps/koru/src/schedule_words.rs",
+        include_str!("../../../../../../../apps/koru/src/schedule_words.rs"),
     ),
     (
         "apps/koru/src/search.rs",
@@ -788,6 +840,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/taskbar.rs",
         include_str!("../../../../../../../apps/koru/src/taskbar.rs"),
+    ),
+    (
+        "apps/koru/src/tasks.rs",
+        include_str!("../../../../../../../apps/koru/src/tasks.rs"),
     ),
     (
         "apps/koru/src/tasks_view/accessibility.rs",
@@ -846,6 +902,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/tasks_view/view.rs"),
     ),
     (
+        "apps/koru/src/terminal_prefs.rs",
+        include_str!("../../../../../../../apps/koru/src/terminal_prefs.rs"),
+    ),
+    (
         "apps/koru/src/trash/draw.rs",
         include_str!("../../../../../../../apps/koru/src/trash/draw.rs"),
     ),
@@ -860,6 +920,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/trash/view.rs",
         include_str!("../../../../../../../apps/koru/src/trash/view.rs"),
+    ),
+    (
+        "apps/koru/src/website.rs",
+        include_str!("../../../../../../../apps/koru/src/website.rs"),
     ),
     (
         "apps/koru/src/welcome/build.rs",
@@ -888,6 +952,310 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/welcome/rows.rs",
         include_str!("../../../../../../../apps/koru/src/welcome/rows.rs"),
+    ),
+    (
+        "apps/koru/src/whatsnew.rs",
+        include_str!("../../../../../../../apps/koru/src/whatsnew.rs"),
+    ),
+    (
+        "apps/koru-document/src/blockmenu.rs",
+        include_str!("../../../../../../../apps/koru-document/src/blockmenu.rs"),
+    ),
+    (
+        "apps/koru-document/src/bubble.rs",
+        include_str!("../../../../../../../apps/koru-document/src/bubble.rs"),
+    ),
+    (
+        "apps/koru-document/src/caption.rs",
+        include_str!("../../../../../../../apps/koru-document/src/caption.rs"),
+    ),
+    (
+        "apps/koru-document/src/context_menu.rs",
+        include_str!("../../../../../../../apps/koru-document/src/context_menu.rs"),
+    ),
+    (
+        "apps/koru-document/src/diagrams.rs",
+        include_str!("../../../../../../../apps/koru-document/src/diagrams.rs"),
+    ),
+    (
+        "apps/koru-document/src/docview.rs",
+        include_str!("../../../../../../../apps/koru-document/src/docview.rs"),
+    ),
+    (
+        "apps/koru-document/src/draw.rs",
+        include_str!("../../../../../../../apps/koru-document/src/draw.rs"),
+    ),
+    (
+        "apps/koru-document/src/lib.rs",
+        include_str!("../../../../../../../apps/koru-document/src/lib.rs"),
+    ),
+    (
+        "apps/koru-document/src/main.rs",
+        include_str!("../../../../../../../apps/koru-document/src/main.rs"),
+    ),
+    (
+        "apps/koru-document/src/menu.rs",
+        include_str!("../../../../../../../apps/koru-document/src/menu.rs"),
+    ),
+    (
+        "apps/koru-document/src/page_menu.rs",
+        include_str!("../../../../../../../apps/koru-document/src/page_menu.rs"),
+    ),
+    (
+        "apps/koru-document/src/search.rs",
+        include_str!("../../../../../../../apps/koru-document/src/search.rs"),
+    ),
+    (
+        "apps/koru-document/src/spelling.rs",
+        include_str!("../../../../../../../apps/koru-document/src/spelling.rs"),
+    ),
+    (
+        "apps/koru-document/src/structure.rs",
+        include_str!("../../../../../../../apps/koru-document/src/structure.rs"),
+    ),
+    (
+        "apps/koru-document/src/view.rs",
+        include_str!("../../../../../../../apps/koru-document/src/view.rs"),
+    ),
+    (
+        "apps/koru-document/src/window_menu.rs",
+        include_str!("../../../../../../../apps/koru-document/src/window_menu.rs"),
+    ),
+    (
+        "apps/koru-agent/src/account.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/account.rs"),
+    ),
+    (
+        "apps/koru-agent/src/account/cloud_sync.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/account/cloud_sync.rs"),
+    ),
+    (
+        "apps/koru-agent/src/account/delivery.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/account/delivery.rs"),
+    ),
+    (
+        "apps/koru-agent/src/account/inventory.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/account/inventory.rs"),
+    ),
+    (
+        "apps/koru-agent/src/agents_menu.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/agents_menu.rs"),
+    ),
+    (
+        "apps/koru-agent/src/app.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/app.rs"),
+    ),
+    (
+        "apps/koru-agent/src/build_stamp.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/build_stamp.rs"),
+    ),
+    (
+        "apps/koru-agent/src/cli.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/cli.rs"),
+    ),
+    (
+        "apps/koru-agent/src/cli_updates.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/cli_updates.rs"),
+    ),
+    (
+        "apps/koru-agent/src/client.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/client.rs"),
+    ),
+    (
+        "apps/koru-agent/src/cloud_host.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/cloud_host.rs"),
+    ),
+    (
+        "apps/koru-agent/src/cloud_host/inspection.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/cloud_host/inspection.rs"),
+    ),
+    (
+        "apps/koru-agent/src/connection.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/connection.rs"),
+    ),
+    (
+        "apps/koru-agent/src/delegate_host.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/delegate_host.rs"),
+    ),
+    (
+        "apps/koru-agent/src/delegate_report.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/delegate_report.rs"),
+    ),
+    (
+        "apps/koru-agent/src/delegate_report/retained.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/delegate_report/retained.rs"),
+    ),
+    (
+        "apps/koru-agent/src/delegate_worker.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/delegate_worker.rs"),
+    ),
+    (
+        "apps/koru-agent/src/device.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/device.rs"),
+    ),
+    (
+        "apps/koru-agent/src/dictation_coordinator.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/dictation_coordinator.rs"),
+    ),
+    (
+        "apps/koru-agent/src/enrollment.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/enrollment.rs"),
+    ),
+    (
+        "apps/koru-agent/src/event.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/event.rs"),
+    ),
+    (
+        "apps/koru-agent/src/gateway_host.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/gateway_host.rs"),
+    ),
+    (
+        "apps/koru-agent/src/gateway_worker.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/gateway_worker.rs"),
+    ),
+    (
+        "apps/koru-agent/src/global_input/insertion.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/global_input/insertion.rs"),
+    ),
+    (
+        "apps/koru-agent/src/global_input/mod.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/global_input/mod.rs"),
+    ),
+    (
+        "apps/koru-agent/src/global_input/release.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/global_input/release.rs"),
+    ),
+    (
+        "apps/koru-agent/src/global_input/windows.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/global_input/windows.rs"),
+    ),
+    (
+        "apps/koru-agent/src/grants.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/grants.rs"),
+    ),
+    (
+        "apps/koru-agent/src/grants/identity.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/grants/identity.rs"),
+    ),
+    (
+        "apps/koru-agent/src/handshake.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/handshake.rs"),
+    ),
+    (
+        "apps/koru-agent/src/hotkey.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/hotkey.rs"),
+    ),
+    (
+        "apps/koru-agent/src/identity.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/identity.rs"),
+    ),
+    (
+        "apps/koru-agent/src/identity/keychain.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/identity/keychain.rs"),
+    ),
+    (
+        "apps/koru-agent/src/identity/profile_lifecycle.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/identity/profile_lifecycle.rs"),
+    ),
+    (
+        "apps/koru-agent/src/launched_by.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/launched_by.rs"),
+    ),
+    (
+        "apps/koru-agent/src/lib.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/lib.rs"),
+    ),
+    (
+        "apps/koru-agent/src/main.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/main.rs"),
+    ),
+    (
+        "apps/koru-agent/src/network.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/network.rs"),
+    ),
+    (
+        "apps/koru-agent/src/notification_activation.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/notification_activation.rs"),
+    ),
+    (
+        "apps/koru-agent/src/paths.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/paths.rs"),
+    ),
+    (
+        "apps/koru-agent/src/paths/session.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/paths/session.rs"),
+    ),
+    (
+        "apps/koru-agent/src/registry.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/registry.rs"),
+    ),
+    (
+        "apps/koru-agent/src/reminders/ledger.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/reminders/ledger.rs"),
+    ),
+    (
+        "apps/koru-agent/src/reminders/mod.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/reminders/mod.rs"),
+    ),
+    (
+        "apps/koru-agent/src/reminders/model.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/reminders/model.rs"),
+    ),
+    (
+        "apps/koru-agent/src/reminders/preferences.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/reminders/preferences.rs"),
+    ),
+    (
+        "apps/koru-agent/src/reminders/reconcile.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/reminders/reconcile.rs"),
+    ),
+    (
+        "apps/koru-agent/src/reminders/worker.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/reminders/worker.rs"),
+    ),
+    (
+        "apps/koru-agent/src/rendezvous.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/rendezvous.rs"),
+    ),
+    (
+        "apps/koru-agent/src/route.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/route.rs"),
+    ),
+    (
+        "apps/koru-agent/src/routing_log.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/routing_log.rs"),
+    ),
+    (
+        "apps/koru-agent/src/run.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/run.rs"),
+    ),
+    (
+        "apps/koru-agent/src/service.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/service.rs"),
+    ),
+    (
+        "apps/koru-agent/src/session_host.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/session_host.rs"),
+    ),
+    (
+        "apps/koru-agent/src/session_worker.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/session_worker.rs"),
+    ),
+    (
+        "apps/koru-agent/src/tray.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/tray.rs"),
+    ),
+    (
+        "apps/koru-agent/src/update.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/update.rs"),
+    ),
+    (
+        "apps/koru-agent/src/voice_window.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/voice_window.rs"),
+    ),
+    (
+        "apps/koru-agent/src/windows_identity.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/windows_identity.rs"),
     ),
 ];
 
@@ -1056,6 +1424,256 @@ pub(super) struct Root {
 
 /// The baselines, an app file at a time.
 pub(super) const ROOTS: &[Root] = &[
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/main.rs",
+        own: &["H-APP-HOST"],
+        modules: &[
+            (
+                "agent",
+                Module::Excluded(
+                    "io: the window's link to the Agent process (AgentLink, update and CLI feeds)",
+                ),
+            ),
+            ("ai_chat_view", Module::Records(&["H-APP-TAB-HOSTS"])),
+            (
+                "app_menu",
+                Module::Excluded("io: the Linux desktop entry's worker; draws nothing"),
+            ),
+            (
+                "build_stamp",
+                Module::Excluded("data: the build's branch, which the caption's branch chip draws"),
+            ),
+            ("canvas_view", Module::Records(&["C-CANVAS-TAB"])),
+            (
+                "chat_diagrams",
+                Module::Excluded(
+                    "orchestration: hands the chat's diagram requests to the diagram worker",
+                ),
+            ),
+            (
+                "console",
+                Module::Excluded("support: attaches a console on Windows; a no-op elsewhere"),
+            ),
+            ("diff", Module::Records(&["C-VERSION-COMPARE"])),
+            ("feedback", Module::Records(&["C-FEEDBACK-PAGE"])),
+            (
+                "format",
+                Module::Excluded("support: the display language and date and size wording"),
+            ),
+            (
+                "input_engine",
+                Module::Excluded("support: a thread-local text engine for input-time layout"),
+            ),
+            ("leaf", Module::Records(&["H-APP-LEAF"])),
+            ("mainview", Module::Records(&["H-MAIN-VIEW"])),
+            ("manage", Module::Records(&["C-MANAGE"])),
+            (
+                "manager_view",
+                Module::Records(&["H-MANAGER-VIEW", "C-POPOUT-CLOSE-DIALOG"]),
+            ),
+            ("mini_app", Module::Records(&["C-MINI-APP"])),
+            ("panes", Module::Records(&["C-EXPLORE"])),
+            (
+                "reminder_settings",
+                Module::Excluded(
+                    "data: the reminder preferences state and controller C-REMINDER-SETTINGS draws",
+                ),
+            ),
+            (
+                "reopen_claim",
+                Module::Excluded("io: the update reopen claim under the channel root"),
+            ),
+            ("result_document", Module::Records(&["H-APP-TAB-HOSTS"])),
+            ("result_view", Module::Records(&["H-APP-TAB-HOSTS"])),
+            ("run_view", Module::Records(&["H-APP-TAB-HOSTS"])),
+            (
+                "schedule_index",
+                Module::Excluded(
+                    "data: the scheduled delegations' index the Agents navigator reads",
+                ),
+            ),
+            (
+                "schedule_words",
+                Module::Excluded("data: how a schedule is worded"),
+            ),
+            ("search", Module::Records(&["H-APP-TAB-HOSTS"])),
+            ("session_offer", Module::Records(&["C-SESSION-OFFER"])),
+            ("session_tab", Module::Records(&["H-APP-TAB-HOSTS"])),
+            ("settings_view", Module::Records(&["H-APP-TAB-HOSTS"])),
+            ("socials_view", Module::Records(&["H-APP-TAB-HOSTS"])),
+            (
+                "support",
+                Module::Records(&["C-SUPPORT-VIEW", "C-SUPPORT-FAB"]),
+            ),
+            ("taskbar", Module::Records(&["C-JUMP-LIST"])),
+            (
+                "tasks",
+                Module::Excluded("orchestration: task command attempts and carets"),
+            ),
+            ("tasks_view", Module::Records(&["C-TASKS-VIEW"])),
+            (
+                "terminal_prefs",
+                Module::Excluded("data: process-wide terminal settings and looks"),
+            ),
+            ("trash", Module::Records(&["C-TRASH-PAGE"])),
+            (
+                "ui_lab",
+                Module::Excluded("the UI Lab itself, which this registry belongs to"),
+            ),
+            (
+                "website",
+                Module::Excluded("data: the product website's URLs"),
+            ),
+            ("welcome", Module::Records(&["C-APP-WELCOME"])),
+            (
+                "whatsnew",
+                Module::Excluded(
+                    "data: release notes and the update greeting, shown through a read-only Leaf",
+                ),
+            ),
+            (
+                "perf",
+                Module::Excluded("test-only: #[cfg(test)] keystroke-cost baselines"),
+            ),
+        ],
+    },
+    Root {
+        owner: "koru-document",
+        file: "apps/koru-document/src/lib.rs",
+        own: &["C-DOCUMENT-WINDOW"],
+        modules: &[
+            ("blockmenu", Module::Records(&["C-DOCUMENT-MENUS"])),
+            ("bubble", Module::Records(&["C-FORMAT-BUBBLE"])),
+            ("caption", Module::Records(&["C-DOCUMENT-WINDOW"])),
+            ("context_menu", Module::Records(&["C-DOCUMENT-MENUS"])),
+            (
+                "diagrams",
+                Module::Excluded("io: the line to the diagram worker"),
+            ),
+            (
+                "docview",
+                Module::Excluded(
+                    "data: the command vocabulary and caret state the bubble and menus show",
+                ),
+            ),
+            ("draw", Module::Records(&["C-DOCUMENT-WINDOW"])),
+            ("menu", Module::Records(&["C-DOCUMENT-MENUS"])),
+            ("page_menu", Module::Records(&["C-DOCUMENT-MENUS"])),
+            ("search", Module::Records(&["C-FIND-REPLACE"])),
+            (
+                "spelling",
+                Module::Excluded("support: the spell-check controller; the editor draws its marks"),
+            ),
+            (
+                "structure",
+                Module::Excluded("support: indent and outdent rules"),
+            ),
+            ("view", Module::Records(&["C-DOCUMENT-WINDOW"])),
+            ("window_menu", Module::Records(&["C-DOCUMENT-MENUS"])),
+        ],
+    },
+    Root {
+        owner: "koru-agent",
+        file: "apps/koru-agent/src/lib.rs",
+        own: &[],
+        modules: &[
+            ("account", Module::Excluded("io: account sync and delivery")),
+            (
+                "agents_menu",
+                Module::Excluded("data: the session catalog behind the tray's Agents rows"),
+            ),
+            ("app", Module::Records(&["C-AGENT-SEARCH-WINDOW"])),
+            ("build_stamp", Module::Excluded("data: the build record")),
+            ("cli", Module::Excluded("orchestration: the command line")),
+            (
+                "cli_updates",
+                Module::Excluded("io: coding-agent CLI updates"),
+            ),
+            ("client", Module::Excluded("io: the client connection")),
+            ("cloud_host", Module::Excluded("io: the Cloud host")),
+            (
+                "connection",
+                Module::Excluded("io: one window's connection"),
+            ),
+            ("delegate_host", Module::Excluded("io: delegated work")),
+            (
+                "delegate_report",
+                Module::Excluded("data: delegated work reports"),
+            ),
+            (
+                "delegate_worker",
+                Module::Excluded("io: the delegation worker"),
+            ),
+            ("device", Module::Excluded("data: this device")),
+            (
+                "dictation_coordinator",
+                Module::Excluded("orchestration: the dictation phases the voice windows show"),
+            ),
+            ("enrollment", Module::Excluded("io: device enrollment")),
+            (
+                "event",
+                Module::Excluded("data: events and the tray's asks"),
+            ),
+            ("gateway_host", Module::Excluded("io: the API gateway host")),
+            ("gateway_worker", Module::Excluded("io: the gateway worker")),
+            (
+                "global_input",
+                Module::Excluded("io: held keys and text insertion"),
+            ),
+            ("grants", Module::Excluded("data: access grants")),
+            ("handshake", Module::Excluded("io: the window handshake")),
+            (
+                "hotkey",
+                Module::Excluded("io: global shortcut registration"),
+            ),
+            (
+                "identity",
+                Module::Excluded("io: device identity and keychain"),
+            ),
+            (
+                "launched_by",
+                Module::Excluded("support: who launched the Agent"),
+            ),
+            ("network", Module::Excluded("io: networking")),
+            (
+                "notification_activation",
+                Module::Excluded("io: the Windows toast activation callback"),
+            ),
+            ("paths", Module::Excluded("data: the Agent's paths")),
+            (
+                "registry",
+                Module::Excluded("data: the connection registry"),
+            ),
+            (
+                "reminders",
+                Module::Excluded("orchestration: reminder scheduling and the system toasts"),
+            ),
+            ("rendezvous", Module::Excluded("io: rendezvous")),
+            ("route", Module::Excluded("orchestration: routing")),
+            ("routing_log", Module::Excluded("io: the routing log")),
+            (
+                "run",
+                Module::Excluded("orchestration: the Agent's window loop host and startup"),
+            ),
+            (
+                "service",
+                Module::Excluded("io: services, with the Store backup's system dialogs"),
+            ),
+            ("session_host", Module::Excluded("io: the session host")),
+            ("session_worker", Module::Excluded("io: the session worker")),
+            ("tray", Module::Records(&["C-AGENT-TRAY"])),
+            (
+                "update",
+                Module::Excluded("io: updates, with their system dialogs"),
+            ),
+            ("voice_window", Module::Records(&["C-AGENT-VOICE-WINDOWS"])),
+            (
+                "windows_identity",
+                Module::Excluded("io: sparse-package registration"),
+            ),
+        ],
+    },
     Root {
         owner: "koru",
         file: "apps/koru/src/panes/mod.rs",
