@@ -32,12 +32,14 @@ mod leaf;
 mod mainview;
 mod mini_app;
 mod pages;
+mod panes;
 mod tasks_view;
 
 pub(super) const LEAF: &[Entry] = leaf::RECORDS;
 pub(super) const MAINVIEW: &[Entry] = mainview::RECORDS;
 pub(super) const MINI_APP: &[Entry] = mini_app::RECORDS;
 pub(super) const PAGES: &[Entry] = pages::RECORDS;
+pub(super) const PANES: &[Entry] = panes::RECORDS;
 pub(super) const TASKS_VIEW: &[Entry] = tasks_view::RECORDS;
 
 /// The workspace app's owner name, as its manifest spells it.

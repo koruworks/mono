@@ -3977,13 +3977,27 @@ pub enum Key {
     UiLabProfileWaitPurpose,
     UiLabAppMenusName,
     UiLabAppMenusPurpose,
+    UiLabExploreName,
+    UiLabExplorePurpose,
+    UiLabAppsRailName,
+    UiLabAppsRailPurpose,
+    UiLabTasksRailName,
+    UiLabTasksRailPurpose,
+    UiLabHomeNavName,
+    UiLabHomeNavPurpose,
+    UiLabHomePageName,
+    UiLabHomePagePurpose,
+    UiLabExplorePopoversName,
+    UiLabExplorePopoversPurpose,
+    UiLabContextColumnName,
+    UiLabContextColumnPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3004] = [
+    pub const ALL: [Key; 3018] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6988,6 +7002,20 @@ impl Key {
         Key::UiLabProfileWaitPurpose,
         Key::UiLabAppMenusName,
         Key::UiLabAppMenusPurpose,
+        Key::UiLabExploreName,
+        Key::UiLabExplorePurpose,
+        Key::UiLabAppsRailName,
+        Key::UiLabAppsRailPurpose,
+        Key::UiLabTasksRailName,
+        Key::UiLabTasksRailPurpose,
+        Key::UiLabHomeNavName,
+        Key::UiLabHomeNavPurpose,
+        Key::UiLabHomePageName,
+        Key::UiLabHomePagePurpose,
+        Key::UiLabExplorePopoversName,
+        Key::UiLabExplorePopoversPurpose,
+        Key::UiLabContextColumnName,
+        Key::UiLabContextColumnPurpose,
     ];
 }
 
@@ -19161,4 +19189,18 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabProfileWaitPurpose, en: "What a window shows while the Profile it belongs to is still opening or cannot be reached.", es: "Lo que muestra una ventana mientras el perfil al que pertenece aún se abre o no se puede alcanzar.", pt_br: "O que uma janela mostra enquanto o perfil a que pertence ainda abre ou não pode ser alcançado.", de: "Was ein Fenster zeigt, solange das Profil, zu dem es gehört, noch öffnet oder nicht erreichbar ist.", fr: "Ce que montre une fenêtre tant que le profil auquel elle appartient s’ouvre encore ou reste injoignable.", ar: "ما تعرضه النافذة بينما لا يزال الملف الشخصي الذي تنتمي إليه يُفتح أو تتعذر الوصول إليه.", zh_hans: "窗口所属的配置文件仍在打开或无法访问时，窗口显示的内容。", ja: "ウィンドウが属するプロファイルがまだ開いている途中か、届かないときに表示する内容です。" },
     Row { key: Key::UiLabAppMenusName, en: "Container menus and launcher", es: "Menús del contenedor y lanzador", pt_br: "Menus do contêiner e lançador", de: "Menüs des Containers und Starter", fr: "Menus du conteneur et lanceur", ar: "قوائم الحاوية والمشغّل", zh_hans: "容器菜单与启动器", ja: "コンテナーのメニューとランチャー" },
     Row { key: Key::UiLabAppMenusPurpose, en: "The right-click, window, workspace and pinned mini app menus the container opens, the new-item launcher and the where-to-open chooser.", es: "Los menús contextual, de ventana, de espacio de trabajo y de miniapps fijadas que abre el contenedor, el lanzador de elementos nuevos y el selector de dónde abrir.", pt_br: "Os menus de contexto, de janela, de espaço de trabalho e de miniapps fixados que o contêiner abre, o lançador de novos itens e o seletor de onde abrir.", de: "Die Kontext-, Fenster-, Arbeitsbereichs- und Mini-App-Menüs, die der Container öffnet, der Starter für Neues und die Auswahl, wo geöffnet wird.", fr: "Les menus contextuel, de fenêtre, d’espace de travail et des mini-apps épinglées qu’ouvre le conteneur, le lanceur de nouveaux éléments et le choix de l’endroit où ouvrir.", ar: "قوائم النقر الأيمن والنافذة ومساحة العمل والتطبيقات المصغرة المثبتة التي تفتحها الحاوية، ومشغّل العناصر الجديدة، ومنتقي مكان الفتح.", zh_hans: "容器打开的右键、窗口、工作区和已固定小应用菜单，新建项启动器和打开位置选择器。", ja: "コンテナーが開く右クリック、ウィンドウ、ワークスペース、ピン留めしたミニアプリのメニュー、新規作成のランチャー、開く場所の選択です。" },
+    Row { key: Key::UiLabExploreName, en: "Explore column", es: "Columna Explorar", pt_br: "Coluna Explorar", de: "Explore-Spalte", fr: "Colonne Explorer", ar: "عمود الاستكشاف", zh_hans: "浏览栏", ja: "エクスプローラー列" },
+    Row { key: Key::UiLabExplorePurpose, en: "The sidebar’s main column: the chosen navigator’s rows (documents, files, chats, agents, artifacts, canvases), their headings and the library’s actions.", es: "La columna principal de la barra lateral: las filas del navegador elegido (documentos, archivos, chats, agentes, artefactos, lienzos), sus títulos y las acciones de la biblioteca.", pt_br: "A coluna principal da barra lateral: as linhas do navegador escolhido (documentos, arquivos, chats, agentes, artefatos, telas), seus títulos e as ações da biblioteca.", de: "Die Hauptspalte der Seitenleiste: die Zeilen des gewählten Navigators (Dokumente, Dateien, Chats, Agenten, Artefakte, Leinwände), ihre Überschriften und die Aktionen der Bibliothek.", fr: "La colonne principale de la barre latérale : les lignes du navigateur choisi (documents, fichiers, chats, agents, artefacts, canevas), leurs titres et les actions de la bibliothèque.", ar: "العمود الرئيسي في الشريط الجانبي: صفوف المتصفح المختار (المستندات والملفات والمحادثات والوكلاء والمنتجات واللوحات) وعناوينها وإجراءات المكتبة.", zh_hans: "侧边栏的主栏：所选导航器的行（文档、文件、聊天、代理、成果、画布）、其标题以及资料库的操作。", ja: "サイドバーの主な列。選んだナビゲーターの行（文書、ファイル、チャット、エージェント、成果物、キャンバス）、その見出し、ライブラリの操作です。" },
+    Row { key: Key::UiLabAppsRailName, en: "Apps rail", es: "Riel de aplicaciones", pt_br: "Trilho de aplicativos", de: "App-Leiste", fr: "Rail des applications", ar: "شريط التطبيقات", zh_hans: "应用轨道", ja: "アプリのレール" },
+    Row { key: Key::UiLabAppsRailPurpose, en: "The squares down the sidebar’s left edge: open workspaces, the navigator views in the person’s order, pinned mini apps, and help, settings and profile at the foot.", es: "Los cuadrados del borde izquierdo de la barra lateral: espacios de trabajo abiertos, las vistas del navegador en el orden de la persona, miniapps fijadas, y ayuda, ajustes y perfil al pie.", pt_br: "Os quadrados na borda esquerda da barra lateral: espaços de trabalho abertos, as visões do navegador na ordem da pessoa, miniapps fixados, e ajuda, ajustes e perfil no pé.", de: "Die Quadrate am linken Rand der Seitenleiste: offene Arbeitsbereiche, die Navigator-Ansichten in der eigenen Reihenfolge, angeheftete Mini-Apps und unten Hilfe, Einstellungen und Profil.", fr: "Les carrés le long du bord gauche de la barre latérale : espaces de travail ouverts, vues du navigateur dans l’ordre choisi, mini-apps épinglées, et aide, réglages et profil en bas.", ar: "المربعات على الحافة اليسرى للشريط الجانبي: مساحات العمل المفتوحة، وعروض المتصفح بترتيب الشخص، والتطبيقات المصغرة المثبتة، والمساعدة والإعدادات والملف الشخصي في الأسفل.", zh_hans: "侧边栏左缘的一列方块：打开的工作区、按个人顺序排列的导航视图、已固定的小应用，底部是帮助、设置和配置文件。", ja: "サイドバー左端に並ぶ四角。開いているワークスペース、本人の順に並べたナビゲーターのビュー、ピン留めしたミニアプリ、下端のヘルプ・設定・プロファイルです。" },
+    Row { key: Key::UiLabTasksRailName, en: "Tasks rail", es: "Riel de tareas", pt_br: "Trilho de tarefas", de: "Aufgabenleiste", fr: "Rail des tâches", ar: "شريط المهام", zh_hans: "任务轨道", ja: "タスクのレール" },
+    Row { key: Key::UiLabTasksRailPurpose, en: "The Tasks navigator: the task buckets with their counts, Reminders, the workspace’s lists with a field for a new one, and Completed.", es: "El navegador de tareas: los grupos de tareas con sus recuentos, Recordatorios, las listas del espacio de trabajo con un campo para una nueva, y Completadas.", pt_br: "O navegador de tarefas: os grupos de tarefas com suas contagens, Lembretes, as listas do espaço de trabalho com um campo para uma nova, e Concluídas.", de: "Der Aufgaben-Navigator: die Aufgabenbereiche mit ihren Zahlen, Erinnerungen, die Listen des Arbeitsbereichs mit einem Feld für eine neue, und Erledigt.", fr: "Le navigateur des tâches : les groupes de tâches avec leurs nombres, Rappels, les listes de l’espace de travail avec un champ pour une nouvelle, et Terminées.", ar: "متصفح المهام: مجموعات المهام مع أعدادها، والتذكيرات، وقوائم مساحة العمل مع حقل لقائمة جديدة، والمكتملة.", zh_hans: "任务导航器：带计数的任务分组、提醒、工作区的列表及新建列表的输入框，以及已完成。", ja: "タスクのナビゲーター。件数付きのタスク区分、リマインダー、新しいリストの欄付きのワークスペースのリスト、完了です。" },
+    Row { key: Key::UiLabHomeNavName, en: "Home rows", es: "Filas de Inicio", pt_br: "Linhas do Início", de: "Start-Zeilen", fr: "Lignes d’accueil", ar: "صفوف الرئيسية", zh_hans: "首页行", ja: "ホームの行" },
+    Row { key: Key::UiLabHomeNavPurpose, en: "The fixed rows the explore column shows in Home mode: Inbox, Today, Upcoming and the recent documents.", es: "Las filas fijas que muestra la columna Explorar en modo Inicio: Bandeja de entrada, Hoy, Próximas y los documentos recientes.", pt_br: "As linhas fixas que a coluna Explorar mostra no modo Início: Caixa de entrada, Hoje, Em breve e os documentos recentes.", de: "Die festen Zeilen, die die Explore-Spalte im Startmodus zeigt: Eingang, Heute, Demnächst und die zuletzt geöffneten Dokumente.", fr: "Les lignes fixes que la colonne Explorer affiche en mode Accueil : Boîte de réception, Aujourd’hui, À venir et les documents récents.", ar: "الصفوف الثابتة التي يعرضها عمود الاستكشاف في وضع الرئيسية: الوارد واليوم والقادم والمستندات الحديثة.", zh_hans: "浏览栏在首页模式下显示的固定行：收件箱、今天、即将到来和最近的文档。", ja: "ホームモードでエクスプローラー列が示す固定の行。受信箱、今日、今後、最近の文書です。" },
+    Row { key: Key::UiLabHomePageName, en: "Home page", es: "Página de inicio", pt_br: "Página inicial", de: "Startseite", fr: "Page d’accueil de l’espace", ar: "الصفحة الرئيسية", zh_hans: "主页", ja: "ホームページ" },
+    Row { key: Key::UiLabHomePagePurpose, en: "The Home tab: a greeting, the day’s numbers, what is due today, documents to continue and the agents at work.", es: "La pestaña Inicio: un saludo, las cifras del día, lo que vence hoy, documentos para continuar y los agentes trabajando.", pt_br: "A aba Início: uma saudação, os números do dia, o que vence hoje, documentos para continuar e os agentes em ação.", de: "Der Start-Tab: ein Gruß, die Zahlen des Tages, was heute fällig ist, Dokumente zum Weitermachen und die arbeitenden Agenten.", fr: "L’onglet Accueil : un salut, les chiffres du jour, ce qui est dû aujourd’hui, les documents à reprendre et les agents à l’œuvre.", ar: "تبويب الرئيسية: تحية وأرقام اليوم وما يستحق اليوم ومستندات للمتابعة والوكلاء العاملون.", zh_hans: "首页标签页：问候语、当天的数字、今天到期的事项、可继续的文档和正在工作的代理。", ja: "ホームのタブ。あいさつ、今日の数字、今日が期限のもの、続きを書く文書、作業中のエージェントです。" },
+    Row { key: Key::UiLabExplorePopoversName, en: "Sidebar popovers", es: "Paneles emergentes de la barra lateral", pt_br: "Painéis da barra lateral", de: "Popover der Seitenleiste", fr: "Fenêtres de la barre latérale", ar: "النوافذ المنبثقة للشريط الجانبي", zh_hans: "侧边栏弹出框", ja: "サイドバーのポップオーバー" },
+    Row { key: Key::UiLabExplorePopoversPurpose, en: "The workspace and profile switcher pages, the help and release notes popover and the library actions, written as element rows of tiles, names and a trailing gear.", es: "Las páginas para cambiar de espacio de trabajo y de perfil, el panel de ayuda y notas de versión y las acciones de la biblioteca, escritos como filas de elementos con mosaicos, nombres y un engranaje final.", pt_br: "As páginas para trocar de espaço de trabalho e de perfil, o painel de ajuda e notas de versão e as ações da biblioteca, escritos como linhas de elementos com blocos, nomes e uma engrenagem no fim.", de: "Die Seiten zum Wechseln von Arbeitsbereich und Profil, das Hilfe- und Versionshinweis-Popover und die Bibliotheksaktionen, als Elementzeilen mit Kacheln, Namen und einem Zahnrad am Ende.", fr: "Les pages de changement d’espace de travail et de profil, la fenêtre d’aide et de notes de version et les actions de la bibliothèque, écrites en lignes d’éléments avec tuiles, noms et engrenage final.", ar: "صفحتا تبديل مساحة العمل والملف الشخصي، ونافذة المساعدة وملاحظات الإصدار، وإجراءات المكتبة، مكتوبة كصفوف عناصر من مربعات وأسماء وترس في النهاية.", zh_hans: "切换工作区和配置文件的页面、帮助与发行说明弹出框以及资料库操作，以带图块、名称和末尾齿轮的元素行写成。", ja: "ワークスペースとプロファイルの切り替えページ、ヘルプとリリースノートのポップオーバー、ライブラリの操作。タイル、名前、末尾の歯車からなる要素の行で書かれています。" },
+    Row { key: Key::UiLabContextColumnName, en: "Context column", es: "Columna de contexto", pt_br: "Coluna de contexto", de: "Kontextspalte", fr: "Colonne de contexte", ar: "عمود السياق", zh_hans: "上下文栏", ja: "コンテキスト列" },
+    Row { key: Key::UiLabContextColumnPurpose, en: "The right-hand column about the selected item: its history, comments, assets, reminders, tasks and Cloud sync, a section at a time.", es: "La columna derecha sobre el elemento seleccionado: su historial, comentarios, recursos, recordatorios, tareas y sincronización en la nube, una sección a la vez.", pt_br: "A coluna da direita sobre o item selecionado: seu histórico, comentários, recursos, lembretes, tarefas e sincronização na nuvem, uma seção por vez.", de: "Die rechte Spalte zum gewählten Element: Verlauf, Kommentare, Anhänge, Erinnerungen, Aufgaben und Cloud-Synchronisation, ein Abschnitt nach dem anderen.", fr: "La colonne de droite sur l’élément choisi : son historique, ses commentaires, ses ressources, ses rappels, ses tâches et sa synchronisation cloud, une section à la fois.", ar: "العمود الأيمن الخاص بالعنصر المحدد: سجله وتعليقاته وأصوله وتذكيراته ومهامه ومزامنته السحابية، قسمًا تلو الآخر.", zh_hans: "关于所选项目的右侧栏：历史、评论、资源、提醒、任务和云同步，一次一个部分。", ja: "選んだ項目についての右側の列。履歴、コメント、資料、リマインダー、タスク、クラウド同期を1区分ずつ示します。" },
 ];

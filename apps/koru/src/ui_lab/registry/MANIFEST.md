@@ -109,41 +109,41 @@ fail until this table says what they compute.
 | domain crate lib.rs public modules | 121 |
 | domain crate modules excluded | 73 |
 | app crates baselined | 1 |
-| app source files | 189 |
-| app files baselined | 15 |
-| app modules classified | 128 |
-| app modules excluded | 52 |
-| records: app crates | 45 |
-| records | 278 |
+| app source files | 216 |
+| app files baselined | 18 |
+| app modules classified | 151 |
+| app modules excluded | 59 |
+| records: app crates | 52 |
+| records | 285 |
 | records: foundations | 59 |
 | records: controls | 77 |
-| records: application compositions | 142 |
+| records: application compositions | 149 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
 | kind: support | 70 |
 | kind: domain composition | 57 |
-| kind: app-local | 41 |
+| kind: app-local | 48 |
 | token values listed | 174 |
-| symbols | 2103 |
+| symbols | 2141 |
 | symbols with typed recipes | 2 |
 | inspector identities | 60 |
 | inspector identity registration sites | 63 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 198 |
+| disposition: no story yet | 205 |
 | disposition: nonvisual | 61 |
 | disposition: platform-only | 0 |
 | disposition: boundary | 18 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 421 |
-| symbol story: nonvisual | 1531 |
+| symbol story: no story yet | 437 |
+| symbol story: nonvisual | 1553 |
 | symbol story: boundary | 150 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2051 |
+| A2UI: not supported | 2089 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1111,8 +1111,11 @@ Records (* minted here, `C-` and the thing's name):
   `C-COMPOSITION-HOST`* — above.
 - `C-TASKS-VIEW`* (`TasksView`) — the whole Tasks page: heading
   (`heading::tree`, an element tree), chips and overflow menu, capture row,
-  rows on `koru_ui::table` with `C-ROW-ATTRIBUTE-CHIPS` and the editor's
-  picker tables (`pickers.rs`).
+  rows as a local element tree (`row.rs`) whose chips are `C-LABEL-CHIP`,
+  and pickers that are the view's own state drawn with `C-MENU` and
+  `C-DATE-GRID`, borrowing only the editor priority picker's `LABELS` and
+  `LEVELS` (`pickers.rs`). It does not draw `C-ROW-GUTTER` or
+  `C-ROW-ATTRIBUTE-CHIPS`; batch 2b's note that it does is wrong.
 - `H-APP-LEAF`* (`Leaf`) — support: the app's `impl Editing for Leaf` and
   `impl View for Leaf` over `koru_document::BuiltInDocument`, which embeds
   `koru_editor::Editor`; every draw call is delegated, so it paints nothing
@@ -1302,6 +1305,37 @@ Defects found here (not fixed):
   so **batch 2b's note that it is compiled under test is wrong** — it is
   not compiled at all; `draw.rs`'s module doc says the caption paints
   last, and the columns, cards, menus and modals all draw after it.
+
+### Part 4 — the side columns (`panes`)
+
+28 non-test files (`explore/popover_baseline.rs` is test-only). Read in
+full by the delegated readers except `explore.rs` (8,517 lines) by
+declarations — every item, `ExploreView`'s fields and draw entry points,
+every inspector scope; the rest searched. 23 modules baselined across
+`panes/mod.rs`, `panes/explore.rs` and `panes/sidebar/mod.rs`.
+
+Records (* minted): `C-EXPLORE`* (the explore column; its scopes are the
+containers `KoruRail`, `KoruLane`, `ExploreTabs`, `ExploreNodes`,
+`ExploreRow`, `ExploreFooter`; its ellipsis is `C-ICON-BUTTON`),
+`C-APPS-RAIL`* (the sidebar's squares, with the mini-app pin group of
+PINS.md), `C-TASKS-RAIL`*, `C-HOME-NAV`* (COMPONENTS.md's WF06
+**KoruHomeNav**, which is `HomeNav` in the source), `C-HOME-PAGE`* (WF07
+**KoruHomePage**, `HomePage`), `C-EXPLORE-POPOVERS`* (the workspace and
+profile switcher pages written as elements, the help popover, the library
+actions), `C-CONTEXT-COLUMN`*. None registers a component identity.
+`fold.rs` is excluded as dead code.
+
+Docs and source disagree (not fixed): COMPONENTS.md WF02's
+`panes/sidebar/apps_row.rs` and WF03's `panes/sidebar/floor.rs` no longer
+exist (the apps are the rail squares above; a test asserts no
+`KoruAppsRow` or `KoruFloor` record), and `panes/sidebar/floor/tests.rs`
+is still tracked though no `mod floor` compiles it; the names
+`KoruHomeNav` and `KoruHomePage` appear nowhere in code; COMPONENTS.md's
+**Explore ellipsis** (UI-012) is stale — `explore/actions.rs` `draw_dots`
+already draws `koru_ui::icon_button::draw_with`; the profile switcher row
+described in COMPONENTS.md is stale against `popover_elements/profiles.rs`;
+`explore/rail.rs` is the Tasks rail, not the apps rail; there is no
+`impl View` for `ExploreView`, a chrome pane drawn by inherent methods.
 
 ### What batches 2a and 2b left for this batch
 

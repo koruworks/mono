@@ -614,6 +614,118 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/mini_app/refinement.rs"),
     ),
     (
+        "apps/koru/src/panes/context.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/context.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/accessibility.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/accessibility.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/accessibility/chats.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/accessibility/chats.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/actions.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/actions.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/apps_rail_drag.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/apps_rail_drag.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/apps_rail_drag/workspaces.rs",
+        include_str!(
+            "../../../../../../../apps/koru/src/panes/explore/apps_rail_drag/workspaces.rs"
+        ),
+    ),
+    (
+        "apps/koru/src/panes/explore/apps_rail_elements.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/apps_rail_elements.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/canvases.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/canvases.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/heading_elements.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/heading_elements.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/help.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/help.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/home_nav.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/home_nav.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/organization_sync.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/organization_sync.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/popover_elements.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/popover_elements.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/popover_elements/profiles.rs",
+        include_str!(
+            "../../../../../../../apps/koru/src/panes/explore/popover_elements/profiles.rs"
+        ),
+    ),
+    (
+        "apps/koru/src/panes/explore/rail.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/rail.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/rail/accessibility.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/rail/accessibility.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/rail_overflow.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/rail_overflow.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/slides.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/slides.rs"),
+    ),
+    (
+        "apps/koru/src/panes/explore/workspace_menu_elements.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/workspace_menu_elements.rs"),
+    ),
+    (
+        "apps/koru/src/panes/fold.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/fold.rs"),
+    ),
+    (
+        "apps/koru/src/panes/home/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/home/mod.rs"),
+    ),
+    (
+        "apps/koru/src/panes/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/mod.rs"),
+    ),
+    (
+        "apps/koru/src/panes/sidebar/apps_rail.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/sidebar/apps_rail.rs"),
+    ),
+    (
+        "apps/koru/src/panes/sidebar/mod.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/sidebar/mod.rs"),
+    ),
+    (
+        "apps/koru/src/panes/sidebar/rail_elements.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/sidebar/rail_elements.rs"),
+    ),
+    (
+        "apps/koru/src/panes/sidebar/rail_order.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/sidebar/rail_order.rs"),
+    ),
+    (
         "apps/koru/src/result_document.rs",
         include_str!("../../../../../../../apps/koru/src/result_document.rs"),
     ),
@@ -944,6 +1056,76 @@ pub(super) struct Root {
 
 /// The baselines, an app file at a time.
 pub(super) const ROOTS: &[Root] = &[
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/panes/mod.rs",
+        own: &[],
+        modules: &[
+            ("context", Module::Records(&["C-CONTEXT-COLUMN"])),
+            ("explore", Module::Records(&["C-EXPLORE"])),
+            (
+                "fold",
+                Module::Excluded(
+                    "dead code: every painting item is #[allow(dead_code)], unconstructed since the ADR-262 move",
+                ),
+            ),
+            ("home", Module::Records(&["C-HOME-PAGE"])),
+            ("sidebar", Module::Records(&["C-APPS-RAIL"])),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/panes/explore.rs",
+        own: &["C-EXPLORE"],
+        modules: &[
+            ("accessibility", Module::Records(&["C-EXPLORE"])),
+            ("actions", Module::Records(&["C-EXPLORE"])),
+            (
+                "apps_rail_drag",
+                Module::Excluded("orchestration: dragging a rail square to reorder it"),
+            ),
+            ("apps_rail_elements", Module::Records(&["C-APPS-RAIL"])),
+            (
+                "canvases",
+                Module::Excluded("data: the canvas rows the explore list paints"),
+            ),
+            ("heading_elements", Module::Records(&["C-EXPLORE"])),
+            ("home_nav", Module::Records(&["C-HOME-NAV"])),
+            (
+                "organization_sync",
+                Module::Excluded("data: the sync state behind the visible sync word"),
+            ),
+            ("rail", Module::Records(&["C-TASKS-RAIL"])),
+            (
+                "rail_overflow",
+                Module::Excluded("data: which rail items fit and which go to More views"),
+            ),
+            (
+                "slides",
+                Module::Excluded("support: the rows' vertical slide offsets; draws nothing"),
+            ),
+            (
+                "workspace_menu_elements",
+                Module::Records(&["C-EXPLORE-POPOVERS"]),
+            ),
+            ("help", Module::Records(&["C-EXPLORE-POPOVERS"])),
+            (
+                "popover_baseline",
+                Module::Excluded("test-only: #[cfg(test)] baseline of the popovers' geometry"),
+            ),
+            ("popover_elements", Module::Records(&["C-EXPLORE-POPOVERS"])),
+        ],
+    },
+    Root {
+        owner: "koru",
+        file: "apps/koru/src/panes/sidebar/mod.rs",
+        own: &[],
+        modules: &[
+            ("apps_rail", Module::Records(&["C-APPS-RAIL"])),
+            ("rail_elements", Module::Records(&["C-APPS-RAIL"])),
+            ("rail_order", Module::Records(&["C-APPS-RAIL"])),
+        ],
+    },
     Root {
         owner: "koru",
         file: "apps/koru/src/mainview/mod.rs",
