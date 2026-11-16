@@ -17,8 +17,9 @@
 //!
 //! ```text
 //! col  UI Lab                         the window, on the ground surface
-//!   row  Caption                      the navigator's toggle; the title; the
-//!                                     properties' toggle; the shared window controls
+//!   row  Caption                      the Koru mark; the title; the navigator's
+//!                                     toggle; then, at the end, the properties'
+//!                                     toggle and the shared window controls
 //!   row  Workbench                    from the caption to the bottom of the window
 //!     col  Navigator                  the catalog              (navigator.rs)
 //!     col  Centre
@@ -28,7 +29,7 @@
 //! ```
 //!
 //! **The preview is always there; the columns beside it fold away.** Each
-//! has a toggle at its own end of the caption and a chord: the primary
+//! has a toggle in the caption and a chord: the primary
 //! modifier with B for the navigator and J for the properties, wherever the
 //! keyboard is. A window too narrow for both shows the
 //! navigator and hides the properties until asked, and opening one in a
@@ -63,7 +64,7 @@ use koru_draw::scene;
 use koru_draw::text::TextEngine;
 use koru_draw::theme::{self, Ink, Line, Profile, Radius, Surface, alias, roles};
 use koru_ui::button::{self, ActionButton, ActionStyle};
-use koru_ui::{InputStyle, Segmented, TextInput, Typed, caption, icon_button};
+use koru_ui::{InputStyle, Segmented, TextInput, Typed, caption};
 use koru_window::{ImeEvent, RichKeyEvent, WindowApp, WindowRequest};
 use vello::Scene;
 use vello::kurbo::Affine;
@@ -81,6 +82,8 @@ use super::tokens::*;
 
 /// The caption row: the band that drags the window and holds its controls.
 const CAPTION: Key = Key::surface("ui-lab", "caption");
+/// The Koru mark in the caption's leading slot.
+const MARK: Key = Key::surface("ui-lab", "mark");
 /// The toolbar's Reset.
 const RESET: Key = Key::surface("ui-lab", "reset");
 /// The panel the component under test stands on, and the box that clips it.
@@ -212,6 +215,42 @@ static ENTRY_STATES: StateRecipe = StateRecipe {
     selected_pressed: Look::bg(Surface::Selected),
     disabled: Look::NONE,
     focus: Some(Ring::Line(Line::Focus)),
+};
+
+/// **A column toggle's states**: nothing at rest, whether its column shows
+/// or not; the hover plate under the pointer; the focus ring while the
+/// keyboard is on it. A shown column is said by the glyph's filled form and
+/// by nothing else: no accent, no lit plate.
+static TOGGLE_STATES: StateRecipe = StateRecipe {
+    name: "ui lab column toggle",
+    base: Look::NONE,
+    selected: Look::NONE,
+    hover: Look::bg(Surface::Hover),
+    pressed: Look::bg(Surface::Hover),
+    selected_hover: Look::bg(Surface::Hover),
+    selected_pressed: Look::bg(Surface::Hover),
+    disabled: Look::NONE,
+    focus: Some(Ring::Line(Line::Focus)),
+};
+
+/// **A column toggle's glyph**: the caption's ordinary icon ink at rest and
+/// the text ink under the pointer, the same whether its column shows or not.
+static TOGGLE_INK: StateRecipe = StateRecipe {
+    name: "ui lab column toggle glyph",
+    base: Look::NONE,
+    selected: Look::NONE,
+    hover: Look {
+        bg: None,
+        ink: Some(Ink::Primary),
+    },
+    pressed: Look {
+        bg: None,
+        ink: Some(Ink::Primary),
+    },
+    selected_hover: Look::NONE,
+    selected_pressed: Look::NONE,
+    disabled: Look::NONE,
+    focus: None,
 };
 
 /// **A frame that only shows the keyboard**: nothing of its own but the
@@ -1094,47 +1133,63 @@ impl Lab {
     /// view.
     fn tree(&self, engine: &mut TextEngine, width: f32, height: f32) -> El {
         let columns = self.columns(width);
+        // A column's toggle, as elements: a square that lights under the
+        // pointer and wears the focus ring, holding the pane glyph. The
+        // glyph is filled while the column shows and outlined while it does
+        // not, in the same ink either way.
         let toggle = |side: Side| {
-            ringed(
-                "Column toggle",
-                side.toggle(),
-                el::leaf(
-                    "Column toggle button",
-                    Slot {
-                        width: TOGGLE_SIZE.value,
-                        height: TOGGLE_SIZE.value,
-                    },
-                )
-                .semantic()
+            let shown = columns.shows(side);
+            let glyph = el::icon(side.glyph(), koru_draw::theme::IconSize::Caption)
+                .decorative()
+                .fill()
+                .activity([side.toggle()])
+                .states(&TOGGLE_INK);
+            el::boxed("Column toggle")
+                .w(TOGGLE_SIZE)
+                .h(TOGGLE_SIZE)
+                .radius(Radius::M)
+                .states(&TOGGLE_STATES)
                 .id(side.toggle())
                 .hit()
                 .focusable()
                 // Published as a button that is on while its column shows.
                 .semantics(Role::Button)
                 .name(side.name())
-                .selected(columns.shows(side))
+                .selected(shown)
                 .action(el::Action::Click)
-                .action(el::Action::Focus),
-            )
+                .action(el::Action::Focus)
+                .child(if shown { glyph.filled() } else { glyph })
         };
-        // The caption: each column's toggle at its own end, the title
-        // between them, and the window's three controls last. Everything
-        // that is not one of those buttons drags the window.
+        // The caption, as the ordinary Koru window leads its own: the Koru
+        // mark in the leading slot, one caption square wide, then the title,
+        // then the navigator's toggle; at the other end the properties'
+        // toggle and the window's three controls. Everything that is not a
+        // button drags the window, the mark and the title included.
         let caption = el::row("Caption")
             .id(CAPTION)
             .h(CAPTION_HEIGHT)
-            .pad_start(CAPTION_INSET)
             .gap(CAPTION_GAP)
             .items_center()
-            .child(toggle(Side::Navigator))
+            .child(
+                el::leaf(
+                    "Koru mark",
+                    Slot {
+                        width: CAPTION_HEIGHT.value,
+                        height: CAPTION_HEIGHT.value,
+                    },
+                )
+                .decorative()
+                .id(MARK),
+            )
             .child(
                 el::text(text(koru_i18n::Key::UiLabTitle))
                     .named("Window title")
                     .role(roles::ROW)
                     .ink(Ink::Secondary)
-                    .fill()
                     .truncate(),
             )
+            .child(toggle(Side::Navigator))
+            .child(el::spacer())
             .child(toggle(Side::Properties))
             .child(el::boxed("Window controls").w(CAPTION_CONTROLS));
 
@@ -1636,7 +1691,6 @@ impl Lab {
         let reset_search = text(koru_i18n::Key::UiLabResetSearch);
         let search = text(koru_i18n::Key::UiLabSearch);
         // Each dropdown's value in force, and whether its list is open.
-        let toggles = Side::ALL.map(|side| (side.toggle(), side.glyph(), columns.shows(side)));
         let dropdowns: Vec<(Key, String, bool)> = Setting::ALL
             .into_iter()
             .map(|setting| setting.key())
@@ -1710,23 +1764,19 @@ impl Lab {
                         state.focused,
                     );
                     scene.pop_layer();
-                } else if let Some((_, glyph, open)) =
-                    toggles.iter().find(|(toggle, _, _)| *toggle == key)
-                {
-                    // The app's own pane toggle: lit while its pane shows.
-                    icon_button::draw_with(
-                        scene,
-                        root,
-                        engine,
-                        rect,
-                        *glyph,
-                        icon_button::State {
-                            hovered: state.hovered,
-                            active: *open,
-                            disabled: false,
-                        },
-                        icon_button::Metrics::INLINE,
-                    );
+                } else if key == MARK {
+                    // The shared mark, as the ordinary caption draws it: 16
+                    // in the text color, centred in its slot. A logo is not a
+                    // verb, so it has no plate and no hover.
+                    let size = CAPTION_MARK.value;
+                    koru_ui::logo::KoruLogo::new(size)
+                        .tint(theme::p().text)
+                        .draw(
+                            scene,
+                            root,
+                            rect.x + (rect.w - size) * 0.5,
+                            rect.y + (rect.h - size) * 0.5,
+                        );
                 } else if let Some((_, value, open)) =
                     dropdowns.iter().find(|(owner, _, _)| *owner == key)
                 {

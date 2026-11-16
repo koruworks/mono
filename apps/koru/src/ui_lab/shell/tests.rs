@@ -1235,12 +1235,24 @@ fn the_caption_holds_the_toggles_and_drags_everywhere_else() {
                         "{context}: {toggle:?} leaves {caption:?}"
                     );
                 }
-                // Left to right: toggle, title, toggle, the window's controls.
-                assert!(navigator.x >= caption.x, "{context}");
-                assert!(navigator.x + navigator.w <= title.x, "{context}");
-                assert!(title.x + title.w <= properties.x, "{context}");
-                assert!(properties.x + properties.w <= minimise.x, "{context}");
+                // Left to right: the Koru mark, the title, the navigator's
+                // toggle; then, at the end, the properties' toggle and the
+                // window's controls.
+                let mark = frame.node(MARK).unwrap().rect;
+                let gap = CAPTION_GAP.token.px(Profile::Desktop);
+                assert_eq!((mark.x, mark.y), (caption.x, caption.y), "{context}");
+                assert_eq!((mark.w, mark.h), (theme::CAPTION_H, theme::CAPTION_H));
+                assert_eq!(title.x, mark.x + mark.w + gap, "{context}");
+                assert_eq!(navigator.x, title.x + title.w + gap, "{context}");
+                assert!(navigator.x + navigator.w <= properties.x, "{context}");
+                assert_eq!(properties.x + properties.w + gap, minimise.x, "{context}");
                 assert!(title.w > 0.0, "{context}: the title has room");
+                // The mark is not a button: it cannot be pressed or tabbed
+                // to, and it drags the window like the title beside it.
+                let (mx, my) = mark.centre();
+                assert_eq!(lab.hit_at(mx, my), None, "{context}");
+                assert!(lab.is_caption(mx, my), "{context}: the mark drags");
+                assert!(!lab.laid.as_ref().unwrap().stops().contains(&MARK));
                 // The focus ring's box is inside the caption too.
                 for ring in frame.named("Column toggle") {
                     assert!(ring.rect.y >= caption.y);
@@ -1256,8 +1268,11 @@ fn the_caption_holds_the_toggles_and_drags_everywhere_else() {
                 }
                 let (tx, ty) = title.centre();
                 assert!(lab.is_caption(tx, ty), "{context}: the title drags");
-                let between = (properties.x + properties.w + minimise.x) * 0.5;
-                assert!(lab.is_caption(between, ty) || properties.x + properties.w == minimise.x);
+                let between = (navigator.x + navigator.w + properties.x) * 0.5;
+                assert!(
+                    lab.is_caption(between, ty),
+                    "{context}: the empty band drags"
+                );
                 assert!(
                     lab.is_caption(navigator.x + navigator.w + 3.0, ty),
                     "{context}"
@@ -1603,5 +1618,63 @@ fn a_column_chord_in_a_narrow_window_keeps_the_preview() {
         assert!(chord(&mut lab, &mut engine, "b", SMALLEST));
         assert_eq!(regions(&lab), (true, true, false));
         assert_sound(&lab, "after the chords");
+    });
+}
+
+/// A column's toggle says its column shows by its glyph's filled form and by
+/// nothing else: at rest it has no plate and its glyph has the caption's
+/// ordinary ink, whether the column shows or not. Under the pointer it has
+/// the ordinary hover plate. The state still reaches a screen reader, which
+/// is tested with the tree.
+#[test]
+fn a_column_toggle_is_lit_by_nothing_but_its_glyph() {
+    english(|| {
+        let (mut lab, mut engine) = drawn(SIZE);
+        // The toggle's own look, and its glyph's: the first child.
+        let looks = |lab: &Lab, key: Key| {
+            let frame = frame(lab);
+            let at = frame
+                .nodes
+                .iter()
+                .position(|node| node.key == Some(key))
+                .unwrap();
+            (frame.nodes[at].look, frame.nodes[at + 1].look)
+        };
+        let shown = looks(&lab, PROPERTIES_TOGGLE);
+        assert_eq!(shown, (Look::NONE, Look::NONE), "no plate, no tint");
+        assert_eq!(
+            frame(&lab).node(PROPERTIES_TOGGLE).unwrap().selected,
+            Some(true)
+        );
+        // Hidden: exactly the same paint. Only the glyph's form differs.
+        lab.set_column(Side::Properties, false);
+        draw(&mut lab, &mut engine, SIZE);
+        assert_eq!(looks(&lab, PROPERTIES_TOGGLE), shown);
+        assert_eq!(
+            frame(&lab).node(PROPERTIES_TOGGLE).unwrap().selected,
+            Some(false)
+        );
+        // Under the pointer: the ordinary hover plate and the text ink, on
+        // or off, and never the accent.
+        for open in [false, true] {
+            lab.set_column(Side::Properties, open);
+            draw(&mut lab, &mut engine, SIZE);
+            let (x, y) = centre(&lab, PROPERTIES_TOGGLE);
+            lab.pointer_moved(x, y);
+            draw(&mut lab, &mut engine, SIZE);
+            let (plate, glyph) = looks(&lab, PROPERTIES_TOGGLE);
+            assert_eq!(plate.bg, Some(Surface::Hover), "open: {open}");
+            assert_eq!(glyph.ink, Some(Ink::Primary), "open: {open}");
+            assert_eq!(glyph.bg, None);
+            lab.pointer_left();
+        }
+        // The keyboard's mark is the ring, on the toggle itself.
+        lab.set_focus(&mut engine, Some(NAVIGATOR_TOGGLE));
+        draw(&mut lab, &mut engine, SIZE);
+        let toggle = frame(&lab).node(NAVIGATOR_TOGGLE).unwrap();
+        assert!(toggle.state.focused && toggle.ring.is_some());
+        assert_eq!(toggle.look, Look::NONE);
+        assert_eq!(toggle.rect.w, TOGGLE_SIZE.value);
+        assert!(toggle.rect.h <= theme::CAPTION_H);
     });
 }

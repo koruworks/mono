@@ -18,10 +18,11 @@ pub(crate) const CAPTION_HEIGHT: Metric = Metric::new("CAPTION_H", theme::CAPTIO
 pub(crate) const CAPTION_CONTROLS: Metric =
     Metric::new("CAPTION_CONTROLS_W", theme::CAPTION_BTN * 3.0);
 
-/// The caption's inset before its first control, the navigator's toggle: 8.
-pub(crate) const CAPTION_INSET: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_PAD", Space::S2);
+/// The Koru mark in the caption's leading slot: 16, the size the ordinary
+/// Koru window draws it at. The slot itself is one caption square.
+pub(crate) const CAPTION_MARK: Metric = Metric::new("UI_LAB_CAPTION_MARK", 16.0);
 
-/// Between the caption's toggles and its title: 8.
+/// Between the caption's mark, its title and the toggle after it: 8.
 pub(crate) const CAPTION_GAP: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_GAP", Space::S2);
 
 /// The navigator column: wide enough for a component's name in any of the
@@ -33,8 +34,8 @@ pub(crate) const NAVIGATOR_WIDTH: Metric = Metric::new("UI_LAB_NAVIGATOR_W", 240
 /// gives way: room for the narrowest preview width on offer.
 pub(crate) const PREVIEW_MIN_WIDTH: Metric = Metric::new("UI_LAB_PREVIEW_MIN_W", 320.0);
 
-/// A side column's toggle in the caption: a square that leaves the caption
-/// room for the focus ring round it.
+/// A side column's toggle in the caption: a square with room for the pane
+/// glyph and the hover plate, inside the caption's height.
 pub(crate) const TOGGLE_SIZE: Metric = Metric::new("UI_LAB_TOGGLE", 26.0);
 
 /// The properties column: the widest style control, in the language that
