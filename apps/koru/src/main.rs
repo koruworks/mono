@@ -62,6 +62,10 @@ mod tasks;
 mod tasks_view;
 mod terminal_prefs;
 mod trash;
+// Nothing consumes the registry until the Lab's window lands; its records are
+// already checked against the production source by their own tests.
+#[allow(dead_code)]
+mod ui_lab;
 mod website;
 mod welcome;
 mod whatsnew;
