@@ -638,6 +638,204 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     ),
     // Batch 2b: the editor, document and host crates.
     (
+        "crates/koru-editor/src/accessibility.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/accessibility.rs"),
+    ),
+    (
+        "crates/koru-editor/src/accessibility/actions.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/accessibility/actions.rs"),
+    ),
+    (
+        "crates/koru-editor/src/accessibility/events.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/accessibility/events.rs"),
+    ),
+    (
+        "crates/koru-editor/src/accessibility/geometry.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/accessibility/geometry.rs"),
+    ),
+    (
+        "crates/koru-editor/src/accessibility/projection.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/accessibility/projection.rs"),
+    ),
+    (
+        "crates/koru-editor/src/accessibility/text_positions.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/accessibility/text_positions.rs"),
+    ),
+    (
+        "crates/koru-editor/src/body.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/body.rs"),
+    ),
+    (
+        "crates/koru-editor/src/browser.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/browser.rs"),
+    ),
+    (
+        "crates/koru-editor/src/chips.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/chips.rs"),
+    ),
+    (
+        "crates/koru-editor/src/clipboard.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/clipboard.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/attr_menu.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/attr_menu.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/color_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/color_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/command_menu.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/command_menu.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/command_menu/accessibility.rs",
+        include_str!(
+            "../../../../../../../crates/koru-editor/src/components/command_menu/accessibility.rs"
+        ),
+    ),
+    (
+        "crates/koru-editor/src/components/date_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/date_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/draw.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/draw.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/emoji_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/emoji_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/entity_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/entity_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/language_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/language_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/link_prompt.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/link_prompt.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/list_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/list_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/mod.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/mod.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/name_prompt.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/name_prompt.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/priority_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/priority_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/components/tag_picker.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/components/tag_picker.rs"),
+    ),
+    (
+        "crates/koru-editor/src/diagram.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/diagram.rs"),
+    ),
+    (
+        "crates/koru-editor/src/dictation.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/dictation.rs"),
+    ),
+    (
+        "crates/koru-editor/src/draw.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/draw.rs"),
+    ),
+    (
+        "crates/koru-editor/src/editor.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/editor.rs"),
+    ),
+    (
+        "crates/koru-editor/src/emoji.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/emoji.rs"),
+    ),
+    (
+        "crates/koru-editor/src/input/action.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/input/action.rs"),
+    ),
+    (
+        "crates/koru-editor/src/input/keymap.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/input/keymap.rs"),
+    ),
+    (
+        "crates/koru-editor/src/input/mod.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/input/mod.rs"),
+    ),
+    (
+        "crates/koru-editor/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/lib.rs"),
+    ),
+    (
+        "crates/koru-editor/src/objective.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/objective.rs"),
+    ),
+    (
+        "crates/koru-editor/src/paragraph.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/paragraph.rs"),
+    ),
+    (
+        "crates/koru-editor/src/pending_image.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/pending_image.rs"),
+    ),
+    (
+        "crates/koru-editor/src/pillinfo.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/pillinfo.rs"),
+    ),
+    (
+        "crates/koru-editor/src/policy.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/policy.rs"),
+    ),
+    (
+        "crates/koru-editor/src/reminders.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/reminders.rs"),
+    ),
+    (
+        "crates/koru-editor/src/rowlayout.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/rowlayout.rs"),
+    ),
+    (
+        "crates/koru-editor/src/table/mod.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/table/mod.rs"),
+    ),
+    (
+        "crates/koru-editor/src/tasks.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/tasks.rs"),
+    ),
+    (
+        "crates/koru-editor/src/trigger.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/trigger.rs"),
+    ),
+    (
+        "crates/koru-editor/src/utils/dates.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/utils/dates.rs"),
+    ),
+    (
+        "crates/koru-editor/src/utils/mod.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/utils/mod.rs"),
+    ),
+    (
+        "crates/koru-editor/src/utils/when.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/utils/when.rs"),
+    ),
+    (
+        "crates/koru-editor/src/utils/zone.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/utils/zone.rs"),
+    ),
+    (
+        "crates/koru-editor/src/view_state.rs",
+        include_str!("../../../../../../../crates/koru-editor/src/view_state.rs"),
+    ),
+    (
         "crates/koru-markdown-view/src/document.rs",
         include_str!("../../../../../../../crates/koru-markdown-view/src/document.rs"),
     ),
@@ -1330,6 +1528,81 @@ pub(super) const CRATES: &[Crate] = &[
                 "dependency",
                 Module::Excluded("test-only: the dependency fence, compiled only under cfg(test)"),
             ),
+        ],
+    },
+    Crate {
+        owner: "koru-editor",
+        lib: "crates/koru-editor/src/lib.rs",
+        root: &[],
+        modules: &[
+            (
+                "accessibility",
+                Module::Records(&["H-EDITOR-ACCESSIBILITY"]),
+            ),
+            ("body", Module::Records(&["C-DOCUMENT-EDITOR"])),
+            (
+                "browser",
+                Module::Excluded(
+                    "io: open and open_without_activating hand a URL to the system browser (rundll32, open, xdg-open) as a child process; draws nothing",
+                ),
+            ),
+            ("chips", Module::Records(&["C-ROW-ATTRIBUTE-CHIPS"])),
+            ("clipboard", Module::Records(&["H-EDITOR-CLIPBOARD"])),
+            (
+                "components",
+                Module::Records(&[
+                    "C-EDITOR-OVERLAY",
+                    "C-COMMAND-MENU",
+                    "C-ENTITY-PICKER",
+                    "C-DATE-PICKER",
+                    "C-EMOJI-LIST",
+                    "C-LANGUAGE-PICKER",
+                    "C-LINK-PROMPT",
+                    "C-LIST-PICKER",
+                    "C-NAME-PROMPT",
+                    "C-PRIORITY-PICKER",
+                    "C-TAG-PICKER",
+                    "C-ACCENT-COLOR-PICKER",
+                    "C-ATTR-MENU",
+                ]),
+            ),
+            ("diagram", Module::Records(&["C-DOCUMENT-DIAGRAM"])),
+            ("dictation", Module::Records(&["H-EDITOR-DICTATION"])),
+            (
+                "draw",
+                Module::Records(&[
+                    "C-DOCUMENT-EDITOR",
+                    "H-EDITOR-EMBEDDED",
+                    "C-DOCUMENT-TEXT",
+                    "C-DOCUMENT-IMAGE",
+                    "C-ROW-GUTTER",
+                    "C-LINK-CARD",
+                ]),
+            ),
+            ("editor", Module::Records(&["C-DOCUMENT-EDITOR"])),
+            ("input", Module::Records(&["H-EDITOR-KEYMAP"])),
+            ("objective", Module::Records(&["H-EDITOR-TASKS"])),
+            ("paragraph", Module::Records(&["C-DOCUMENT-TEXT"])),
+            ("pending_image", Module::Records(&["C-DOCUMENT-IMAGE"])),
+            ("pillinfo", Module::Records(&["H-PILL-INFO"])),
+            ("policy", Module::Records(&["H-EDITOR-POLICY"])),
+            ("reminders", Module::Records(&["H-EDITOR-REMINDERS"])),
+            ("rowlayout", Module::Records(&["C-DOCUMENT-TEXT"])),
+            ("table", Module::Records(&["C-DOCUMENT-TABLE"])),
+            ("tasks", Module::Records(&["H-EDITOR-TASKS"])),
+            ("trigger", Module::Records(&["H-EDITOR-TRIGGERS"])),
+            ("utils", Module::Records(&["H-EDITOR-DATES"])),
+            (
+                "view_state",
+                Module::Records(&[
+                    "C-DOCUMENT-EDITOR",
+                    "H-EDITOR-EMBEDDED",
+                    "H-EDITOR-POLICY",
+                    "C-DOCUMENT-IMAGE",
+                    "C-LINK-CARD",
+                ]),
+            ),
+            ("emoji", Module::Records(&["H-EMOJI-CATALOG"])),
         ],
     },
     Crate {

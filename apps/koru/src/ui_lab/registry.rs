@@ -598,6 +598,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     domain::ARTIFACTS,
     domain::CANVAS,
     domain::CHATS,
+    domain::EDITOR,
     domain::MARKDOWN_VIEW,
     domain::RUNS,
     domain::SEARCH,

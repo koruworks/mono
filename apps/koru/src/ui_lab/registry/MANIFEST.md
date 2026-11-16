@@ -103,40 +103,40 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 18 |
-| domain crate source files | 234 |
-| domain crate lib.rs modules | 180 |
-| domain crate lib.rs public modules | 66 |
-| domain crate modules excluded | 39 |
-| records | 191 |
+| domain crates | 19 |
+| domain crate source files | 283 |
+| domain crate lib.rs modules | 204 |
+| domain crate lib.rs public modules | 90 |
+| domain crate modules excluded | 40 |
+| records | 224 |
 | records: foundations | 59 |
-| records: controls | 63 |
-| records: application compositions | 69 |
-| records: domain crates | 71 |
+| records: controls | 66 |
+| records: application compositions | 99 |
+| records: domain crates | 104 |
 | kind: token | 25 |
 | kind: primitive | 24 |
-| kind: widget | 58 |
-| kind: support | 47 |
-| kind: domain composition | 37 |
+| kind: widget | 61 |
+| kind: support | 59 |
+| kind: domain composition | 55 |
 | token values listed | 174 |
-| symbols | 1294 |
+| symbols | 1706 |
 | symbols with typed recipes | 2 |
-| inspector identities | 41 |
-| inspector identity registration sites | 43 |
+| inspector identities | 45 |
+| inspector identity registration sites | 48 |
 | disposition: story exists | 1 |
-| disposition: no story yet | 135 |
-| disposition: nonvisual | 44 |
+| disposition: no story yet | 153 |
+| disposition: nonvisual | 55 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 11 |
+| disposition: boundary | 15 |
 | symbol story: available | 1 |
-| symbol story: no story yet | 279 |
-| symbol story: nonvisual | 930 |
-| symbol story: boundary | 84 |
+| symbol story: no story yet | 329 |
+| symbol story: nonvisual | 1236 |
+| symbol story: boundary | 140 |
 | A2UI: component | 6 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 9 |
-| A2UI: not supported | 1269 |
+| A2UI: not supported | 1681 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -539,6 +539,7 @@ reached only through the bounded searches below.
 
 | Crate | Non-test files | Read in full | Declarations | Searched | `lib.rs` modules | Excluded | Records | Symbols | Component identities |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `koru-editor` | 49 | 1 | 48 | 0 | 24 | 1 | 33 | 412 | `KoruEntityPicker`, `EmojiList`, `Emoji`, `EmojiCategoryBar` |
 | `koru-markdown-view` | 4 | 4 | 0 | 0 | 3 | 0 | 2 | 49 | — |
 | `koru-session-view` | 22 | 4 | 18 | 0 | 13 | 0 | 7 | 199 | — |
 | `koru-app-shell` | 15 | 1 | 14 | 0 | 14 | 0 | 8 | 138 | — |
@@ -549,6 +550,53 @@ reached only through the bounded searches below.
 
 IDs marked * are minted here in batch 1's style.
 
+- `koru-editor` (read in full: `lib.rs`; the rest by declarations — 60,375
+  lines, with inline test modules from `editor.rs` 10,293, `body.rs` 2,068,
+  `draw.rs` 2,726, `clipboard.rs` 2,580 and `view_state.rs` 1,676 — with
+  `editor.rs`'s `Editor`, `prepare` and the head of `Editing` (300–500),
+  `components/mod.rs`'s `Outcome`/`Overlay` (1–175), `components/draw.rs`'s
+  every painter entry point and inspector scope, `view_state.rs`'s
+  `Embedded` and `ViewState::default`, `policy.rs`'s `Policy`,
+  `emoji_picker.rs`'s `Geometry`, and the label tables of the command,
+  color, priority, attribute and language panels read): 33 records.
+  - The editor and its seams: `C-DOCUMENT-EDITOR`* (`Editor`, `Editing`,
+    the frame, `ViewState`, `Body`), `H-EDITOR-EMBEDDED`* (`Embedded` and
+    `draw::floating_panels`) and `H-EDITOR-POLICY`* (`Policy`, which
+    `ViewState::apply_policy` applies) — the two seams the AI composer
+    uses, approved in COMPONENTS.md's 2026-09-24 entry.
+  - The document it draws, as boundaries, not widgets: `C-DOCUMENT-TEXT`*
+    (paragraph rows, marks, pills, highlights, spelling and search ranges),
+    `C-DOCUMENT-IMAGE`* (COMPONENTS.md's "unregistered Document image
+    boundary", `draw::draw_image_row`, and the pending-image placeholder),
+    `C-DOCUMENT-TABLE`* and `C-DOCUMENT-DIAGRAM`*.
+  - A row's own controls, as `Widget`s (the tasks view, the Explore rail
+    and `koru-document` draw them too): `C-ROW-GUTTER`*,
+    `C-ROW-ATTRIBUTE-CHIPS`*, `C-LINK-CARD`*.
+  - The panels that float over a row: `C-EDITOR-OVERLAY`* (the shared
+    popover frame and its routing), `C-COMMAND-MENU`*, `C-ENTITY-PICKER`*
+    (identity `KoruEntityPicker`, registered by `draw_overlay` and by
+    `draw_standalone_entity_picker`), `C-DATE-PICKER`*, `C-EMOJI-LIST`*
+    (COMPONENTS.md's `EmojiList` / `Emoji`, family `C-CHOICE`, the emoji
+    body of `C-EMOJI-COLOR-PANEL`; it also registers `EmojiCategoryBar`,
+    on one line, which the identity scan reads since this batch),
+    `C-LANGUAGE-PICKER`*, `C-LINK-PROMPT`*, `C-LIST-PICKER`*,
+    `C-NAME-PROMPT`*, `C-PRIORITY-PICKER`*, `C-TAG-PICKER`*,
+    `C-ACCENT-COLOR-PICKER`* (not `koru-ui`'s color picker row: nine
+    accent tokens in a list) and `C-ATTR-MENU`*.
+  - Support: `H-EMOJI-CATALOG`*, `H-EDITOR-ACCESSIBILITY`*,
+    `H-EDITOR-KEYMAP`*, `H-EDITOR-TRIGGERS`*, `H-EDITOR-CLIPBOARD`*,
+    `H-EDITOR-DICTATION`*, `H-PILL-INFO`*, `H-EDITOR-REMINDERS`*,
+    `H-EDITOR-TASKS`*, `H-EDITOR-DATES`*.
+  - Public names that are ordinary words are module-qualified as batch 2a
+    did (`draw::draw_plus`, `chips::draw_row_chips`, `emoji::catalog`,
+    `keymap::resolve`, `when::parse_due`, `tasks::task_ref`).
+  - Re-exports of other crates are left out, as batch 2a left them:
+    `components::{text_field, text_input}` and `draw::{draw_field,
+    baseline_centred_y}` (`koru-ui`), `date_picker`'s grid constants
+    (`koru_ui::date_grid`), `diagram::Status` (`koru-diagram`),
+    `tasks::{ActivitySink, SINK_LIMIT, TaskActivity, remember, run}`
+    (`koru-core`), `utils::zone::*` (`koru-time-zone`), `utils::dates`'
+    `koru_ui::dates` items and `input::keymap::recover_modified_editing_key`.
 - `koru-markdown-view`: `C-MARKDOWN-VIEW`* (the reader a run's result,
   the Artifacts column's result tab and the instructions view draw with)
   and `C-MARKDOWN-DOCUMENT`* (a boundary: the file read as a Koru document
@@ -645,6 +693,13 @@ from the source or the page named:
 Visible parts with no public symbol, listed under the record that paints
 them:
 
+- `C-EDITOR-OVERLAY`: the panel rows of every picker (`components/draw.rs`
+  draws each `Overlay` kind's rows, headers, create rows and swatch faces
+  itself), the entity picker's scope footer (an inspector scope at
+  `components/draw.rs` 1132), and the body's skin-tone strip
+  (`draw.rs` `draw_body_tone_strip`).
+- `C-DOCUMENT-EDITOR`: the empty-document and title placeholders and the
+  status bar halves the frame draws from `draw::Frame`.
 - `C-TERMINAL-VIEW`: the shaped row cache and its box-drawing and
   replacement-glyph painting (`row.rs`), the cursor block/beam/underline and
   the selection fill (`render.rs`), text extraction for a selection
@@ -661,6 +716,19 @@ them:
 
 ### What building each surface needs
 
+- **Pure** — `koru_editor::Editor::over`/`rooted_at` (rows over an
+  in-memory `WorkspaceDoc`; `ViewState::default` makes its own
+  `TextEngine`; no store, window or worker — though a story still needs a
+  document to edit, and the editor's attachment and clipboard paths read
+  debug switches from the environment when they run); every picker's
+  constructor (state only; `EntityPicker` never searches, it hands the host
+  a request through `take_request`, and creating a tag or a list is the
+  host's); the emoji catalog (a static table; the preferred skin tone and
+  recents are process state).
+- **Changes OS state when driven** — `koru_editor::clipboard::put`,
+  `put_plain` and `put_system_text` write the system clipboard; `take` and
+  `one_line` read it. `koru_editor::browser` (excluded) spawns the system
+  browser.
 - **Pure** — `MarkdownView::new` (no engine, worker or file of its own;
   the host lends its `TextEngine` to lay out and draw);
   `MarkdownDocument::of`/`of_document` (import and export in memory, in a
@@ -696,6 +764,19 @@ them:
 
 ### Defects found (not fixed)
 
+- `koru-editor`, hard-coded English a person reads: the command menu's row
+  labels (`Command::label`, 22 of 24 kinds; its own comment calls it a
+  tracked gap), its disabled reasons (`disabled`: "Offline", "Can't be a
+  task", "Not a task") and its placeholder ("Insert above", "Insert
+  below", "Filter blocks"); `color_picker::LABELS`, `priority_picker::LABELS`
+  and `chips::priority_label` (four levels, twice); `attr_menu::ROWS`;
+  `chips::DUE_NONE` ("No date"); `editor::TASK_WARNING_TOOLTIP` ("Has
+  unfinished items"); the name prompt's label and placeholder ("Image
+  name", "Architecture diagram", "Document name", "spec.md",
+  `components/draw.rs` 1652–1654); `emoji::group_name`'s category names.
+  The document text and image boundaries register no identity (COMPONENTS.md
+  calls the image one "unregistered" deliberately); no picker but the
+  entity and emoji ones registers one.
 - `koru-markdown-view`: the not-Markdown state joins its translated labels
   to their values with a fixed `": "` (`view.rs` 364, 367, 373);
   `MarkdownView::lines` is public and its own doc calls it "what a test
