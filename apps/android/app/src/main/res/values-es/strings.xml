@@ -420,7 +420,7 @@
     <string name="account_cloud_sync_complete">Sincronizando mediante Koru Cloud</string>
     <string name="account_cloud_sync_partial">Sincronizando %1$d de %2$d espacios de trabajo</string>
     <string name="account_cloud_sync_unattached">No disponible en esta versión</string>
-    <string name="account_cloud_sync_free_full">Koru Lite no tiene plazas disponibles ahora mismo. Tu trabajo permanece en este dispositivo. Puedes apuntarte a la lista de espera desde tu cuenta.</string>
+    <string name="account_cloud_sync_free_full">Koru Free no tiene plazas disponibles ahora mismo. Tu trabajo permanece en este dispositivo. Puedes apuntarte a la lista de espera desde tu cuenta.</string>
     <string name="transfers">Archivos e imágenes</string>
     <string name="transfers_on_cellular">Transferir con datos móviles</string>
     <string name="transfers_on_cellular_explainer">Si está desactivado, los archivos y las imágenes esperan a una conexión sin límite de datos. Los documentos se sincronizan igualmente y aún puedes descargar uno concreto desde el propio documento.</string>

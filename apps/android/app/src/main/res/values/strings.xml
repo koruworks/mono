@@ -463,7 +463,7 @@
     <string name="account_cloud_sync_complete">Syncing via Koru Cloud</string>
     <string name="account_cloud_sync_partial">Syncing %1$d of %2$d workspaces</string>
     <string name="account_cloud_sync_unattached">Not available in this build</string>
-    <string name="account_cloud_sync_free_full">Koru Lite has no open place right now. Your work stays on this device. You can join the waitlist from your account.</string>
+    <string name="account_cloud_sync_free_full">Koru Free has no open place right now. Your work stays on this device. You can join the waitlist from your account.</string>
     <!-- What one Workspace's file transfers say, per language. The counts are
          the engine's (`cloud-blob-object-v1` §10) and are generic: a file is
          counted exactly like a picture, which is the D259 correction. Each

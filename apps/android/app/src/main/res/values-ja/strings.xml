@@ -410,7 +410,7 @@
     <string name="account_cloud_sync_complete">Koru Cloud 経由で同期中</string>
     <string name="account_cloud_sync_partial">%2$d 個中 %1$d 個のワークスペースを同期中</string>
     <string name="account_cloud_sync_unattached">このビルドでは利用できません</string>
-    <string name="account_cloud_sync_free_full">現在、Koru Lite に空きがありません。作業内容はこのデバイスに残ります。アカウントからウェイトリストに登録できます。</string>
+    <string name="account_cloud_sync_free_full">現在、Koru Free に空きがありません。作業内容はこのデバイスに残ります。アカウントからウェイトリストに登録できます。</string>
     <string name="transfers">ファイルと画像</string>
     <string name="transfers_on_cellular">モバイル通信で転送</string>
     <string name="transfers_on_cellular_explainer">オフのとき、ファイルと画像はデータ制限のない接続を待ちます。ドキュメントはどちらの場合も同期を続け、必要なものは文書内から個別にダウンロードできます。</string>
