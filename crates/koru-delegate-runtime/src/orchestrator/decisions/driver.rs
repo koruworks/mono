@@ -37,6 +37,10 @@ pub enum DecisionResumeStep {
     SuccessorInstalled,
     InputUnconfirmed,
     InputAcknowledged,
+    /// The approved edit's positively recorded save settled the decision
+    /// (O150), taken here when the confirmation itself did not settle it
+    /// (a failed write, or a restart in between). The wait settles later.
+    EffectSettled,
 }
 
 /// A refusal that only means "not yet": retry on a later turn.
@@ -124,7 +128,8 @@ impl Orchestrator {
                 return Ok(Step::Waiting("bot_cleanup_owned"));
             }
             let open = super::launch::resume_open(&execution);
-            return self.decision_resume_successor(owner, run, &resume, open);
+            let settled = state.phase == Phase::Settled;
+            return self.decision_resume_successor(owner, run, &resume, open, settled);
         }
         match (state.authorization, state.phase, execution.wait.phase) {
             (Authorization::Pending, Phase::Publishing, _) => {
@@ -210,6 +215,7 @@ impl Orchestrator {
         run: RunId,
         resume: &koru_delegate_core::decisions::DecisionResume,
         open: bool,
+        settled: bool,
     ) -> Result<DecisionResumeStep, RunError> {
         use DecisionResumeStep as Step;
         let (attempt, generation, session, _) = resume.consumer_identity();
@@ -257,8 +263,16 @@ impl Orchestrator {
                     None => Ok(Step::Waiting("bot_continuation_unconfirmed")),
                 }
             }
-            // Acknowledged: the one-use consume is the AI's tool call.
-            _ => Ok(Step::Waiting("bot_consume_owned")),
+            // Acknowledged: the one-use consume is the AI's tool call. Once
+            // its save is positively recorded, the decision settles (O150);
+            // the wait then ends when that settlement's Control is applied.
+            _ if settled => Ok(Step::Waiting("publication_pending")),
+            _ => {
+                if self.settle_saved_decision_effect(owner, run)? {
+                    return Ok(Step::EffectSettled);
+                }
+                Ok(Step::Waiting("bot_consume_owned"))
+            }
         }
     }
 }

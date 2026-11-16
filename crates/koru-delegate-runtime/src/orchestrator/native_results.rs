@@ -383,6 +383,16 @@ impl Orchestrator {
     ) -> Result<NativeResultIntentView, RunError> {
         self.native_record_for_device(&request.key, device)?;
         let record = self.native_ledger()?.confirm_native_result(request)?;
+        // O150: the one place both savers of an approved edit pass through.
+        // A positively recorded page result may be that decision's save.
+        if matches!(record.purpose, NativeEffectPurpose::Result {})
+            && matches!(
+                record.stage,
+                NativeResultStage::Verified | NativeResultStage::Registered
+            )
+        {
+            self.settle_decision_after_confirmation(request.key.run);
+        }
         if !self.run_publication_pending(request.key.run) {
             self.arm_bot_cleanup(request.key.run)?;
         }
