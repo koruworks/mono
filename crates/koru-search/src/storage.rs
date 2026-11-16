@@ -52,8 +52,9 @@ use sha2::{Digest, Sha256};
 use crate::fuzzy::SharedVocabulary;
 use crate::model::{
     AttrRow, Fragment, FuzzyIndexStats, IndexStats, Lifecycle, PreviewBlock, RecentQuery,
-    SearchFacet, SearchFacets, SearchPage, SearchPreview, SearchQuery, SearchResult,
+    SearchFacet, SearchFacets, SearchPage, SearchPreview, SearchQuery, SearchResult, field,
 };
+use crate::fuzzy::Part;
 use crate::normalize::{normalize, term_counts};
 
 /// The shape of everything below, **and what the text in it means**. A change
@@ -212,14 +213,19 @@ impl SearchIndex {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
+        // The lists' share of those words, so a query that did not ask for
+        // lists reads the counts it would read if none were indexed.
+        let list_texts = self.texts_where(LIST_FIELD_ONLY, [])?;
         tracing::info!(
             fragments = texts.len(),
             elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "search: loaded fragments for fuzzy vocabulary"
         );
-        self.vocabulary
-            .write()
-            .replace_all(term_counts(texts.iter().map(String::as_str)), now_ms());
+        self.vocabulary.write().replace_all(
+            term_counts(texts.iter().map(String::as_str)),
+            term_counts(list_texts.iter().map(String::as_str)),
+            now_ms(),
+        );
         tracing::info!(
             elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "search: fuzzy vocabulary warmed"
@@ -382,14 +388,21 @@ impl SearchIndex {
         }
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
         Ok(())
     }
 
     /// A workspace the store no longer holds.
     pub fn remove_workspace(&mut self, workspace: &str) -> SearchResult<()> {
-        let texts = self.texts_where("workspace_id = ?1", params![workspace])?;
+        // Read in two groups, because the vocabulary keeps the lists' words
+        // apart from everybody else's and each delta goes to its own part.
+        let texts = self.texts_where(
+            "workspace_id = ?1 AND field <> 'task-list'",
+            params![workspace],
+        )?;
+        let list_texts = self.texts_where(LIST_OWNED, params![workspace])?;
         let delta = removal_delta(&texts);
+        let list_delta = removal_delta(&list_texts);
         let tx = self.connection.transaction()?;
         for sql in [
             "DELETE FROM fragments WHERE workspace_id = ?1",
@@ -402,7 +415,8 @@ impl SearchIndex {
         }
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
+        vocabulary.apply_delta(list_delta, Part::Lists);
         Ok(())
     }
 
@@ -547,7 +561,7 @@ impl SearchIndex {
         )?;
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
         Ok(())
     }
 
@@ -580,7 +594,7 @@ impl SearchIndex {
         )?;
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
         Ok(())
     }
 
@@ -906,8 +920,23 @@ fn insert_attr_value(tx: &rusqlite::Transaction<'_>, value: &AttrRow) -> SearchR
 }
 
 /// Rows the listing path owns: the workspace's own name, and every title.
+///
+/// **By key and field, not by "has no document".** A task list's fragment has
+/// no document either, and when ownership was `document_id IS NULL` every
+/// listing refresh — a document renamed, moved, created — would have deleted
+/// the workspace's list fragments with the workspace's name. Three writers,
+/// three disjoint predicates: this, [`NODE_OWNED`] and [`LIST_OWNED`].
 const LISTING_OWNED: &str =
-    "workspace_id = ?1 AND (document_id IS NULL OR stable_key LIKE 'doc:%')";
+    "workspace_id = ?1 AND (field = 'workspace' OR stable_key LIKE 'doc:%')";
+
+/// Rows the list path owns: one fragment per live task list of a workspace.
+const LIST_OWNED: &str = "workspace_id = ?1 AND stable_key LIKE 'list:%'";
+
+/// Every task-list fragment in the index: the lists' share of the vocabulary.
+const LIST_FIELD_ONLY: &str = "field = 'task-list'";
+
+/// The SQL above spells the field as a literal; this keeps it the token.
+const _: () = assert!(matches!(field::TASK_LIST.as_bytes(), b"task-list"));
 
 /// Rows the document path owns: everything the node walk produced.
 const NODE_OWNED: &str = "document_id = ?1 AND stable_key LIKE 'node:%'";
