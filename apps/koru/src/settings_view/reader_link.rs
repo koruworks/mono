@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 //! **The Settings page's line to the reader** (OCR Plan 2.5): the one thread
-//! that asks the Store about *Text in pictures and PDFs* and carries out what
+//! that asks the Store about *Recognize text and images in PDFs* and carries out what
 //! was pressed on its card, and the pure mapping from what the Store said to
 //! the card's [`ReaderRow`].
 //!
@@ -275,6 +275,18 @@ pub(crate) fn row(answer: &Answer) -> Option<ReaderRow> {
             could_not_be_read: state.counts.could_not_be_read,
             megabytes: koru_voice_consent::megabytes(installed.download_bytes),
         }
+    } else if state.offer.is_none()
+        && state.catalog.state == CatalogStage::Failed
+        && state.catalog.code.as_deref() != Some("offline")
+    {
+        // Losing this reason left a bare "Not downloaded" with no action:
+        // the missing terms disable installation, so explain why they are missing.
+        ReaderStatus::Unavailable(match state.catalog.code.as_deref() {
+            Some("catalog_invalid") => ReaderBlocked::DownloadInformationInvalid,
+            _ => ReaderBlocked::DownloadInformationUnavailable,
+        })
+    } else if state.offer.is_none() && state.catalog.state == CatalogStage::Ready {
+        ReaderStatus::Unavailable(ReaderBlocked::NoModel)
     } else {
         ReaderStatus::NotDownloaded {
             megabytes: state

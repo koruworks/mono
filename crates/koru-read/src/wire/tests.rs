@@ -107,7 +107,7 @@ fn every_message_has_a_pinned_shape() {
                 pages_read: 12,
             }),
             json!({
-                "kind": "status", "worker_version": "0.0.3", "protocol_version": 1,
+                "kind": "status", "worker_version": "0.0.3", "protocol_version": 2,
                 "process_id": 4242, "supervisor_launch_id": "launch-1",
                 "recognition": false, "recognition_built": true, "job": 7, "pages_read": 12
             }),
@@ -149,7 +149,7 @@ fn the_codes_are_stable_lowercase_tokens() {
     );
     assert_eq!(
         Want::ALL.iter().map(|w| w.as_str()).collect::<Vec<_>>(),
-        ["text", "recognize"]
+        ["text", "recognize", "force-recognize"]
     );
 }
 
@@ -223,7 +223,7 @@ fn every_job_message_names_its_job_and_says_whether_it_ends_it() {
 /// move the other.
 #[test]
 fn the_protocol_and_frame_versions_are_two_numbers() {
-    assert_eq!(PROTOCOL_VERSION, 1);
+    assert_eq!(PROTOCOL_VERSION, 2);
     assert_eq!(FRAME_VERSION, 1);
 }
 

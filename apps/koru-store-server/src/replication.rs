@@ -450,7 +450,7 @@ impl ReplicationStore for LiveReplicationStore {
 
     fn admit_peer_subject(&self, workspace: WorkspaceId) -> Result<(), StoreFailure> {
         let store = self.state.store.lock().map_err(|_| failed("internal"))?;
-        root_exchange::admit_peer_subject(&store, workspace)
+        root_exchange::admit_peer_inventory_request(&store, workspace)
     }
 
     /// The Profile a Workspace is currently placed under here — the root

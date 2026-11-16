@@ -31,6 +31,9 @@ use serde::{Deserialize, Serialize};
 /// time, by someone who already holds the item.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReadingAnswer {
+    /// Durable authored revisions, independent of generated pages.
+    #[serde(default)]
+    pub corrections: ReadingCorrections,
     pub workspace: WorkspaceId,
     /// The blob's address (`b3:<hex>`).
     pub hash: String,
@@ -74,6 +77,39 @@ pub struct ReadingAnswer {
     /// only so a surface can offer *Read again* by [`Self::offers`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed_here: Option<String>,
+    /// Current device facts for inspection, including items not read yet.
+    /// Absent when an older Store does not provide these facts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local: Option<ReadingLocal>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReadingCorrections {
+    pub selected: Option<String>,
+    /// Concurrent heads are retained so the editor can review and resolve them.
+    pub versions: Vec<ReadingCorrectionVersion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReadingCorrectionVersion {
+    pub id: String,
+    /// None resets to generated OCR; an empty string corrects to blank text.
+    pub text: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CorrectReading {
+    pub expected_heads: Vec<String>,
+    pub text: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReadingLocal {
+    pub available_here: bool,
+    pub pending: bool,
+    pub supported: bool,
+    pub needs_reader: bool,
+    pub reader_ready: bool,
 }
 
 /// Which of the two requests the Store would accept for one item here.
@@ -93,6 +129,9 @@ pub struct ReadingOffers {
     /// ([`ReadingAnswer::failed_here`]).
     #[serde(default)]
     pub read_again: bool,
+    /// Render and recognize every page, ignoring embedded PDF text.
+    #[serde(default)]
+    pub force_ocr: bool,
 }
 
 /// Which request a person made (`POST …/read-all`, `POST …/read-again`).
@@ -101,6 +140,7 @@ pub struct ReadingOffers {
 pub enum ReadRequestKind {
     ReadAll,
     ReadAgain,
+    ForceOcr,
 }
 
 /// **The answer to a request that was accepted**: recorded on this computer,

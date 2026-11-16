@@ -29,11 +29,10 @@
 //!   row per workspace and hash, removed when the request has been met. The
 //!   request is machine-local; its result, the reading, is not.
 //!
-//! ## A schema bump is a rebuild
+//! ## Schema upgrades
 //!
-//! As the projection's and the index's: if the stored
-//! [`READINGS_SCHEMA_VERSION`] differs, every table is dropped and the catch-up
-//! applies every reading document again. There is no migration chain.
+//! Version 2 upgrades to 3 in place, preserving queued requests and readings.
+//! Version 1 rebuilds the derived mirror. A newer version is refused.
 //!
 //! ## What it never holds
 //!
@@ -48,11 +47,11 @@ use koru_read::{GENERATION, Reading, ReadingStatus, Reason};
 use koru_store_core::ids::{DocumentId, WorkspaceId};
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 
-/// The shape of everything below. A change is a rebuild.
+/// The shape of everything below.
 ///
 /// 1 is the first: `readings`, `reading_pages`, `reading_sources`,
-/// `read_attempts`. 2 adds `read_requests` (OCR Plan 3.2).
-pub const READINGS_SCHEMA_VERSION: i64 = 2;
+/// `read_attempts`. 2 adds `read_requests`; 3 adds persistent forced OCR mode.
+pub const READINGS_SCHEMA_VERSION: i64 = 4;
 
 /// The name in the log, so the file that ran is the file on disk.
 const MIGRATION_NAME: &str = "028_readings_requests_migration.sql";
@@ -156,8 +155,8 @@ pub enum AttemptCode {
     /// Recognition is needed and no reader is installed. Waits as
     /// `needs_reader` until one is; **not a failure**.
     NeedsReader,
-    /// The worker died mid-job. One retry in a fresh worker, resuming past the
-    /// page it died on; then left until the next generation.
+    /// The worker died mid-job. One retry in a fresh worker, starting at the
+    /// first undelivered page; then left until the next generation.
     Crashed,
     /// The worker reached its memory limit on this file. As [`Self::Crashed`].
     MemoryLimit,
@@ -251,7 +250,23 @@ impl Mirror {
         db.pragma_update(None, "synchronous", "NORMAL")?;
         db.busy_timeout(std::time::Duration::from_secs(2))?;
         let found: i64 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if found != 0 && found != READINGS_SCHEMA_VERSION {
+        if found > READINGS_SCHEMA_VERSION {
+            return Err(MirrorError(
+                "the readings cache was written by a newer build".into(),
+            ));
+        }
+        if found == 2 {
+            tracing::info!(
+                database = "readings.db",
+                from = 2,
+                to = 3,
+                migration = "029_readings_force_ocr_migration.sql",
+                "preserving readings and requests while adding forced OCR mode"
+            );
+            db.execute_batch(include_str!(
+                "../../migrations/029_readings_force_ocr_migration.sql"
+            ))?;
+        } else if found != 0 && found != 3 && found != READINGS_SCHEMA_VERSION {
             let started = std::time::Instant::now();
             tracing::info!(
                 database = "readings.db",
@@ -271,6 +286,11 @@ impl Mirror {
             );
         }
         db.execute_batch(SCHEMA)?;
+        if found < 4 {
+            db.execute_batch(include_str!(
+                "../../migrations/030_readings_corrections.sql"
+            ))?;
+        }
         db.pragma_update(None, "user_version", READINGS_SCHEMA_VERSION)?;
         Ok(Self { db })
     }
@@ -311,6 +331,17 @@ impl Mirror {
         let now: HashSet<&str> = applied.entries.iter().map(|(h, _)| h.as_str()).collect();
 
         for (hash, reading) in &applied.entries {
+            let serialized = serde_json::to_string(&reading.corrections)
+                .map_err(|e| MirrorError(e.to_string()))?;
+            let old: Option<String> = tx.query_row(
+                "SELECT revisions FROM reading_corrections WHERE workspace_id=?1 AND parent_document_id=?2 AND hash=?3",
+                params![workspace, parent, hash], |r| r.get(0)).optional()?;
+            if old.as_deref() != Some(&serialized) {
+                tx.execute("INSERT INTO reading_corrections VALUES (?1,?2,?3,?4)
+                    ON CONFLICT(workspace_id,parent_document_id,hash) DO UPDATE SET revisions=excluded.revisions",
+                    params![workspace, parent, hash, serialized])?;
+                changed.push(hash.clone());
+            }
             let row = Row::of(reading);
             let moved = before.get(hash) != Some(&row);
             tx.execute(
@@ -341,7 +372,7 @@ impl Mirror {
             // words and the newer application is as good as the older.
             let best_elsewhere: Option<(i64, i64, i64)> = {
                 let mut q = tx.prepare(
-                    "SELECT generation, status, reason, page_count FROM readings
+                    "SELECT generation, status, reason, page_count, source FROM readings
                       WHERE workspace_id = ?1 AND hash = ?2 AND parent_document_id <> ?3",
                 )?;
                 let rows = q.query_map(params![workspace, hash, parent], |r| {
@@ -349,7 +380,7 @@ impl Mirror {
                         generation: r.get(0)?,
                         status: r.get(1)?,
                         reason: r.get(2)?,
-                        source: None,
+                        source: r.get(4)?,
                         page_count: r.get(3)?,
                     })
                 })?;
@@ -372,6 +403,10 @@ impl Mirror {
         }
 
         for hash in before.keys().filter(|h| !now.contains(h.as_str())) {
+            tx.execute(
+                "DELETE FROM reading_corrections WHERE parent_document_id=?1 AND hash=?2",
+                params![parent, hash],
+            )?;
             tx.execute(
                 "DELETE FROM readings WHERE parent_document_id = ?1 AND hash = ?2",
                 params![parent, hash],
@@ -431,6 +466,10 @@ impl Mirror {
         };
         tx.execute(
             "DELETE FROM readings WHERE parent_document_id = ?1 AND workspace_id = ?2",
+            params![parent, workspace],
+        )?;
+        tx.execute(
+            "DELETE FROM reading_corrections WHERE parent_document_id=?1 AND workspace_id=?2",
             params![parent, workspace],
         )?;
         for hash in &hashes {
@@ -739,13 +778,42 @@ impl Mirror {
     /// again** (OCR TECHNICAL §7 "The local requests table", §9). Asking
     /// again while a request stands keeps the first one's time, so a request
     /// keeps its place among the others. Returns whether a row was added.
+    #[cfg(test)]
     pub fn request(&mut self, workspace: WorkspaceId, hash: &str, at: i64) -> Result<bool> {
+        self.request_with_ocr(workspace, hash, at, false)
+    }
+
+    pub fn request_with_ocr(
+        &mut self,
+        workspace: WorkspaceId,
+        hash: &str,
+        at: i64,
+        force: bool,
+    ) -> Result<bool> {
         let added = self.db.execute(
-            "INSERT INTO read_requests (workspace_id, hash, requested_at) VALUES (?1, ?2, ?3)
+            "INSERT INTO read_requests (workspace_id, hash, requested_at, force_ocr) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (workspace_id, hash) DO NOTHING",
-            params![workspace.to_storage(), hash, at],
+            params![workspace.to_storage(), hash, at, i64::from(force)],
         )?;
         Ok(added > 0)
+    }
+
+    /// 0 ordinary, 1 forced from the beginning, 2 forced with durable progress.
+    pub fn force_ocr(&self, workspace: WorkspaceId, hash: &str) -> Result<u8> {
+        Ok(self
+            .db
+            .query_row(
+                "SELECT force_ocr FROM read_requests WHERE workspace_id = ?1 AND hash = ?2",
+                params![workspace.to_storage(), hash],
+                |r| r.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    pub fn force_started(&mut self, workspace: WorkspaceId, hash: &str) -> Result<()> {
+        self.db.execute("UPDATE read_requests SET force_ocr = 2 WHERE workspace_id = ?1 AND hash = ?2 AND force_ocr = 1", params![workspace.to_storage(), hash])?;
+        Ok(())
     }
 
     /// Whether a request for `hash` in `workspace` stands.
@@ -899,6 +967,22 @@ impl Mirror {
                 }
             }
         }
+        for hash in hashes {
+            if let Some(text) = self.corrections_in(&workspace, hash)?.text() {
+                if text.is_empty() {
+                    found.remove(hash);
+                } else {
+                    found.insert(
+                        hash.clone(),
+                        koru_search::ReadingText {
+                            hash: hash.clone(),
+                            page_count: 1,
+                            pages: vec![(1, text.as_str().to_owned())],
+                        },
+                    );
+                }
+            }
+        }
         Ok(found
             .into_values()
             .map(|mut reading| {
@@ -910,6 +994,21 @@ impl Mirror {
     }
 
     // ------------------------------------------------------------ diagnosis
+
+    fn corrections_in(
+        &self,
+        workspace: &str,
+        hash: &str,
+    ) -> Result<koru_read::document::Corrections> {
+        let mut q = self.db.prepare("SELECT revisions FROM reading_corrections WHERE workspace_id=?1 AND hash=?2 ORDER BY parent_document_id")?;
+        let rows = q.query_map(params![workspace, hash], |r| r.get::<_, String>(0))?;
+        let mut result = koru_read::document::Corrections::default();
+        for row in rows {
+            let history = serde_json::from_str(&row?).map_err(|e| MirrorError(e.to_string()))?;
+            result.merge_from(&history);
+        }
+        Ok(result)
+    }
 
     pub fn counts(&self) -> Result<MirrorCounts> {
         let mut counts = MirrorCounts::default();
@@ -1020,7 +1119,7 @@ impl Mirror {
                     generation: row.generation,
                     status: row.status.clone(),
                     reason: row.reason.clone(),
-                    source: None,
+                    source: row.source.clone(),
                     page_count: row.page_count,
                 }
                 .rank()
@@ -1323,6 +1422,7 @@ CREATE TABLE IF NOT EXISTS read_requests (
     hash         TEXT NOT NULL,
     -- Epoch milliseconds UTC: the order requests are met in; nothing displays it.
     requested_at INTEGER NOT NULL,
+    force_ocr INTEGER NOT NULL DEFAULT 0 CHECK (force_ocr IN (0, 1, 2)),
     PRIMARY KEY (workspace_id, hash)
 ) WITHOUT ROWID;
 ";

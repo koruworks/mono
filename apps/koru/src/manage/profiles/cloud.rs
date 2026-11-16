@@ -101,6 +101,9 @@ impl ProfilesController {
             self.cloud.sync_due = true;
         }
     }
+    pub(super) fn refresh_cloud_sync(&mut self) {
+        self.cloud.sync_due = true;
+    }
     fn cloud_readable(&self) -> bool {
         self.cloud_visible
             && self.account.stage == AccountStage::SignedIn

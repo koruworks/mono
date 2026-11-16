@@ -70,7 +70,7 @@ fn paged(docs: Docs, built: bool) -> StubLauncher {
             .find(|(hash, _)| object_path(hash) == *path)
             .map(|(hash, doc)| (doc.clone(), hash.clone()))
             .expect("a scripted file");
-        let recognize = *want == Want::Recognize;
+        let recognize = *want != Want::Text;
         let first = (*from_page).max(1);
         let last = match max_text_pages {
             Some(cap) => doc.pages.min((first - 1).saturating_add(*cap)),
@@ -86,7 +86,7 @@ fn paged(docs: Docs, built: bool) -> StubLauncher {
         let mut events = Vec::new();
         let (mut recognized, mut left, mut stopped) = (0_u32, 0_u32, None);
         for n in first..=last {
-            if !doc.scanned {
+            if !doc.scanned && *want != Want::ForceRecognize {
                 events.push(page(n, word_on(doc.word, n), Source::TextLayer, None));
                 continue;
             }
@@ -692,6 +692,247 @@ fn port(device: &Device, hub: Arc<ReaderHub>) -> ReadingPort {
     }
 }
 
+#[test]
+fn persistent_corrections_save_search_stale_guard_and_reset_through_the_store() {
+    use koru_store_api::routes::readings::ReadingService;
+    use koru_store_wire::readings::CorrectReading;
+    let pdf = hash(109);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let file = a_file(&mut store, ws, "Sample.pdf", &pdf, "application/pdf");
+    land(&mut store, ws, &pdf, 100, "application/pdf");
+    let (mut device, hub) = recognizing(
+        store,
+        docs(&[(
+            &pdf,
+            Doc {
+                pages: 1,
+                scanned: false,
+                word: "original",
+            },
+        )]),
+    );
+    device.here(&pdf);
+    device.settle();
+    let port = port(&device, hub);
+    let blob = BlobHash::parse(&pdf).unwrap();
+    let saved = port
+        .correct(
+            ws,
+            &blob,
+            CorrectReading {
+                expected_heads: vec![],
+                text: Some("correctedquokka".into()),
+            },
+        )
+        .unwrap();
+    // Check against live authority before any derived consumer gets a turn.
+    assert_eq!(
+        port.correct(
+            ws,
+            &blob,
+            CorrectReading {
+                expected_heads: vec![],
+                text: Some("stale".into())
+            }
+        )
+        .unwrap_err()
+        .code(),
+        koru_store_core::errors::Code::IdempotencyConflict
+    );
+    assert_eq!(port.reading(ws, &blob).unwrap().unwrap().corrections, saved);
+    device.settle();
+    assert!(device.found("correctedquokka", file));
+    assert!(!device.found(&word_on("original", 1), file));
+    let heads = saved.versions.iter().map(|v| v.id.clone()).collect();
+    port.correct(
+        ws,
+        &blob,
+        CorrectReading {
+            expected_heads: heads,
+            text: None,
+        },
+    )
+    .unwrap();
+    device.settle();
+    assert!(!device.found("correctedquokka", file));
+    assert!(device.found(&word_on("original", 1), file));
+}
+
+#[test]
+fn persistent_corrections_sync_offline_edits_and_reset_without_original_bytes() {
+    use koru_store_api::routes::readings::ReadingService;
+    use koru_store_wire::readings::CorrectReading;
+    let pdf = hash(110);
+    let mut a_store = store();
+    let ws = workspace(&mut a_store);
+    let file = a_file(&mut a_store, ws, "Shared.pdf", &pdf, "application/pdf");
+    land(&mut a_store, ws, &pdf, 100, "application/pdf");
+    let record = a_store.workspace(ws).unwrap();
+    let profile = a_store.profile(record.owner).unwrap();
+    let manifest = a_store.manifest_id(ws).unwrap();
+    let (mut a, a_hub) = recognizing(
+        a_store,
+        docs(&[(
+            &pdf,
+            Doc {
+                pages: 1,
+                scanned: false,
+                word: "original",
+            },
+        )]),
+    );
+    a.here(&pdf);
+    a.settle();
+    let mut b_store = store();
+    b_store
+        .provision_replica(&profile, &record, manifest, at(1))
+        .unwrap();
+    let (mut b, b_hub) = recognizing(b_store, docs(&[]));
+    sync(&a, &b, ws, manifest);
+    sync(&a, &b, ws, file);
+    sync(&a, &b, ws, reading_document_id(file));
+    b.settle();
+    let a_port = port(&a, a_hub);
+    let b_port = port(&b, b_hub);
+    let blob = BlobHash::parse(&pdf).unwrap();
+    a_port
+        .correct(
+            ws,
+            &blob,
+            CorrectReading {
+                expected_heads: vec![],
+                text: Some("alphacorrection".into()),
+            },
+        )
+        .unwrap();
+    b_port
+        .correct(
+            ws,
+            &blob,
+            CorrectReading {
+                expected_heads: vec![],
+                text: Some("betacorrection".into()),
+            },
+        )
+        .unwrap();
+    sync(&a, &b, ws, reading_document_id(file));
+    sync(&b, &a, ws, reading_document_id(file));
+    a.settle();
+    b.settle();
+    let aa = a_port.reading(ws, &blob).unwrap().unwrap();
+    let bb = b_port.reading(ws, &blob).unwrap().unwrap();
+    assert_eq!(aa.corrections, bb.corrections);
+    assert_eq!(aa.corrections.versions.len(), 2);
+    let selected = aa
+        .corrections
+        .versions
+        .iter()
+        .find(|v| Some(&v.id) == aa.corrections.selected.as_ref())
+        .unwrap()
+        .text
+        .as_ref()
+        .unwrap();
+    assert!(a.found(selected, file));
+    assert!(b.found(selected, file));
+    let heads = aa
+        .corrections
+        .versions
+        .iter()
+        .map(|v| v.id.clone())
+        .collect();
+    a_port
+        .correct(
+            ws,
+            &blob,
+            CorrectReading {
+                expected_heads: heads,
+                text: None,
+            },
+        )
+        .unwrap();
+    sync(&a, &b, ws, reading_document_id(file));
+    a.settle();
+    b.settle();
+    assert!(b.found(&word_on("original", 1), file));
+    assert!(!b.found("alphacorrection", file));
+    assert!(!b.found("betacorrection", file));
+    assert_eq!(
+        b.reads(),
+        0,
+        "corrections and reset work without the original file or OCR worker"
+    );
+}
+
+#[test]
+fn reading_diagnostics_force_restarts_a_partial_and_finishes_in_windows() {
+    use koru_store_api::routes::readings::ReadingService;
+    use koru_store_wire::readings::ReadRequestKind;
+    let pdf = hash(91);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let file = a_file(&mut store, ws, "Sample.pdf", &pdf, "application/pdf");
+    land(&mut store, ws, &pdf, 100, "application/pdf");
+    let (mut device, hub) = recognizing(
+        store,
+        docs(&[(
+            &pdf,
+            Doc {
+                pages: 205,
+                scanned: true,
+                word: "visible",
+            },
+        )]),
+    );
+    device.here(&pdf);
+    project(&mut device);
+    let reading_port = port(&device, Arc::clone(&hub));
+    let blob = BlobHash::parse(&pdf).unwrap();
+    let unread = reading_port.reading(ws, &blob).unwrap().unwrap();
+    assert!(unread.status.is_none());
+    assert!(unread.local.as_ref().unwrap().available_here);
+    device.settle();
+    assert_eq!(
+        device.reading(ws, file, &pdf).unwrap().status,
+        Some(ReadingStatus::Partial)
+    );
+    assert!(
+        reading_port
+            .reading(ws, &blob)
+            .unwrap()
+            .unwrap()
+            .offers
+            .force_ocr
+    );
+    reading_port
+        .request(ws, &blob, ReadRequestKind::ForceOcr)
+        .unwrap();
+    assert!(
+        reading_port
+            .reading(ws, &blob)
+            .unwrap()
+            .unwrap()
+            .local
+            .unwrap()
+            .pending
+    );
+    device.settle();
+    let requests = jobs(&device, &pdf);
+    assert_eq!(
+        requests[1].0, 1,
+        "force must restart, not resume the old partial"
+    );
+    assert!(requests[1..].iter().all(|r| r.3 == Want::ForceRecognize));
+    assert!(
+        requests.last().unwrap().0 > 1,
+        "forced windows resume their own progress"
+    );
+    let reading = device.reading(ws, file, &pdf).unwrap();
+    assert_eq!(reading.status, Some(ReadingStatus::Read));
+    assert_eq!(reading.pages.len(), 205);
+    assert!(!requested(&device, ws, &pdf));
+}
+
 /// **A file that failed only on this computer is offered *Read again***
 /// (EXPERIENCE §7: "always shown once the item has been read or has failed"):
 /// it has no synced reading, yet the Store answers for it; accepting clears
@@ -832,6 +1073,57 @@ fn read_again_after_a_crash_grants_the_first_retry_and_stops() {
     );
 }
 
+#[test]
+fn reading_diagnostics_retries_the_crashed_page_instead_of_claiming_empty() {
+    let bad = hash(79);
+    let mut store = store();
+    let ws = workspace(&mut store);
+    let file = a_file(&mut store, ws, "Outlined.pdf", &bad, "application/pdf");
+    land(&mut store, ws, &bad, 10, "application/pdf");
+    let launcher = StubLauncher::new(|request| {
+        let Request::Read { job, from_page, .. } = request else {
+            return Ok(Vec::new());
+        };
+        if *from_page == 1 {
+            Err(Interrupted::Crashed {
+                memory_limit: false,
+            })
+        } else {
+            Ok(vec![Event::Done {
+                job: *job,
+                status: ReadingStatus::Empty,
+                reason: None,
+                pages_done: 1,
+            }])
+        }
+    });
+    let requests = Arc::clone(&launcher.requests);
+    let mut device = Device::new(store, launcher);
+    device.here(&bad);
+    for _ in 0..4 {
+        device.settle();
+        device.coordinator.recompute(device.now);
+    }
+    let starts: Vec<_> = requests
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|request| {
+            if let Request::Read { from_page, .. } = request {
+                Some(*from_page)
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(starts, [1, 1], "one retry at the failed page, then stop");
+    assert!(
+        device
+            .reading(ws, file, &bad)
+            .is_none_or(|reading| reading.status != Some(ReadingStatus::Empty))
+    );
+}
+
 /// **Off silences Read again where it needs the reader**: a picture that
 /// failed here is not offered while the reader is off, and is when it is on.
 #[test]
@@ -910,6 +1202,7 @@ fn the_offers_and_the_refusals_are_one_decision() {
     assert_eq!(
         scan_cap.offers(),
         ReadingOffers {
+            force_ocr: true,
             read_all: true,
             read_again: false
         },
@@ -964,7 +1257,13 @@ fn the_offers_and_the_refusals_are_one_decision() {
         Some(Code::InvalidRequest)
     );
     let still_going = facts("partial", None, "recognized", "pp-ocr", "application/pdf");
-    assert_eq!(still_going.offers(), ReadingOffers::default());
+    assert_eq!(
+        still_going.offers(),
+        ReadingOffers {
+            force_ocr: true,
+            ..ReadingOffers::default()
+        }
+    );
 
     // Read again: read, empty, failed — a picture needs the reader.
     for status in ["read", "empty", "failed"] {

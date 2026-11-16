@@ -23,6 +23,77 @@ fn reading(status: ReadingStatus, pages: &[(u32, &str)]) -> Reading {
     }
 }
 
+#[test]
+fn persistent_corrections_override_search_survive_rescan_and_reset_across_holders() {
+    use koru_read::document::{CorrectionRevision, Corrections};
+    let (mut mirror, _name, _keeper) = memory();
+    let ws = WorkspaceId::new();
+    let (one, two) = (DocumentId::new(), DocumentId::new());
+    let hash = "b3:correction".to_owned();
+    let mut generated = reading(ReadingStatus::Read, &[(1, "machine")]);
+    generated.corrections = Corrections(BTreeMap::from([(
+        "a".into(),
+        CorrectionRevision {
+            parents: Default::default(),
+            text: Some(PageText::new("corrected")),
+        },
+    )]));
+    mirror
+        .apply(&applied(ws, one, vec![(hash.clone(), generated.clone())]))
+        .unwrap();
+    let words = |mirror: &Mirror| {
+        mirror
+            .readings_for(ws, std::slice::from_ref(&hash))
+            .unwrap()
+    };
+    assert_eq!(words(&mirror)[0].pages[0].1, "corrected");
+    let rescanned = reading(ReadingStatus::Read, &[(1, "new machine"), (2, "second")]);
+    mirror
+        .apply(&applied(ws, two, vec![(hash.clone(), rescanned.clone())]))
+        .unwrap();
+    assert_eq!(words(&mirror)[0].pages[0].1, "corrected");
+    generated.corrections.0.insert(
+        "b".into(),
+        CorrectionRevision {
+            parents: ["a".into()].into_iter().collect(),
+            text: Some(PageText::new("")),
+        },
+    );
+    mirror
+        .apply(&applied(ws, one, vec![(hash.clone(), generated.clone())]))
+        .unwrap();
+    assert!(
+        words(&mirror).is_empty(),
+        "blank correction removes generated matches"
+    );
+    let mut reset = rescanned;
+    reset.corrections = generated.corrections.clone();
+    reset.corrections.0.insert(
+        "c".into(),
+        CorrectionRevision {
+            parents: ["b".into()].into_iter().collect(),
+            text: None,
+        },
+    );
+    mirror
+        .apply(&applied(ws, two, vec![(hash.clone(), reset)]))
+        .unwrap();
+    mirror
+        .apply(&applied(ws, one, vec![(hash.clone(), generated)]))
+        .unwrap();
+    assert_eq!(
+        words(&mirror)[0].pages[0].1,
+        "new machine",
+        "old holder cannot resurrect correction after reset"
+    );
+    assert!(
+        mirror
+            .readings_for(WorkspaceId::new(), &[hash])
+            .unwrap()
+            .is_empty()
+    );
+}
+
 fn applied(workspace: WorkspaceId, parent: DocumentId, entries: Vec<(String, Reading)>) -> Applied {
     Applied {
         workspace,
@@ -269,7 +340,7 @@ fn the_checked_vocabularies_are_the_reading_types_own() {
 
 /// **A mirror from another schema version is rebuilt, not migrated.**
 #[test]
-fn another_schema_version_is_discarded() {
+fn a_newer_schema_version_is_refused() {
     let (mut mirror, name, _keeper) = memory();
     let ws = WorkspaceId::new();
     mirror
@@ -284,8 +355,72 @@ fn another_schema_version_is_discarded() {
         .pragma_update(None, "user_version", READINGS_SCHEMA_VERSION + 1)
         .unwrap();
     drop(mirror);
+    assert!(Mirror::in_named_memory(&name).is_err());
+}
+
+#[test]
+fn reading_diagnostics_migrates_an_isolated_v2_cache_and_preserves_requests() {
+    let (mut mirror, name, _keeper) = memory();
+    let ws = WorkspaceId::new();
+    mirror.request(ws, "b3:ordinary", 100).unwrap();
+    mirror
+        .connection()
+        .execute_batch("ALTER TABLE read_requests DROP COLUMN force_ocr; PRAGMA user_version = 2;")
+        .unwrap();
+    drop(mirror);
+    let mut reopened = Mirror::in_named_memory(&name).unwrap();
+    assert!(reopened.requested(ws, "b3:ordinary").unwrap());
+    assert_eq!(reopened.force_ocr(ws, "b3:ordinary").unwrap(), 0);
+    reopened
+        .request_with_ocr(ws, "b3:force", 101, true)
+        .unwrap();
+    drop(reopened);
+    let mut reopened = Mirror::in_named_memory(&name).unwrap();
+    assert_eq!(reopened.force_ocr(ws, "b3:force").unwrap(), 1);
+    reopened.force_started(ws, "b3:force").unwrap();
+    drop(reopened);
     let reopened = Mirror::in_named_memory(&name).unwrap();
-    assert_eq!(reopened.counts().unwrap().documents, 0);
+    assert_eq!(reopened.force_ocr(ws, "b3:force").unwrap(), 2);
+    assert_eq!(reopened.all_requests().unwrap().len(), 2);
+}
+
+#[test]
+fn persistent_corrections_migration_preserves_v3_words_and_forced_requests() {
+    let (mut mirror, name, _keeper) = memory();
+    let ws = WorkspaceId::new();
+    mirror.request_with_ocr(ws, "b3:force", 10, true).unwrap();
+    mirror
+        .apply(&applied(
+            ws,
+            DocumentId::new(),
+            vec![(
+                "b3:file".into(),
+                reading(ReadingStatus::Read, &[(1, "preserved")]),
+            )],
+        ))
+        .unwrap();
+    mirror
+        .connection()
+        .execute_batch("DROP TABLE reading_corrections; PRAGMA user_version=3;")
+        .unwrap();
+    drop(mirror);
+    let reopened = Mirror::in_named_memory(&name).unwrap();
+    assert_eq!(reopened.force_ocr(ws, "b3:force").unwrap(), 1);
+    assert_eq!(
+        reopened.pages_of(&ws.to_storage(), "b3:file").unwrap()[0].1,
+        "preserved"
+    );
+    assert!(
+        reopened.sources_in(ws).unwrap().is_empty(),
+        "snapshots are revisited to populate the correction layer"
+    );
+    assert_eq!(
+        reopened
+            .connection()
+            .pragma_query_value(None, "user_version", |r| r.get::<_, i64>(0))
+            .unwrap(),
+        4
+    );
 }
 
 /// **The plans, pinned, on a mirror of realistic size**: 20,000 readings of
@@ -589,12 +724,12 @@ CREATE TABLE read_attempts (
 PRAGMA user_version = 1;
 ";
 
-/// **A version 1 mirror becomes version 2**: rebuilt, as every bump is — its
+/// **A version 1 mirror becomes version 4**: its derived rows are rebuilt — its
 /// rows go and the catch-up brings them back from the reading documents —
 /// and it now holds `read_requests`.
 #[test]
-fn a_version_one_mirror_is_rebuilt_at_version_two_with_the_requests_table() {
-    assert_eq!(READINGS_SCHEMA_VERSION, 2);
+fn reading_diagnostics_a_version_one_mirror_is_rebuilt_with_the_requests_table() {
+    assert_eq!(READINGS_SCHEMA_VERSION, 4);
     let name = koru_sqlite::MemoryName::fresh("readings.db");
     let keeper = koru_sqlite::open_memory(&name).unwrap();
     keeper.execute_batch(VERSION_1_SCHEMA).unwrap();
@@ -624,7 +759,7 @@ fn a_version_one_mirror_is_rebuilt_at_version_two_with_the_requests_table() {
         .connection()
         .pragma_query_value(None, "user_version", |r| r.get(0))
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 4);
     assert_eq!(mirror.counts().unwrap().by_status.len(), 0, "rebuilt");
     assert!(
         mirror.attempts("text").unwrap().is_empty(),
@@ -634,7 +769,7 @@ fn a_version_one_mirror_is_rebuilt_at_version_two_with_the_requests_table() {
     assert!(mirror.request(ws, "b3:aa", 5).unwrap());
     assert!(mirror.requested(ws, "b3:aa").unwrap());
 
-    // Opened again at version 2: nothing is rebuilt, the request stands.
+    // Opened again at version 4: nothing is rebuilt, the request stands.
     drop(mirror);
     let again = Mirror::in_named_memory(&name).unwrap();
     assert!(again.requested(ws, "b3:aa").unwrap());

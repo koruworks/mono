@@ -47,7 +47,7 @@ pub(crate) struct Rows<'a> {
     pub(crate) spelling_languages: &'a [(LanguageChoice, String)],
     pub(crate) spelling_note: Option<&'a str>,
     pub(crate) dictionary: Option<&'a DictionaryRow>,
-    /// The *Text in pictures and PDFs* card; `None` draws none.
+    /// The *Recognize text and images in PDFs* card; `None` draws none.
     pub(crate) reader: Option<&'a crate::ReaderRow>,
     /// How many words the personal dictionary holds, once the host has read it.
     pub(crate) personal_words: Option<usize>,

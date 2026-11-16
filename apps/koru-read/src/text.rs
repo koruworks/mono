@@ -6,8 +6,9 @@
 //! interprets a page's content and hands every run of positioned glyphs, each
 //! with whatever Unicode mapping its font provides, to a `Device` the caller
 //! implements. [`Collector`] is that device: it keeps each glyph's position,
-//! size and characters and ignores every drawing operation except pictures,
-//! whose share of the page [`crate::accept`] needs. [`assemble`] then turns
+//! size and characters, picture coverage, and whether paths were painted.
+//! Paths can be outlined letters with no glyph mapping for text extraction.
+//! [`assemble`] then turns
 //! the glyphs into lines.
 //!
 //! ## How lines are found
@@ -206,6 +207,7 @@ fn mapping(text: &str) -> Mapping {
 pub struct Collector {
     glyphs: Vec<Placed>,
     unmapped: usize,
+    has_paths: bool,
     picture_area: f64,
     page_area: f64,
     largest_image: u64,
@@ -219,6 +221,7 @@ impl Collector {
         Collector {
             glyphs: Vec::new(),
             unmapped: 0,
+            has_paths: false,
             picture_area: 0.0,
             page_area,
             largest_image: 0,
@@ -239,6 +242,7 @@ impl Collector {
             text,
             chars,
             unmapped: self.unmapped,
+            has_paths: self.has_paths,
             picture_share,
             largest_image: self.largest_image,
             image_pixels: self.image_pixels,
@@ -324,7 +328,12 @@ impl Collector {
 }
 
 impl<'a> Device<'a> for Collector {
-    fn draw_path(&mut self, _: &BezPath, _: DrawProps<'a>, _: &DrawMode) {}
+    fn draw_path(&mut self, path: &BezPath, _: DrawProps<'a>, _: &DrawMode) {
+        // Outlined lettering never reaches draw_glyph_run. A path is not proof
+        // of text, but it is not proof of an empty page either: let OCR decide
+        // when there is no usable text layer. Clip paths alone do not count.
+        self.has_paths |= !path.is_empty();
+    }
 
     fn push_clip_path(&mut self, _: &ClipPath) {}
 

@@ -1100,6 +1100,7 @@ impl Coordinator {
         let mut again = pair.clone();
         again.fresh = false;
         again.requested = true;
+        again.restart = false;
         self.plan.insert(at, again);
         self.counts.requested += 1;
     }
@@ -1394,8 +1395,15 @@ impl Coordinator {
                 continue;
             };
             let mime = reference.mime.clone().unwrap_or_else(|| row_mime.clone());
+            let force = if requested {
+                self.mirror
+                    .force_ocr(workspace, &reference.blob)
+                    .unwrap_or(0)
+            } else {
+                0
+            };
             let needs_reader = match readable(&mime) {
-                Some(Readable::Text) => needs_reader,
+                Some(Readable::Text) => needs_reader || force > 0,
                 Some(Readable::Picture) => true,
                 None => continue,
             };
@@ -1423,7 +1431,13 @@ impl Coordinator {
                     // installed, so the pair is queued for it and waits for
                     // the worker there (`process`), not counted as needing
                     // a reader (OCR Plan 3.6).
-                    (Recognition::Yes | Recognition::NotNow(_), _) => Want::Recognize,
+                    (Recognition::Yes | Recognition::NotNow(_), _) => {
+                        if force > 0 {
+                            Want::ForceRecognize
+                        } else {
+                            Want::Recognize
+                        }
+                    }
                     (Recognition::No, true) => {
                         tally.needs_reader(workspace);
                         continue;
@@ -1443,7 +1457,7 @@ impl Coordinator {
                 // A request has its own lane, between the two.
                 fresh: fresh && !requested,
                 want,
-                restart: restart && want == Want::Recognize,
+                restart: force == 1 || (restart && want != Want::Text),
                 counted: !fresh && !counted_settled,
                 requested,
             });
@@ -1491,6 +1505,7 @@ impl Coordinator {
         // request already under way reads on to its end: *Read again* means
         // reading, and its first window is what made it unsettled.
         if let Some(reading) = self.words_here(&state, pair)
+            && pair.want != Want::ForceRecognize
             && held.is_none_or(|held| rank_of(&reading) > rank_of(held))
             && !(requested && held.is_none() && prior.is_some())
         {
@@ -1526,7 +1541,7 @@ impl Coordinator {
             return Processed::NoReader(why);
         }
         self.worker_down = None;
-        if pair.want == Want::Recognize {
+        if pair.want != Want::Text {
             match self.recognition(now) {
                 Recognition::Yes => {}
                 // Queued for recognition, and the reader has gone since —
@@ -1594,7 +1609,11 @@ impl Coordinator {
         let base = fork(state, pair.workspace, reading_document_id(pair.parent))
             .map_err(|_| "the reading document did not fork".to_owned())?;
         let mut writer = Writer::new(pair.workspace, reading_document_id(pair.parent), base);
-        match writer.doc.write(&pair.hash, reading) {
+        // A generated reading may be reused across workspaces. Authored
+        // corrections belong to the workspace where they were written.
+        let mut generated = reading.clone();
+        generated.corrections = Default::default();
+        match writer.doc.write(&pair.hash, &generated) {
             Ok(Write::Applied) => {}
             Ok(Write::Superseded { .. }) => {
                 self.stats.skipped += 1;
@@ -1635,7 +1654,15 @@ impl Coordinator {
         // that pass reached the last page, and the reader starts at the first.
         // A requested PDF also resumes a capped `partial` — that is *Read all
         // pages* — and starts a finished one again at page 1 (*Read again*).
-        let prior = prior.filter(|_| !pair.restart);
+        let restart = if pair.want == Want::ForceRecognize {
+            self.mirror
+                .force_ocr(pair.workspace, &pair.hash)
+                .unwrap_or(1)
+                == 1
+        } else {
+            pair.restart
+        };
+        let prior = prior.filter(|_| !restart);
         let resume = prior
             .as_ref()
             .filter(|r| {
@@ -1645,6 +1672,7 @@ impl Coordinator {
             })
             .and_then(|r| r.pages_done);
         let from_page = resume.map_or(1, |done| done.saturating_add(1));
+        let prior = prior.filter(|_| resume.is_some());
         let held_words = prior
             .as_ref()
             .is_some_and(|r| r.generation == GENERATION && r.pages.values().any(|t| !t.is_empty()));
@@ -1655,14 +1683,19 @@ impl Coordinator {
         // The reader's own token when the job may recognize — the installed
         // descriptor's signed engine, `pp-ocr` — and `text` otherwise.
         let reader = match pair.want {
-            Want::Recognize => self
+            Want::Recognize | Want::ForceRecognize => self
                 .model
                 .as_ref()
                 .and_then(ModelInUse::reader)
                 .unwrap_or_else(ReaderId::text),
             Want::Text => ReaderId::text(),
         };
-        match writer.doc.begin(&pair.hash, &reader, GENERATION) {
+        let begun = if from_page == 1 {
+            writer.doc.begin_fresh(&pair.hash, &reader, GENERATION)
+        } else {
+            writer.doc.begin(&pair.hash, &reader, GENERATION)
+        };
+        match begun {
             Ok(Write::Applied) => {}
             Ok(Write::Superseded { .. }) => {
                 self.stats.skipped += 1;
@@ -1875,7 +1908,7 @@ impl Coordinator {
                         // Pages that need the reader: wait as `needs_reader`,
                         // not fed again until one is installed.
                         self.record(&pair.hash, AttemptCode::NeedsReader, now);
-                        if pair.want == Want::Recognize {
+                        if pair.want != Want::Text {
                             // Asked to recognize, and pages still need the
                             // reader: it is not working here.
                             self.recognition_lost();
@@ -1894,7 +1927,7 @@ impl Coordinator {
                 let kept = self.keep_progress(&state, &mut writer, pair, &mut buffer, last_page);
                 // **The model would not load** (possibly after some pages):
                 // recognition is off until the worker restarts.
-                if code == FailureCode::NeedsReader && pair.want == Want::Recognize {
+                if code == FailureCode::NeedsReader && pair.want != Want::Text {
                     self.recognition_lost();
                 }
                 match local_code(code) {
@@ -1923,10 +1956,10 @@ impl Coordinator {
                 return Processed::NoReader(why);
             }
             (Err(Interrupted::Crashed { memory_limit }), _) => {
-                // The page after the last one delivered is the one it died on:
-                // skip it on the retry (resume at last page + 2).
-                let stuck = last_page.map_or(from_page, |l| l + 1);
-                let kept = self.keep_progress(&state, &mut writer, pair, &mut buffer, Some(stuck));
+                // A crash is not a completed page. Keep only delivered progress
+                // so the bounded retry starts on the failed page itself. Marking
+                // it complete made a one-page scan's retry finish as empty.
+                let kept = self.keep_progress(&state, &mut writer, pair, &mut buffer, last_page);
                 let code = if memory_limit {
                     AttemptCode::MemoryLimit
                 } else {
@@ -1960,7 +1993,16 @@ impl Coordinator {
             }
         };
         match result {
-            Ok(outcome) => self.debug_line(job.0, pair, outcome, words),
+            Ok(outcome) => {
+                // Progress reaches the Store before the local restart flag.
+                // A crash between them safely repeats pages, never skips them.
+                if writer.wrote && pair.want == Want::ForceRecognize {
+                    if let Err(error) = self.mirror.force_started(pair.workspace, &pair.hash) {
+                        self.stats.last_error = Some(error.0);
+                    }
+                }
+                self.debug_line(job.0, pair, outcome, words)
+            }
             Err(why) => self.commit_failed(pair, now, why),
         }
         Processed::Done

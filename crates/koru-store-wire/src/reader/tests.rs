@@ -79,6 +79,7 @@ fn an_item_carries_ids_and_tokens_only() {
         reason: "password".into(),
         pages_done: None,
         offers: crate::readings::ReadingOffers {
+            force_ocr: false,
             read_all: false,
             read_again: true,
         },

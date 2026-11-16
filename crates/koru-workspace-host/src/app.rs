@@ -7,6 +7,8 @@
 //! knows what a row is.
 
 mod delegate_folder;
+mod file_paste;
+mod image_file;
 mod inspector_window;
 mod key_release;
 mod modifiers;
@@ -15,6 +17,7 @@ mod profile_delivery;
 mod profile_removal;
 mod profile_switch;
 mod profile_wait;
+mod reading_rescan;
 mod recording;
 mod trash;
 mod zoom;
@@ -1202,15 +1205,27 @@ enum ImportMessage {
     ReadingFetchedForSave {
         result: Result<(String, String), String>,
     },
+    ReadingInspected {
+        source: WindowId,
+        file: koru_core::DocumentId,
+        result: Result<crate::reading_details::ReadingDetails, String>,
+    },
     /// What the Store says may be asked of one item's reading now, for its
     /// right-click menu (OCR Plan 3.2). `None`: nothing offered.
     ReadingOffers {
         target: crate::reading_file::ReadingTarget,
         offers: Option<crate::reading_requests::ReadingOffers>,
     },
+    ReadingRescanFinished(Result<reading_rescan::Summary, ()>),
     FileOpened {
         name: String,
         result: Result<(), String>,
+    },
+    FileImageOpened {
+        source: WindowId,
+        file: koru_core::DocumentId,
+        name: String,
+        image: Arc<koru_ui::media_viewer::ViewerImage>,
     },
     FilesSaved {
         count: usize,
@@ -2750,6 +2765,7 @@ struct App<H: Host> {
     pending_ai_import: Option<(WindowId, uuid::Uuid)>,
     /// A Tasks page whose `+` chose files: attached once the import lands.
     pending_page_attachment: Option<koru_core::ids::PageKey>,
+    pending_file_paste: Option<(koru_core::WorkspaceId, koru_core::DocumentId)>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
     /// Batches wait here while any other import is active rather than being
     /// silently discarded by `import_busy`.
@@ -5996,6 +6012,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             pending_attachment: None,
             pending_ai_import: None,
             pending_page_attachment: None,
+            pending_file_paste: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
             // staged before the process existed, so nothing will focus-event
@@ -7027,21 +7044,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 file_actions.len()
             );
         }
-        for (_id, file, action) in file_actions {
+        for (source, file, action) in file_actions {
             crate::attach_debug!(
                 "shell service_images leftover FileAction::{action:?} file={} — MainView did not intercept",
                 file.to_storage()
             );
             match action {
                 crate::FileAction::Open => {
-                    self.open_file(file);
+                    self.open_file(source, file, false);
                 }
                 crate::FileAction::Save => {
                     self.save_file(file);
                 }
                 crate::FileAction::Reveal => {
                     // MainView intercepts Reveal; fallback open for bare views.
-                    self.open_file(file);
+                    self.open_file(source, file, false);
                 }
                 crate::FileAction::Restore => {
                     // MainView intercepts Restore via PaneRequest; no-op here.
@@ -9947,6 +9964,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::ImportFiles(selection) => {
                 self.import_content(source, "files", selection);
             }
+            PaneRequest::ImportFileAttachments { paths, document } => {
+                if !self.import_busy
+                    && let Some(workspace) = self.runtime.workspace.current()
+                {
+                    self.import_content(
+                        source,
+                        "files",
+                        crate::ImportSourceSelection::Files(paths),
+                    );
+                    if self.import_busy {
+                        self.pending_file_paste = Some((workspace, document));
+                    }
+                }
+            }
             PaneRequest::CancelImport => self.cancel_content_import(),
             PaneRequest::VoiceConsent(accepted) => self.answer_voice_consent(accepted),
             PaneRequest::CancelVoiceDownload => self.stop_voice_download(),
@@ -9968,15 +9999,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
             }
             PaneRequest::SaveFiles(ids) => self.save_files(ids),
             PaneRequest::SaveReading(target) => self.save_reading(target),
+            PaneRequest::InspectFileReading(file) => self.inspect_file_reading(source, file),
             PaneRequest::ReadingOffers(target) => self.fetch_reading_offers(target),
             PaneRequest::ReadRequest(target, kind) => self.request_reading(target, kind),
+            PaneRequest::RescanWorkspaceFiles(workspace) => self.rescan_workspace_files(workspace),
             PaneRequest::SaveDiagram(request) => self.save_diagram(source, request),
             PaneRequest::CopyDiagram(request) => self.copy_diagram(source, &request),
             PaneRequest::OpenFile(id) => {
                 crate::attach_debug!("shell drain PaneRequest::OpenFile id={}", id.to_storage());
-                self.open_file(id);
+                self.open_file(source, id, false);
             }
-            PaneRequest::OpenFiles(ids) => self.open_files(ids),
+            PaneRequest::OpenFileExternally(id) => self.open_file(source, id, true),
+            PaneRequest::OpenFiles(ids) => self.open_files(source, ids),
             PaneRequest::OpenFileNote(id) => self.open_file_note(event_loop, source, id),
             PaneRequest::RenameFile(id, title) => {
                 if let Err(error) = self.runtime.workspace.rename_document(id, &title) {
@@ -10806,6 +10840,29 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         self.runtime.workspace.attach_files_to_page(page, &ids);
                     }
                 }
+                if let Some((workspace, document)) = self.pending_file_paste.take()
+                    && !files.is_empty()
+                {
+                    // Only edit the captured open document. Never reopen a closed
+                    // document or attach into whichever tab is active now.
+                    let result = if self.runtime.workspace.current() == Some(workspace)
+                        && self.runtime.workspace.document(document).is_some()
+                    {
+                        file_paste::attachment_cuttings(workspace, &files)
+                            .map_err(|error| error.to_string())
+                            .and_then(|cuttings| self.runtime.workspace
+                                .plant_into_document(workspace, document, None, &cuttings, None)
+                                .map_err(|error| error.to_string()))
+                    } else {
+                        Err(koru_i18n::t(koru_i18n::current(), koru_i18n::Key::PasteFilesDestinationClosed).to_owned())
+                    };
+                    if let Err(error) = result {
+                        self.report(ErrorReport::new(
+                            koru_i18n::t(koru_i18n::current(), koru_i18n::Key::PasteFilesAttachFailed),
+                            error,
+                        ));
+                    }
+                }
                 if let Some((window, node)) = self.pending_attachment.take()
                     && let Some(pane) = self.panes.get_mut(&window)
                 {
@@ -10970,6 +11027,25 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     }
                 }
             }
+            ImportMessage::ReadingInspected { source, file, result } => {
+                if let Some(pane) = self.panes.get_mut(&source)
+                    && pane.view.show_file_reading(file, result)
+                {
+                    pane.needs_frame.set(true);
+                    pane.window.request_redraw();
+                }
+            }
+            ImportMessage::ReadingRescanFinished(result) => {
+                let lang = crate::accessibility::ui_lang();
+                let message = match result {
+                    Ok(summary) => koru_i18n::t(lang, koru_i18n::Key::FilesRescanSummary)
+                        .replace("{queued}", &summary.queued.to_string())
+                        .replace("{skipped}", &summary.skipped.to_string())
+                        .replace("{failed}", &summary.failed.to_string()),
+                    Err(()) => koru_i18n::t(lang, koru_i18n::Key::FilesRescanFailed).to_owned(),
+                };
+                self.notice(message);
+            }
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -10981,6 +11057,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .with_details(error),
                 ),
             },
+            ImportMessage::FileImageOpened { source, file, name, image } => {
+                if let Some(pane) = self.panes.get_mut(&source)
+                    && pane.view.show_file_image(file, name, image)
+                {
+                    pane.needs_frame.set(true);
+                    pane.window.request_redraw();
+                }
+            }
             ImportMessage::FileOpened { name, result } => match result {
                 Ok(()) => self.notice(format!("Opened \u{201c}{name}\u{201d}.")),
                 Err(error) if blob_is_waiting_for_a_device(&error) => match waiting_device_names(&error) {
@@ -11168,11 +11252,51 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// **The debug-only *Save reading*** (`reading_file`): fetch on a worker,
-    /// then the dialog here, then the write on a worker — *Save as…*'s three
-    /// steps. Refused, as the menu hides it, without `KORU_READ_DEBUG`.
+    /// Reading details and View extracted text are available in normal builds.
+    /// Fetch on a worker, then show the result in the requesting window.
+    fn inspect_file_reading(&mut self, source: WindowId, file: koru_core::DocumentId) {
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let lang = crate::accessibility::ui_lang();
+        let spawned = std::thread::Builder::new()
+            .name("koru-inspect-reading".into())
+            .spawn(move || {
+                let result = (|| {
+                    let target = crate::reading_file::ReadingTarget::File(file);
+                    let (client, ws, hash, name) =
+                        locate_reading_item(&segment, root.as_deref(), &target, None)?;
+                    let answer = client.reading(ws, &hash).map_err(|e| e.to_string())?;
+                    let mut details = crate::reading_details::format(
+                        name.unwrap_or_default(),
+                        answer.as_ref(),
+                        lang,
+                    );
+                    details.target = Some((ws, hash));
+                    Ok(details)
+                })();
+                let _ = tx.send(ImportMessage::ReadingInspected {
+                    source,
+                    file,
+                    result,
+                });
+                let _ = proxy.send_event(Wake::Import);
+            });
+        if let Err(error) = spawned {
+            if let Some(pane) = self.panes.get_mut(&source) {
+                pane.view.show_file_reading(file, Err(error.to_string()));
+                pane.needs_frame.set(true);
+                pane.window.request_redraw();
+            }
+        }
+    }
+
+    /// Files export from their OCR tab; inline pictures keep the debug-only entry.
     fn save_reading(&mut self, target: crate::reading_file::ReadingTarget) {
-        if !crate::reading_file::enabled() {
+        if matches!(target, crate::reading_file::ReadingTarget::Picture { .. })
+            && !crate::reading_file::enabled()
+        {
             return;
         }
         let tx = self.import_tx.clone();
@@ -11248,6 +11372,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     let sent = match kind {
                         ReadRequestKind::ReadAll => client.read_all(ws, &hash).map(|_| ()),
                         ReadRequestKind::ReadAgain => client.read_again(ws, &hash).map(|_| ()),
+                        ReadRequestKind::ForceOcr => client.force_ocr(ws, &hash).map(|_| ()),
                     };
                     if let Err(error) = sent {
                         tracing::debug!(code = %error.code(), "a reading request was refused");
@@ -11524,10 +11649,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// Open an opaque workspace file through its OS association. The Store read
-    /// and disk write stay off the event thread; the cache keeps one bounded
-    /// copy per stable file id rather than leaking a new temp file per click.
-    fn open_file(&mut self, id: koru_core::DocumentId) {
+    /// Open images in the requesting pane's viewer; other files use their OS
+    /// association. Store reads, image decoding and disk writes stay off the
+    /// event thread. Explicit external opening bypasses the viewer.
+    fn open_file(&mut self, source: WindowId, id: koru_core::DocumentId, external: bool) {
+        let internal = !external
+            && self
+                .panes
+                .get_mut(&source)
+                .is_some_and(|pane| pane.view.begin_file_image_open(id));
         let tx = self.import_tx.clone();
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
@@ -11543,9 +11673,23 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     name = entry.title;
                     let bytes =
                         workspace_file_bytes(&segment, root.as_deref(), workspace, store_id)?;
-                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes)
+                    if internal && let Some(image) = image_file::decode(&bytes)? {
+                        let _ = tx.send(ImportMessage::FileImageOpened {
+                            source,
+                            file: id,
+                            name: name.clone(),
+                            image: Arc::new(image),
+                        });
+                        return Ok(true);
+                    }
+                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes).map(|_| false)
                 })();
-                let _ = tx.send(ImportMessage::FileOpened { name, result });
+                if !matches!(result, Ok(true)) {
+                    let _ = tx.send(ImportMessage::FileOpened {
+                        name,
+                        result: result.map(|_| ()),
+                    });
+                }
                 let _ = proxy.send_event(Wake::Import);
             })
         {
@@ -11725,9 +11869,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     /// Open every selected file through the associated OS application.
-    fn open_files(&mut self, ids: Vec<koru_core::DocumentId>) {
+    fn open_files(&mut self, source: WindowId, ids: Vec<koru_core::DocumentId>) {
         if ids.len() == 1 {
-            self.open_file(ids[0]);
+            self.open_file(source, ids[0], false);
             return;
         }
         let Some(workspace_id) = self.runtime.workspace.current() else {
@@ -12392,6 +12536,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
     /// the literal `/attach` text is not left behind.
     fn finish_pending_attachment(&mut self, cancelled: bool) {
+        self.pending_file_paste = None;
         self.pending_page_attachment = None;
         let Some((window, node)) = self.pending_attachment.take() else {
             return;

@@ -267,6 +267,8 @@ impl From<String> for PageText {
 /// [`crate::ReadingDoc`] on why a reading never mixes generations.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct Reading {
+    /// Authored revisions survive replacement of generated pages.
+    pub corrections: crate::document::Corrections,
     pub reader: Option<ReaderId>,
     pub generation: u32,
     pub status: Option<ReadingStatus>,

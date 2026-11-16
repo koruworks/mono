@@ -354,8 +354,8 @@ fn every_row_builds_and_the_paths_are_grouped() {
     // `…/read-again`) add two internal rows over two paths. Turning the
     // reader off and on again (OCR Plan 3.5, `…/reader/off` and `…/on`) two
     // more.
-    assert_eq!(ROUTES.len(), 126, "a row was added or removed");
-    assert_eq!(paths.len(), 103, "a path was added or removed");
+    assert_eq!(ROUTES.len(), 131, "a row was added or removed");
+    assert_eq!(paths.len(), 107, "a path was added or removed");
 }
 
 #[test]
@@ -534,6 +534,9 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/workspaces/{id}/blobs/pause",
             "/v1/workspaces/{id}/blobs/release",
             "/v1/profiles/{id}/transport-mode",
+            "/v1/profiles/{id}/transport-mode",
+            "/v1/profiles/{id}/transport-default",
+            "/v1/workspaces/{id}/transport-mode",
             // Ours: the reader that finds words in pictures, on this computer
             // (OCR Plan 2.4) — a model on this machine and this machine's
             // answer to an offer, which promise a third party nothing.
@@ -553,8 +556,10 @@ fn only_deliberate_adapter_and_diagnostic_routes_are_internal() {
             "/v1/readings/{workspace}/{hash}",
             // Ours: a person's request on one item, a fact about this
             // computer (OCR Plan 3.2).
+            "/v1/readings/{workspace}/{hash}/correction",
             "/v1/readings/{workspace}/{hash}/read-all",
             "/v1/readings/{workspace}/{hash}/read-again",
+            "/v1/readings/{workspace}/{hash}/force-ocr",
             "/v1/debug/openapi.json",
             "/v1/debug/store",
             "/v1/debug/workspaces/{id}",

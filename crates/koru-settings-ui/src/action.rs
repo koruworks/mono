@@ -151,7 +151,7 @@ pub(crate) enum Action {
     AppMenuEntry(bool),
     /// *Preview in sample document*, at the right of *Document fonts*.
     PreviewSampleDocument,
-    // ------------------------------- Text in pictures and PDFs (OCR Plan 2.5)
+    // ------------------------------- Recognize text and images in PDFs (OCR Plan 2.5)
     /// **Turn on**, or **Try again** after a download that did not finish.
     ReaderTurnOn,
     ReaderStop,

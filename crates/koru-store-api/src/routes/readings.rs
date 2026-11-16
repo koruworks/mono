@@ -41,8 +41,19 @@ use crate::state::AppState;
 
 /// **The daemon's answer to "what was read out of these bytes here?"**
 pub trait ReadingService: Send + Sync + 'static {
-    /// The winning reading of `hash` in `workspace`, or `None` when nothing
-    /// has been read of it there yet. `Err` is a mirror that could not be
+    fn correct(
+        &self,
+        _workspace: WorkspaceId,
+        _hash: &BlobHash,
+        _request: koru_store_wire::readings::CorrectReading,
+    ) -> Result<koru_store_wire::readings::ReadingCorrections, Error> {
+        Err(Error::new(
+            Code::ProjectionUnavailable,
+            "reading corrections are unavailable",
+        ))
+    }
+    /// The winning reading and local state of a live blob, including unread
+    /// items. `None` means no known live item. `Err` is a mirror that could not be
     /// read, with SQLite's message, which never carries a row's value.
     fn reading(
         &self,
@@ -104,9 +115,8 @@ pub async fn items(
 
 /// `GET /v1/readings/{workspace}/{hash}` — the winning reading, or `null`.
 ///
-/// `null` is "nothing read here yet", which is an answer; an unknown
-/// workspace is a 404 from the catalog, never a `null` that would read as
-/// one.
+/// Live unread items return local facts with no status or pages. `null` means
+/// no known item; an unknown workspace is a 404 from the catalog.
 pub async fn reading(
     State(state): State<Arc<AppState>>,
     Extension(caller): Extension<Caller>,
@@ -133,9 +143,29 @@ pub async fn reading(
             "this store is not running a readings mirror",
         )
     })?;
-    let answer = service
-        .reading(workspace, &hash)
+    let answer = tokio::task::spawn_blocking(move || service.reading(workspace, &hash))
+        .await
+        .map_err(|_| ApiError::bare(Code::Internal))?
         .map_err(|error| ApiError::new(Code::StorageFailed, error))?;
+    Ok(Json(answer))
+}
+
+pub async fn correct(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path((workspace, hash)): Path<(String, String)>,
+    Json(body): Json<koru_store_wire::readings::CorrectReading>,
+) -> ApiResult<Json<koru_store_wire::readings::ReadingCorrections>> {
+    caller.require(Scope::EditDocuments)?;
+    let workspace =
+        WorkspaceId::parse(&workspace).ok_or_else(|| ApiError::bare(Code::InvalidId))?;
+    let hash = BlobHash::parse(&hash).map_err(|_| ApiError::bare(Code::InvalidRequest))?;
+    let service = state
+        .reading_service()
+        .ok_or_else(|| ApiError::bare(Code::ProjectionUnavailable))?;
+    let answer = tokio::task::spawn_blocking(move || service.correct(workspace, &hash, body))
+        .await
+        .map_err(|_| ApiError::bare(Code::Internal))??;
     Ok(Json(answer))
 }
 
@@ -155,6 +185,15 @@ pub async fn read_again(
     Path((workspace, hash)): Path<(String, String)>,
 ) -> ApiResult<Json<ReadRequested>> {
     request(state, caller, workspace, hash, ReadRequestKind::ReadAgain)
+}
+
+/// Render and recognize each page even when embedded text is present.
+pub async fn force_ocr(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path((workspace, hash)): Path<(String, String)>,
+) -> ApiResult<Json<ReadRequested>> {
+    request(state, caller, workspace, hash, ReadRequestKind::ForceOcr)
 }
 
 fn request(

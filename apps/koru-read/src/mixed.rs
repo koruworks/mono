@@ -3,7 +3,7 @@
 //! **One page, two sets of words: its text layer and what recognition read
 //! in its pictures.**
 //!
-//! A page with a usable text layer whose pictures cover more than half of it
+//! A page with a usable text layer and pictures or painted paths
 //! is recognized as well ([`crate::accept::Ask::AsWell`]): a screenshot or a
 //! scan inside a typed document holds words the layer does not. Both are
 //! kept, as the page's one string (`Source::Mixed`), and that string must not
@@ -14,10 +14,8 @@
 //! that is not already there**, in recognition's reading order. A recognized
 //! line is already there when
 //!
-//! - with case and white space ignored, it appears inside the layer — the
-//!   same words, perhaps wrapped or spaced differently; or
-//! - at least [`COVERED`] of its words are words of the layer — the same line
-//!   with a character misread, which an exact comparison would add again; or
+//! - its exact word sequence already occurs in the layer, ignoring case,
+//!   punctuation and whitespace; or
 //! - it repeats a recognized line already added.
 //!
 //! The layer goes first because it is exact (it is the file's own text) and
@@ -29,34 +27,25 @@
 
 use std::collections::HashSet;
 
-/// A recognized line most of whose words the layer already holds is the
-/// layer's line, read again.
-pub const COVERED: f64 = 0.8;
-
 /// The page's text: `layer`, then the lines of `recognized` it lacks.
 pub fn combine(layer: &str, recognized: &str) -> String {
-    let layer_squashed = squash(layer);
-    let layer_words: HashSet<String> = words(layer).collect();
+    let layer_words: Vec<String> = words(layer).collect();
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = layer.to_string();
     for line in recognized.lines() {
         let line = line.trim();
-        let squashed = squash(line);
-        if squashed.is_empty() || !seen.insert(squashed.clone()) {
-            continue;
-        }
-        if layer_squashed.contains(&squashed) {
-            continue;
-        }
         let line_words: Vec<String> = words(line).collect();
-        if !line_words.is_empty() {
-            let known = line_words
-                .iter()
-                .filter(|word| layer_words.contains(*word))
-                .count();
-            if known as f64 >= COVERED * line_words.len() as f64 {
-                continue;
-            }
+        if line_words.is_empty() || !seen.insert(line_words.join(" ")) {
+            continue;
+        }
+        // Similarity is not duplication: one different name or number can be
+        // the very word somebody needs to find. Do not suppress partial matches
+        // or a short name that happens to be a substring of another word.
+        if layer_words
+            .windows(line_words.len())
+            .any(|window| window == line_words)
+        {
+            continue;
         }
         if !out.is_empty() {
             out.push('\n');
@@ -64,14 +53,6 @@ pub fn combine(layer: &str, recognized: &str) -> String {
         out.push_str(line);
     }
     out
-}
-
-/// Lower case, with every white-space character removed.
-fn squash(text: &str) -> String {
-    text.chars()
-        .filter(|c| !c.is_whitespace())
-        .flat_map(char::to_lowercase)
-        .collect()
 }
 
 /// The lower-cased runs of letters and digits.

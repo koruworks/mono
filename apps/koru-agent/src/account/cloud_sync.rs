@@ -97,17 +97,40 @@ impl CloudSyncPort for AgentCloudSync {
         true
     }
 
+    fn starts_connected_profiles_on(&self) -> bool {
+        true
+    }
+
+    fn choose_cloud_sync(
+        &self,
+        profile: koru_account_core::ProfileId,
+        enabled: bool,
+    ) -> Result<(), ServiceError> {
+        self.store_client()?
+            .set_profile_transport_mode(profile, if enabled { "cloud" } else { "p2p" }, true)
+            .map(|_| ())
+            .map_err(|_| ServiceError::retryable("store_unavailable"))
+    }
+
     /// The Store operation behind the Profile prompt's *Move everything*
     /// (D258): the Profile and its Workspaces to Cloud, as one group. A
     /// Profile already there writes nothing, so repeating it is free.
     fn open_to_cloud(&self, profile: koru_account_core::ProfileId) -> Result<(), ServiceError> {
         self.store_client()?
-            .set_profile_transport_mode(
+            .initialize_profile_transport_mode(
                 profile,
                 koru_store_core::TransportMode::Cloud.as_storage(),
-                true,
             )
-            .map(|_| ())
+            .and_then(|settings| {
+                if settings.mode == "cloud" {
+                    Ok(())
+                } else {
+                    Err(koru_store_core::errors::Error::new(
+                        koru_store_core::errors::Code::Forbidden,
+                        "this Profile has an explicit local sync choice",
+                    ))
+                }
+            })
             .map_err(|_| ServiceError::retryable("store_unavailable"))
     }
 }

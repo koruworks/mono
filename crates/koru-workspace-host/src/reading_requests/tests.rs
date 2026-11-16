@@ -4,6 +4,7 @@ use super::*;
 
 fn offers(read_all: bool, read_again: bool) -> Option<ReadingOffers> {
     Some(ReadingOffers {
+        force_ocr: false,
         read_all,
         read_again,
     })
@@ -35,24 +36,31 @@ fn each_entry_is_shown_only_where_the_store_offers_it() {
 
 /// A request sent is not offered again by the menu opened next.
 #[test]
-fn a_request_sent_is_not_offered_twice() {
+fn reading_diagnostics_a_pending_request_disables_every_read_action() {
     let both = ReadingOffers {
+        force_ocr: true,
         read_all: true,
         read_again: true,
     };
     assert_eq!(
         after_request(both, ReadRequestKind::ReadAll),
         ReadingOffers {
+            force_ocr: false,
             read_all: false,
-            read_again: true
+            read_again: false
         }
     );
     assert_eq!(
         after_request(both, ReadRequestKind::ReadAgain),
         ReadingOffers {
-            read_all: true,
+            force_ocr: false,
+            read_all: false,
             read_again: false
         }
+    );
+    assert_eq!(
+        after_request(both, ReadRequestKind::ForceOcr),
+        ReadingOffers::default()
     );
 }
 

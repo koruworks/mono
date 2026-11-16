@@ -932,11 +932,11 @@ fn pictures_and_scanned_pages_wait_as_needs_reader() {
 }
 
 /// **A file that crashes the worker** is recorded locally, retried once in a
-/// fresh worker resuming past the page it died on, then left — never a loop
+/// fresh worker retrying the undelivered page, then left — never a loop
 /// that burns the restart budget. A password-protected PDF is synced as
 /// `failed/password` and not retried.
 #[test]
-fn a_crashing_file_gets_one_retry_and_a_password_is_final() {
+fn reading_diagnostics_a_crashing_file_gets_one_retry_and_a_password_is_final() {
     let hostile = hash(14);
     let locked = hash(15);
     let library = library(&[
@@ -971,10 +971,9 @@ fn a_crashing_file_gets_one_retry_and_a_password_is_final() {
             _ => None,
         })
         .collect();
-    assert_eq!(crashed, vec![1, 2], "one retry, past the page it died on");
+    assert_eq!(crashed, vec![1, 1], "one retry of the undelivered page");
     assert_eq!(device.coordinator.counts.failed, 1);
-    let partial = device.reading(ws, crashing, &hostile).unwrap();
-    assert_eq!(partial.status, Some(ReadingStatus::Partial));
+    assert!(device.reading(ws, crashing, &hostile).is_none());
 
     let failed = device.reading(ws, password, &locked).unwrap();
     assert_eq!(failed.status, Some(ReadingStatus::Failed));
@@ -1579,6 +1578,7 @@ fn one_readings_answer_comes_from_the_document_and_falls_back_to_the_mirror() {
     };
     let words = vec![(1, "one".to_owned()), (2, "two".to_owned())];
     let entry = Reading {
+        corrections: Default::default(),
         reader: Some(ReaderId::text()),
         generation: 1,
         status: Some(ReadingStatus::Partial),
@@ -1639,3 +1639,5 @@ mod long_files;
 // ------------------------------------- a worker that cannot be asked (3.6)
 
 mod worker_down;
+
+mod runtime;

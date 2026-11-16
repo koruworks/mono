@@ -130,6 +130,7 @@ impl AccountForm {
             // drained for parked scopes too (see `capture_local_effects`).
             cloud_uri: _,
             cloud_visible: _,
+            sync_modes: _,
             progress: _,
             progress_owner: _,
             local_effects: _,

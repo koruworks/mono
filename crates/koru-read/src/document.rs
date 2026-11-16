@@ -64,6 +64,9 @@
 
 use std::collections::BTreeMap;
 
+mod corrections;
+pub use corrections::{CorrectionRevision, Corrections};
+
 use loro::{ExportMode, LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::reading::{PageText, ReaderId, Reading, ReadingStatus, Reason, Source};
@@ -287,6 +290,7 @@ impl ReadingDoc {
             }
         }
         Some(Reading {
+            corrections: corrections::read(&entry),
             reader: get_string(&entry, key::READER).and_then(ReaderId::parse),
             generation,
             status: get_string(&entry, key::STATUS).and_then(|s| ReadingStatus::parse(&s)),
@@ -383,6 +387,24 @@ impl ReadingDoc {
         // So a reader taking this generation's map finds one, even before the
         // first page — and so the map exists mergeable from the start.
         entry.ensure_mergeable_map(&pages_key(generation))?;
+        self.doc.commit();
+        Ok(Write::Applied)
+    }
+
+    /// Start over at this generation, replacing derived words and progress.
+    /// Resuming uses `begin` instead. A newer generation is never cleared.
+    pub fn begin_fresh(&self, hash: &str, reader: &ReaderId, generation: u32) -> Result<Write> {
+        let written = self.begin(hash, reader, generation)?;
+        if written != Write::Applied {
+            return Ok(written);
+        }
+        let entry = self.ensure_entry(hash)?;
+        entry
+            .ensure_mergeable_map(&pages_key(generation))?
+            .clear()?;
+        entry.delete(key::PAGES_DONE)?;
+        entry.delete(key::CONFIDENCE)?;
+        entry.delete(key::SOURCE)?;
         self.doc.commit();
         Ok(Write::Applied)
     }
@@ -503,6 +525,7 @@ impl ReadingDoc {
             self.empty_pages_below(&entry, generation)?;
             entry.insert(key::GENERATION, i64::from(generation))?;
         }
+        corrections::merge(&entry, &reading.corrections)?;
         entry.insert(key::READER, reader.as_str())?;
         let map = entry.ensure_mergeable_map(&pages_key(generation))?;
         for (page, text) in &reading.pages {

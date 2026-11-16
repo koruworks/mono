@@ -1205,6 +1205,39 @@ pub const ROUTES: &[Route] = &[
         returns: "what was written; a Workspace somebody already chose for is never in the group",
     },
     Route {
+        method: "GET",
+        audience: Audience::Internal,
+        path: "/v1/profiles/{id}/transport-mode",
+        handler: || get(routes::workspaces::get_profile_transport_mode),
+        request: None,
+        response: Some(|g| g.subschema_for::<koru_store_wire::ProfileTransportSettings>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Read this device's Profile and Workspace sync choices",
+        returns: "saved modes and revisions for the Profile and its Workspaces",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/profiles/{id}/transport-default",
+        handler: || post(routes::workspaces::initialize_profile_transport_mode),
+        request: Some(|g| g.subschema_for::<SetProfileTransportMode>()),
+        response: Some(|g| g.subschema_for::<koru_store_wire::ProfileTransportSettings>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Promote default sync modes without changing explicit choices",
+        returns: "the saved Profile and Workspace choices",
+    },
+    Route {
+        method: "PUT",
+        audience: Audience::Internal,
+        path: "/v1/workspaces/{id}/transport-mode",
+        handler: || put(routes::workspaces::set_workspace_transport_mode),
+        request: Some(|g| g.subschema_for::<koru_store_wire::SetWorkspaceTransportMode>()),
+        response: Some(|g| g.subschema_for::<koru_store_wire::ProfileTransportSettings>()),
+        scope: Some(Scope::ManageWorkspaces),
+        summary: "Choose this device's sync mode for one Workspace",
+        returns: "the saved choices, or a stale revision or Profile ceiling refusal",
+    },
+    Route {
         method: "POST",
         audience: Audience::Public,
         path: "/v1/workspaces/{id}/history/{entry}/label",
@@ -1524,8 +1557,7 @@ pub const ROUTES: &[Route] = &[
     Route {
         method: "GET",
         // Ours until a rung that reads it for a person ships (*Copy text*, an
-        // assistant's reading tool): today only the debug-only *Save reading*
-        // entry asks, and a shape that may still move promises nobody anything.
+        // assistant's reading tool): used by our per-file inspection surfaces.
         audience: Audience::Internal,
         path: "/v1/readings/{workspace}/{hash}",
         handler: || get(routes::readings::reading),
@@ -1535,16 +1567,25 @@ pub const ROUTES: &[Route] = &[
         summary: "The words read out of one file or picture in a workspace",
         returns: "the winning reading of those bytes there — reader, generation, status, \
                   reason, source, confidence, how far it got, and each page's words — with \
-                  what a person may ask of it on this computer now (offers: read_all, \
-                  read_again). When reading it failed on this computer only, `failed_here` \
-                  names the local failure, and an item with no reading at all is still \
-                  answered, with no status and no pages, so it can be read again. Null when \
-                  nothing has been read of them yet. A file's words, so one item at a time; \
+                  current device facts and available requests (read_all, read_again, force_ocr). \
+                  failed_here names a local failure. Live unread items return local facts \
+                  with no status or pages; null means no known live item. One item at a time; \
                   `projection_unavailable` when this store runs no readings mirror",
     },
     // ---- a person's requests on one item (OCR Plan 3.2). Internal, like the
     // reading they act on: a request is a fact about this computer, and the
     // surfaces asking are ours.
+    Route {
+        method: "PUT",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/correction",
+        handler: || put(routes::readings::correct),
+        request: Some(|g| g.subschema_for::<koru_store_wire::readings::CorrectReading>()),
+        response: Some(|g| g.subschema_for::<koru_store_wire::readings::ReadingCorrections>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Save a correction or reset to generated OCR without replacing its history",
+        returns: "current correction heads; stale writes are refused",
+    },
     Route {
         method: "POST",
         audience: Audience::Internal,
@@ -1572,6 +1613,17 @@ pub const ROUTES: &[Route] = &[
         returns: "the request, recorded on this computer; the item is read again and its \
                   reading written again at the same generation. Refused as read-all is, and \
                   invalid_request when it has not been read and has not failed",
+    },
+    Route {
+        method: "POST",
+        audience: Audience::Internal,
+        path: "/v1/readings/{workspace}/{hash}/force-ocr",
+        handler: || post(routes::readings::force_ocr),
+        request: None,
+        response: Some(|g| g.subschema_for::<ReadRequested>()),
+        scope: Some(Scope::EditDocuments),
+        summary: "Force OCR: recognize rendered pages, ignoring embedded text",
+        returns: "a persistent local request; requires local bytes, a supported picture or PDF, and an enabled reader",
     },
     Route {
         method: "GET",

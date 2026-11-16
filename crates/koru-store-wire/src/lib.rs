@@ -635,6 +635,30 @@ pub struct ProfileTransportModeOutcome {
     pub workspaces_left_alone: u32,
 }
 
+/// Device-local synchronization choices, as read from the Store.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ProfileTransportSettings {
+    pub mode: String,
+    pub explicit_choice: bool,
+    pub revision: i64,
+    pub workspaces: Vec<WorkspaceTransportSettings>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct WorkspaceTransportSettings {
+    pub id: String,
+    pub name: String,
+    pub mode: String,
+    pub explicit_choice: bool,
+    pub revision: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+pub struct SetWorkspaceTransportMode {
+    pub mode: String,
+    pub expected_revision: i64,
+}
+
 /// Rename a history marker. `label: None` clears the name; the marker then
 /// falls back to its reason in every listing.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]

@@ -33,6 +33,7 @@
 
 pub(crate) mod applier;
 pub(crate) mod coordinator;
+mod corrections;
 pub(crate) mod feed;
 pub(crate) mod launcher;
 pub(crate) mod mirror;
@@ -313,9 +314,15 @@ fn spawn_coordinator(
     board: Arc<Board>,
     stop: Arc<AtomicBool>,
 ) -> Option<std::thread::JoinHandle<()>> {
+    // A committed reading wakes the desktop's replication runtime, whose
+    // notifier spawns async work. Native threads do not inherit Tokio's
+    // context. Keep the Store's runtime entered while this thread runs;
+    // in-memory hosts without one have no async replication notifier.
+    let runtime = tokio::runtime::Handle::try_current().ok();
     let handle = std::thread::Builder::new()
         .name("koru-readings".into())
         .spawn(move || {
+            let _entered = runtime.as_ref().map(tokio::runtime::Handle::enter);
             while !stop.load(Ordering::Acquire) && !inbox.is_stopping() {
                 let now = koru_store_core::model::Timestamp::now().millis();
                 let busy = coordinator.step(now);
@@ -462,24 +469,19 @@ impl ReadingPort {
             .map(|attempt| attempt.code.as_str().to_owned()))
     }
 
-    /// **An item with no synced reading that failed here** (OCR Plan 3.5):
-    /// the entry that holds it — a live one, from the projection the
-    /// coordinator queues from — and the facts its offers are made from. A
-    /// failure only this computer knows is written nowhere a menu could read,
-    /// so without this the item could never be read again.
-    fn failed_only_here(
+    /// A live item without a synced reading: unread, waiting, or failed here.
+    /// Resolve its holder before exposing local state or accepting a request.
+    fn local_item(
         &self,
         workspace: WorkspaceId,
         hash: &str,
-    ) -> Result<Option<(koru_store_core::ids::DocumentId, Facts, String)>, String> {
+    ) -> Result<Option<(koru_store_core::ids::DocumentId, Facts, Option<String>)>, String> {
         let (code, pending) = {
             let mirror = self
                 .mirror
                 .lock()
                 .map_err(|_| "the readings mirror's lock is poisoned".to_owned())?;
-            let Some(code) = Self::local_failure(&mirror, hash)? else {
-                return Ok(None);
-            };
+            let code = Self::local_failure(&mirror, hash)?;
             (code, mirror.requested(workspace, hash).map_err(|e| e.0)?)
         };
         let Some(document) = self.items.holder(workspace, hash)? else {
@@ -504,13 +506,21 @@ impl ReadingPort {
             here,
             reader_ready: self.reader_ready(),
             pending,
-            failed_here: true,
+            failed_here: code.is_some(),
         };
         Ok(Some((document, facts, code)))
     }
 }
 
 impl koru_store_api::routes::readings::ReadingService for ReadingPort {
+    fn correct(
+        &self,
+        workspace: WorkspaceId,
+        hash: &koru_store_core::model::BlobHash,
+        request: koru_store_wire::readings::CorrectReading,
+    ) -> Result<koru_store_wire::readings::ReadingCorrections, koru_store_core::errors::Error> {
+        self.save_correction(workspace, hash, request)
+    }
     fn reading(
         &self,
         workspace: WorkspaceId,
@@ -523,14 +533,27 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
             let mut answer = answer(workspace, parent, &row, entry, words);
             answer.offers = facts.offers();
             answer.failed_here = failed_here;
+            answer.local = Some(facts.local());
+            answer.corrections = corrections::wire(
+                &self
+                    .correction_history(workspace, hash)
+                    .map_err(|e| e.to_string())?,
+            );
             return Ok(Some(answer));
         }
-        // **No synced reading, and this computer gave up on it** (OCR Plan
-        // 3.5): answered, with nothing read, so *Read again* can be offered.
+        // An unread live item still has inspectable local state.
+        let corrections = corrections::wire(
+            &self
+                .correction_history(workspace, hash)
+                .map_err(|e| e.to_string())?,
+        );
         Ok(self
-            .failed_only_here(workspace, hash)?
+            .local_item(workspace, hash)?
             .map(|(document, facts, code)| {
-                local_answer(workspace, hash, document, code, facts.offers())
+                let mut answer = local_answer(workspace, hash, document, code, facts.offers());
+                answer.local = Some(facts.local());
+                answer.corrections = corrections.clone();
+                answer
             }))
     }
 
@@ -554,7 +577,7 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
         let facts = match self.winner(workspace, hash.as_str()).map_err(storage)? {
             Some((.., facts, _)) => facts,
             None => self
-                .failed_only_here(workspace, hash.as_str())
+                .local_item(workspace, hash.as_str())
                 .map_err(storage)?
                 .map(|(_, facts, _)| facts)
                 .unwrap_or_default(),
@@ -570,16 +593,20 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
             // The attempt goes first: a coordinator that recomputed between
             // the two writes would otherwise see a request for an item that
             // failed for good, and drop it as met.
-            if kind == koru_store_wire::readings::ReadRequestKind::ReadAgain && facts.failed_here {
+            if kind == koru_store_wire::readings::ReadRequestKind::ForceOcr
+                || (kind == koru_store_wire::readings::ReadRequestKind::ReadAgain
+                    && facts.failed_here)
+            {
                 mirror
                     .clear_attempts(hash.as_str())
                     .map_err(|e| storage(e.0))?;
             }
             mirror
-                .request(
+                .request_with_ocr(
                     workspace,
                     hash.as_str(),
                     koru_store_core::model::Timestamp::now().millis(),
+                    kind == koru_store_wire::readings::ReadRequestKind::ForceOcr,
                 )
                 .map_err(|e| storage(e.0))?;
         }
@@ -634,17 +661,16 @@ impl koru_store_api::routes::readings::ReadingService for ReadingPort {
     }
 }
 
-/// **The answer for an item this computer gave up on and nobody has a
-/// reading of** (OCR Plan 3.5): nothing read, the local failure named, and
-/// the offers — *Read again*, where it would be accepted.
+/// The answer for a live item without a reading, with an optional local failure.
 fn local_answer(
     workspace: WorkspaceId,
     hash: &str,
     document: koru_store_core::ids::DocumentId,
-    code: String,
+    code: Option<String>,
     offers: koru_store_wire::readings::ReadingOffers,
 ) -> koru_store_wire::readings::ReadingAnswer {
     koru_store_wire::readings::ReadingAnswer {
+        corrections: Default::default(),
         workspace,
         hash: hash.to_owned(),
         document,
@@ -657,7 +683,8 @@ fn local_answer(
         pages_done: None,
         pages: Vec::new(),
         offers,
-        failed_here: Some(code),
+        failed_here: code,
+        local: None,
     }
 }
 
@@ -687,6 +714,19 @@ struct Facts {
 }
 
 impl Facts {
+    fn local(&self) -> koru_store_wire::readings::ReadingLocal {
+        koru_store_wire::readings::ReadingLocal {
+            available_here: self.here,
+            pending: self.pending,
+            supported: self
+                .mime
+                .as_deref()
+                .is_some_and(|mime| coordinator::readable(mime).is_some()),
+            needs_reader: self.picture()
+                || (self.status.as_deref() == Some("partial") && self.reason.is_none()),
+            reader_ready: self.reader_ready,
+        }
+    }
     fn recognized_some(&self) -> bool {
         matches!(self.source.as_deref(), Some("recognized" | "mixed"))
             || self
@@ -732,6 +772,9 @@ impl Facts {
             ReadRequestKind::ReadAgain => {
                 matches!(status, Some("read" | "empty" | "failed")) || self.failed_here
             }
+            ReadRequestKind::ForceOcr => {
+                self.picture() || self.mime.as_deref().is_some_and(coordinator::is_pdf)
+            }
         };
         if !applies {
             return Some(Error::new(
@@ -739,6 +782,9 @@ impl Facts {
                 match kind {
                     ReadRequestKind::ReadAll => "this item did not stop at a page limit",
                     ReadRequestKind::ReadAgain => "this item has not been read and has not failed",
+                    ReadRequestKind::ForceOcr => {
+                        "force OCR is available for supported pictures and PDFs"
+                    }
                 },
             ));
         }
@@ -757,6 +803,7 @@ impl Facts {
         let needs_reader = match kind {
             ReadRequestKind::ReadAll => self.read_all_needs_reader(),
             ReadRequestKind::ReadAgain => self.read_again_needs_reader(),
+            ReadRequestKind::ForceOcr => true,
         };
         if needs_reader && !self.reader_ready {
             return Some(Error::new(
@@ -772,6 +819,7 @@ impl Facts {
         ReadingOffers {
             read_all: self.refusal(ReadRequestKind::ReadAll).is_none(),
             read_again: self.refusal(ReadRequestKind::ReadAgain).is_none(),
+            force_ocr: self.refusal(ReadRequestKind::ForceOcr).is_none(),
         }
     }
 }
@@ -788,6 +836,7 @@ fn answer(
     use koru_store_wire::readings::{ReadingAnswer, ReadingPage};
     match entry {
         Some(reading) => ReadingAnswer {
+            corrections: corrections::wire(&reading.corrections),
             workspace,
             hash: row.hash.clone(),
             document: parent,
@@ -808,8 +857,10 @@ fn answer(
                 .collect(),
             offers: Default::default(),
             failed_here: None,
+            local: None,
         },
         None => ReadingAnswer {
+            corrections: Default::default(),
             workspace,
             hash: row.hash.clone(),
             document: parent,
@@ -831,6 +882,7 @@ fn answer(
                 .collect(),
             offers: Default::default(),
             failed_here: None,
+            local: None,
         },
     }
 }

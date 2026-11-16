@@ -28,6 +28,9 @@ pub struct Layer {
     pub chars: usize,
     /// Glyphs the font could not map to any character.
     pub unmapped: usize,
+    /// Painted vector paths may be letters converted to outlines. With no
+    /// usable text layer, only rendering and recognition can read them.
+    pub has_paths: bool,
     /// The share of the page, `0.0..=1.0`, covered by drawn pictures (summed,
     /// so overlapping pictures can exceed what is visible; capped at 1).
     pub picture_share: f64,
@@ -53,14 +56,6 @@ pub const MAX_UNMAPPED_PERMILLE: usize = 100;
 /// not. *Not measured: this plan's guess.*
 pub const MIN_PICTURE_SHARE: f64 = 0.10;
 
-/// A page whose text layer is taken **and** whose pictures cover more than
-/// this share of it is also recognized, and keeps both sets of words
-/// (decided after the design was signed off, from Plan 0.1: 2% of real pages
-/// have a usable layer and pictures over half the page, and on a third of
-/// those recognition found more than one and a half times the layer's text —
-/// screenshots and scans inside a typed document).
-pub const MIXED_PICTURE_SHARE: f64 = 0.5;
-
 /// What recognition a page asks for, when the reader is there.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Ask {
@@ -68,8 +63,7 @@ pub enum Ask {
     Nothing,
     /// Instead of its text layer, which is missing or cannot be trusted.
     Instead,
-    /// As well as its text layer, which is real but sits beside pictures that
-    /// cover most of the page.
+    /// As well as its text layer, which sits beside pictures or painted paths.
     AsWell,
 }
 
@@ -77,7 +71,9 @@ pub enum Ask {
 pub fn ask(layer: &Layer, verdict: Verdict) -> Ask {
     match verdict {
         Verdict::NeedsReader => Ask::Instead,
-        Verdict::Text if layer.picture_share > MIXED_PICTURE_SHARE => Ask::AsWell,
+        // Small screenshots and outlined words beside a real header can carry
+        // unique text too. Coverage is not evidence that their words are known.
+        Verdict::Text if layer.has_paths || layer.picture_share > 0.0 => Ask::AsWell,
         Verdict::Text | Verdict::Nothing => Ask::Nothing,
     }
 }
@@ -103,14 +99,18 @@ pub fn judge(layer: &Layer) -> Verdict {
     if layer.chars >= MIN_TEXT_CHARS {
         return Verdict::Text;
     }
-    // Short text, or none. Over a picture it is a scan (perhaps with a page
-    // number in a real font). **Without a picture the page really is that
-    // short** — a blank page, a title, a page number — and reading its pixels
+    // Short text, or none. Pictures can be scans, and vector paths can be
+    // outlined letters (perhaps beside a page number in a real font).
+    // Without either, the page really is that short — a blank page, a title,
+    // a page number — and reading its pixels
     // would find the same: so it is taken as it is rather than making a text
     // PDF wait for a download it does not need. (TECHNICAL §8 says a page that
     // fails the check "is treated as a scan"; this is the one place the worker
     // is narrower, and why.)
-    if layer.picture_share >= MIN_PICTURE_SHARE {
+    if layer.has_paths
+        || layer.picture_share >= MIN_PICTURE_SHARE
+        || (layer.chars == 0 && layer.picture_share > 0.0)
+    {
         return Verdict::NeedsReader;
     }
     if layer.chars == 0 {

@@ -604,13 +604,7 @@ impl MainView {
     }
 
     pub(super) fn reveal_imported_file(&mut self, file: koru_core::DocumentId) {
-        if !self.sidebar.is_open() {
-            self.toggle_sidebar();
-        }
-        self.explore.show_files();
-        let node = koru_core::NodeId::from_uuid(file.as_uuid());
-        self.explore.reveal(node);
-        self.explore.set_selected(Some(node));
+        self.reveal_file_in_explorer(file);
     }
 
     /// **Ctrl+Z takes a delete back, while the toast offering it is up.**

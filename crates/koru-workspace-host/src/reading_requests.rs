@@ -40,6 +40,9 @@ pub fn entries(offers: Option<ReadingOffers>, picture: bool) -> Vec<ReadRequestK
     if offers.read_again {
         out.push(ReadRequestKind::ReadAgain);
     }
+    if offers.force_ocr {
+        out.push(ReadRequestKind::ForceOcr);
+    }
     out
 }
 
@@ -50,6 +53,7 @@ pub fn label(kind: ReadRequestKind, lang: koru_i18n::Lang) -> &'static str {
         match kind {
             ReadRequestKind::ReadAll => koru_i18n::Key::ReadingReadAllPages,
             ReadRequestKind::ReadAgain => koru_i18n::Key::ReadingReadAgain,
+            ReadRequestKind::ForceOcr => koru_i18n::Key::ReadingForceOcr,
         },
     )
 }
@@ -57,17 +61,8 @@ pub fn label(kind: ReadRequestKind, lang: koru_i18n::Lang) -> &'static str {
 /// What an answer means once a request for the item has been sent: nothing
 /// more is offered until the Store says otherwise. Kept by a view so the menu
 /// opened next does not offer the same request twice.
-pub fn after_request(offers: ReadingOffers, kind: ReadRequestKind) -> ReadingOffers {
-    match kind {
-        ReadRequestKind::ReadAll => ReadingOffers {
-            read_all: false,
-            ..offers
-        },
-        ReadRequestKind::ReadAgain => ReadingOffers {
-            read_again: false,
-            ..offers
-        },
-    }
+pub fn after_request(_offers: ReadingOffers, _kind: ReadRequestKind) -> ReadingOffers {
+    ReadingOffers::default()
 }
 
 #[cfg(test)]

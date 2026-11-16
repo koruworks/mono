@@ -31,6 +31,7 @@ struct FakePort {
     /// Whether this host starts a created Profile's Cloud sync on — the
     /// desktop does, and a host that cannot open its Store does not.
     starts_on: AtomicBool,
+    connected_starts_on: AtomicBool,
     /// The Store cannot be reached, so it cannot be opened to Cloud.
     closed: AtomicBool,
     /// Every Profile the Store was opened to Cloud for, in order.
@@ -70,6 +71,9 @@ impl CloudSyncPort for FakePort {
     }
     fn starts_created_profiles_on(&self) -> bool {
         self.starts_on.load(Ordering::Acquire)
+    }
+    fn starts_connected_profiles_on(&self) -> bool {
+        self.connected_starts_on.load(Ordering::Acquire)
     }
     fn open_to_cloud(&self, profile: ProfileId) -> Result<(), ServiceError> {
         if self.closed.load(Ordering::Acquire) {
@@ -845,6 +849,43 @@ fn a_new_account_profile() -> HostedAccount {
         profile: Some(ProfileId::new()),
         ..Default::default()
     }
+}
+
+#[test]
+fn sync_modes_connected_existing_profile_starts_cloud_without_creation_flag() {
+    let hosted = a_new_account_profile();
+    let profile = hosted.profile.unwrap();
+    hosted.subscribed.store(true, Ordering::Release);
+    let mut fixture = fixture(hosted, workspaces(profile, 1));
+    fixture.port.starts_on.store(true, Ordering::Release);
+    fixture
+        .port
+        .connected_starts_on
+        .store(true, Ordering::Release);
+    let first = fixture.inspect().unwrap();
+    assert!(first[0].enabled);
+    assert_eq!(fixture.port.opened(), vec![profile]);
+    let mutations = fixture.hosted.lifecycle_calls();
+    fixture.inspect().unwrap();
+    assert_eq!(fixture.hosted.lifecycle_calls(), mutations);
+}
+
+#[test]
+fn sync_modes_connected_cloud_default_waits_for_store_admission() {
+    let hosted = a_new_account_profile();
+    let profile = hosted.profile.unwrap();
+    hosted.subscribed.store(true, Ordering::Release);
+    let mut fixture = fixture(hosted, workspaces(profile, 1));
+    fixture.port.starts_on.store(true, Ordering::Release);
+    fixture
+        .port
+        .connected_starts_on
+        .store(true, Ordering::Release);
+    fixture.port.closed.store(true, Ordering::Release);
+    fixture.inspect().unwrap();
+    assert!(fixture.port.opened().is_empty());
+    assert_eq!(fixture.hosted.lifecycle_calls(), 0);
+    assert!(!remembered(&fixture).enabled);
 }
 
 fn remembered(fixture: &Fixture) -> crate::account::cloud_sync::ProfileCloudSync {

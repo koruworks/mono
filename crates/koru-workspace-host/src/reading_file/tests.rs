@@ -5,6 +5,7 @@ use koru_api_client::ReadingPage;
 
 fn answer() -> ReadingAnswer {
     ReadingAnswer {
+        corrections: Default::default(),
         workspace: koru_store_core::ids::WorkspaceId::new(),
         hash: "b3:0123456789abcdef0123".into(),
         document: koru_store_core::ids::DocumentId::new(),
@@ -27,6 +28,7 @@ fn answer() -> ReadingAnswer {
         ],
         offers: Default::default(),
         failed_here: None,
+        local: None,
     }
 }
 

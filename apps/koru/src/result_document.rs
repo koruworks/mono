@@ -161,6 +161,26 @@ impl ResultDocument {
             .map(|document| document.markdown().to_owned())
     }
 
+    /// Literal text for an OCR correction. Reject non-text content instead of
+    /// silently dropping an embedded object when the person saves.
+    pub fn plain_text(&self) -> Option<String> {
+        fn collect(doc: &WorkspaceDoc, parent: Parent, lines: &mut Vec<String>) -> Option<()> {
+            for id in doc.children(parent).ok()? {
+                let node = doc.read(id).ok()?;
+                lines.push(node.content.as_text()?.to_owned());
+                collect(doc, Parent::Node(id), lines)?;
+            }
+            Some(())
+        }
+        let mut lines = Vec::new();
+        collect(
+            &self.workspace.ws,
+            Parent::Node(first_document(&self.workspace.ws)?),
+            &mut lines,
+        )?;
+        Some(lines.join("\n"))
+    }
+
     /// Notice whether that last input moved the document. Cheap, and latched.
     fn note_change(&mut self) {
         if !self.edited && self.workspace.ws.version() != self.opened_at {

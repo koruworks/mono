@@ -7,6 +7,25 @@ use crate::reading::GENERATION;
 const H: &str = "b3:00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
 const H2: &str = "b3:ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
 
+#[test]
+fn reading_diagnostics_fresh_read_removes_old_words_but_preserves_newer_generations() {
+    let doc = device(1);
+    doc.begin(H, &ReaderId::text(), GENERATION).unwrap();
+    doc.put_pages(H, GENERATION, &[(1, &text("stale words"))], Some(1))
+        .unwrap();
+    doc.begin_fresh(H, &ReaderId::text(), GENERATION).unwrap();
+    assert!(doc.reading(H).unwrap().pages.is_empty());
+    assert_eq!(doc.reading(H).unwrap().pages_done, None);
+    doc.begin(H, &ReaderId::text(), GENERATION + 1).unwrap();
+    doc.put_pages(H, GENERATION + 1, &[(1, &text("newer words"))], Some(1))
+        .unwrap();
+    assert!(matches!(
+        doc.begin_fresh(H, &ReaderId::text(), GENERATION).unwrap(),
+        Write::Superseded { .. }
+    ));
+    assert_eq!(doc.reading(H).unwrap().pages[&1].as_str(), "newer words");
+}
+
 /// A replica with a fixed peer id, so last-writer-wins resolves the same way on
 /// every run and a failure reproduces.
 fn device(peer: u64) -> ReadingDoc {
@@ -490,6 +509,7 @@ fn a_whole_reading_written_at_once_reads_back_as_itself() {
     let doc = device(1);
     let reading = Reading {
         reader: Some(ReaderId::parse("ocr-x").unwrap()),
+        corrections: Default::default(),
         generation: 1,
         status: Some(ReadingStatus::Partial),
         reason: Some(Reason::PageCap),
@@ -528,6 +548,7 @@ fn an_entry_round_trips_all_eight_languages_byte_exactly() {
     pages.insert(strings.len() as u32 + 1, text(&strings.join("\n")));
     let reading = Reading {
         reader: Some(ReaderId::text()),
+        corrections: Default::default(),
         generation: GENERATION,
         status: Some(ReadingStatus::Read),
         reason: None,

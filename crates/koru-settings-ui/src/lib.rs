@@ -326,7 +326,7 @@ pub struct SettingsSurface {
     spelling_note: Option<String>,
     /// The row offering a missing dictionary's download, when one is missing.
     dictionary: Option<DictionaryRow>,
-    /// The *Text in pictures and PDFs* card (OCR Plan 2.5), host-fed.
+    /// The *Recognize text and images in PDFs* card (OCR Plan 2.5), host-fed.
     reader: Option<ReaderRow>,
     /// The personal dictionary's size, as the host last read it.
     personal_words: Option<usize>,
@@ -531,7 +531,7 @@ impl SettingsSurface {
         self.dictionary = row;
     }
 
-    /// The *Text in pictures and PDFs* card, as the host last read it, or
+    /// The *Recognize text and images in PDFs* card, as the host last read it, or
     /// `None` for a host that says nothing about the reader. Answers whether
     /// it changed, so a host repaints only then.
     pub fn set_reader(&mut self, row: Option<ReaderRow>) -> bool {
@@ -771,13 +771,22 @@ impl SettingsSurface {
     /// after choosing *set up your mic*. The card is found through a semantic
     /// layout anchor, so localized copy cannot change where the link lands.
     pub fn scroll_to_voice(&mut self) -> bool {
+        self.scroll_to_editor_anchor(page::Anchor::Voice)
+    }
+
+    /// The Files menu's setup link, positioned by the card's semantic anchor.
+    pub fn scroll_to_reader(&mut self) -> bool {
+        self.scroll_to_editor_anchor(page::Anchor::Reader)
+    }
+
+    fn scroll_to_editor_anchor(&mut self, anchor: page::Anchor) -> bool {
         let paged = self.show_page(PageId::Editor);
         self.relayout();
         let Some(y) = self
             .laid
             .anchors
             .iter()
-            .find(|(anchor, _)| *anchor == page::Anchor::Voice)
+            .find(|(candidate, _)| *candidate == anchor)
             .map(|(_, y)| *y)
         else {
             return paged;

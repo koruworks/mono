@@ -22,11 +22,29 @@ fn lines_only_the_pictures_hold_are_added_after_the_layer() {
     );
 }
 
-/// A typed line read back with one character wrong is still the typed line.
+/// A different word is retained: similarity alone cannot prove a misreading.
 #[test]
-fn a_misread_copy_of_a_typed_line_is_not_added() {
+fn reading_diagnostics_keeps_a_single_different_word() {
     let recognized = "The invoice is due on the fifteenth of Narch.";
-    assert_eq!(combine(LAYER, recognized), LAYER);
+    assert_eq!(combine(LAYER, recognized), format!("{LAYER}\n{recognized}"));
+}
+
+#[test]
+fn reading_diagnostics_preserves_new_names_numbers_and_word_boundaries() {
+    for (layer, recognized) in [
+        (
+            "The invoice is due on day 15",
+            "The invoice is due on day 16",
+        ),
+        (
+            "The contact for this request is Alice",
+            "The contact for this request is Bob",
+        ),
+        ("Annual report", "Ann"),
+        ("one two three", "three two one"),
+    ] {
+        assert_eq!(combine(layer, recognized), format!("{layer}\n{recognized}"));
+    }
 }
 
 /// A line that is mostly new words is added, even if it shares a few.

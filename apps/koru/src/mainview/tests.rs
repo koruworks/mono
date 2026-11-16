@@ -11,6 +11,99 @@
 //! Nothing here touches disk. `Workspace::new` is in-memory; only
 //! `Session::open` reaches a directory, and only `App::new` calls it.
 use super::*;
+
+#[test]
+fn ocr_text_opens_reuses_and_closes_as_a_tab_without_a_modal() {
+    use koru_workspace_host::{View, reading_details};
+    let (mut view, _) = super::harness::container();
+    let file = koru_core::DocumentId::new();
+    let subject = MenuSubject::Files(vec![koru_core::NodeId::from_uuid(file.as_uuid())]);
+    assert!(view.run_menu_action(subject.clone(), MenuAction::ViewExtractedText));
+    let count = view.tabs().len();
+    assert!(matches!(view.tabs().active_tab().view, TabView::Ocr(_)));
+    assert!(view.file_preview.is_none());
+    assert!(View::show_file_reading(
+        &mut view,
+        file,
+        Ok(reading_details::format(
+            "sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+    assert_eq!(view.tabs().active_tab().label, "ocr:sample.pdf");
+    assert!(view.run_menu_action(subject, MenuAction::ViewExtractedText));
+    assert_eq!(view.tabs().len(), count);
+    let index = view.tabs().active();
+    assert!(view.close(index));
+    assert!(!View::show_file_reading(
+        &mut view,
+        file,
+        Ok(reading_details::format(
+            "sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+}
+
+#[test]
+fn ocr_text_host_routes_export_and_does_not_reopen_a_closed_tab() {
+    use koru_workspace_host::{View, reading_details};
+    let (mut view, _) = super::harness::container();
+    let file = koru_core::DocumentId::new();
+    let subject = MenuSubject::Files(vec![koru_core::NodeId::from_uuid(file.as_uuid())]);
+    while View::take_pane_request(&mut view).is_some() {}
+    assert!(view.run_menu_action(subject.clone(), MenuAction::ViewExtractedText));
+    assert_eq!(
+        View::take_pane_request(&mut view),
+        Some(PaneRequest::InspectFileReading(file))
+    );
+    let mut hosted = crate::manager_view::ManagerView::Container(view);
+    assert!(View::show_file_reading(
+        &mut hosted,
+        file,
+        Ok(reading_details::format(
+            "Sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+    let crate::manager_view::ManagerView::Container(mut view) = hosted else {
+        panic!("container")
+    };
+    assert!(view.file_preview.is_none());
+    let TabView::Ocr(ocr) = &mut view.tabs_mut().active_mut().view else {
+        panic!("OCR tab");
+    };
+    assert!(ocr.accessible_action("export", true));
+    assert_eq!(
+        View::take_pane_request(&mut view),
+        Some(PaneRequest::SaveReading(
+            koru_workspace_host::reading_file::ReadingTarget::File(file)
+        ))
+    );
+    let index = view.tabs().active();
+    assert!(view.close(index));
+    assert!(!View::show_file_reading(
+        &mut view,
+        file,
+        Ok(reading_details::format(
+            "Sample.pdf".into(),
+            None,
+            koru_i18n::Lang::En
+        ))
+    ));
+    assert!(view.file_preview.is_none());
+    view.run_menu_action(subject, MenuAction::ForceOcr);
+    assert_eq!(
+        View::take_pane_request(&mut view),
+        Some(PaneRequest::ReadRequest(
+            koru_workspace_host::reading_file::ReadingTarget::File(file),
+            koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr,
+        ))
+    );
+}
 use crate::mainview::harness::*;
 use crate::mainview::panes::{PaneNode, PanePath, SplitAxis, TEAR_OFF_PX};
 use koru_core::node::Node;
@@ -217,20 +310,31 @@ fn import_completion_actions_name_and_route_the_imported_root() {
     assert_eq!(toast.action(), Some("View file"));
     assert!(matches!(payload, ToastPayload::ShowFile(id) if *id == file));
 
+    View::set_entries(
+        &mut v,
+        vec![koru_core::explore::ExploreEntry {
+            id: file,
+            parent: None,
+            ordinal: 0,
+            title: "Report.pdf".into(),
+            kind: koru_core::explore::KIND_FILE.into(),
+            mime: Some("application/pdf".into()),
+            note: None,
+            trashed_at: None,
+            trashed_by: None,
+        }],
+        None,
+    );
     v.reveal_imported_file(file);
     assert!(v.sidebar.is_open());
     assert_eq!(
         v.explore.navigator_mode(),
         crate::panes::explore::NavigatorMode::Files
     );
-    assert_eq!(
-        v.explore.selected(),
-        Some(koru_core::NodeId::from_uuid(file.as_uuid()))
-    );
     v.refresh_explore(&workspace.ws, true);
     assert_eq!(
-        v.explore.selected(),
-        Some(koru_core::NodeId::from_uuid(file.as_uuid())),
+        v.explore.selection_nodes(),
+        vec![koru_core::NodeId::from_uuid(file.as_uuid())],
         "refreshing the Files projection must not restore the active page over the selected file"
     );
 }
@@ -411,6 +515,7 @@ fn a_files_reading_offers_reach_its_menu_without_a_fetch_on_open() {
 
     // The answer: stopped at the page limit, can be finished here.
     let capped = Some(ReadingOffers {
+        force_ocr: false,
         read_all: true,
         read_again: false,
     });
@@ -627,7 +732,7 @@ fn a_body_attachment_open_and_save_issue_pane_requests() {
 
 #[test]
 fn a_body_attachment_reveal_opens_files_mode_and_restore_issues_a_pane_request() {
-    let (mut v, _workspace) = on_document();
+    let (mut v, workspace) = on_document();
     let file = koru_core::DocumentId::new();
     let node = koru_core::NodeId::from_uuid(file.as_uuid());
     View::set_entries(
@@ -652,11 +757,12 @@ fn a_body_attachment_reveal_opens_files_mode_and_restore_issues_a_pane_request()
     leaf.view_mut().wants_file_action = Some((file, koru_editor::FileAction::Reveal));
     assert_eq!(View::take_wants_file_action(&mut v), None);
     assert_eq!(View::take_pane_request(&mut v), None);
+    v.refresh_explore(&workspace.ws, true);
     assert_eq!(
         v.explore.navigator_mode(),
         crate::panes::explore::NavigatorMode::Files
     );
-    assert_eq!(v.explore.selected(), Some(node));
+    assert_eq!(v.explore.selection_nodes(), vec![node]);
 
     let TabView::Leaf(leaf) = v.active_view() else {
         panic!("document leaf");

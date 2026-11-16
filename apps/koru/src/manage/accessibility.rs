@@ -116,7 +116,11 @@ fn control_part(control: Control) -> ControlPart {
         Control::AddGoogle => "add-google",
         Control::MakeOffline => "make-offline",
         Control::SignOut => "sign-out",
-        Control::CloudSync => "cloud-sync",
+        Control::SyncMode(_, mode) => match mode {
+            koru_store_core::TransportMode::LocalOnly => "sync-off",
+            koru_store_core::TransportMode::P2p => "sync-p2p",
+            koru_store_core::TransportMode::Cloud => "sync-cloud",
+        },
         Control::GetCloud => "get-cloud",
         Control::Delete => "delete-profile",
         Control::RemoveFromDevice => "remove-from-device",
@@ -239,6 +243,7 @@ impl Context {
             // A workspace's row and its trailing control are about that
             // workspace, wherever it moves in the list.
             Control::WorkspaceRow(id)
+            | Control::SyncMode(Some(id), _)
             | Control::WorkspaceMore(id)
             | Control::Unarchive(id)
             | Control::RestoreWorkspace(id)
@@ -285,9 +290,14 @@ impl ManageView {
             let node = match placed.look {
                 Look::Toggle(_) => SemanticNode::new(cx.control(placed.control), Role::Switch)
                     .with_toggled(self.toggled(placed.control)),
+                Look::Action(style) if matches!(placed.control, Control::SyncMode(..)) => {
+                    SemanticNode::new(cx.control(placed.control), Role::Button)
+                        .with_toggled(style == koru_ui::button::ActionStyle::Primary)
+                }
                 _ => SemanticNode::new(cx.control(placed.control), Role::Button),
             };
             node.with_label(self.control_name(placed))
+                .disabled(self.laid.disabled.contains(&placed.control))
                 .with_bounds(scrolled(placed.rect))
                 .with_actions([Action::Click, Action::Focus])
         };
@@ -482,6 +492,20 @@ impl ManageView {
                 .map_or_else(|| "Profile".to_owned(), |row| row.name.clone())
         };
         match placed.control {
+            Control::SyncMode(workspace, _) => {
+                let name = workspace
+                    .and_then(|id| {
+                        self.c
+                            .sync_settings()?
+                            .workspaces
+                            .iter()
+                            .find(|row| row.id == id.to_storage())
+                            .map(|row| row.name.clone())
+                    })
+                    .or_else(|| self.laid.profile.map(profile_name))
+                    .unwrap_or_default();
+                format!("{}: {name}", placed.label)
+            }
             Control::ProfileSignIn(id) if placed.label == super::cloud::CONNECT => {
                 format!("Connect {}\u{2026}", profile_name(id))
             }

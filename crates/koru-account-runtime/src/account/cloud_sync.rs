@@ -95,6 +95,18 @@ pub trait CloudSyncPort: Send + Sync {
         false
     }
 
+    /// Connected Profiles default to Cloud, while the Store preserves explicit
+    /// Sync off/P2P choices. Hosts implementing this must honor those choices in
+    /// `open_to_cloud` on every reconciliation, not overwrite them on restart.
+    fn starts_connected_profiles_on(&self) -> bool {
+        false
+    }
+
+    /// A deliberate switch, distinct from a default replay on sign-in.
+    fn choose_cloud_sync(&self, _profile: ProfileId, _enabled: bool) -> Result<(), ServiceError> {
+        Ok(())
+    }
+
     /// **The device-local half of "on"**: let this device's Store move
     /// `profile` and its Workspaces through Koru Cloud — the transport mode
     /// (`Store::choose_transport_mode`, the Profile and its Workspaces as
@@ -790,6 +802,7 @@ impl ProductionAccountService {
         // must lose at most the activation, never the answer to "did they ask
         // for this?".
         if let Some((profile, enabled)) = change {
+            port.choose_cloud_sync(profile, enabled)?;
             let chosen = state
                 .accounts
                 .entry(account_key.clone())
@@ -836,7 +849,8 @@ impl ProductionAccountService {
             // until it is. Anything missing leaves the intention for the
             // next pass.
             let waiting = applied.is_none()
-                && profile_state.starts_on
+                && (profile_state.starts_on
+                    || (port.starts_connected_profiles_on() && !profile_state.enabled))
                 && self.cloud_subscription_known(account, cancel) == Some(true);
             // **Cloud sync on means the Store is open to Cloud.** One rule,
             // however the Profile came to be on: the switch, the default, or
@@ -851,12 +865,13 @@ impl ProductionAccountService {
             let gated = port.starts_created_profiles_on();
             if gated
                 && on
-                && !self.cloud_opened.contains(profile)
-                && port.open_to_cloud(*profile).is_ok()
+                && (!self.cloud_opened.contains(profile) || port.starts_connected_profiles_on())
             {
-                self.cloud_opened.insert(*profile);
-                // The Cloud pass was being refused until this moment.
-                woken = true;
+                if port.open_to_cloud(*profile).is_ok() {
+                    woken |= self.cloud_opened.insert(*profile);
+                } else {
+                    self.cloud_opened.remove(profile);
+                }
             }
             let open = !gated || self.cloud_opened.contains(profile);
             let starting = waiting && open;

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! The *Text in pictures and PDFs* card in each of its states, what each
+//! The *Recognize text and images in PDFs* card in each of its states, what each
 //! button asks the host, and every sentence in eight languages.
 
 use super::*;
@@ -122,7 +122,10 @@ fn turn_on_needs_a_size_and_try_again_follows_a_failure() {
         ended: None,
     };
     let (line, button) = status_line(Lang::En, &unknown);
-    assert_eq!(line, "Not downloaded");
+    assert_eq!(
+        line,
+        "Not downloaded. Waiting for download information before recognition can be turned on."
+    );
     assert!(button.is_none());
     let failed = ReaderStatus::NotDownloaded {
         megabytes: Some(24),
@@ -219,6 +222,8 @@ fn every_state_is_worded_in_every_language() {
         ReaderStatus::Off { megabytes: 24 },
     ];
     let blocked = [
+        ReaderBlocked::DownloadInformationUnavailable,
+        ReaderBlocked::DownloadInformationInvalid,
         ReaderBlocked::NoTrustRoot,
         ReaderBlocked::NoWorker,
         ReaderBlocked::WorkerMissing,
@@ -291,7 +296,7 @@ fn the_card_is_on_the_editor_page_and_its_buttons_ask_the_host() {
     assert!(
         !lines(&surface)
             .iter()
-            .any(|l| l == "Text in pictures and PDFs"),
+            .any(|l| l == "Recognize text and images in PDFs"),
         "a host that says nothing draws no card"
     );
     assert!(surface.set_reader(Some(row(not_downloaded()))));
@@ -302,7 +307,7 @@ fn the_card_is_on_the_editor_page_and_its_buttons_ask_the_host() {
     assert!(
         lines(&surface)
             .iter()
-            .any(|l| l == "Text in pictures and PDFs")
+            .any(|l| l == "Recognize text and images in PDFs")
     );
     assert!(goto(&mut surface, "Turn on"));
     assert_eq!(surface.page(), crate::PageId::Editor);

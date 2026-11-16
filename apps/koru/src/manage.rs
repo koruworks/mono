@@ -44,6 +44,7 @@ mod profile_page;
 pub mod profiles;
 mod recovery;
 mod sign_in;
+mod sync_modes;
 #[cfg(test)]
 mod tests;
 pub(crate) mod workspaces;

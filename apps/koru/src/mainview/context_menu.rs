@@ -306,6 +306,8 @@ pub enum MenuAction {
     /// *Import files…* — the file picker, files kept as files. The first
     /// row of the New… launcher's Import list, above the content formats.
     ImportFiles,
+    OcrSettings(Option<bool>),
+    RescanAllFiles,
     /// **One of a run's results**, by its position in the snapshot the menu
     /// opened with. Picking it opens that version as a tab — the same
     /// primitive the run's own Result view and the Artifacts column reach.
@@ -453,7 +455,7 @@ pub enum MenuAction {
     /// Save what was read out of the file to a text file — OCR TECHNICAL §9's
     /// debugging entry, **shown only with `KORU_READ_DEBUG=1`**, for one file
     /// under Explore → Files ([`explore_file_items`]).
-    SaveReading,
+    ViewExtractedText,
     /// *Read all pages* (OCR Plan 3.2, EXPERIENCE §4): read the rest of a
     /// file that stopped at the page limit. Shown for one file under Explore
     /// → Files where the Store offers it ([`explore_file_items`]).
@@ -461,6 +463,7 @@ pub enum MenuAction {
     /// *Read again*: read one file's words once more. Shown where the Store
     /// offers it — the file has been read, or reading it failed.
     ReadAgain,
+    ForceOcr,
     Restore,
     DeletePermanently,
     EmptyTrash,
@@ -1059,9 +1062,6 @@ impl MenuAction {
             // Socials authoring (the Agent's publisher runs regardless).
             Self::NewSocialPost => f::socials(),
             Self::NewTaskIn(_) => f::tasks(),
-            // A developer's switch rather than a product flag, gated the same
-            // way so a stale index cannot reach it either.
-            Self::SaveReading => koru_workspace_host::reading_file::enabled(),
             _ => true,
         }
     }
@@ -1269,6 +1269,17 @@ impl MenuAction {
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
             MenuAction::ImportFiles => "Import files\u{2026}",
+            MenuAction::OcrSettings(enabled) => koru_i18n::t(
+                crate::format::lang(),
+                match enabled {
+                    Some(true) => koru_i18n::Key::FilesOcrSettingsOn,
+                    Some(false) => koru_i18n::Key::FilesOcrSettingsOff,
+                    None => koru_i18n::Key::FilesOcrSettings,
+                },
+            ),
+            MenuAction::RescanAllFiles => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FilesRescanAll)
+            }
             MenuAction::ImportFormat(id) => {
                 koru_workspace_host::formats::import_menu_name(id, crate::format::lang())
                     .unwrap_or(id)
@@ -1361,9 +1372,13 @@ impl MenuAction {
             MenuAction::OpenFileInApp => "Open in app",
             MenuAction::SaveFileAs => "Save as\u{2026}",
             MenuAction::AddNote => "Add note",
-            // Not translated: only a developer switch reveals it, as the AI
-            // view's debug-only prompt field (`reading_file`'s note).
-            MenuAction::SaveReading => koru_workspace_host::reading_file::LABEL,
+            MenuAction::ForceOcr => koru_workspace_host::reading_requests::label(
+                koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr,
+                crate::format::lang(),
+            ),
+            MenuAction::ViewExtractedText => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReadingViewText)
+            }
             MenuAction::OpenNote => "Open note",
             MenuAction::Restore => "Restore",
             MenuAction::DeletePermanently => "Delete permanently",
@@ -1998,11 +2013,10 @@ pub fn file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
     }
 }
 
-/// The Files view's menu: [`file_items`], and for one file under
-/// `KORU_READ_DEBUG`, *Save reading to file…* last above the rule. Only this
-/// view offers it — a page attachment's menu stays [`file_items`].
+/// The Files view's menu: [`file_items`] and View extracted text for one file,
+/// independently of the last reading status. Reading export lives in the OCR tab.
 ///
-/// **Then, for one file, *Read all pages* and *Read again* where the Store
+/// **Then, for one file, *Read all pages* and *Re-scan* where the Store
 /// offers them** (OCR Plan 3.2; `koru_workspace_host::reading_requests`):
 /// `offers` is the Store's last answer for the file, kept by the view —
 /// `None` when nothing is known yet, which shows neither. They are a group of
@@ -2013,12 +2027,18 @@ pub fn explore_file_items(
     note: Option<bool>,
     offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
 ) -> Vec<MenuAction> {
-    let mut items = with_reading_row(
-        file_items(count, note),
-        count == 1 && koru_workspace_host::reading_file::enabled(),
-    );
+    let mut items = file_items(count, note);
     if count == 1 {
-        let entries = koru_workspace_host::reading_requests::entries(offers, false);
+        // The Files menu has one way to re-scan: explicit recognition. Keep
+        // automatic retries available to the Settings failed-item workflow.
+        let entries: Vec<_> = koru_workspace_host::reading_requests::entries(offers, false)
+            .into_iter()
+            .filter(|kind| {
+                *kind != koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain
+            })
+            .collect();
+        items.push(MenuAction::Divider);
+        items.push(MenuAction::ViewExtractedText);
         if !entries.is_empty() {
             items.push(MenuAction::Divider);
             items.extend(entries.into_iter().map(|kind| match kind {
@@ -2028,19 +2048,11 @@ pub fn explore_file_items(
                 koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain => {
                     MenuAction::ReadAgain
                 }
+                koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr => {
+                    MenuAction::ForceOcr
+                }
             }));
         }
-    }
-    items
-}
-
-fn with_reading_row(mut items: Vec<MenuAction>, offered: bool) -> Vec<MenuAction> {
-    if offered {
-        let at = items
-            .iter()
-            .position(|item| *item == MenuAction::Divider)
-            .unwrap_or(items.len());
-        items.insert(at, MenuAction::SaveReading);
     }
     items
 }

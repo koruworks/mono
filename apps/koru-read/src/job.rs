@@ -215,10 +215,10 @@ pub fn run(
         // reader's absence, and nothing more is read.
         Kind::Picture => match job.want {
             Want::Text => failed(FailureCode::NeedsReader),
-            Want::Recognize if !engine.recognition.available() => {
+            Want::Recognize | Want::ForceRecognize if !engine.recognition.available() => {
                 failed(engine.recognition.absent())
             }
-            Want::Recognize => {
+            Want::Recognize | Want::ForceRecognize => {
                 let rest = picture::MAX_PICTURE_FILE_BYTES.saturating_sub(bytes.len() as u64);
                 if file.take(rest + 1).read_to_end(&mut bytes).is_err() {
                     return failed(FailureCode::Unreadable);
@@ -377,8 +377,6 @@ struct Tally {
     examined: u32,
     with_words: u32,
     needs_reader: u32,
-    /// Abandoned at the page budget, or the page panicked.
-    lost: u32,
     /// Pages sent to the reader, against `max_read_pages`.
     recognized: u32,
 }
@@ -489,7 +487,10 @@ fn read_pdf(
 
     // Recognition only when it was asked for and is here: a text job never
     // takes the reader, so it never loads the model.
-    let recognize = job.want == Want::Recognize && engine.recognition.available();
+    if job.want == Want::ForceRecognize && !engine.recognition.available() {
+        return failed(engine.recognition.absent());
+    }
+    let recognize = job.want != Want::Text && engine.recognition.available();
     let count = document.page_count();
     let first = job.from_page.max(1);
     let last = match job.max_text_pages {
@@ -501,9 +502,8 @@ fn read_pdf(
     // Where the reading cap stopped the job: the last page it finished.
     let mut stopped_at: Option<u32> = None;
     let mut next = first;
-    // One reader thread at a time, reading on from `next`. A page that runs
-    // past its budget, or panics, costs that reader; the next one starts
-    // after the lost page.
+    // One reader thread at a time. A page that exceeds its budget or panics
+    // fails the job without claiming that page as completed.
     'pages: while next <= last {
         let (tx, rx) = std::sync::mpsc::sync_channel::<(u32, Layer)>(0);
         let stop = Arc::new(AtomicBool::new(false));
@@ -533,7 +533,9 @@ fn read_pdf(
                 Waited::Got((number, layer)) if number == next => {
                     tally.examined += 1;
                     let verdict = judge(&layer);
-                    let wanted = if recognize {
+                    let wanted = if job.want == Want::ForceRecognize {
+                        Ask::Instead
+                    } else if recognize {
                         ask(&layer, verdict)
                     } else {
                         Ask::Nothing
@@ -593,13 +595,14 @@ fn read_pdf(
                                 confidence: Some(recognized.confidence),
                             }
                         }
-                        // The page could not be recognized: an unusable
-                        // layer gives nothing, a real one is kept.
-                        (_, Some(Step::Lost)) if wanted == Ask::Instead => {
-                            tally.lost += 1;
-                            page(id, number, String::new(), Source::Recognized)
+                        // A failed recognition is not an empty page. Stop
+                        // before it; the coordinator keeps completed pages
+                        // and retries this one under its bounded backoff.
+                        (_, Some(Step::Lost)) => {
+                            stop.store(true, Ordering::Release);
+                            return failed(FailureCode::Internal);
                         }
-                        (_, Some(Step::Lost)) | (Verdict::Text, None) => {
+                        (Verdict::Text, None) => {
                             if !layer.text.is_empty() {
                                 tally.with_words += 1;
                             }
@@ -625,8 +628,7 @@ fn read_pdf(
                 // The page ran past its budget (the reader is abandoned and
                 // told to stop at its next chance), the reader ended without
                 // it (the page panicked), or it answered a page it was not
-                // asked for (a bug in a `Document`): the page is lost and a
-                // fresh reader starts after it.
+                // asked for (a bug in a `Document`): fail before this page.
                 lost @ (Waited::Got(_) | Waited::Ended | Waited::TimedOut) => {
                     stop.store(true, Ordering::Release);
                     engine.abandoned.note(Arc::clone(&finished));
@@ -641,13 +643,7 @@ fn read_pdf(
                     } else {
                         tracing::warn!(job = %id, page = next, "a page could not be read");
                     }
-                    tally.examined += 1;
-                    tally.lost += 1;
-                    if !emit(page(id, next, String::new(), Source::TextLayer)) {
-                        return failed(FailureCode::Cancelled);
-                    }
-                    next += 1;
-                    break;
+                    return failed(FailureCode::Internal);
                 }
                 Waited::Cancelled => {
                     stop.store(true, Ordering::Release);
@@ -660,9 +656,6 @@ fn read_pdf(
         }
     }
 
-    if tally.examined > 0 && tally.lost == tally.examined {
-        return failed(FailureCode::Internal);
-    }
     let (status, reason) = if stopped_at.is_some() {
         (ReadingStatus::Partial, Some(Reason::PageCap))
     } else if tally.needs_reader > 0 {
@@ -680,7 +673,6 @@ fn read_pdf(
         with_words = tally.with_words,
         needs_reader = tally.needs_reader,
         recognized = tally.recognized,
-        lost = tally.lost,
         status = status.as_str(),
         "a PDF was read"
     );

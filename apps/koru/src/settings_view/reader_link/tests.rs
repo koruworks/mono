@@ -140,6 +140,47 @@ fn every_state_the_store_reports_is_its_own_status() {
     assert_eq!(card.not_here, 38);
 }
 
+#[test]
+fn reader_catalog_failures_explain_why_turn_on_is_unavailable() {
+    for (code, expected) in [
+        (
+            Some("catalog_unavailable"),
+            ReaderBlocked::DownloadInformationUnavailable,
+        ),
+        (
+            Some("catalog_invalid"),
+            ReaderBlocked::DownloadInformationInvalid,
+        ),
+        (
+            Some("unknown-failure"),
+            ReaderBlocked::DownloadInformationUnavailable,
+        ),
+        (None, ReaderBlocked::DownloadInformationUnavailable),
+    ] {
+        let card = row(&answer(ReaderState {
+            catalog: CatalogState {
+                state: CatalogStage::Failed,
+                code: code.map(str::to_owned),
+            },
+            ..ReaderState::default()
+        }))
+        .unwrap();
+        assert_eq!(card.status, ReaderStatus::Unavailable(expected));
+    }
+    let card = row(&answer(ReaderState {
+        catalog: CatalogState {
+            state: CatalogStage::Ready,
+            code: None,
+        },
+        ..ReaderState::default()
+    }))
+    .unwrap();
+    assert_eq!(
+        card.status,
+        ReaderStatus::Unavailable(ReaderBlocked::NoModel)
+    );
+}
+
 /// **Names come from the listing**: a file by its name, a page holding the
 /// picture by its title, an entry the listing did not have unnamed. The
 /// token round-trips to the document route.
@@ -266,6 +307,7 @@ fn partly_read_items_are_their_own_list_with_their_offers() {
         reason: "page-cap".into(),
         pages_done: Some(200),
         offers: ReadingOffers {
+            force_ocr: false,
             read_all: true,
             read_again: false,
         },
@@ -295,6 +337,7 @@ fn partly_read_items_are_their_own_list_with_their_offers() {
                     reason: "unsupported".into(),
                     pages_done: None,
                     offers: ReadingOffers {
+                        force_ocr: false,
                         read_all: false,
                         read_again: true,
                     },

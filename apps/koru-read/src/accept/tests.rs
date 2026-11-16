@@ -23,12 +23,26 @@ fn what_recognition_a_page_asks_for() {
     assert_eq!(ask_for(layer(500, 0, 0.51)), Ask::AsWell, "mixed");
     assert_eq!(
         ask_for(layer(500, 0, 0.5)),
-        Ask::Nothing,
-        "exactly half is not more than half"
+        Ask::AsWell,
+        "a picture can carry words at any coverage"
     );
-    assert_eq!(ask_for(layer(500, 0, 0.1)), Ask::Nothing);
+    assert_eq!(ask_for(layer(500, 0, 0.1)), Ask::AsWell);
     assert_eq!(ask_for(layer(0, 0, 0.0)), Ask::Nothing, "a blank page");
-    assert!((MIXED_PICTURE_SHARE - 0.5).abs() < f64::EPSILON);
+}
+
+#[test]
+fn reading_diagnostics_checks_small_images_and_outlines_beside_a_header() {
+    let mut header = layer(50, 0, 0.0);
+    header.has_paths = true;
+    assert_eq!(ask(&header, judge(&header)), Ask::AsWell);
+    let small_image = layer(0, 0, 0.01);
+    assert_eq!(ask(&small_image, judge(&small_image)), Ask::Instead);
+    let small_image_with_text = layer(50, 0, 0.01);
+    assert_eq!(
+        ask(&small_image_with_text, judge(&small_image_with_text)),
+        Ask::AsWell
+    );
+    assert_eq!(ask(&layer(0, 0, 0.0), Verdict::Nothing), Ask::Nothing);
 }
 
 #[test]

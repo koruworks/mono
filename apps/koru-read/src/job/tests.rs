@@ -299,10 +299,9 @@ fn scripted(pages: Vec<Script>, page_budget: Duration, abandoned: Arc<Abandoned>
 }
 
 /// **A page that never finishes is abandoned at its budget**, and the job
-/// carries on with the rest: the lost page is progress with no words, and
-/// the reading is made from the pages that finished.
+/// reports a local failure, keeping only pages that actually finished.
 #[test]
-fn a_page_that_never_finishes_is_abandoned_at_its_budget() {
+fn reading_diagnostics_a_page_that_never_finishes_is_abandoned_at_its_budget() {
     let (release, page_two) = stuck();
     let abandoned = lenient();
     let budget = Duration::from_millis(200);
@@ -318,15 +317,8 @@ fn a_page_that_never_finishes_is_abandoned_at_its_budget() {
     let started = Instant::now();
     let (pages, end) = read(&engine, &request("objects/b3-s", "application/pdf"));
     let took = started.elapsed();
-    assert_eq!(
-        pages,
-        [
-            text_page(1, "first page words"),
-            text_page(2, ""),
-            text_page(3, "third page words")
-        ]
-    );
-    assert_eq!(end, done(ReadingStatus::Read, None, 3));
+    assert_eq!(pages, [text_page(1, "first page words")]);
+    assert_eq!(end, failed(FailureCode::Internal));
     assert!(
         took >= budget,
         "the page was not given its budget: {took:?}"
@@ -346,25 +338,25 @@ fn a_page_that_never_finishes_is_abandoned_at_its_budget() {
 /// When nothing finished, nothing true about the file was learnt: a local
 /// failure, which another device or a later attempt may not share.
 #[test]
-fn a_file_whose_every_page_is_lost_fails_locally() {
+fn reading_diagnostics_a_file_whose_every_page_is_lost_fails_locally() {
     let (_one, first) = stuck();
     let (_two, second) = stuck();
     let engine = scripted(vec![first, second], Duration::from_millis(50), lenient());
     let (pages, end) = read(&engine, &request("objects/b3-s", "application/pdf"));
-    assert_eq!(pages, [text_page(1, ""), text_page(2, "")]);
+    assert!(pages.is_empty());
     assert_eq!(end, failed(FailureCode::Internal));
 }
 
 #[test]
-fn a_page_that_panics_is_skipped_and_the_rest_are_read() {
+fn reading_diagnostics_a_panicked_page_is_not_marked_complete() {
     let engine = scripted(
         vec![Script::Panics, Script::Words("survivor words")],
         Duration::from_secs(30),
         lenient(),
     );
     let (pages, end) = read(&engine, &request("objects/b3-s", "application/pdf"));
-    assert_eq!(pages, [text_page(1, ""), text_page(2, "survivor words")]);
-    assert_eq!(end, done(ReadingStatus::Read, None, 2));
+    assert!(pages.is_empty());
+    assert_eq!(end, failed(FailureCode::Internal));
 }
 
 /// A cancel ends the job between pages, without waiting for the rest.
@@ -490,6 +482,21 @@ fn a_scanned_page_is_rendered_and_read_and_a_text_page_is_not() {
     assert_eq!(engine.recognition.loads(), 1);
 }
 
+#[test]
+fn reading_diagnostics_force_ocr_ignores_good_embedded_text_and_keeps_caps() {
+    let (engine, seen) = scripted_reading(vec![
+        Script::Words("plausible but wrong invisible text layer"),
+        Script::Words("another plausible but wrong text layer"),
+    ]);
+    let mut job = recognize("objects/b3-s", "application/pdf");
+    job.want = Want::ForceRecognize;
+    job.max_read_pages = Some(1);
+    let (pages, end) = read_all(&engine, &job);
+    assert_eq!(pages, [recognized(1)]);
+    assert_eq!(end, done(ReadingStatus::Partial, Some(Reason::PageCap), 1));
+    assert_eq!(seen.sizes(), [(1, 1)]);
+}
+
 /// **A page with a real layer and pictures over most of it** is read as well,
 /// and keeps both sets of words, once each: `mixed`.
 #[test]
@@ -592,36 +599,32 @@ fn a_cap_of_nothing_reads_nothing() {
 /// **A page whose images declare too much is never rendered**: the reader is
 /// not called and the job carries on with the rest.
 #[test]
-fn a_page_drawing_a_huge_image_is_not_rendered() {
+fn reading_diagnostics_a_page_drawing_a_huge_image_is_not_rendered() {
     let (engine, seen) = scripted_reading(vec![
         Script::Words("typed words on the first page"),
         Script::HugeScan,
         Script::Scan,
     ]);
     let (got, end) = read_all(&engine, &recognize("objects/b3-s", "application/pdf"));
-    assert_eq!(
-        got,
-        [
-            layered(1, "typed words on the first page"),
-            (2, String::new(), Source::Recognized, None),
-            recognized(3),
-        ]
+    assert_eq!(got, [layered(1, "typed words on the first page")]);
+    assert_eq!(end, failed(FailureCode::Internal));
+    assert!(
+        seen.sizes().is_empty(),
+        "the oversized page never reaches the reader"
     );
-    assert_eq!(end, done(ReadingStatus::Read, None, 3));
-    assert_eq!(seen.sizes(), [(3, 1)], "page 2 never reached the reader");
 }
 
 /// The same, from a real PDF through `hayro`: the declared size comes from
 /// the text pass, which decodes nothing.
 #[test]
-fn a_real_pdfs_decompression_bomb_is_refused_by_its_declared_size() {
+fn reading_diagnostics_a_real_pdfs_decompression_bomb_is_refused_by_its_declared_size() {
     let (recognition, seen) = fixtures::fake_recognition(|_, _| "never".into());
     let engine = engine(Memory::default().with("objects/b3-bomb", fixtures::bomb()))
         .with_recognition(recognition);
     let (got, end) = read_all(&engine, &recognize("objects/b3-bomb", "application/pdf"));
     assert_eq!(got[0].1, "typed words on the first page");
-    assert_eq!(got[1], (2, String::new(), Source::Recognized, None));
-    assert_eq!(end, done(ReadingStatus::Read, None, 2));
+    assert_eq!(got.len(), 1);
+    assert_eq!(end, failed(FailureCode::Internal));
     assert!(seen.sizes().is_empty(), "nothing was rendered");
 }
 

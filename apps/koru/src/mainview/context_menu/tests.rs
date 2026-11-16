@@ -934,21 +934,23 @@ fn a_file_menu_offers_the_note_row_the_file_has_earned() {
 /// the menu without them, so a menu corrected in place moves nothing the
 /// pointer is on.
 #[test]
-fn the_files_menu_shows_read_all_pages_and_read_again_where_offered() {
+fn files_ocr_menu_offers_rescan_without_the_automatic_retry() {
     use koru_workspace_host::reading_requests::ReadingOffers;
-    let offered = |read_all, read_again| {
+    let offered = |read_all, force_ocr| {
         Some(ReadingOffers {
+            force_ocr,
             read_all,
-            read_again,
+            read_again: true,
         })
     };
     let base = explore_file_items(1, Some(false), None);
+    assert!(base.contains(&MenuAction::ViewExtractedText));
     assert!(!base.contains(&MenuAction::ReadAllPages));
     assert!(!base.contains(&MenuAction::ReadAgain));
     assert_eq!(
         explore_file_items(1, Some(false), offered(false, false)),
         base,
-        "nothing offered: nothing added"
+        "automatic retry alone does not add a Files menu action"
     );
 
     let capped = explore_file_items(1, Some(false), offered(true, false));
@@ -960,15 +962,16 @@ fn the_files_menu_shows_read_all_pages_and_read_again_where_offered() {
     let read = explore_file_items(1, Some(false), offered(false, true));
     assert_eq!(
         read[base.len()..],
-        [MenuAction::Divider, MenuAction::ReadAgain]
+        [MenuAction::Divider, MenuAction::ForceOcr]
     );
+    assert!(!read.contains(&MenuAction::ReadAgain));
     let both = explore_file_items(1, Some(true), offered(true, true));
     assert_eq!(
         both[both.len() - 3..],
         [
             MenuAction::Divider,
             MenuAction::ReadAllPages,
-            MenuAction::ReadAgain
+            MenuAction::ForceOcr
         ]
     );
 
@@ -976,6 +979,7 @@ fn the_files_menu_shows_read_all_pages_and_read_again_where_offered() {
     let many = explore_file_items(3, None, offered(true, true));
     assert!(!many.contains(&MenuAction::ReadAllPages));
     assert!(!many.contains(&MenuAction::ReadAgain));
+    assert!(!many.contains(&MenuAction::ForceOcr));
 
     // Their words are the shared ones, in the language drawn.
     let lang = crate::format::lang();
@@ -984,8 +988,8 @@ fn the_files_menu_shows_read_all_pages_and_read_again_where_offered() {
         koru_i18n::t(lang, koru_i18n::Key::ReadingReadAllPages)
     );
     assert_eq!(
-        MenuAction::ReadAgain.label(),
-        koru_i18n::t(lang, koru_i18n::Key::ReadingReadAgain)
+        MenuAction::ForceOcr.label(),
+        koru_i18n::t(lang, koru_i18n::Key::ReadingForceOcr)
     );
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **The *Text in pictures and PDFs* card** (OCR EXPERIENCE §4, OCR Plan 2.5):
+//! **The *Recognize text and images in PDFs* card** (OCR EXPERIENCE §4, OCR Plan 2.5):
 //! beside the other downloads on the Editor page — spelling dictionaries and
 //! voice input — built from the same rows they are.
 //!
@@ -100,6 +100,8 @@ pub enum ReaderStatus {
 /// `ReaderUnavailable`, in this crate's words.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum ReaderBlocked {
+    DownloadInformationUnavailable,
+    DownloadInformationInvalid,
     NoTrustRoot,
     NoWorker,
     WorkerMissing,
@@ -169,6 +171,7 @@ pub(crate) fn lay_out(b: &mut Builder<'_>, lang: Lang, row: &ReaderRow) {
         Some(t(lang, Key::SettingsReaderTitle)),
         Some(t(lang, Key::SettingsReaderAside)),
     );
+    b.anchor(crate::page::Anchor::Reader);
     let status = t(lang, Key::SettingsReaderStatus);
     match status_line(lang, &row.status) {
         (line, Some((action, label))) => b.row_button(status, Some(&line), action, label),
@@ -318,7 +321,7 @@ pub(crate) fn status_line(
                     t(lang, Key::SettingsReaderNotDownloadedSize),
                     &[&number::decimal(lang, *mb)],
                 ),
-                (None, false, None) => t(lang, Key::SettingsReaderNotDownloaded).to_owned(),
+                (None, false, None) => t(lang, Key::SettingsReaderDownloadPending).to_owned(),
             };
             // **Turn on** needs the terms, and the terms carry the size: no
             // size known means nothing to agree to yet.
@@ -397,6 +400,8 @@ fn blocked(lang: Lang, why: ReaderBlocked) -> &'static str {
     t(
         lang,
         match why {
+            ReaderBlocked::DownloadInformationUnavailable => Key::SettingsReaderDownloadUnavailable,
+            ReaderBlocked::DownloadInformationInvalid => Key::SettingsReaderDownloadInvalid,
             ReaderBlocked::NoTrustRoot => Key::SettingsReaderUnavailableNoTrustRoot,
             ReaderBlocked::NoWorker => Key::SettingsReaderUnavailableNoWorker,
             ReaderBlocked::WorkerMissing => Key::SettingsReaderUnavailableWorkerMissing,

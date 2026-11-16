@@ -165,6 +165,7 @@ fn a_local_failure_is_listed_only_once_the_coordinator_gave_up() {
     assert_eq!(
         answer.items[0].offers,
         ReadingOffers {
+            force_ocr: false,
             read_all: false,
             read_again: true
         }
@@ -347,6 +348,7 @@ fn the_list_offers_what_the_menu_offers() {
     assert_eq!(
         answer.items[0].offers,
         ReadingOffers {
+            force_ocr: false,
             read_all: false,
             read_again: true
         }

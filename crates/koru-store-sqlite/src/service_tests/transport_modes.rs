@@ -930,7 +930,7 @@ fn answering_yes_moves_the_profile_and_its_workspaces_in_one_group() {
         let subject = TransportSubject::Workspace(workspace);
         let row = store.transport_mode(subject).unwrap();
         assert_eq!(row.mode, TransportMode::Cloud);
-        assert!(row.explicit_choice, "the prompt is a choice, not a default");
+        assert!(!row.explicit_choice, "the workspace follows its profile");
         // The effective answer, which is the only value a transport may
         // branch on: nothing is capped, so bytes may actually move.
         let admission = store.transport_admission(subject).unwrap();
@@ -1249,13 +1249,14 @@ fn a_subject_created_on_a_linked_device_admits_peers_with_no_prompt_answered() {
     still_p2p_after_restart(dir.path(), profile, workspace);
 }
 
-/// **Nothing the person already has is promoted.** Linking says what to do
-/// with subjects made from now on; reaching back over the existing rows would
-/// reverse D258 for data that was created under it.
+/// Linking includes existing default-mode content (OCR acceptance U).
 #[test]
-fn a_subject_created_before_linking_keeps_its_mode() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut store = durable_store(dir.path());
+fn sync_modes_a_subject_created_before_linking_is_promoted() {
+    let mut store = Store::open(
+        SqliteCatalog::in_memory().unwrap(),
+        SqliteBackend::in_memory(),
+    )
+    .unwrap();
     let (profile, workspace) = profile_and_workspace(&mut store);
 
     link_to_account(&mut store);
@@ -1265,35 +1266,25 @@ fn a_subject_created_before_linking_keeps_its_mode() {
         TransportSubject::Workspace(workspace),
     ] {
         let state = store.transport_mode(subject).unwrap();
-        assert_eq!(state.mode, TransportMode::LocalOnly, "{subject:?}");
-        assert_eq!(state.revision, 1, "{subject:?} was rewritten");
-        assert_eq!(
-            store
-                .admit_transport(subject, TransportPath::Peer)
-                .unwrap_err()
-                .code(),
-            Code::Forbidden,
-            "{subject:?}",
-        );
+        assert_eq!(state.mode, TransportMode::P2p, "{subject:?}");
+        assert_eq!(state.revision, 2);
+        assert!(!state.explicit_choice);
+        assert!(store.admit_transport(subject, TransportPath::Peer).is_ok());
     }
     let unit = CatalogUnitRef::Workspace { workspace };
-    assert_eq!(
+    assert!(
         store
             .eligible_export_source(unit, TransportPath::Peer)
-            .unwrap(),
-        None
+            .unwrap()
+            .is_some()
     );
 
-    // A Workspace created after linking under that same unpromoted Profile is
-    // **capped at it** rather than seeded above it: a child over its ceiling
-    // is a `ceiling_mismatch`, which stops the transport rather than opening
-    // it. The Profile prompt is still the way out for rows that predate the
-    // linking, and on a phone that surface does not exist yet.
+    // Later Workspaces inherit the now-linked default too.
     let later = store.create_workspace(profile, "after", at()).unwrap().id;
     let state = store
         .transport_mode(TransportSubject::Workspace(later))
         .unwrap();
-    assert_eq!(state.mode, TransportMode::LocalOnly);
+    assert_eq!(state.mode, TransportMode::P2p);
     assert!(
         !store
             .transport_admission(TransportSubject::Workspace(later))
@@ -1396,7 +1387,10 @@ fn the_profile_prompt_still_raises_a_linked_device_to_cloud_in_one_group() {
     ] {
         let admission = store.transport_admission(subject).unwrap();
         assert_eq!(admission.mode, TransportMode::Cloud, "{subject:?}");
-        assert!(admission.explicit_choice, "{subject:?}");
+        assert_eq!(
+            admission.explicit_choice,
+            subject == TransportSubject::Profile(profile)
+        );
     }
     assert_eq!(
         store

@@ -21,12 +21,12 @@ rem   koru.bat setup    set up sccache, jobs, fonts and third-party code
 rem                     --check reports; --defender-exclusions and --agent-skills opt in
 rem
 rem Everything after the subcommand is forwarded to cargo, except the optional
-rem path consumed by `root` and `root-stop`; the rooted signed verbs take none.
+rem path consumed by `root`, `root-open` and `root-stop`; the rooted signed verbs take none.
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
 set "SUB=%~1"
-rem `root` and `root-stop` take one script argument rather than cargo args.
+rem The root verbs take one script argument rather than cargo args.
 rem Capture it before `shift`; the general collector below deliberately loses
 rem argument positions because every other verb forwards the whole tail.
 set "ROOT_COMMAND_PATH=%~2"
@@ -390,17 +390,17 @@ if not "%ROOT_COMMAND_EXTRA%"=="" (
   exit /b 2
 )
 call :ensure_fonts || exit /b 1
+call :ensure_voice_runtime || exit /b 1
 call :announce_environment
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -Action Start -Root "%ROOT_COMMAND_PATH%"
 exit /b %ERRORLEVEL%
 
 :do_root_open
-if not "%~3"=="" (
+if not "%ROOT_COMMAND_EXTRA%"=="" (
   echo koru: root-open takes at most one path
   echo usage: koru.bat root-open [path]
   exit /b 2
 )
-set "ROOT_COMMAND_PATH=%~2"
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\dev\root-stack.ps1" -Action Open -Root "%ROOT_COMMAND_PATH%"
 exit /b %ERRORLEVEL%
 
@@ -879,7 +879,7 @@ echo   stop-all   stop this worktree's Koru, Agent and services
 echo   jank       ...with the stall watch on, logging to koru-jank.log
 echo   root       build and start Agent + API Gateway + Koru on one isolated root;
 echo              its interactive Agent registers real global shortcuts
-echo   root-open  open another window through an already-running isolated Agent
+echo   root-open  open an isolated root using built binaries, without rebuilding
 echo   root-stop  stop that root's Agent and services (close windows first)
 echo   build-root-signed  build/register a signed rooted Windows notification test
 echo   run-root-signed    launch the latest signed rooted Windows notification test

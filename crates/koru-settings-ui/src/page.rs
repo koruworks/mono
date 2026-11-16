@@ -217,6 +217,7 @@ impl PageId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Anchor {
     Voice,
+    Reader,
 }
 
 /// Where the page's title sits under the window's top edge — the shared

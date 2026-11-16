@@ -1677,6 +1677,22 @@ impl Client {
         ))
     }
 
+    pub fn correct_reading(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+        request: &koru_store_wire::readings::CorrectReading,
+    ) -> Result<koru_store_wire::readings::ReadingCorrections> {
+        self.put(
+            &format!(
+                "/v1/readings/{}/{}/correction",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            request,
+        )
+    }
+
     /// **Read all pages** of a file that stopped at a page limit (OCR Plan
     /// 3.2). Recorded on this computer and met behind anything freshly added.
     /// Refused `blob_not_here`, `reader_unavailable` or `invalid_request`;
@@ -1707,6 +1723,22 @@ impl Client {
         self.post(
             &format!(
                 "/v1/readings/{}/{}/read-again",
+                workspace.to_storage(),
+                hash.as_str()
+            ),
+            &serde_json::json!({}),
+        )
+    }
+
+    /// Recognize all pages, ignoring the embedded PDF text layer.
+    pub fn force_ocr(
+        &self,
+        workspace: WorkspaceId,
+        hash: &BlobHash,
+    ) -> Result<koru_store_wire::readings::ReadRequested> {
+        self.post(
+            &format!(
+                "/v1/readings/{}/{}/force-ocr",
                 workspace.to_storage(),
                 hash.as_str()
             ),
@@ -2058,6 +2090,45 @@ impl Client {
             &koru_store_wire::SetProfileTransportMode {
                 mode: mode.to_owned(),
                 include_workspaces,
+            },
+        )
+    }
+
+    pub fn profile_transport_mode(
+        &self,
+        profile: ProfileId,
+    ) -> Result<koru_store_wire::ProfileTransportSettings> {
+        self.get(&format!(
+            "/v1/profiles/{}/transport-mode",
+            profile.to_storage()
+        ))
+    }
+
+    pub fn initialize_profile_transport_mode(
+        &self,
+        profile: ProfileId,
+        mode: &str,
+    ) -> Result<koru_store_wire::ProfileTransportSettings> {
+        self.post(
+            &format!("/v1/profiles/{}/transport-default", profile.to_storage()),
+            &koru_store_wire::SetProfileTransportMode {
+                mode: mode.into(),
+                include_workspaces: true,
+            },
+        )
+    }
+
+    pub fn set_workspace_transport_mode(
+        &self,
+        workspace: WorkspaceId,
+        mode: &str,
+        expected_revision: i64,
+    ) -> Result<koru_store_wire::ProfileTransportSettings> {
+        self.put(
+            &format!("/v1/workspaces/{}/transport-mode", workspace.to_storage()),
+            &koru_store_wire::SetWorkspaceTransportMode {
+                mode: mode.into(),
+                expected_revision,
             },
         )
     }

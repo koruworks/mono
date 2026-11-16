@@ -806,6 +806,11 @@ impl ManagerView {
 }
 
 impl View for ManagerView {
+    forward_to_the_window! {
+        fn begin_file_image_open(&mut self, file: koru_core::DocumentId) -> bool;
+        fn show_file_reading(&mut self, file: koru_core::DocumentId, details: Result<koru_workspace_host::reading_details::ReadingDetails, String>) -> bool;
+        fn show_file_image(&mut self, file: koru_core::DocumentId, name: String, image: std::sync::Arc<koru_ui::media_viewer::ViewerImage>) -> bool;
+    }
     fn set_window_focused(&mut self, focused: bool) {
         match self {
             Self::Container(view) => view.set_window_focused(focused),

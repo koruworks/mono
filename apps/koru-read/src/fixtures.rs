@@ -159,6 +159,7 @@ impl crate::pdf::Document for Scripted {
                 text: text.into(),
                 chars: text.chars().filter(|c| !c.is_whitespace()).count(),
                 unmapped: 0,
+                has_paths: false,
                 picture_share,
                 largest_image,
                 image_pixels: largest_image,

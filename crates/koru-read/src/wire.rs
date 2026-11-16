@@ -52,7 +52,7 @@ use crate::reading::{PageText, ReadingStatus, Reason, Source};
 
 /// **What these messages mean.** Bump when a shape changes in a way an older
 /// peer cannot read. 1 is the first.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// The frame version handed to `koru_ipc::frame`. Changes only if the framing
 /// does.
@@ -85,6 +85,8 @@ tokens! {
         /// none: pictures, scanned pages, and text layers that fail the
         /// acceptance check. Sent only when the reader is installed.
         Recognize => "recognize",
+        /// Render every PDF page, replacing its embedded text with recognition.
+        ForceRecognize => "force-recognize",
     }
 }
 

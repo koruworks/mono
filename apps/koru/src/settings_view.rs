@@ -40,7 +40,7 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState};
 use winit::window::CursorIcon;
 
-mod reader_link;
+pub(crate) mod reader_link;
 mod reminders;
 #[cfg(test)]
 mod tests;
@@ -104,6 +104,7 @@ pub struct SettingsView {
     /// else polls. `None` under test, where no Store may be dialled.
     reader: Option<reader_link::ReaderLink>,
     reader_state: Option<koru_store_wire::reader::ReaderState>,
+    reader_scroll_pending: bool,
     reader_asked_at: Option<std::time::Instant>,
     /// Commands sent and not yet answered: the page looks for the answer on a
     /// short wake, as it does for the app-menu read.
@@ -181,6 +182,7 @@ impl SettingsView {
             app_menu_read: koru_autostart::app_menu::SUPPORTED.then(crate::app_menu::read),
             reader: None,
             reader_state: None,
+            reader_scroll_pending: false,
             reader_asked_at: None,
             reader_pending: 0,
             reader_catalog_polls: 0,
@@ -266,7 +268,12 @@ impl SettingsView {
         let row = reader_link::row(&answer);
         self.reader_requested = reader_link::reading_requested(&answer.items);
         self.reader_state = answer.state;
-        self.surface.set_reader(row)
+        let changed = self.surface.set_reader(row);
+        if self.reader_scroll_pending {
+            self.reader_scroll_pending = false;
+            return self.surface.scroll_to_reader() || changed;
+        }
+        changed
     }
 
     fn reader_deadline(&self) -> Option<std::time::Instant> {
@@ -292,6 +299,12 @@ impl SettingsView {
     /// Opened from the first-minutes guide's mic link.
     pub fn scroll_to_voice(&mut self) -> bool {
         self.surface.scroll_to_voice()
+    }
+
+    pub fn scroll_to_reader(&mut self) -> bool {
+        self.reader_scroll_pending = true;
+        self.ask_reader(reader_link::Command::Refresh);
+        self.surface.scroll_to_reader()
     }
 
     /// The coding agents *Agent providers* lists. Answers whether one moved.

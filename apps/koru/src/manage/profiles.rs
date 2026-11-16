@@ -29,6 +29,7 @@ mod removal;
 mod results;
 mod scopes;
 mod surface;
+mod sync_modes;
 
 mod attach;
 #[cfg(test)]
@@ -92,6 +93,7 @@ pub struct ViewHints {
 }
 
 pub struct ProfilesController {
+    sync_modes: sync_modes::State,
     cloud: cloud::State,
     cloud_uri: Option<String>,
     cloud_visible: bool,
@@ -176,6 +178,7 @@ impl Default for ProfilesController {
 impl ProfilesController {
     pub fn new() -> Self {
         Self {
+            sync_modes: Default::default(),
             cloud: Default::default(),
             cloud_uri: None,
             cloud_visible: false,
@@ -594,14 +597,20 @@ impl ProfilesController {
             .preview_request
             .is_some()
             .then(|| std::time::Instant::now() + std::time::Duration::from_millis(16));
-        match (preview, self.progress.deadline()) {
-            (Some(a), Some(b)) => Some(a.min(b)),
-            (a, b) => a.or(b),
-        }
+        [
+            preview,
+            self.progress.deadline(),
+            self.sync_modes.deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     pub fn maintain(&mut self, now: std::time::Instant) -> bool {
-        self.drain_deletion_preview() | self.maintain_cloud_progress(now)
+        self.drain_deletion_preview()
+            | self.maintain_cloud_progress(now)
+            | self.maintain_sync_modes(now)
     }
 }
 

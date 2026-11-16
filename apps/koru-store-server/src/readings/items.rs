@@ -206,10 +206,12 @@ pub(crate) fn collect(
                 // Each list offers its own action: the other is the menu's.
                 offers: match listed.kind {
                     ReaderItemKind::PartlyRead => koru_store_wire::readings::ReadingOffers {
+                        force_ocr: false,
                         read_all: offers.read_all,
                         read_again: false,
                     },
                     ReaderItemKind::CouldNotBeRead => koru_store_wire::readings::ReadingOffers {
+                        force_ocr: false,
                         read_all: false,
                         read_again: offers.read_again,
                     },

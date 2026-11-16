@@ -4,8 +4,8 @@
 //! §9; asked for by the maintainer: "For me to debug, add an option to right
 //! click and save .ocr to a file so I can review it").
 //!
-//! A right-click entry on a file under Explore → Files and on a picture in a
-//! page, **shown only when `KORU_READ_DEBUG=1`** and offered whatever the
+//! Offered in the extracted-text tab's toolbar, and on a picture in a page
+//! **only when `KORU_READ_DEBUG=1`**. The export is available whatever the
 //! reading's status — including none yet, which is worth seeing too. It reads
 //! `GET /v1/readings/{workspace}/{hash}` and adds nothing underneath.
 //!
@@ -15,8 +15,8 @@
 //! dialog, a store or a disk; the shell (`app.rs`, `save_reading`) does the
 //! fetch and the write off the event loop, as *Save as…* does.
 //!
-//! The entry's label is not translated, on the precedent of the AI view's
-//! debug-only system-prompt field: only a developer switch reveals it.
+//! The OCR tab translates its toolbar label. The inline picture's debug-only
+//! menu retains the diagnostic label below.
 
 use koru_api_client::ReadingAnswer;
 

@@ -91,8 +91,10 @@ pub(crate) enum Control {
     AddGoogle,
     MakeOffline,
     SignOut,
-    /// The Profile's Cloud sync switch.
-    CloudSync,
+    SyncMode(
+        Option<koru_store_core::ids::WorkspaceId>,
+        koru_store_core::TransportMode,
+    ),
     /// *Get Koru Cloud…*: the Koru Cloud page.
     GetCloud,
     /// *Delete profile and its workspaces…*: the shared, restorable batch.
@@ -399,7 +401,7 @@ impl ManageView {
                 }
                 // *Sign-in and sync* is Koru Cloud's; a build that hides it
                 // has no such section (koru-features).
-                let section = koru_features::cloud_sync().then(|| {
+                let section = Some({
                     let section = self.lay_sign_in(profile, column, y, &mut controls);
                     y = section.rect.y + section.rect.h + SECTION_GAP;
                     section
@@ -409,6 +411,13 @@ impl ManageView {
                 (Some(workspaces), recovery, section, Some(footer))
             }
         };
+        for placed in &controls {
+            if let Control::SyncMode(workspace, mode) = placed.control
+                && !self.c.sync_mode_enabled(workspace, mode)
+            {
+                disabled.push(placed.control);
+            }
+        }
         Laid {
             profile: Some(profile.id),
             header,
@@ -808,8 +817,9 @@ impl ManageView {
                 self.perform(Intent::Unlink(profile, 0));
             }
             Control::SignOut => self.ask_to_sign_out(),
-            Control::CloudSync => {
-                self.perform(Intent::CloudSync(profile));
+            Control::SyncMode(workspace, mode) => {
+                self.c.choose_sync_mode(workspace, mode);
+                self.relayout();
             }
             Control::Delete => self.ask_to_delete(profile),
             Control::RemoveFromDevice => self.ask_to_remove_from_device(profile),

@@ -124,6 +124,37 @@ fn a_scan_has_no_text_layer_and_is_left_for_the_reader() {
 }
 
 #[test]
+fn outlined_letters_need_ocr_but_an_empty_page_does_not() {
+    let mut writer = fixtures::Writer::new();
+    // An outlined letter H: visible lettering, with no PDF glyph or bitmap.
+    let outline = "72 700 m 74 700 l 74 705 l 80 705 l 80 700 l \
+                   82 700 l 82 712 l 80 712 l 80 707 l 74 707 l \
+                   74 712 l 72 712 l h f";
+    let catalog = fixtures::document(
+        &mut writer,
+        &[
+            outline.into(),
+            String::new(),
+            fixtures::lines(&["7"]) + outline,
+        ],
+    );
+    let read = layers(writer.finish(catalog));
+    assert_eq!(read[0].1.chars, 0);
+    assert_eq!(read[0].1.picture_share, 0.0);
+    assert_eq!(judge(&read[0].1), Verdict::NeedsReader);
+    assert_eq!(
+        crate::accept::ask(&read[0].1, judge(&read[0].1)),
+        crate::accept::Ask::Instead
+    );
+    assert_eq!(judge(&read[1].1), Verdict::Nothing);
+    assert_eq!(
+        judge(&read[2].1),
+        Verdict::NeedsReader,
+        "page number beside outlines"
+    );
+}
+
+#[test]
 fn a_font_that_maps_nothing_is_left_for_the_reader() {
     let read = layers(fixtures::unmapped());
     let (_, layer) = &read[0];

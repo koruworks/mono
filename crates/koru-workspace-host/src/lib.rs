@@ -70,6 +70,7 @@ mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
 pub mod reader_offer;
+pub mod reading_details;
 pub mod reading_file;
 pub mod reading_requests;
 pub mod reveal;
@@ -1820,6 +1821,31 @@ pub trait View {
         None
     }
 
+    /// Claim a file open for the shared image viewer. Decoding stays on a
+    /// worker; hosts without a viewer keep using the system application.
+    fn begin_file_image_open(&mut self, _file: koru_core::DocumentId) -> bool {
+        false
+    }
+
+    /// Deliver a file's reading to the pane that requested inspection.
+    fn show_file_reading(
+        &mut self,
+        _file: koru_core::DocumentId,
+        _details: Result<reading_details::ReadingDetails, String>,
+    ) -> bool {
+        false
+    }
+
+    /// Deliver a decoded image only to the pane that requested it.
+    fn show_file_image(
+        &mut self,
+        _file: koru_core::DocumentId,
+        _name: String,
+        _image: std::sync::Arc<koru_ui::media_viewer::ViewerImage>,
+    ) -> bool {
+        false
+    }
+
     /// Blob hash of a picture whose reading the person asked to save — the
     /// `KORU_READ_DEBUG` entry on a picture ([`reading_file`]). The shell owns
     /// the fetch, the dialog and the write, as it does an image's *Copy*.
@@ -2878,6 +2904,11 @@ pub enum PaneRequest {
     },
     /// Add opaque file entries to the workspace's Files projection.
     ImportFiles(ImportSourceSelection),
+    /// Import copied files, then add references to the captured document.
+    ImportFileAttachments {
+        paths: Vec<std::path::PathBuf>,
+        document: koru_core::DocumentId,
+    },
     /// Ask the active content-import worker to stop at its next safe checkpoint.
     CancelImport,
     /// **The voice consent step was answered.** `true` records the agreement
@@ -2920,6 +2951,7 @@ pub enum PaneRequest {
     /// Save what was read out of one file or picture to a text file the
     /// person chooses — the `KORU_READ_DEBUG` entry ([`reading_file`]).
     SaveReading(reading_file::ReadingTarget),
+    InspectFileReading(koru_core::DocumentId),
     /// Ask the Store what may be asked of one item's reading now (*Read all
     /// pages*, *Read again*), for its right-click menu. The answer comes back
     /// through [`View::set_reading_offers`] (OCR Plan 3.2).
@@ -2929,15 +2961,20 @@ pub enum PaneRequest {
         reading_file::ReadingTarget,
         reading_requests::ReadRequestKind,
     ),
+    /// Re-run reading for eligible live files in this captured workspace.
+    /// Selection and later workspace navigation do not alter the scope.
+    RescanWorkspaceFiles(koru_core::WorkspaceId),
     /// Save a drawn diagram as a PNG or an SVG at a user-selected path. Served
     /// against the window that asked: its device rasterises the PNG.
     SaveDiagram(SaveDiagram),
     /// Put a picture of a drawn diagram on the clipboard. Served against the
     /// window that asked, like a save: its device rasterises the bitmap.
     CopyDiagram(CopyDiagram),
-    /// Materialize one workspace file in Koru's temporary open cache and hand
-    /// it to the operating system's associated application.
+    /// Open a workspace image in Koru's viewer, or another file through its
+    /// operating system association. Hosts without a viewer use the latter.
     OpenFile(koru_core::DocumentId),
+    /// Explicit external opening from the built-in image viewer.
+    OpenFileExternally(koru_core::DocumentId),
     /// Materialize and open every selected workspace file through its OS
     /// association.
     OpenFiles(Vec<koru_core::DocumentId>),
@@ -3103,6 +3140,7 @@ impl PaneRequest {
             Self::SetWorkspaceIcon { .. } => "request.workspace_icon",
             Self::ImportContent { .. } => "request.import_content",
             Self::ImportFiles(..) => "request.import_files",
+            Self::ImportFileAttachments { .. } => "request.import_file_attachments",
             Self::CancelImport => "request.cancel_import",
             Self::VoiceConsent(..) => "request.voice_consent",
             Self::CancelVoiceDownload => "request.cancel_voice_download",
@@ -3115,8 +3153,11 @@ impl PaneRequest {
             Self::SaveFile(..) => "request.save_file",
             Self::SaveFiles(..) => "request.save_files",
             Self::SaveReading(..) => "request.save_reading",
+            Self::InspectFileReading(..) => "request.inspect_file_reading",
             Self::ReadingOffers(..) => "request.reading_offers",
             Self::ReadRequest(..) => "request.read_request",
+            Self::OpenFileExternally(..) => "request.open_file_externally",
+            Self::RescanWorkspaceFiles(..) => "request.rescan_workspace_files",
             Self::SaveDiagram(..) => "request.save_diagram",
             Self::CopyDiagram(..) => "request.copy_diagram",
             Self::OpenFile(..) => "request.open_file",
