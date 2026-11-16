@@ -206,6 +206,7 @@ fn a_pick_names_the_production_button_inside_the_labs_own_elements() {
             OWNER,
             "UI Lab",
             "Workbench",
+            "Centre",
             "Preview",
             "Preview stage",
             "Component under test",
@@ -222,12 +223,22 @@ fn a_pick_names_the_production_button_inside_the_labs_own_elements() {
         );
         assert!(windows.panel_seat.stale, "the panel shows the new pick");
 
-        // The toolbar's Reset is the shared compact button, in its own row.
+        // The toolbar's Reset is the shared compact button, in the centre's
+        // toolbar, beside the record's name.
         let reset = centre(&windows, "reset");
         point(&mut windows, reset);
         frame(&mut windows, &mut engine);
         let ancestry = windows.inspector.selected_ancestry();
-        let expected = [OWNER, "UI Lab", "Toolbar", "Reset", "KoruButton"];
+        let expected = [
+            OWNER,
+            "UI Lab",
+            "Workbench",
+            "Centre",
+            "Toolbar",
+            "Toolbar heading",
+            "Reset",
+            "KoruButton",
+        ];
         assert_eq!(
             &ancestry[..expected.len().min(ancestry.len())],
             expected,

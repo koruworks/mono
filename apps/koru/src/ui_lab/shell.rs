@@ -17,17 +17,20 @@
 //!
 //! ```text
 //! col  UI Lab                         the window, on the ground surface
-//!   row  Caption                      the title; the shared window controls
-//!   row  Toolbar                      a column's toggle at each end; the record's
-//!                                     name; theme, width, language; Reset
-//!   row  Workbench
+//!   row  Caption                      the navigator's toggle; the title; the
+//!                                     properties' toggle; the shared window controls
+//!   row  Workbench                    from the caption to the bottom of the window
 //!     col  Navigator                  the catalog              (navigator.rs)
-//!     scroll  Preview                 the record's page        (page.rs)
+//!     col  Centre
+//!       Toolbar                       the record's name; theme, width, language; Reset
+//!       scroll  Preview               the record's page        (page.rs)
 //!     scroll  Properties              what is recorded, and a story's inputs
 //! ```
 //!
 //! **The preview is always there; the columns beside it fold away.** Each
-//! has a toggle in the toolbar. A window too narrow for both shows the
+//! has a toggle at its own end of the caption and a chord: the primary
+//! modifier with B for the navigator and J for the properties, wherever the
+//! keyboard is. A window too narrow for both shows the
 //! navigator and hides the properties until asked, and opening one in a
 //! narrow window closes the other, so the preview never has less than
 //! [`PREVIEW_MIN_WIDTH`]. When a column closes with the keyboard inside it,
@@ -99,7 +102,22 @@ enum Side {
 impl Side {
     const ALL: [Self; 2] = [Self::Navigator, Self::Properties];
 
-    /// The toolbar button that shows and hides the column.
+    /// **The chord that shows and hides the column**: the primary modifier
+    /// (Ctrl, or Cmd on a Mac) with B for the navigator and J for the
+    /// properties. Matched and written out by `koru-keys`, so the key that
+    /// fires and the key a description names are one value on every
+    /// platform.
+    const fn chord(self) -> koru_keys::Chord {
+        koru_keys::Chord::new(
+            koru_keys::On::Letter(match self {
+                Self::Navigator => 'b',
+                Self::Properties => 'j',
+            }),
+            koru_keys::PRIMARY,
+        )
+    }
+
+    /// The caption button that shows and hides the column.
     const fn toggle(self) -> Key {
         match self {
             Self::Navigator => Key::surface("ui-lab", "toggle-navigator"),
@@ -982,6 +1000,22 @@ impl Lab {
         mods: ModifiersState,
         repeat: bool,
     ) -> bool {
+        // A column's chord works wherever the keyboard is, a field and an
+        // open list included: it is checked before either is offered the
+        // key, so it neither types a letter nor is taken as one. Not while
+        // an input method is composing, when the keys are the composition's.
+        if let Some(side) = Side::ALL
+            .into_iter()
+            .find(|side| side.chord().matches(key, typed, mods))
+        {
+            if repeat || self.fields.iter().any(|(_, field)| field.is_composing()) {
+                return false;
+            }
+            self.close_menu();
+            let open = !self.shown_columns().shows(side);
+            self.set_column(side, open);
+            return true;
+        }
         if self.menu.is_some() {
             return self.menu_key(engine, key, repeat);
         }
@@ -1059,23 +1093,6 @@ impl Lab {
     /// leave its column; the height bounds how many navigator rows can be in
     /// view.
     fn tree(&self, engine: &mut TextEngine, width: f32, height: f32) -> El {
-        let entry = self.entry;
-        let caption = el::row("Caption")
-            .id(CAPTION)
-            .h(CAPTION_HEIGHT)
-            .pad_start(CAPTION_INSET)
-            .items_center()
-            .child(
-                el::text(text(koru_i18n::Key::UiLabTitle))
-                    .named("Window title")
-                    .role(roles::ROW)
-                    .ink(Ink::Secondary)
-                    .fill()
-                    .truncate(),
-            )
-            .child(el::boxed("Window controls").w(CAPTION_CONTROLS));
-
-        let reset = text(koru_i18n::Key::UiLabReset);
         let columns = self.columns(width);
         let toggle = |side: Side| {
             ringed(
@@ -1100,52 +1117,43 @@ impl Lab {
                 .action(el::Action::Focus),
             )
         };
-        let toolbar = el::row("Toolbar")
-            .pad_x(TOOLBAR_INSET_X)
-            .pad_y(TOOLBAR_INSET_Y)
-            .gap(TOOLBAR_GAP)
+        // The caption: each column's toggle at its own end, the title
+        // between them, and the window's three controls last. Everything
+        // that is not one of those buttons drags the window.
+        let caption = el::row("Caption")
+            .id(CAPTION)
+            .h(CAPTION_HEIGHT)
+            .pad_start(CAPTION_INSET)
+            .gap(CAPTION_GAP)
             .items_center()
             .child(toggle(Side::Navigator))
             .child(
-                el::text(text(entry.name))
-                    .named("Story title")
+                el::text(text(koru_i18n::Key::UiLabTitle))
+                    .named("Window title")
                     .role(roles::ROW)
-                    .emphasis(true)
+                    .ink(Ink::Secondary)
                     .fill()
                     .truncate(),
             )
-            .children(self.settings(engine))
-            .child(
-                el::leaf(
-                    "Reset",
-                    Slot {
-                        width: ActionButton::new(reset, ActionStyle::Secondary, None).width(engine),
-                        height: ActionButton::H,
-                    },
-                )
-                .semantic()
-                .id(RESET)
-                .hit()
-                .focusable()
-                // Nothing to put back for a record with no story, or for a
-                // story with nothing to change.
-                .disabled(self.story.as_ref().is_none_or(|story| !story.can_change()))
-                .semantics(Role::Button)
-                .name(koru_i18n::Key::UiLabReset)
-                .action(el::Action::Click)
-                .action(el::Action::Focus),
-            )
-            .child(toggle(Side::Properties));
+            .child(toggle(Side::Properties))
+            .child(el::boxed("Window controls").w(CAPTION_CONTROLS));
 
-        // The preview is always there; a side column is there while the
-        // window has room for it or the person asked for it.
+        // The side columns run from the caption to the bottom of the window;
+        // the toolbar is the centre's own, over the page. The preview is
+        // always there; a side column is there while the window has room for
+        // it or the person asked for it.
+        let centre = el::col("Centre")
+            .fill()
+            .child(self.toolbar(engine, width - columns.width()))
+            .child(el::divider(Line::Divider))
+            .child(self.page(engine, width));
         let mut workbench = el::row("Workbench").fill();
         if columns.navigator {
             workbench = workbench
                 .child(self.navigator(engine, height))
                 .child(el::divider(Line::Divider));
         }
-        workbench = workbench.child(self.page(engine, width));
+        workbench = workbench.child(centre);
         if columns.properties {
             workbench = workbench
                 .child(el::divider(Line::Divider))
@@ -1155,9 +1163,85 @@ impl Lab {
             .bg(Surface::Ground)
             .child(caption)
             .child(el::divider(Line::Divider))
-            .child(toolbar)
-            .child(el::divider(Line::Divider))
             .child(workbench)
+    }
+
+    /// **The centre's toolbar**: the record's name, the three settings and
+    /// Reset, over the page and no wider than it.
+    ///
+    /// On one row while the name can have [`TOOLBAR_TITLE_MIN`] beside the
+    /// settings at their full width. In a narrower centre the settings take
+    /// a row of their own under the name and Reset, and share that row's
+    /// width: the name is what gives way first, by being cut short, and then
+    /// each setting's field narrows, its value clipped before its chevron.
+    /// Nothing is ever laid out past the centre's edge.
+    fn toolbar(&self, engine: &mut TextEngine, centre: f32) -> El {
+        let profile = Profile::Desktop;
+        let reset = text(koru_i18n::Key::UiLabReset);
+        let reset_width = ActionButton::new(reset, ActionStyle::Secondary, None).width(engine);
+        let gap = TOOLBAR_GAP.token.px(profile);
+        let ring = 2.0 * FOCUS_INSET.token.px(profile);
+        let settings: f32 = Setting::ALL
+            .into_iter()
+            .map(|setting| self.dropdown_width(engine, setting.key()) + ring + gap)
+            .sum();
+        let one_row = centre
+            >= 2.0 * TOOLBAR_INSET_X.token.px(profile)
+                + TOOLBAR_TITLE_MIN.value
+                + settings
+                + gap
+                + reset_width;
+        let title = el::text(text(self.entry.name))
+            .named("Story title")
+            .role(roles::ROW)
+            .emphasis(true)
+            .fill()
+            .truncate();
+        let reset = el::leaf(
+            "Reset",
+            Slot {
+                width: reset_width,
+                height: ActionButton::H,
+            },
+        )
+        .semantic()
+        .id(RESET)
+        .hit()
+        .focusable()
+        // Nothing to put back for a record with no story, or for a
+        // story with nothing to change.
+        .disabled(self.story.as_ref().is_none_or(|story| !story.can_change()))
+        .semantics(Role::Button)
+        .name(koru_i18n::Key::UiLabReset)
+        .action(el::Action::Click)
+        .action(el::Action::Focus);
+        if one_row {
+            return el::row("Toolbar")
+                .pad_x(TOOLBAR_INSET_X)
+                .pad_y(TOOLBAR_INSET_Y)
+                .gap(TOOLBAR_GAP)
+                .items_center()
+                .child(title)
+                .children(self.settings(engine, false))
+                .child(reset);
+        }
+        el::col("Toolbar")
+            .pad_x(TOOLBAR_INSET_X)
+            .pad_y(TOOLBAR_INSET_Y)
+            .gap(TOOLBAR_ROWS_GAP)
+            .child(
+                el::row("Toolbar heading")
+                    .gap(TOOLBAR_GAP)
+                    .items_center()
+                    .child(title)
+                    .child(reset),
+            )
+            .child(
+                el::row("Toolbar settings")
+                    .gap(TOOLBAR_GAP)
+                    .items_center()
+                    .children(self.settings(engine, true)),
+            )
     }
 
     /// The left column: its heading, the search, and under it the catalog
@@ -1255,10 +1339,16 @@ impl WindowApp for Lab {
         self.closed = true;
     }
 
+    /// The caption drags the window everywhere but on a button: the
+    /// window's own three, and the two column toggles the caption holds. A
+    /// press the caption takes never reaches [`click`](Self::click), so a
+    /// button left in the drag band would be a button that cannot be
+    /// pressed.
     fn is_caption(&self, x: f32, y: f32) -> bool {
         self.caption_rect()
             .is_some_and(|caption| caption.contains(x, y))
             && self.caption_action_at(x, y).is_none()
+            && self.hit_at(x, y).is_none()
     }
 
     fn cursor_icon(&self, x: f32, y: f32) -> CursorIcon {

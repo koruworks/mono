@@ -18,8 +18,11 @@ pub(crate) const CAPTION_HEIGHT: Metric = Metric::new("CAPTION_H", theme::CAPTIO
 pub(crate) const CAPTION_CONTROLS: Metric =
     Metric::new("CAPTION_CONTROLS_W", theme::CAPTION_BTN * 3.0);
 
-/// The title's inset from the window's start edge: 16.
-pub(crate) const CAPTION_INSET: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_PAD", Space::S4);
+/// The caption's inset before its first control, the navigator's toggle: 8.
+pub(crate) const CAPTION_INSET: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_PAD", Space::S2);
+
+/// Between the caption's toggles and its title: 8.
+pub(crate) const CAPTION_GAP: Tagged<Space> = Tagged::new("UI_LAB_CAPTION_GAP", Space::S2);
 
 /// The navigator column: wide enough for a component's name in any of the
 /// eight languages, narrow enough to leave the preview room in the smallest
@@ -30,8 +33,8 @@ pub(crate) const NAVIGATOR_WIDTH: Metric = Metric::new("UI_LAB_NAVIGATOR_W", 240
 /// gives way: room for the narrowest preview width on offer.
 pub(crate) const PREVIEW_MIN_WIDTH: Metric = Metric::new("UI_LAB_PREVIEW_MIN_W", 320.0);
 
-/// A side column's toggle in the toolbar: a square as high as the compact
-/// action beside it.
+/// A side column's toggle in the caption: a square that leaves the caption
+/// room for the focus ring round it.
 pub(crate) const TOGGLE_SIZE: Metric = Metric::new("UI_LAB_TOGGLE", 26.0);
 
 /// The properties column: the widest style control, in the language that
@@ -47,6 +50,14 @@ pub(crate) const TOOLBAR_INSET_Y: Tagged<Space> = Tagged::new("UI_LAB_TOOLBAR_PA
 
 /// Between the toolbar's title and its actions: 8.
 pub(crate) const TOOLBAR_GAP: Tagged<Space> = Tagged::new("UI_LAB_TOOLBAR_GAP", Space::S2);
+
+/// Between the toolbar's two rows, when it has two: 8.
+pub(crate) const TOOLBAR_ROWS_GAP: Tagged<Space> =
+    Tagged::new("UI_LAB_TOOLBAR_ROWS_GAP", Space::S2);
+
+/// The least room the record's name is given on one row with the settings.
+/// With less, the settings go on a row of their own under it.
+pub(crate) const TOOLBAR_TITLE_MIN: Metric = Metric::new("UI_LAB_TOOLBAR_TITLE_MIN_W", 160.0);
 
 /// Between the navigator's heading and what is under it: 4.
 pub(crate) const NAVIGATOR_GAP: Tagged<Space> = Tagged::new("UI_LAB_NAVIGATOR_GAP", Space::S1);

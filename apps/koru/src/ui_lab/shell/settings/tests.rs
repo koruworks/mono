@@ -72,21 +72,24 @@ fn pick(lab: &mut Lab, engine: &mut TextEngine, setting: Setting, part: &str) {
     draw(lab, engine, SIZE);
 }
 
-/// The three settings are in the toolbar, before Reset, each showing the
-/// value in force and each as wide as its widest option.
+/// The three settings are in the centre's toolbar, side by side, each
+/// showing the value in force and none wider than its widest option.
 #[test]
 fn the_toolbar_holds_the_three_settings() {
     let _theme = theme_guard();
     english(|| {
         let (lab, _) = drawn(SIZE);
         let stops = lab.laid.as_ref().unwrap().stops();
+        let first = stops
+            .iter()
+            .position(|stop| *stop == Setting::Theme.key())
+            .unwrap();
         assert_eq!(
-            stops[1..5],
+            stops[first..first + 3],
             [
                 Setting::Theme.key(),
                 Setting::Width.key(),
                 Setting::Language.key(),
-                RESET
             ]
         );
         let toolbar = frame(&lab).rect_of("Toolbar").unwrap();
@@ -98,7 +101,7 @@ fn the_toolbar_holds_the_three_settings() {
             assert_eq!(rect.h, Dropdown::H);
             right = rect.x + rect.w;
         }
-        assert!(right <= lab.rect(RESET).unwrap().x);
+        assert!(right <= toolbar.x + toolbar.w);
         let value = |setting: Setting| lab.chosen(setting.key()).unwrap().label;
         assert_eq!(value(Setting::Theme), "Light");
         assert_eq!(value(Setting::Width), "Full width");

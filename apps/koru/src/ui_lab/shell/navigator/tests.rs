@@ -331,7 +331,7 @@ fn the_arrows_move_through_the_rows_and_tab_passes_the_list() {
         // comes back to the row the keyboard was on.
         let left = lab.focus;
         assert!(tab(&mut lab, &mut engine));
-        assert_eq!(lab.focus, Some(PAGE));
+        assert_eq!(lab.focus, Some(RESET), "the centre's toolbar is next");
         assert!(named(
             &mut lab,
             &mut engine,

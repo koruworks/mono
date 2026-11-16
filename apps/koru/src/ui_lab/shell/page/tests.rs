@@ -347,14 +347,14 @@ fn a_long_page_scrolls_from_the_keyboard() {
 #[test]
 fn the_properties_column_brings_a_tabbed_control_into_view() {
     english(|| {
-        let size = (SMALLEST.0, 340.0);
+        let size = (SMALLEST.0, 250.0);
         let (mut lab, mut engine) = drawn(size);
         // Too narrow for the properties until they are asked for.
         assert!(lab.set_column(Side::Properties, true));
         draw(&mut lab, &mut engine, size);
         assert!(
             frame(&lab).scrollbar(PANEL).is_some(),
-            "the column is taller than a 340 high window"
+            "the column is taller than a 250 high window"
         );
         let style = control_key(Control::Style);
         let viewport = frame(&lab).node(PANEL).unwrap().viewport.unwrap();

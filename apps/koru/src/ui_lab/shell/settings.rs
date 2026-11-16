@@ -407,22 +407,27 @@ impl Lab {
             .is_some_and(|open| open.menu.hover != before)
     }
 
-    /// A dropdown's field in the tree: a slot as wide as its widest option,
-    /// so it does not change size with its value, in a box that wears the
-    /// focus ring.
-    pub(super) fn dropdown(&self, engine: &mut TextEngine, owner: Key, name: koru_i18n::Key) -> El {
+    /// How wide `owner`'s field is at its fullest: as wide as its widest
+    /// option, so it does not change size with its value.
+    pub(super) fn dropdown_width(&self, engine: &mut TextEngine, owner: Key) -> f32 {
         let options: Vec<DropdownOption> = self
             .choices(owner)
             .into_iter()
             .map(|choice| DropdownOption::new(choice.label, choice.selected))
             .collect();
+        Dropdown::width_for(engine, &options)
+    }
+
+    /// A dropdown's field in the tree: a slot at its full width, in a box
+    /// that wears the focus ring.
+    pub(super) fn dropdown(&self, engine: &mut TextEngine, owner: Key, name: koru_i18n::Key) -> El {
         ringed(
             "Setting",
             owner,
             el::leaf(
                 "Setting field",
                 Slot {
-                    width: Dropdown::width_for(engine, &options),
+                    width: self.dropdown_width(engine, owner),
                     height: Dropdown::H,
                 },
             )
@@ -438,11 +443,25 @@ impl Lab {
         )
     }
 
-    /// The three settings, as the toolbar holds them.
-    pub(super) fn settings(&self, engine: &mut TextEngine) -> Vec<El> {
+    /// The three settings, as the toolbar holds them. `shared` is a row the
+    /// three have to themselves and may be too narrow for: each then takes an
+    /// equal share of it, up to its full width and no further, and the shared
+    /// dropdown clips its value before its chevron.
+    pub(super) fn settings(&self, engine: &mut TextEngine, shared: bool) -> Vec<El> {
+        let ring = 2.0 * FOCUS_INSET.token.px(Profile::Desktop);
         Setting::ALL
             .into_iter()
-            .map(|setting| self.dropdown(engine, setting.key(), setting.name()))
+            .map(|setting| {
+                let field = self.dropdown(engine, setting.key(), setting.name());
+                if shared {
+                    let full = self.dropdown_width(engine, setting.key()) + ring;
+                    field
+                        .fill()
+                        .max_w(Length::Runtime(full, "the setting's widest option"))
+                } else {
+                    field
+                }
+            })
             .collect()
     }
 

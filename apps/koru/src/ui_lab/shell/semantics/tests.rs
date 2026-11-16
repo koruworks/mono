@@ -152,6 +152,18 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     Some("Components")
                 ),
                 (
+                    "s:ui-lab#toggle-properties".to_owned(),
+                    NativeRole::Button,
+                    Some("Properties")
+                ),
+                (
+                    SEARCH_AT.to_owned(),
+                    NativeRole::TextInput,
+                    Some("Search components")
+                ),
+                (LIST_AT.to_owned(), NativeRole::ListBox, Some("Components")),
+                (RESET_AT.to_owned(), NativeRole::Button, Some("Reset")),
+                (
                     "s:ui-lab.setting#theme".to_owned(),
                     NativeRole::ComboBox,
                     Some("Theme")
@@ -166,18 +178,6 @@ fn the_tree_names_every_control_by_role_name_and_what_it_can_be_asked() {
                     NativeRole::ComboBox,
                     Some("Language")
                 ),
-                (RESET_AT.to_owned(), NativeRole::Button, Some("Reset")),
-                (
-                    "s:ui-lab#toggle-properties".to_owned(),
-                    NativeRole::Button,
-                    Some("Properties")
-                ),
-                (
-                    SEARCH_AT.to_owned(),
-                    NativeRole::TextInput,
-                    Some("Search components")
-                ),
-                (LIST_AT.to_owned(), NativeRole::ListBox, Some("Components")),
                 (PAGE_AT.to_owned(), NativeRole::Group, Some("Details")),
                 (PANEL_AT.to_owned(), NativeRole::Group, Some("Properties")),
             ]
@@ -811,7 +811,8 @@ fn the_search_field_is_announced_and_can_be_set() {
             .map(|node| tail(&node.occurrence))
             .collect();
         let at = |locator: &str| order.iter().position(|l| l == locator).unwrap();
-        assert!(at(RESET_AT) < at(SEARCH_AT) && at(SEARCH_AT) < at(LIST_AT));
+        assert!(at("s:ui-lab#toggle-properties") < at(SEARCH_AT));
+        assert!(at(SEARCH_AT) < at(LIST_AT) && at(LIST_AT) < at(RESET_AT));
 
         let all = find(&semantics, LIST_AT).size_of_set.unwrap();
         let set = request(
@@ -1075,6 +1076,28 @@ fn a_column_toggle_says_whether_its_column_shows() {
         let toggle = find(&semantics, TOGGLE_AT);
         assert_eq!(toggle.toggled, Some(Toggled::True));
         assert_eq!(toggle.actions, [Action::Click, Action::Focus]);
+        // Each toggle says its chord, written as this platform writes it:
+        // the same value the keyboard is matched against.
+        let primary = koru_keys::label_for(koru_keys::PRIMARY, koru_keys::On::Letter('j'));
+        assert_eq!(toggle.description.as_deref(), Some(primary.as_str()));
+        let navigator = find(&semantics, "s:ui-lab#toggle-navigator");
+        assert_eq!(
+            navigator.description,
+            Some(koru_keys::label_for(
+                koru_keys::PRIMARY,
+                koru_keys::On::Letter('b')
+            ))
+        );
+        if cfg!(windows) {
+            assert_eq!(toggle.description.as_deref(), Some("Ctrl+J"));
+            assert_eq!(navigator.description.as_deref(), Some("Ctrl+B"));
+        }
+        // Both stand in the caption, where they are drawn and pressed.
+        let caption = lab.caption_rect().unwrap();
+        for node in [toggle, navigator] {
+            let bounds = node.bounds.unwrap();
+            assert!(bounds.y >= caption.y && bounds.y + bounds.h <= caption.y + caption.h);
+        }
         assert_eq!(
             find(&semantics, "s:ui-lab#toggle-navigator").toggled,
             Some(Toggled::True)

@@ -13,15 +13,16 @@
 //! ```text
 //! Window        UI Lab                       s:window#window
 //! ├── Button    Minimize / Maximize / Close  s:window#minimize, #maximize, #close
-//! ├── Button    Components / Properties      s:ui-lab#toggle-navigator, #toggle-properties   on while shown
-//! ├── ComboBox  Theme, Preview width, Language  s:ui-lab.setting#<setting>   value = the one in force
-//! ├── Button    Reset                        s:ui-lab#reset
+//! ├── Button    Components / Properties      s:ui-lab#toggle-navigator, #toggle-properties
+//! │                                          on while shown; described by its chord
 //! ├── TextInput Search components            s:ui-lab#search           value = the query
 //! ├── Label     nothing was found            s:ui-lab#no-results       spoken when it changes
 //! ├── Button    Reset search                 s:ui-lab#reset-search     only while nothing is found
 //! ├── ListBox   Components                   s:ui-lab#navigator        how many rows it has
 //! │   ├── Button         a group             s:ui-lab.group#<group>    expanded or collapsed
 //! │   └── ListBoxOption  a record            s:ui-lab.navigator#<catalog id>   selected, n of N
+//! ├── ComboBox  Theme, Preview width, Language  s:ui-lab.setting#<setting>   value = the one in force
+//! ├── Button    Reset                        s:ui-lab#reset
 //! ├── Group     Details                      s:ui-lab#page
 //! │   ├── Button    the component under test s:ui-lab#subject      a button named by its label,
 //! │   │                                                            a text field with its value,
@@ -360,10 +361,13 @@ impl Lab {
         if dropdown && let Some(choice) = self.chosen(key) {
             result = result.with_value(choice.label);
         }
-        if Side::ALL.into_iter().any(|side| side.toggle() == key) {
+        if let Some(side) = Side::ALL.into_iter().find(|side| side.toggle() == key) {
             // On while its column shows; a request toggles it, as a press
-            // does.
-            result = result.with_toggled(node.selected == Some(true));
+            // does. Its chord is said with it, written as this platform
+            // writes it.
+            result = result
+                .with_toggled(node.selected == Some(true))
+                .with_description(koru_keys::label(&side.chord()));
         }
         match row {
             // Selected or not is said of every record's row, and where it
