@@ -1605,6 +1605,10 @@ impl MainView {
             return false;
         }
         let documents = workspace.task_list_documents();
+        let mut paths = koru_core::system::shared_name_paths(
+            &self.list_table,
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListPathSeparator),
+        );
         let lists: Vec<crate::tasks_view::ListFace> = self
             .list_table
             .iter()
@@ -1612,6 +1616,7 @@ impl MainView {
                 id: node.entry.id,
                 name: node.entry.name.clone(),
                 color: node.entry.color.clone(),
+                path: paths.remove(&node.entry.id),
             })
             .collect();
         let mut changed = false;

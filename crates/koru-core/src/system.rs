@@ -334,6 +334,49 @@ pub struct ListTree {
     steps: usize,
 }
 
+/// **Where a list is, for the surfaces that show it outside the tree** — the
+/// `/task_list` picker, a list chip, a search result. A name alone identifies
+/// a list only while no other live list has it (nested-lists D8), so a list
+/// whose folded name another list shares gets the names of the lists it is
+/// inside, outermost first, each followed by `separator`: *"Top 3 / "*, ready
+/// to be put ahead of its own name.
+///
+/// Only lists that need one are in the answer: a name nobody shares has no
+/// entry, and neither does a top-level list — it has nothing above it, and
+/// the path on its namesake is what tells the two apart. Computed from the
+/// rows a view was pushed; never stored, never part of a list's name.
+pub fn shared_name_paths(nodes: &[ListNode], separator: &str) -> HashMap<ListId, String> {
+    let mut named: HashMap<String, usize> = HashMap::new();
+    for node in nodes {
+        *named.entry(node.entry.fold_key()).or_default() += 1;
+    }
+    let by_id: HashMap<ListId, &ListNode> = nodes.iter().map(|n| (n.entry.id, n)).collect();
+    let mut out = HashMap::new();
+    for node in nodes {
+        if node.parent.is_none() || named.get(&node.entry.fold_key()).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let mut above: Vec<&str> = Vec::new();
+        let mut at = node.parent;
+        // Bounded by the table: the rows are a repaired tree, but a short
+        // path is a better failure than a walk that does not end.
+        for _ in 0..nodes.len() {
+            let Some(parent) = at.and_then(|id| by_id.get(&id)) else {
+                break;
+            };
+            above.push(parent.entry.name.as_str());
+            at = parent.parent;
+        }
+        let mut path = String::new();
+        for name in above.iter().rev() {
+            path.push_str(name);
+            path.push_str(separator);
+        }
+        out.insert(node.entry.id, path);
+    }
+    out
+}
+
 impl ListTree {
     /// Build from every record, tombstones included: a deleted list is a
     /// link in the chain to a list's nearest live ancestor.

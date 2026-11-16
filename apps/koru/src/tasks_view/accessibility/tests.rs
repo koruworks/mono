@@ -657,6 +657,7 @@ fn the_list_chip_is_a_control_and_opens_the_list_picker() {
         id: list,
         name: "Bike Project".to_owned(),
         color: None,
+        path: None,
     }]);
 
     let chip = find(&view, &row_occurrence(&view, 0, parts::LIST_CHIP).locator())

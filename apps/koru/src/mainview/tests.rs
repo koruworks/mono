@@ -11548,6 +11548,7 @@ fn a_list(name: &str, color: &str) -> (koru_core::ids::ListId, crate::tasks_view
             id,
             name: name.to_owned(),
             color: Some(color.to_owned()),
+            path: None,
         },
     )
 }
