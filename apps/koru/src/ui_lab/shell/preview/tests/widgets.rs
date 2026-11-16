@@ -328,3 +328,119 @@ fn the_dropdown_opens_its_own_list_and_shows_what_was_chosen() {
         assert!(node(&lab, "s:ui-lab.part#field").disabled);
     });
 }
+
+#[test]
+fn a_color_is_chosen_from_the_swatches_and_from_the_row() {
+    english(|| {
+        for id in [registry::SWATCH_STORY, registry::COLOR_PICKER_ROW_STORY] {
+            let (mut lab, mut engine) = staged(id);
+            assert_eq!(result(&lab), "Chosen: none", "{id}");
+            assert!(click_part(&mut lab, &mut engine, "success"));
+            assert_eq!(result(&lab), "Chosen: success", "{id}");
+            // Four production swatches: the first hollow, one chosen, and
+            // the keyboard's ring on the one that was pressed.
+            let records = inspected(&mut lab, &mut engine, SIZE);
+            let swatches: Vec<(&str, &str)> = records
+                .iter()
+                .filter(|record| record.name == "KoruSwatch")
+                .map(|record| {
+                    (
+                        property(record, "color"),
+                        property(record, "selected / hovered / focused"),
+                    )
+                })
+                .collect();
+            assert_eq!(swatches.len(), 4, "{id}");
+            assert_eq!(swatches[0], ("none", "false / false / false"), "{id}");
+            assert_eq!(swatches[2].1, "true / false / true", "{id}");
+            // The rings reach outside a square, and stay inside the slot.
+            let slot = lab.rect(SUBJECT).unwrap();
+            for part in &lab.laid.as_ref().unwrap().parts {
+                let reach = koru_ui::swatch::Swatch::RING_REACH;
+                assert!(part.rect.x - reach >= slot.x - 0.01, "{id}");
+                assert!(part.rect.y - reach >= slot.y - 0.01, "{id}");
+                assert!(part.rect.x + part.rect.w + reach <= slot.x + slot.w + 0.01);
+                assert!(part.rect.y + part.rect.h + reach <= slot.y + slot.h + 0.01);
+            }
+        }
+        // The row's label is the caller's text; without one the row is
+        // just its swatches, and shorter by the label's line.
+        let (mut lab, mut engine) = staged(registry::COLOR_PICKER_ROW_STORY);
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let row = records
+            .iter()
+            .find(|record| record.name == "ColorPickerRow")
+            .unwrap();
+        assert_eq!(property(row, "label"), "Color");
+        let labelled = lab.rect(SUBJECT).unwrap().h;
+        lab.set_field(&mut engine, control_key(Control::Label), "");
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let row = records
+            .iter()
+            .find(|record| record.name == "ColorPickerRow")
+            .unwrap();
+        assert_eq!(property(row, "label"), "none");
+        assert!(lab.rect(SUBJECT).unwrap().h < labelled);
+    });
+}
+
+#[test]
+fn the_stepper_is_nudged_to_either_end_of_its_scale() {
+    english(|| {
+        let (mut lab, mut engine) = staged(registry::STEPPER_STORY);
+        assert_eq!(result(&lab), "Value: 3");
+        assert!(click_part(&mut lab, &mut engine, "more"));
+        assert!(click_part(&mut lab, &mut engine, "more"));
+        assert_eq!(result(&lab), "Value: 5");
+        // At the top, More is dimmed and takes no press; the readout never
+        // does.
+        assert!(node(&lab, "s:ui-lab.part#more").disabled);
+        click_part(&mut lab, &mut engine, "more");
+        click_part(&mut lab, &mut engine, "value");
+        assert_eq!(result(&lab), "Value: 5");
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let drawn = component_at(&records, "KoruStepper", lab.rect(SUBJECT).unwrap());
+        assert_eq!(property(drawn, "value"), "5");
+        assert_eq!(property(drawn, "less / more enabled"), "true / false");
+        let value = node(&lab, "s:ui-lab.part#value");
+        assert_eq!(value.role, NativeRole::Label);
+        assert_eq!(value.value.as_deref(), Some("5"));
+        // The keyboard: from More the arrow goes back to Less, past the
+        // readout, and Enter nudges.
+        assert!(key(&mut lab, &mut engine, NamedKey::ArrowLeft));
+        assert_eq!(widget(&lab).cursor(), 0);
+        assert!(key(&mut lab, &mut engine, NamedKey::Enter));
+        assert_eq!(result(&lab), "Value: 4");
+    });
+}
+
+#[test]
+fn a_preview_tile_is_chosen_and_shares_the_row_with_the_other() {
+    english(|| {
+        let (mut lab, mut engine) = staged(registry::PREVIEW_TILE_STORY);
+        assert_eq!(result(&lab), "Chosen: Light");
+        assert!(click_part(&mut lab, &mut engine, "dark"));
+        assert_eq!(result(&lab), "Chosen: Dark");
+        let records = inspected(&mut lab, &mut engine, SIZE);
+        let tiles: Vec<(&str, &str)> = records
+            .iter()
+            .filter(|record| record.name == "KoruPreviewTile")
+            .map(|record| {
+                (
+                    property(record, "label"),
+                    property(record, "selected / hovered"),
+                )
+            })
+            .collect();
+        assert_eq!(
+            tiles,
+            [("Light", "false / false"), ("Dark", "true / false")]
+        );
+        let parts = &lab.laid.as_ref().unwrap().parts;
+        assert_eq!(parts[0].rect.w, parts[1].rect.w);
+        assert_eq!(
+            parts[1].rect.x - (parts[0].rect.x + parts[0].rect.w),
+            koru_ui::preview_tile::PreviewTile::GAP
+        );
+    });
+}

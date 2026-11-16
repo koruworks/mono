@@ -759,6 +759,11 @@ pub(crate) const TOGGLE_STORY: &str = "C-TOGGLE/switch";
 pub(crate) const CHIP_STORY: &str = "C-CHIP/choice";
 pub(crate) const SEGMENTED_STORY: &str = "C-SEGMENTED/choice";
 pub(crate) const DROPDOWN_STORY: &str = "C-DROPDOWN/field";
+/// The shared pickers (`stories/pickers.rs`).
+pub(crate) const SWATCH_STORY: &str = "C-SWATCH/choice";
+pub(crate) const COLOR_PICKER_ROW_STORY: &str = "C-COLOR-PICKER-ROW/row";
+pub(crate) const STEPPER_STORY: &str = "C-STEPPER/scale";
+pub(crate) const PREVIEW_TILE_STORY: &str = "C-PREVIEW-TILE/choice";
 
 /// A widget symbol a story drives: its inputs, the option sets it takes,
 /// and the story's ID. It takes no style of the two button enums, and no

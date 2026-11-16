@@ -53,7 +53,6 @@ pub(crate) enum PartRole {
     /// A field that shows one value and opens the list of the rest.
     Combo,
     /// Something to read, not to press: a stepper's value.
-    #[allow(dead_code)] // Until the stepper's story.
     Readout,
 }
 
@@ -107,7 +106,6 @@ impl Part {
     }
 
     /// The component has no focus mark for this part: the window rings it.
-    #[allow(dead_code)] // Until the first story of a component without one.
     pub(crate) fn ringed(mut self) -> Self {
         self.own_focus = false;
         self
@@ -214,6 +212,7 @@ pub(crate) trait Widget: Sync {
 }
 
 mod choices;
+mod pickers;
 
 /// Every widget story the Lab can run.
 pub(crate) const ALL: &[&dyn Widget] = &[
@@ -221,6 +220,10 @@ pub(crate) const ALL: &[&dyn Widget] = &[
     &choices::ChipStory,
     &choices::SegmentedStory,
     &choices::DropdownStory,
+    &pickers::SwatchStory,
+    &pickers::ColorPickerRowStory,
+    &pickers::StepperStory,
+    &pickers::PreviewTileStory,
 ];
 
 /// A string of the Lab's, in the display language.

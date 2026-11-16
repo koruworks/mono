@@ -181,6 +181,10 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         "ui_lab/stories/choices.rs",
         include_str!("stories/choices.rs"),
     ),
+    (
+        "ui_lab/stories/pickers.rs",
+        include_str!("stories/pickers.rs"),
+    ),
     ("ui_lab/story.rs", include_str!("story.rs")),
     ("ui_lab/tokens.rs", include_str!("tokens.rs")),
     ("ui_lab/windows.rs", include_str!("windows.rs")),

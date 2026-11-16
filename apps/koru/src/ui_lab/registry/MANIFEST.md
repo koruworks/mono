@@ -28,7 +28,7 @@ from the Android and iOS apps are in the registry and in none of those, and
 no page shows a phone's cell. The macOS share extension and the desktop's
 system surfaces are native and are listed.
 
-**Thirteen records have a story**: the nine the gallery opened with, and
+**Seventeen records have a story**: the nine the gallery opened with, and
 the shared widgets plan L4b has reached (see *L4b batch 1* below). A record
 with a story names the symbol the
 story drives as a `Recipe`: its typed styles, the inputs the properties
@@ -50,6 +50,10 @@ column offers, and the option sets the symbol takes. Its Windows cell is
 | `C-CHIP/choice` | Chip | `koru_ui::chip::Chip`: three, one chosen; the first one's label; the leading slot |
 | `C-SEGMENTED/choice` | Segmented control | `koru_ui::segmented::Segmented`: three segments, one chosen; the arrows choose |
 | `C-DROPDOWN/field` | Dropdown | `koru_ui::dropdown::Dropdown`: the field and the list it opens; disabled |
+| `C-SWATCH/choice` | Swatch | `koru_ui::swatch::Swatch`: a row of four, the first hollow; one chosen |
+| `C-COLOR-PICKER-ROW/row` | Color picker row | `koru_ui::color_picker_row::ColorPickerRow`: its label, its swatches, one chosen |
+| `C-STEPPER/scale` | Stepper | `koru_ui::stepper::Stepper`: a value from 1 to 5, each button dimmed at its end |
+| `C-PREVIEW-TILE/choice` | Preview tile | `koru_ui::preview_tile::PreviewTile`: two theme tiles, one chosen |
 
 The text input's story drives three of `InputStyle`'s four constructors;
 `bare` draws no box and waits for a story of its own, as do `invalid` and the
@@ -209,7 +213,8 @@ One list, deduplicated; each batch's section below has the lines.
   stroke their own edge in `focus_ring` at twice a border's weight. Three
   spellings of one idea. The shared search box (`InputStyle::search`)
   draws no focus state at all, so the Lab still rings its search field
-  itself.
+  itself. `Stepper` and `PreviewTile` draw none either: in their stories
+  the Lab's own ring stands in, and says so.
 - **Controls with nothing behind them**: every create and edit control in
   the iOS app (the store services refuse each one) and its Add image,
   which inserts a fixed 1×1 picture; `SearchSurface::is_global_search`
@@ -262,16 +267,16 @@ batch's counts.
 | kind: native adapter | 35 |
 | token values listed | 174 |
 | symbols | 2391 |
-| symbols with typed recipes | 14 |
+| symbols with typed recipes | 18 |
 | inspector identities | 61 |
 | inspector identity registration sites | 64 |
-| disposition: story exists | 13 |
-| disposition: no story yet | 200 |
+| disposition: story exists | 17 |
+| disposition: no story yet | 196 |
 | disposition: nonvisual | 62 |
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
-| symbol story: available | 13 |
-| symbol story: no story yet | 441 |
+| symbol story: available | 17 |
+| symbol story: no story yet | 437 |
 | symbol story: nonvisual | 1675 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
@@ -288,7 +293,7 @@ about each platform.
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 13 | 274 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| Windows | 17 | 270 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
 | macOS | 0 | 1 | 286 | 0 | 1 | 3 | 34 | 8 | 0 |
 | Linux | 0 | 0 | 286 | 0 | 0 | 7 | 36 | 3 | 1 |
 | Android | 0 | 18 | 0 | 73 | 13 | 196 | 28 | 3 | 2 |
@@ -2460,10 +2465,10 @@ few questions (`ui_lab/stories.rs`).
 | `C-CHIP` | `C-CHIP/choice` | runs |
 | `C-SEGMENTED` | `C-SEGMENTED/choice` | runs |
 | `C-DROPDOWN` | `C-DROPDOWN/field` | runs |
-| `C-SWATCH` | | no story yet |
-| `C-COLOR-PICKER-ROW` | | no story yet |
-| `C-STEPPER` | | no story yet |
-| `C-PREVIEW-TILE` | | no story yet |
+| `C-SWATCH` | `C-SWATCH/choice` | runs |
+| `C-COLOR-PICKER-ROW` | `C-COLOR-PICKER-ROW/row` | runs |
+| `C-STEPPER` | `C-STEPPER/scale` | runs |
+| `C-PREVIEW-TILE` | `C-PREVIEW-TILE/choice` | runs |
 | `C-ICON-BUTTON` | | no story yet |
 | `C-BUTTON-GROUP` | | no story yet |
 | `C-SPLIT-BUTTON` | | no story yet |
@@ -2504,6 +2509,25 @@ story forces them.
   is set while the list shows. *Disabled* is `enabled(false)`. `in_face`
   (a font picker's per-row face) has no input: it takes a font stack, not
   a choice the type lists.
+- **Swatch** (`Swatch::draw`, `Swatch::row`): four in a row, one chosen.
+  The colors are sample content: none (the hollow "automatic" value), then
+  the theme's own `accent`, `success` and `notice_fg`, named as the palette
+  spells them. The slot keeps `Swatch::RING_REACH` clear on every side, so
+  the selection and focus rings are drawn inside it. `alpha` has no input.
+- **Color picker row** (`ColorPickerRow::new(colors).label(..)` with
+  `selected`, `hovered`, `focused`): the same four colors. *Label* is the
+  caller's text, opening as "Color"; emptied, the row is built without
+  `label` and is just its swatches. `alpha` has no input.
+- **Stepper** (`Stepper::layout`, `draw`): a value from 1 to 5, opening in
+  the middle. `can_less` and `can_more` are real: each button is dimmed,
+  and takes no press, at its end. The readout is published as a value and
+  is never pressed. **The stepper draws no keyboard-focus state**, so the
+  window rings the button the keyboard is on; `alpha` has no input.
+- **Preview tile** (`PreviewTile::new(label, selected)`, `row`, `draw`):
+  two tiles sharing a 320 px row. Each paints its picture with a built-in
+  theme's ground, as the appearance settings' tiles do. **The tile has no
+  keyboard-focus state** either (its border lights under the pointer
+  only), so the window rings it; `alpha` has no input.
 
 ## Keeping the inventory true
 

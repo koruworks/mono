@@ -4280,6 +4280,11 @@ pub enum Key {
     /// Under a story's switch: it is on, or off.
     UiLabResultOn,
     UiLabResultOff,
+    /// Under a story's stepper: the value it stands at. `{}` is the value.
+    UiLabResultValue,
+    /// A stepper's two buttons, as a screen reader names them.
+    UiLabStepLess,
+    UiLabStepMore,
     // **Text in pictures and PDFs: long files** (OCR Plan 3.2, EXPERIENCE §4).
     /// A file's right-click entry: read the rest of a file that stopped at
     /// the page limit.
@@ -4368,7 +4373,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3320] = [
+    pub const ALL: [Key; 3323] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7630,6 +7635,9 @@ impl Key {
         Key::UiLabResultChosen,
         Key::UiLabResultOn,
         Key::UiLabResultOff,
+        Key::UiLabResultValue,
+        Key::UiLabStepLess,
+        Key::UiLabStepMore,
         Key::ReadingReadAllPages,
         Key::ReadingReadAgain,
         Key::ReadingDetails,
@@ -20122,6 +20130,9 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabResultChosen, en: "Chosen: {}", es: "Elegido: {}", pt_br: "Escolhido: {}", de: "Gewählt: {}", fr: "Choisi : {}", ar: "المحدد: {}", zh_hans: "已选择：{}", ja: "選択中: {}" },
     Row { key: Key::UiLabResultOn, en: "On", es: "Activado", pt_br: "Ativado", de: "Ein", fr: "Activé", ar: "مفعّل", zh_hans: "开", ja: "オン" },
     Row { key: Key::UiLabResultOff, en: "Off", es: "Desactivado", pt_br: "Desativado", de: "Aus", fr: "Désactivé", ar: "متوقف", zh_hans: "关", ja: "オフ" },
+    Row { key: Key::UiLabResultValue, en: "Value: {}", es: "Valor: {}", pt_br: "Valor: {}", de: "Wert: {}", fr: "Valeur : {}", ar: "القيمة: {}", zh_hans: "值：{}", ja: "値: {}" },
+    Row { key: Key::UiLabStepLess, en: "Less", es: "Menos", pt_br: "Menos", de: "Weniger", fr: "Moins", ar: "أقل", zh_hans: "减少", ja: "減らす" },
+    Row { key: Key::UiLabStepMore, en: "More", es: "Más", pt_br: "Mais", de: "Mehr", fr: "Plus", ar: "أكثر", zh_hans: "增加", ja: "増やす" },
     // Text in pictures and PDFs: long files (OCR Plan 3.2). The wording is
     // EXPERIENCE §4's own.
     Row { key: Key::ReadingReadAllPages, en: "Read all pages", es: "Leer todas las páginas", pt_br: "Ler todas as páginas", de: "Alle Seiten lesen", fr: "Lire toutes les pages", ar: "قراءة كل الصفحات", zh_hans: "读取所有页面", ja: "すべてのページを読み取る" },
