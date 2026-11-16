@@ -1459,7 +1459,7 @@ fn every_domain_module_is_classified() {
     owners.dedup();
     assert_eq!(
         owners.len(),
-        16,
+        18,
         "the thirteen domain UI crates and batch 2b's editor, document and host crates"
     );
 }

@@ -103,40 +103,40 @@ fail until this table says what they compute.
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
-| domain crates | 16 |
-| domain crate source files | 197 |
-| domain crate lib.rs modules | 145 |
-| domain crate lib.rs public modules | 40 |
-| domain crate modules excluded | 29 |
-| records | 183 |
+| domain crates | 18 |
+| domain crate source files | 234 |
+| domain crate lib.rs modules | 180 |
+| domain crate lib.rs public modules | 66 |
+| domain crate modules excluded | 39 |
+| records | 191 |
 | records: foundations | 59 |
 | records: controls | 63 |
-| records: application compositions | 61 |
-| records: domain crates | 63 |
+| records: application compositions | 69 |
+| records: domain crates | 71 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 58 |
-| kind: support | 39 |
+| kind: support | 47 |
 | kind: domain composition | 37 |
 | token values listed | 174 |
-| symbols | 1198 |
+| symbols | 1294 |
 | symbols with typed recipes | 2 |
 | inspector identities | 41 |
 | inspector identity registration sites | 43 |
 | disposition: story exists | 1 |
 | disposition: no story yet | 135 |
-| disposition: nonvisual | 39 |
+| disposition: nonvisual | 44 |
 | disposition: platform-only | 0 |
-| disposition: boundary | 8 |
+| disposition: boundary | 11 |
 | symbol story: available | 1 |
 | symbol story: no story yet | 279 |
-| symbol story: nonvisual | 860 |
-| symbol story: boundary | 58 |
+| symbol story: nonvisual | 930 |
+| symbol story: boundary | 84 |
 | A2UI: component | 6 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 9 |
-| A2UI: not supported | 1173 |
+| A2UI: not supported | 1269 |
 <!-- counts:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -542,6 +542,8 @@ reached only through the bounded searches below.
 | `koru-markdown-view` | 4 | 4 | 0 | 0 | 3 | 0 | 2 | 49 | — |
 | `koru-session-view` | 22 | 4 | 18 | 0 | 13 | 0 | 7 | 199 | — |
 | `koru-app-shell` | 15 | 1 | 14 | 0 | 14 | 0 | 8 | 138 | — |
+| `koru-webview` | 5 | 3 | 2 | 0 | 4 | 0 | 1 | 20 | — |
+| `koru-window` | 32 | 1 | 31 | 0 | 31 | 10 | 7 | 76 | — |
 
 ### Records
 
@@ -587,6 +589,56 @@ IDs marked * are minted here in batch 1's style.
   (`apps/koru/src/mainview/zoomlabel.rs`). Their availability stays the
   shared desktop default because the source ships in the linked crate; the
   missing consumer is recorded here rather than as a platform status.
+- `koru-webview` (read in full: `lib.rs`, `js.rs`, `debug.rs`; `engine.rs`
+  and `stub.rs` by declarations): `C-WEB-SURFACE`*, one boundary record.
+  What a person sees in it is a page the system's web engine draws
+  (WebView2 on Windows, WKWebView on macOS); Koru places, shows, focuses
+  and navigates it and draws none of it, so the open call and the type are
+  `Boundary` and the rest is support. Its consumer is the app's Support
+  surface (`apps/koru/src/support`). `lib.rs` declares `engine` twice — the
+  engine, and `stub.rs` under `no-webview` and on Linux — and the baseline
+  lists both.
+- `koru-window` (read in full: `lib.rs`; the rest by declarations, with
+  `accessibility.rs`'s platform split, `frame.rs`'s Windows/other split and
+  `input.rs`'s event enums read): the native window host adapters as
+  support — `H-WINDOW-RUNNERS`* (`WindowApp`/`run` and
+  `MultiWindowApp`/`run_windows`, their window requests and the private
+  dispatch core both obey), `H-WINDOW-ACCESSIBILITY`* (the AccessKit
+  adapter's lifetime against one window), `H-WINDOW-INPUT`*,
+  `H-WINDOW-RENDERER`*, `H-SYSTEM-APPEARANCE`* — and two boundaries the
+  operating system owns: `C-WINDOW-FRAME`* (outline, corners, shadow,
+  resize border, snapping, the Mac's traffic lights) and
+  `C-IME-COMPOSITION`* (preedit text and the candidate window). The
+  workspace app's own loop is `koru-workspace-host`'s, below.
+  `dispatch/parity.rs` is `#[cfg(test)]` (`dispatch.rs` 1205) and is left
+  out of the sources like every test file.
+
+### Platforms
+
+The shared desktop default is batch 2a's (Windows existing, macOS and Linux
+the same source unverified, Android and iOS not audited). Exceptions, each
+from the source or the page named:
+
+- `NativeOwned`, first used here: the record's visible part is the
+  operating system's or a provider's. `C-WEB-SURFACE` on Windows and macOS
+  (the engine's page), `C-WINDOW-FRAME` on Windows and macOS (DWM's frame
+  and shadow; AppKit's titled window and traffic lights), and
+  `C-IME-COMPOSITION` on Windows, macOS and Linux (PLATFORMS.md, P1 native
+  input: "the native candidate surface remains OS-owned"). The
+  `#[expect(dead_code)]` on `Availability::NativeOwned` said it would fail
+  once one was recorded; it is removed.
+- `C-WEB-SURFACE` on Linux is `Unavailable`: wry is linked only for Windows
+  and macOS (`Cargo.toml` 38–45) and `stub.rs` answers every call with
+  `RuntimeUnavailable`.
+- `H-WINDOW-ACCESSIBILITY` is `Existing` only on Windows; macOS is
+  `Planned` (the adapter is Windows-only by ADR-336 and
+  `docs/features/macos/CATCHUP.md` owns the change that adds it); Linux is
+  `Unavailable` (`accessibility.rs` 315: an inert stand-in that never builds
+  a tree, with no plan recorded).
+- `C-WINDOW-FRAME` on Linux, and every Android and iOS cell of these
+  records, are `NotAudited`: no page says what the frame or the mobile
+  equivalents are, and a desktop window frame's absence on a phone is not
+  written down anywhere.
 
 ### Private parts
 
@@ -628,6 +680,19 @@ them:
   the application's `ShellHost`; it holds windows only once
   `koru_window::run_windows` opens them, and the crate cannot name a
   document, profile, workspace or store (its `Cargo.toml` is the fence).
+  `koru_window::run`/`run_windows` take over the thread's event loop until
+  the last window closes; the accessibility bridge needs a live window.
+- **Starts an engine process** — `WebSurface::open` needs a live parent
+  window handle, blocks the UI thread while WebView2 builds its environment
+  (260–560 ms measured, `guide/contributing/deps/WRY.md`), and keeps
+  cookies and storage in the caller's data directory; under `no-webview` it
+  answers `RuntimeUnavailable` and links no engine. A story of it needs the
+  feature or a real window; neither is in the Lab today.
+- **Starts a thread or touches disk** — `koru_window::renderer::Warmup::start`
+  spawns the device warm-up thread; `RendererBackend::load`/`store` read and
+  write a machine-local state file.
+- **Changes process state when applied** — `koru_window::Appearance::apply`
+  and `CaretAppearance::apply` write `koru_draw::theme`'s process globals.
 
 ### Defects found (not fixed)
 
@@ -648,6 +713,9 @@ them:
   inspector scope; `ZoomLabel` duplicates the app's own
   `mainview/zoomlabel.rs`, and the shell's caption painters have no
   production caller (above).
+- **Docs and source disagree** — `koru-window`'s `lib.rs` says
+  `koru-workspace-host`'s `app.rs` is "5,300 lines" and its own `app.rs`
+  says "11,450 lines"; the file is 21,795 lines at `d4ad8af0`.
 
 ### Reconnaissance
 

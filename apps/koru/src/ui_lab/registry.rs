@@ -134,10 +134,6 @@ pub(crate) enum Availability {
     /// It has no role on that platform, for a recorded reason.
     NotApplicable,
     /// The operating system or a provider owns that surface there.
-    #[expect(
-        dead_code,
-        reason = "no shared API or token is OS-owned; the native batch records the first"
-    )]
     NativeOwned,
     /// Not looked at yet. Never read as a yes or as a no.
     NotAudited,
@@ -610,6 +606,8 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     domain::SHELL_CHROME,
     domain::SOCIALS,
     domain::VOICE,
+    domain::WEBVIEW,
+    domain::WINDOW,
 ];
 
 /// Every record, flattened.

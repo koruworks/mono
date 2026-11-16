@@ -803,6 +803,154 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         "crates/koru-app-shell/src/zoom_label.rs",
         include_str!("../../../../../../../crates/koru-app-shell/src/zoom_label.rs"),
     ),
+    (
+        "crates/koru-webview/src/debug.rs",
+        include_str!("../../../../../../../crates/koru-webview/src/debug.rs"),
+    ),
+    (
+        "crates/koru-webview/src/engine.rs",
+        include_str!("../../../../../../../crates/koru-webview/src/engine.rs"),
+    ),
+    (
+        "crates/koru-webview/src/js.rs",
+        include_str!("../../../../../../../crates/koru-webview/src/js.rs"),
+    ),
+    (
+        "crates/koru-webview/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-webview/src/lib.rs"),
+    ),
+    (
+        "crates/koru-webview/src/stub.rs",
+        include_str!("../../../../../../../crates/koru-webview/src/stub.rs"),
+    ),
+    (
+        "crates/koru-window/src/accessibility.rs",
+        include_str!("../../../../../../../crates/koru-window/src/accessibility.rs"),
+    ),
+    (
+        "crates/koru-window/src/activation.rs",
+        include_str!("../../../../../../../crates/koru-window/src/activation.rs"),
+    ),
+    (
+        "crates/koru-window/src/app.rs",
+        include_str!("../../../../../../../crates/koru-window/src/app.rs"),
+    ),
+    (
+        "crates/koru-window/src/appearance.rs",
+        include_str!("../../../../../../../crates/koru-window/src/appearance.rs"),
+    ),
+    (
+        "crates/koru-window/src/console.rs",
+        include_str!("../../../../../../../crates/koru-window/src/console.rs"),
+    ),
+    (
+        "crates/koru-window/src/desktop_preferences.rs",
+        include_str!("../../../../../../../crates/koru-window/src/desktop_preferences.rs"),
+    ),
+    (
+        "crates/koru-window/src/dispatch.rs",
+        include_str!("../../../../../../../crates/koru-window/src/dispatch.rs"),
+    ),
+    (
+        "crates/koru-window/src/dock.rs",
+        include_str!("../../../../../../../crates/koru-window/src/dock.rs"),
+    ),
+    (
+        "crates/koru-window/src/frame.rs",
+        include_str!("../../../../../../../crates/koru-window/src/frame.rs"),
+    ),
+    (
+        "crates/koru-window/src/framestats.rs",
+        include_str!("../../../../../../../crates/koru-window/src/framestats.rs"),
+    ),
+    (
+        "crates/koru-window/src/gpu.rs",
+        include_str!("../../../../../../../crates/koru-window/src/gpu.rs"),
+    ),
+    (
+        "crates/koru-window/src/hairline.rs",
+        include_str!("../../../../../../../crates/koru-window/src/hairline.rs"),
+    ),
+    (
+        "crates/koru-window/src/input.rs",
+        include_str!("../../../../../../../crates/koru-window/src/input.rs"),
+    ),
+    (
+        "crates/koru-window/src/key_quarantine.rs",
+        include_str!("../../../../../../../crates/koru-window/src/key_quarantine.rs"),
+    ),
+    (
+        "crates/koru-window/src/lib.rs",
+        include_str!("../../../../../../../crates/koru-window/src/lib.rs"),
+    ),
+    (
+        "crates/koru-window/src/multi.rs",
+        include_str!("../../../../../../../crates/koru-window/src/multi.rs"),
+    ),
+    (
+        "crates/koru-window/src/non_activating.rs",
+        include_str!("../../../../../../../crates/koru-window/src/non_activating.rs"),
+    ),
+    (
+        "crates/koru-window/src/offscreen.rs",
+        include_str!("../../../../../../../crates/koru-window/src/offscreen.rs"),
+    ),
+    (
+        "crates/koru-window/src/open_bytes.rs",
+        include_str!("../../../../../../../crates/koru-window/src/open_bytes.rs"),
+    ),
+    (
+        "crates/koru-window/src/open_uri.rs",
+        include_str!("../../../../../../../crates/koru-window/src/open_uri.rs"),
+    ),
+    (
+        "crates/koru-window/src/renderer.rs",
+        include_str!("../../../../../../../crates/koru-window/src/renderer.rs"),
+    ),
+    (
+        "crates/koru-window/src/request.rs",
+        include_str!("../../../../../../../crates/koru-window/src/request.rs"),
+    ),
+    (
+        "crates/koru-window/src/resize.rs",
+        include_str!("../../../../../../../crates/koru-window/src/resize.rs"),
+    ),
+    (
+        "crates/koru-window/src/reveal.rs",
+        include_str!("../../../../../../../crates/koru-window/src/reveal.rs"),
+    ),
+    (
+        "crates/koru-window/src/rounded_region.rs",
+        include_str!("../../../../../../../crates/koru-window/src/rounded_region.rs"),
+    ),
+    (
+        "crates/koru-window/src/search_geometry.rs",
+        include_str!("../../../../../../../crates/koru-window/src/search_geometry.rs"),
+    ),
+    (
+        "crates/koru-window/src/snap.rs",
+        include_str!("../../../../../../../crates/koru-window/src/snap.rs"),
+    ),
+    (
+        "crates/koru-window/src/system_locale.rs",
+        include_str!("../../../../../../../crates/koru-window/src/system_locale.rs"),
+    ),
+    (
+        "crates/koru-window/src/system_theme.rs",
+        include_str!("../../../../../../../crates/koru-window/src/system_theme.rs"),
+    ),
+    (
+        "crates/koru-window/src/system_version.rs",
+        include_str!("../../../../../../../crates/koru-window/src/system_version.rs"),
+    ),
+    (
+        "crates/koru-window/src/traffic_lights.rs",
+        include_str!("../../../../../../../crates/koru-window/src/traffic_lights.rs"),
+    ),
+    (
+        "crates/koru-window/src/window_geometry.rs",
+        include_str!("../../../../../../../crates/koru-window/src/window_geometry.rs"),
+    ),
 ];
 
 /// One domain crate's root: its records declared in `lib.rs` itself, and
@@ -1242,6 +1390,103 @@ pub(super) const CRATES: &[Crate] = &[
             ("tabslide", Module::Records(&["H-SHELL-TABS"])),
             ("tabstrip", Module::Records(&["H-SHELL-TABS"])),
             ("zoom_label", Module::Records(&["C-SHELL-ZOOM-LABEL"])),
+        ],
+    },
+    Crate {
+        owner: "koru-webview",
+        lib: "crates/koru-webview/src/lib.rs",
+        root: &["C-WEB-SURFACE"],
+        modules: &[
+            ("debug", Module::Records(&["C-WEB-SURFACE"])),
+            // Declared twice: the WebView2/WKWebView engine, and `stub.rs`
+            // under `no-webview` and wherever wry is not linked (Linux).
+            ("engine", Module::Records(&["C-WEB-SURFACE"])),
+            ("engine", Module::Records(&["C-WEB-SURFACE"])),
+            ("js", Module::Records(&["C-WEB-SURFACE"])),
+        ],
+    },
+    Crate {
+        owner: "koru-window",
+        lib: "crates/koru-window/src/lib.rs",
+        root: &[],
+        modules: &[
+            (
+                "accessibility",
+                Module::Records(&["H-WINDOW-ACCESSIBILITY"]),
+            ),
+            (
+                "activation",
+                Module::Excluded(
+                    "io: brings the application to the front, and on macOS makes it an accessory app; draws nothing",
+                ),
+            ),
+            ("app", Module::Records(&["H-WINDOW-RUNNERS"])),
+            ("appearance", Module::Records(&["H-SYSTEM-APPEARANCE"])),
+            (
+                "console",
+                Module::Excluded("io: attaches a GUI-subsystem binary to its parent console"),
+            ),
+            (
+                "desktop_preferences",
+                Module::Excluded(
+                    "data: one read of desktop-v1.json's remaining facts (close behavior, global-search height, reminder startup); draws nothing",
+                ),
+            ),
+            ("dispatch", Module::Records(&["H-WINDOW-RUNNERS"])),
+            (
+                "dock",
+                Module::Excluded("io: sets the macOS Dock icon winit ignores"),
+            ),
+            ("frame", Module::Records(&["C-WINDOW-FRAME"])),
+            ("framestats", Module::Records(&["H-WINDOW-RENDERER"])),
+            ("gpu", Module::Records(&["H-WINDOW-RUNNERS"])),
+            ("hairline", Module::Records(&["C-WINDOW-FRAME"])),
+            (
+                "input",
+                Module::Records(&["H-WINDOW-INPUT", "C-IME-COMPOSITION"]),
+            ),
+            ("key_quarantine", Module::Records(&["H-WINDOW-INPUT"])),
+            ("multi", Module::Records(&["H-WINDOW-RUNNERS"])),
+            ("non_activating", Module::Records(&["H-WINDOW-RUNNERS"])),
+            ("offscreen", Module::Records(&["H-WINDOW-RENDERER"])),
+            (
+                "open_bytes",
+                Module::Excluded(
+                    "io: writes a temporary copy of bytes Koru holds and asks the OS to open it",
+                ),
+            ),
+            (
+                "open_uri",
+                Module::Excluded("io: hands a URI to the desktop to open"),
+            ),
+            ("renderer", Module::Records(&["H-WINDOW-RENDERER"])),
+            ("request", Module::Records(&["H-WINDOW-RUNNERS"])),
+            ("resize", Module::Records(&["C-WINDOW-FRAME"])),
+            ("reveal", Module::Records(&["H-WINDOW-RUNNERS"])),
+            ("rounded_region", Module::Records(&["C-WINDOW-FRAME"])),
+            (
+                "search_geometry",
+                Module::Excluded(
+                    "data: the global-search row's value schema in the shared window-geometry file",
+                ),
+            ),
+            ("snap", Module::Records(&["C-WINDOW-FRAME"])),
+            (
+                "system_locale",
+                Module::Excluded("io: reads the machine's language before any window exists"),
+            ),
+            ("system_theme", Module::Records(&["H-SYSTEM-APPEARANCE"])),
+            (
+                "system_version",
+                Module::Excluded("io: reads the macOS version; compiled only on macOS"),
+            ),
+            ("traffic_lights", Module::Records(&["C-WINDOW-FRAME"])),
+            (
+                "window_geometry",
+                Module::Excluded(
+                    "io: machine-local paths and the shared window-geometry row store (read, merge, write); the Lab must never read or write it",
+                ),
+            ),
         ],
     },
 ];

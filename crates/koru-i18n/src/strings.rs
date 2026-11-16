@@ -3785,13 +3785,29 @@ pub enum Key {
     UiLabShellSurfacePurpose,
     UiLabOptionLeft,
     UiLabOptionRight,
+    UiLabWebSurfaceName,
+    UiLabWebSurfacePurpose,
+    UiLabWindowRunnersName,
+    UiLabWindowRunnersPurpose,
+    UiLabWindowAccessibilityName,
+    UiLabWindowAccessibilityPurpose,
+    UiLabWindowFrameName,
+    UiLabWindowFramePurpose,
+    UiLabImeCompositionName,
+    UiLabImeCompositionPurpose,
+    UiLabWindowInputName,
+    UiLabWindowInputPurpose,
+    UiLabWindowRendererName,
+    UiLabWindowRendererPurpose,
+    UiLabSystemAppearanceName,
+    UiLabSystemAppearancePurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2812] = [
+    pub const ALL: [Key; 2828] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6604,6 +6620,22 @@ impl Key {
         Key::UiLabShellSurfacePurpose,
         Key::UiLabOptionLeft,
         Key::UiLabOptionRight,
+        Key::UiLabWebSurfaceName,
+        Key::UiLabWebSurfacePurpose,
+        Key::UiLabWindowRunnersName,
+        Key::UiLabWindowRunnersPurpose,
+        Key::UiLabWindowAccessibilityName,
+        Key::UiLabWindowAccessibilityPurpose,
+        Key::UiLabWindowFrameName,
+        Key::UiLabWindowFramePurpose,
+        Key::UiLabImeCompositionName,
+        Key::UiLabImeCompositionPurpose,
+        Key::UiLabWindowInputName,
+        Key::UiLabWindowInputPurpose,
+        Key::UiLabWindowRendererName,
+        Key::UiLabWindowRendererPurpose,
+        Key::UiLabSystemAppearanceName,
+        Key::UiLabSystemAppearancePurpose,
     ];
 }
 
@@ -18585,4 +18617,20 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::UiLabShellSurfacePurpose, en: "What a view the shell hosts must answer: one way in for events, one way out for commands, and what closing its window means to it.", es: "Lo que debe responder una vista que aloja el shell: una entrada para los eventos, una salida para las órdenes y qué significa para ella cerrar su ventana.", pt_br: "O que uma visualização hospedada pelo shell precisa responder: uma entrada para eventos, uma saída para comandos e o que fechar a janela significa para ela.", de: "Was eine von der Shell gehostete Ansicht beantworten muss: ein Weg hinein für Ereignisse, einer hinaus für Befehle und was das Schließen ihres Fensters für sie bedeutet.", fr: "Ce qu’une vue hébergée par le shell doit fournir : une entrée pour les événements, une sortie pour les commandes, et ce que la fermeture de sa fenêtre signifie pour elle.", ar: "ما يجب أن يجيب عنه العرض الذي تستضيفه الواجهة: مدخل واحد للأحداث، ومخرج واحد للأوامر، وما يعنيه له إغلاق نافذته.", zh_hans: "外壳托管的视图必须回答的内容：事件的唯一入口、命令的唯一出口，以及关闭其窗口对它意味着什么。", ja: "シェルがホストするビューが応えるべきこと。イベントの入口、コマンドの出口、そしてウィンドウを閉じることがそのビューにとって何を意味するかです。" },
     Row { key: Key::UiLabOptionLeft, en: "Left", es: "Izquierda", pt_br: "Esquerda", de: "Links", fr: "Gauche", ar: "يسار", zh_hans: "左", ja: "左" },
     Row { key: Key::UiLabOptionRight, en: "Right", es: "Derecha", pt_br: "Direita", de: "Rechts", fr: "Droite", ar: "يمين", zh_hans: "右", ja: "右" },
+    Row { key: Key::UiLabWebSurfaceName, en: "Native web surface", es: "Superficie web nativa", pt_br: "Superfície web nativa", de: "Native Weboberfläche", fr: "Surface web native", ar: "سطح ويب أصلي", zh_hans: "原生网页视图", ja: "ネイティブの Web 表示" },
+    Row { key: Key::UiLabWebSurfacePurpose, en: "A page shown by the system’s web engine inside a Koru window, placed and focused by the host, whose content Koru does not draw.", es: "Una página que muestra el motor web del sistema dentro de una ventana de Koru, colocada y enfocada por el anfitrión, cuyo contenido no dibuja Koru.", pt_br: "Uma página exibida pelo mecanismo web do sistema dentro de uma janela do Koru, posicionada e focada pelo host, cujo conteúdo o Koru não desenha.", de: "Eine Seite, die die Web-Engine des Systems in einem Koru-Fenster zeigt, vom Host platziert und fokussiert; ihren Inhalt zeichnet Koru nicht.", fr: "Une page affichée par le moteur web du système dans une fenêtre Koru, placée et mise au premier plan par l’hôte, dont Koru ne dessine pas le contenu.", ar: "صفحة يعرضها محرك الويب في النظام داخل نافذة Koru، يضعها المضيف ويمنحها التركيز، ولا يرسم Koru محتواها.", zh_hans: "由系统网页引擎在 Koru 窗口中显示的页面，由宿主定位和聚焦，其内容不由 Koru 绘制。", ja: "システムの Web エンジンが Koru のウィンドウ内に表示するページ。配置とフォーカスはホストが行い、内容は Koru が描きません。" },
+    Row { key: Key::UiLabWindowRunnersName, en: "Window event loops", es: "Bucles de eventos de ventana", pt_br: "Laços de eventos de janela", de: "Ereignisschleifen der Fenster", fr: "Boucles d’événements des fenêtres", ar: "حلقات أحداث النوافذ", zh_hans: "窗口事件循环", ja: "ウィンドウのイベントループ" },
+    Row { key: Key::UiLabWindowRunnersPurpose, en: "Runs one window or a set of them under the same event rules — key quarantine, resize borders, clicks, IME, focus and present timing — for an app that draws its own content.", es: "Ejecuta una ventana o un conjunto de ellas con las mismas reglas de eventos (cuarentena de teclas, bordes de cambio de tamaño, clics, IME, foco y tiempo de presentación) para una aplicación que dibuja su propio contenido.", pt_br: "Executa uma janela ou um conjunto delas com as mesmas regras de eventos (quarentena de teclas, bordas de redimensionamento, cliques, IME, foco e tempo de apresentação) para um aplicativo que desenha seu próprio conteúdo.", de: "Betreibt ein Fenster oder mehrere nach denselben Ereignisregeln – Tastenquarantäne, Größenränder, Klicks, IME, Fokus und Darstellungstakt – für eine App, die ihren Inhalt selbst zeichnet.", fr: "Fait tourner une fenêtre ou un ensemble de fenêtres selon les mêmes règles d’événements (quarantaine des touches, bords de redimensionnement, clics, IME, focus et rythme d’affichage) pour une application qui dessine son propre contenu.", ar: "يشغّل نافذة واحدة أو مجموعة نوافذ وفق قواعد الأحداث نفسها، أي حجر المفاتيح وحدود تغيير الحجم والنقرات ومحرر الإدخال والتركيز وتوقيت العرض، لتطبيق يرسم محتواه بنفسه.", zh_hans: "按同一套事件规则（按键隔离、缩放边框、点击、输入法、焦点和呈现时机）运行一个或一组窗口，供自行绘制内容的应用使用。", ja: "キーの隔離、サイズ変更の縁、クリック、IME、フォーカス、表示のタイミングという同じイベント規則で1つまたは複数のウィンドウを動かし、内容を自分で描くアプリに使わせます。" },
+    Row { key: Key::UiLabWindowAccessibilityName, en: "Screen reader bridge", es: "Puente del lector de pantalla", pt_br: "Ponte do leitor de tela", de: "Brücke zum Bildschirmleser", fr: "Passerelle du lecteur d’écran", ar: "جسر قارئ الشاشة", zh_hans: "屏幕阅读器桥接", ja: "スクリーンリーダーとの橋渡し" },
+    Row { key: Key::UiLabWindowAccessibilityPurpose, en: "Gives a window its native accessibility provider for as long as the window lives, and passes its tree and requests between Koru and the system.", es: "Da a una ventana su proveedor de accesibilidad nativo mientras la ventana existe y pasa su árbol y sus peticiones entre Koru y el sistema.", pt_br: "Dá a uma janela seu provedor de acessibilidade nativo enquanto ela existir e passa sua árvore e seus pedidos entre o Koru e o sistema.", de: "Gibt einem Fenster für seine ganze Lebensdauer den nativen Barrierefreiheitsanbieter und reicht Baum und Anfragen zwischen Koru und dem System weiter.", fr: "Donne à une fenêtre son fournisseur d’accessibilité natif pendant toute sa vie et fait passer son arbre et ses demandes entre Koru et le système.", ar: "يمنح النافذة مزود إمكانية الوصول الأصلي طوال عمرها، وينقل شجرتها وطلباتها بين Koru والنظام.", zh_hans: "在窗口存续期间为其提供原生无障碍提供程序，并在 Koru 与系统之间传递其树和请求。", ja: "ウィンドウが存在する間、ネイティブのアクセシビリティ提供者を与え、そのツリーと要求を Koru とシステムの間で受け渡します。" },
+    Row { key: Key::UiLabWindowFrameName, en: "Native window frame", es: "Marco nativo de la ventana", pt_br: "Moldura nativa da janela", de: "Nativer Fensterrahmen", fr: "Cadre natif de la fenêtre", ar: "إطار النافذة الأصلي", zh_hans: "原生窗口边框", ja: "ネイティブのウィンドウ枠" },
+    Row { key: Key::UiLabWindowFramePurpose, en: "The window’s outline, corners, shadow, resize border, snapping and, on a Mac, traffic lights: the system’s, which Koru only adjusts.", es: "El contorno, las esquinas, la sombra, el borde de cambio de tamaño, el acoplamiento y, en un Mac, los botones de semáforo de la ventana: son del sistema y Koru solo los ajusta.", pt_br: "O contorno, os cantos, a sombra, a borda de redimensionamento, o encaixe e, no Mac, os botões de semáforo da janela: são do sistema, e o Koru só os ajusta.", de: "Umriss, Ecken, Schatten, Größenrand, Andocken und auf dem Mac die Ampelknöpfe des Fensters: Sie gehören dem System, Koru passt sie nur an.", fr: "Le contour, les coins, l’ombre, le bord de redimensionnement, l’ancrage et, sur Mac, les feux tricolores de la fenêtre : ils appartiennent au système, que Koru ne fait qu’ajuster.", ar: "حدود النافذة وزواياها وظلها وحافة تغيير حجمها والتثبيت، وأزرار الإشارة على Mac: كلها للنظام، ويكتفي Koru بضبطها.", zh_hans: "窗口的轮廓、圆角、阴影、缩放边框、贴靠，以及 Mac 上的红绿灯按钮：它们属于系统，Koru 只做调整。", ja: "ウィンドウの輪郭、角、影、サイズ変更の縁、スナップ、そして Mac の信号ボタン。これらはシステムのもので、Koru は調整するだけです。" },
+    Row { key: Key::UiLabImeCompositionName, en: "Input method composition", es: "Composición del método de entrada", pt_br: "Composição do método de entrada", de: "Eingabemethoden-Komposition", fr: "Composition de la méthode de saisie", ar: "تركيب أسلوب الإدخال", zh_hans: "输入法组字", ja: "入力メソッドの変換" },
+    Row { key: Key::UiLabImeCompositionPurpose, en: "Text an input method is still composing and the candidate window the system shows for it, passed through to whichever field holds the input.", es: "El texto que un método de entrada aún está componiendo y la ventana de candidatos que muestra el sistema, pasados al campo que tiene la entrada.", pt_br: "O texto que um método de entrada ainda está compondo e a janela de candidatos que o sistema mostra, repassados ao campo que detém a entrada.", de: "Text, den eine Eingabemethode noch zusammensetzt, und das Kandidatenfenster, das das System dazu zeigt, weitergereicht an das Feld mit der Eingabe.", fr: "Le texte qu’une méthode de saisie compose encore et la fenêtre de candidats que le système affiche, transmis au champ qui détient la saisie.", ar: "النص الذي لا يزال أسلوب الإدخال يركّبه ونافذة الاقتراحات التي يعرضها النظام له، ممرَّرين إلى الحقل الذي يملك الإدخال.", zh_hans: "输入法仍在组字的文本及系统为其显示的候选窗口，转交给持有输入的字段。", ja: "入力メソッドが変換中のテキストと、そのためにシステムが表示する候補ウィンドウ。入力を持つ欄へそのまま渡されます。" },
+    Row { key: Key::UiLabWindowInputName, en: "Window input records", es: "Registros de entrada de la ventana", pt_br: "Registros de entrada da janela", de: "Eingabedatensätze des Fensters", fr: "Enregistrements d’entrée de la fenêtre", ar: "سجلات إدخال النافذة", zh_hans: "窗口输入记录", ja: "ウィンドウの入力記録" },
+    Row { key: Key::UiLabWindowInputPurpose, en: "Key and pointer events as the shared loop hands them over, with keys held across a focus change kept from leaking into the next window.", es: "Los eventos de teclado y de puntero tal como los entrega el bucle compartido, evitando que las teclas mantenidas durante un cambio de foco pasen a la ventana siguiente.", pt_br: "Os eventos de teclado e de ponteiro como o laço compartilhado os entrega, impedindo que teclas mantidas durante uma troca de foco vazem para a próxima janela.", de: "Tasten- und Zeigerereignisse, wie die gemeinsame Schleife sie übergibt; über einen Fokuswechsel gehaltene Tasten gelangen nicht ins nächste Fenster.", fr: "Les événements clavier et pointeur tels que la boucle partagée les transmet, sans que les touches tenues pendant un changement de focus passent à la fenêtre suivante.", ar: "أحداث المفاتيح والمؤشر كما تسلّمها الحلقة المشتركة، مع منع المفاتيح المضغوطة أثناء تغيير التركيز من التسرب إلى النافذة التالية.", zh_hans: "共享循环交出的按键和指针事件，并防止跨焦点切换按住的键泄漏到下一个窗口。", ja: "共有ループが渡すキーとポインターのイベント。フォーカスの切り替えをまたいで押されたままのキーが次のウィンドウに漏れないようにします。" },
+    Row { key: Key::UiLabWindowRendererName, en: "Window renderer", es: "Renderizador de ventana", pt_br: "Renderizador da janela", de: "Fenster-Renderer", fr: "Moteur de rendu de la fenêtre", ar: "مُصيِّر النافذة", zh_hans: "窗口渲染器", ja: "ウィンドウのレンダラー" },
+    Row { key: Key::UiLabWindowRendererPurpose, en: "Builds the GPU renderer a window draws with, chooses its graphics backend, renders a scene off screen, and times frames when asked.", es: "Crea el renderizador de GPU con el que dibuja una ventana, elige su sistema gráfico, renderiza una escena fuera de pantalla y mide los fotogramas cuando se pide.", pt_br: "Cria o renderizador de GPU com que uma janela desenha, escolhe o sistema gráfico, renderiza uma cena fora da tela e mede os quadros quando pedido.", de: "Baut den GPU-Renderer, mit dem ein Fenster zeichnet, wählt sein Grafik-Backend, rendert eine Szene außerhalb des Bildschirms und misst auf Wunsch Frames.", fr: "Construit le moteur de rendu GPU avec lequel une fenêtre dessine, choisit son système graphique, rend une scène hors écran et chronomètre les images sur demande.", ar: "يبني مُصيِّر GPU الذي ترسم به النافذة، ويختار واجهتها الرسومية، ويصيّر مشهدًا خارج الشاشة، ويقيس الإطارات عند الطلب.", zh_hans: "构建窗口绘制所用的 GPU 渲染器，选择其图形后端，在屏幕外渲染场景，并按需为帧计时。", ja: "ウィンドウが描画に使う GPU レンダラーを作り、グラフィックのバックエンドを選び、画面外でシーンを描画し、求めに応じてフレームを計測します。" },
+    Row { key: Key::UiLabSystemAppearanceName, en: "System appearance", es: "Apariencia del sistema", pt_br: "Aparência do sistema", de: "Systemdarstellung", fr: "Apparence du système", ar: "مظهر النظام", zh_hans: "系统外观", ja: "システムの外観" },
+    Row { key: Key::UiLabSystemAppearancePurpose, en: "Applies the light or dark look and the caret the settings ask for, and follows the system’s theme when told to.", es: "Aplica el aspecto claro u oscuro y el cursor de texto que piden los ajustes, y sigue el tema del sistema cuando se le indica.", pt_br: "Aplica a aparência clara ou escura e o cursor de texto que as configurações pedem, e segue o tema do sistema quando indicado.", de: "Wendet das helle oder dunkle Aussehen und die Schreibmarke an, die die Einstellungen verlangen, und folgt auf Wunsch dem Systemdesign.", fr: "Applique l’apparence claire ou sombre et le curseur de texte demandés par les réglages, et suit le thème du système quand on le lui demande.", ar: "يطبّق المظهر الفاتح أو الداكن ومؤشر الكتابة الذي تطلبه الإعدادات، ويتبع سمة النظام عند الطلب.", zh_hans: "应用设置要求的浅色或深色外观及文本光标，并在需要时跟随系统主题。", ja: "設定が求める明るい・暗い見た目とキャレットを適用し、指示があればシステムのテーマに従います。" },
 ];

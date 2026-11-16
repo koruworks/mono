@@ -27,6 +27,8 @@ mod settings;
 mod shell_chrome;
 mod socials;
 mod voice;
+mod webview;
+mod window;
 
 pub(super) const AGENTS: &[Entry] = agents::RECORDS;
 pub(super) const AI: &[Entry] = ai::RECORDS;
@@ -43,6 +45,8 @@ pub(super) const SETTINGS: &[Entry] = settings::RECORDS;
 pub(super) const SHELL_CHROME: &[Entry] = shell_chrome::RECORDS;
 pub(super) const SOCIALS: &[Entry] = socials::RECORDS;
 pub(super) const VOICE: &[Entry] = voice::RECORDS;
+pub(super) const WEBVIEW: &[Entry] = webview::RECORDS;
+pub(super) const WINDOW: &[Entry] = window::RECORDS;
 
 const fn source(owner: &'static str, module: &'static str, file: &'static str) -> Source {
     Source {
