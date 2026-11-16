@@ -33,14 +33,18 @@
 //! it. The rest are filed a group at a time: [`foundations`] (tokens, the
 //! element layer, drawing primitives and their support code), [`controls`]
 //! (the shared widgets and the input support beside them) and
-//! [`compositions`] (whole surfaces assembled from controls). A later batch
-//! adds its records to the file of the group they are shown under, with the
-//! [`Kind`] and [`Source::owner`] that say where they came from.
+//! [`compositions`] (whole surfaces assembled from controls). The domain
+//! crates' records are in [`domain`], a file per crate, because a crate's
+//! surfaces, controls and support are reviewed together against its source;
+//! each record still names the group it is shown under. A later batch adds
+//! its records the same way, with the [`Kind`] and [`Source::owner`] that say
+//! where they came from.
 
 use koru_ui::button::{ActionStyle, ButtonRole};
 
 mod compositions;
 mod controls;
+mod domain;
 mod foundations;
 
 /// The three groups the navigator files entries under.
@@ -85,10 +89,6 @@ pub(crate) enum Kind {
     /// calendar arithmetic, the text engine, the inspection seam.
     Support,
     /// A surface owned by one domain crate (search, settings, chats, …).
-    #[expect(
-        dead_code,
-        reason = "the domain-crate batch registers these; the expectation fails once one does"
-    )]
     DomainComposition,
     /// A control or painter private to one application.
     #[expect(
@@ -132,10 +132,6 @@ pub(crate) enum Availability {
     /// Confirmed: there is no implementation there.
     Unavailable,
     /// It has no role on that platform, for a recorded reason.
-    #[expect(
-        dead_code,
-        reason = "no shared API or token is without a role anywhere; the domain and native batches record the first"
-    )]
     NotApplicable,
     /// The operating system or a provider owns that surface there.
     #[expect(
@@ -599,6 +595,10 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     foundations::RECORDS,
     controls::RECORDS,
     compositions::RECORDS,
+    domain::AGENTS,
+    domain::APPEARANCE,
+    domain::SHELL_CHROME,
+    domain::VOICE,
 ];
 
 /// Every record, flattened.

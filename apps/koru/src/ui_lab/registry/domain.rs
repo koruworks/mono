@@ -1,0 +1,81 @@
+// SPDX-License-Identifier: MPL-2.0
+
+//! **The domain crates' records**: the surfaces, controls, painters and
+//! support code of `koru-ai-ui`, `koru-search-ui`, `koru-shell-chrome` and
+//! the other domain UI crates, a file per crate. Each record names the group
+//! it is shown under (most are compositions) and the [`Kind`] it honestly is.
+//! A crate's modules that draw nothing — controllers, readers, gateways, data
+//! books — have no record; the module baselines in `tests/drift.rs` and
+//! `MANIFEST.md` say why each was left out, and which surfaces need services
+//! to be built.
+
+use super::*;
+use koru_i18n::Key;
+
+mod agents;
+mod appearance;
+mod shell_chrome;
+mod voice;
+
+pub(super) const AGENTS: &[Entry] = agents::RECORDS;
+pub(super) const APPEARANCE: &[Entry] = appearance::RECORDS;
+pub(super) const SHELL_CHROME: &[Entry] = shell_chrome::RECORDS;
+pub(super) const VOICE: &[Entry] = voice::RECORDS;
+
+const fn source(owner: &'static str, module: &'static str, file: &'static str) -> Source {
+    Source {
+        owner,
+        module,
+        file,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+const fn record(
+    catalog_id: &'static str,
+    public_name: &'static str,
+    name: Key,
+    purpose: Key,
+    family: Family,
+    kind: Kind,
+    catalog_family: Option<&'static str>,
+    identities: &'static [&'static str],
+    source: Source,
+    platforms: [(Platform, Availability); 5],
+    apis: &'static [Api],
+) -> Entry {
+    Entry {
+        catalog_id,
+        public_name,
+        name,
+        purpose,
+        family,
+        kind,
+        catalog_family,
+        identities,
+        source,
+        platforms,
+        recipes: &[],
+        apis,
+    }
+}
+
+/// A symbol that paints and has no story yet.
+const fn painter(symbol: &'static str) -> Api {
+    plain(symbol, Story::NoStoryYet)
+}
+
+/// A painting symbol whose production values are listed.
+const fn painter_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
+    plain_with(symbol, options, Story::NoStoryYet)
+}
+
+/// Geometry, input, outcomes, state or constants beside a surface.
+const fn support(symbol: &'static str) -> Api {
+    plain(symbol, Story::Nonvisual)
+}
+
+/// Nonvisual, with the production values it carries.
+const fn support_with(symbol: &'static str, options: &'static [OptionSet]) -> Api {
+    plain_with(symbol, options, Story::Nonvisual)
+}

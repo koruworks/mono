@@ -25,6 +25,26 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         include_str!("registry/controls.rs"),
     ),
     (
+        "ui_lab/registry/domain.rs",
+        include_str!("registry/domain.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/agents.rs",
+        include_str!("registry/domain/agents.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/appearance.rs",
+        include_str!("registry/domain/appearance.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/shell_chrome.rs",
+        include_str!("registry/domain/shell_chrome.rs"),
+    ),
+    (
+        "ui_lab/registry/domain/voice.rs",
+        include_str!("registry/domain/voice.rs"),
+    ),
+    (
         "ui_lab/registry/foundations.rs",
         include_str!("registry/foundations.rs"),
     ),
@@ -171,7 +191,7 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
         "telemetry",
     ];
     for (file, source) in LAB_SOURCES {
-        for line in code_lines(source) {
+        for line in scanned_lines(file, source) {
             for forbidden in FORBIDDEN {
                 assert!(
                     !line.contains(forbidden),
@@ -182,13 +202,127 @@ fn the_lab_names_none_of_the_services_or_stores_it_must_not_start() {
     }
 }
 
+/// **The registry's record files are data, and their data is paths.** A
+/// record names the production symbol it describes as a string literal —
+/// `"koru_settings_ui::SettingsSurface"` — and the inventory has to be able
+/// to name every UI crate, including the ones the Lab itself must never
+/// call. A literal is text the registry shows; it links nothing and runs
+/// nothing. So in these files, and only these, the scans read each code
+/// line with its string literals emptied: a `use`, a path expression or a
+/// call of a forbidden crate is still refused, exactly as strictly as
+/// anywhere else in the Lab, while a record may spell the path it records.
+/// Every other Lab file — the shell, the story, the registry's own module
+/// with the Button and the shell-facing functions — is scanned whole.
+const RECORD_FILES: &[&str] = &[
+    "ui_lab/registry/compositions.rs",
+    "ui_lab/registry/controls.rs",
+    "ui_lab/registry/domain.rs",
+    "ui_lab/registry/domain/agents.rs",
+    "ui_lab/registry/domain/appearance.rs",
+    "ui_lab/registry/domain/shell_chrome.rs",
+    "ui_lab/registry/domain/voice.rs",
+    "ui_lab/registry/foundations.rs",
+];
+
+/// `line` with the contents of every `"…"` literal removed, quotes kept.
+/// A record file holds no raw string, no character literal of a quote and
+/// no literal that runs past its line — each would let text slip out of a
+/// literal unseen — so meeting one fails rather than guessing.
+fn outside_strings(file: &str, line: &str) -> String {
+    let refuse = || panic!("{file}: a record file uses only plain string literals: {line}");
+    let mut code = String::with_capacity(line.len());
+    let mut inside = false;
+    let mut escaped = false;
+    let mut previous = ' ';
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        if inside {
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                inside = false;
+                code.push(c);
+            }
+        } else {
+            let starts_token = !(previous.is_alphanumeric() || previous == '_');
+            // `r"…"` or `r#"…"#`: a raw literal, whose end this reading
+            // would not find. A `'"'` character literal likewise.
+            if (c == 'r' && starts_token && matches!(chars.peek(), Some('"' | '#')))
+                || (c == '\'' && chars.peek() == Some(&'"'))
+            {
+                refuse();
+            }
+            if c == '"' {
+                inside = true;
+            }
+            code.push(c);
+        }
+        previous = c;
+    }
+    assert!(
+        !inside,
+        "{file}: a record's string literal ends on its own line: {line}"
+    );
+    code
+}
+
+/// The code lines the scans read in `file`: whole, or with string literals
+/// emptied for a record file.
+fn scanned_lines(file: &'static str, source: &'static str) -> Vec<String> {
+    let record = RECORD_FILES.contains(&file);
+    code_lines(source)
+        .map(|line| {
+            if record {
+                outside_strings(file, line)
+            } else {
+                line.to_owned()
+            }
+        })
+        .collect()
+}
+
+/// The exemption above is narrow and does what it says: a record file's
+/// literal may name a forbidden crate, its code may not, and every other
+/// file is read with its literals intact.
+#[test]
+fn only_record_literals_may_spell_a_forbidden_path() {
+    let record = "ui_lab/registry/domain/settings.rs";
+    assert_eq!(
+        outside_strings(record, r#"support("koru_settings_ui::SettingsSurface"),"#),
+        r#"support(""),"#
+    );
+    assert_eq!(
+        outside_strings(record, r#"plain("a \"quoted\" koru_settings", x)"#),
+        r#"plain("", x)"#
+    );
+    assert!(
+        outside_strings(record, "use koru_settings_ui::SettingsSurface;").contains("koru_settings")
+    );
+    assert!(
+        outside_strings(record, r#"let _ = ("", koru_settings_ui::x());"#)
+            .contains("koru_settings")
+    );
+    // Not a record file: read whole.
+    assert!(!RECORD_FILES.contains(&"ui_lab/shell.rs"));
+    assert!(!RECORD_FILES.contains(&"ui_lab/registry.rs"));
+    // Every record file is a Lab source the scans read.
+    for file in RECORD_FILES {
+        assert!(
+            LAB_SOURCES.iter().any(|(listed, _)| listed == file),
+            "{file} is exempted but not scanned"
+        );
+    }
+}
+
 /// The Lab's only uses of the workspace host are the typed command and the
 /// one size constant its window shares with `--window-size`.
 #[test]
 fn the_lab_takes_only_the_command_and_a_constant_from_the_workspace_host() {
-    let mut uses: Vec<&str> = LAB_SOURCES
+    let mut uses: Vec<String> = LAB_SOURCES
         .iter()
-        .flat_map(|(_, source)| code_lines(source))
+        .flat_map(|(file, source)| scanned_lines(file, source))
         .filter(|line| line.contains("koru_workspace_host"))
         .collect();
     uses.sort_unstable();
