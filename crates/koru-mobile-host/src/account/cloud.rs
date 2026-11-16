@@ -695,14 +695,16 @@ impl Host for MobileCloudHost {
         if let (Some(workspace), Some(incarnation), Some(blobs)) =
             (blob_workspace, blob_incarnation, blobs.as_ref())
         {
-            let holds = lock(&deferrals)
+            let holds = deferrals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
                 .admissions
                 .entry(workspace)
                 .or_default()
                 .clone();
             let live = Arc::clone(&self.live);
             blobs.bind_admission(
-                host.tokio(),
+                &host.tokio(),
                 permit,
                 holds,
                 Arc::new(move |_| {

@@ -1068,7 +1068,11 @@ impl BlobEngine {
         // Removed references no longer need a background owner observation.
         // Recoverable Trash is already part of this canonical walk.
         let hashes: BTreeSet<_> = walk.blobs.iter().map(|blob| blob.hash.as_str()).collect();
-        self.state().entry(workspace).or_default().admission.retain(|hash, _| hashes.contains(hash.as_str()));
+        self.state()
+            .entry(workspace)
+            .or_default()
+            .admission
+            .retain(|hash, _| hashes.contains(hash.as_str()));
 
         let object_host = access
             .byte_origins

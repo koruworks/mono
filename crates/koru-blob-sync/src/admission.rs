@@ -31,12 +31,19 @@ impl HttpControlPlane {
             return Err(TransferError::NoAccess);
         }
         let plan: CloudPlanResponseV1 = self.account_read(access, "/v1/account/cloud-plan").await?;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis().min(i64::MAX as u128) as i64).unwrap_or(0);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis().min(i64::MAX as u128) as i64)
+            .unwrap_or(0);
         let observed = plan.evaluated_at_millis.get();
-        if observed > now || now.saturating_sub(observed) >= 60_000
-            || plan.valid_until_millis.is_some_and(|until| until.get() <= now)
-        { return Err(TransferError::Unreachable); }
+        if observed > now
+            || now.saturating_sub(observed) >= 60_000
+            || plan
+                .valid_until_millis
+                .is_some_and(|until| until.get() <= now)
+        {
+            return Err(TransferError::Unreachable);
+        }
         let mut path = "/v1/account/cloud-usage/workspaces?limit=100".to_owned();
         let mut result = Vec::new();
         let mut cursors = std::collections::HashSet::new();
@@ -210,7 +217,10 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
         };
         let (mut plan, page) = fixtures();
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
         plan["evaluated_at_millis"] = Value::String(now.to_string());
         plan["valid_until_millis"] = Value::String((now + 60_000).to_string());
         let typed: CloudUsageWorkspacesResponseV1 = serde_json::from_value(page.clone()).unwrap();

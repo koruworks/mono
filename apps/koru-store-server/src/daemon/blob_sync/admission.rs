@@ -46,7 +46,8 @@ impl Observer {
         documents: UploadAdmissionHolds,
         live: LiveAuthorization,
     ) {
-        let koru_sync_control::cloud::CloudPermitScopeV2::Workspace { descriptor } = &permit.scope else {
+        let koru_sync_control::cloud::CloudPermitScopeV2::Workspace { descriptor } = &permit.scope
+        else {
             return;
         };
         let workspace = WorkspaceId::from_uuid(descriptor.workspace_id.as_uuid());
