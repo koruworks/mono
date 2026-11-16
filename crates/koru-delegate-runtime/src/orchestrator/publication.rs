@@ -505,6 +505,16 @@ impl Orchestrator {
         state.source_usage.clear();
         state.delivery_retry = None;
         state.decision_cleanup = None;
+        // A page result confirmed while the decision held the handle is
+        // durable in the native journal but still owes its registration in
+        // the Run document, which only an ordinary commit can write. That is
+        // possible now: register it (an approved edit Koru saved during the
+        // wait, O150), so delivery and cleanup do not wait on it. A failure
+        // keeps it Verified; the existing terminal cleanup retries it.
+        if let Err(error) = self.reconcile_verified_native_for_run(run) {
+            self.trace(run, "verified_native_unregistered", format_args!("{error}"));
+        }
+        let state = self.runs.get_mut(&run).ok_or_else(publication_pending)?;
         let Some(attempt) = state.attempt.as_ref().filter(|_| !ended) else {
             return Ok(None);
         };

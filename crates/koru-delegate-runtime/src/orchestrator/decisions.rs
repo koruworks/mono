@@ -25,6 +25,7 @@ mod driver;
 mod edit;
 mod launch;
 mod resume;
+mod settle;
 mod successor;
 pub use driver::DecisionResumeStep;
 pub use edit::DecisionEditRequest;

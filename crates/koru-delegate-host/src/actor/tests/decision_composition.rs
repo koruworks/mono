@@ -301,3 +301,227 @@ fn a_persistently_refused_publication_waits_a_tick_and_the_resume_driver_still_s
     );
     server.join().unwrap();
 }
+
+/// O150 on the real actor loop: once the person allowed the edit and the
+/// successor's continuation was acknowledged, the approved edit is consumed
+/// and its positive Store outcome confirmed through the private Bot route,
+/// exactly as the shared native effect sends both (for Koru's own trigger
+/// and for the model's exact retry alike). The decision settles on that
+/// confirmation, the actor's own maintenance publishes the owed Control and
+/// settles the wait, and the Run's published classification is no longer
+/// waiting, all while the successor keeps running.
+#[test]
+fn a_confirmed_save_settles_the_decision_and_the_actor_lifts_the_fence_mid_turn() {
+    use koru_delegate_core::decisions::{
+        DecisionAuthorization, DecisionBindingV1, DecisionClosureReason, DecisionPhase,
+    };
+    use koru_delegate_core::{
+        BotAdmissionState, BotExecutionFence, ConfirmNativeResult, NativeResultDisposition,
+        NativeResultKey, NativeResultKind, NativeResultObservation, NativeResultOperation,
+        NativeResultReference, NativeResultStage, PrepareNativeResult,
+    };
+    let DecisionChain {
+        orchestrator,
+        sessions,
+        prepared,
+        waits,
+        ..
+    } = decision_chain();
+    let (owner, run) = (prepared.owner, prepared.run);
+    let successor = SessionId::mint();
+    let turn = AgentTurnId::mint();
+    prepared.script_resume(&mut sessions.lock().unwrap(), successor, turn);
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    actor
+        .attach_decision_bridge(Box::new(bridge(&listener)))
+        .unwrap();
+    let answering = prepared.clone();
+    let server = std::thread::spawn(move || {
+        let mut stream = accept_within(&listener, Duration::from_secs(30));
+        reply(&mut stream, |request: &EnrollBotWaitCleanup| {
+            answering.enrolled_reply(request)
+        });
+    });
+    // One actor turn as its loop runs it: a tick, then every wake, bounded.
+    let turn_once = |actor: &mut Actor| {
+        actor.maintenance_tick();
+        let drain_until = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < drain_until {
+            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+                break;
+            };
+            actor.handle(command);
+        }
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut allowed = false;
+    while steps(&actor.resume_log).last() != Some(&Step::InputAcknowledged) {
+        assert!(
+            Instant::now() < deadline,
+            "the chain did not reach the acknowledged successor: {:?}",
+            steps(&actor.resume_log)
+        );
+        turn_once(&mut actor);
+        if !allowed && steps(&actor.resume_log).contains(&Step::OriginStopped) {
+            prepared.allow_once(&mut actor.orchestrator).unwrap();
+            allowed = true;
+        }
+    }
+    server.join().unwrap();
+
+    let keys = prepared
+        .successor_keys(&mut actor.orchestrator)
+        .unwrap()
+        .unwrap();
+    let consumer = BotExecutionFence {
+        attempt: keys.attempt,
+        generation: keys.generation,
+        session: successor,
+        turn: Some(turn),
+        ..prepared.fence
+    };
+    fn ledger(actor: &mut Actor) -> &mut dyn koru_delegate_sqlite::BotLedger {
+        actor.orchestrator.ports_mut().store.bots().unwrap()
+    }
+    let record = ledger(&mut actor)
+        .bot_decision(owner, run, prepared.decision)
+        .unwrap()
+        .unwrap();
+    let DecisionBindingV1::KoruEdit(binding) = &record.receipt.binding else {
+        panic!("a Koru edit decision")
+    };
+    let request = PrepareNativeResult {
+        key: NativeResultKey {
+            run,
+            attempt: consumer.attempt,
+            generation: consumer.generation,
+            turn,
+            operation_id: binding.operation_id,
+        },
+        kind: NativeResultOperation::EditPage,
+        destination: binding.workspace,
+        target: Some(binding.target),
+        request_fingerprint: binding.edit_fingerprint,
+        expected_revision: Some(binding.expected_revision.as_slice().to_vec()),
+        config_revision: binding.global_policy.config_revision.get(),
+        policy_revision: binding.global_policy.policy_revision.get(),
+        title: "Approved page".into(),
+    };
+    let consumed = actor.bot_command(BotCommand::ConsumeDecisionEdit {
+        fence: consumer.clone(),
+        request: request.clone(),
+        payload: binding.payload.clone(),
+        proof: prepared.proof.clone(),
+        boot: prepared.boot,
+    });
+    assert!(
+        matches!(&consumed, Ok(BotReply::NativeResult { intent })
+            if intent.disposition == NativeResultDisposition::Execute),
+        "{consumed:?}"
+    );
+    let confirmed = actor.bot_command(BotCommand::ConfirmNativeResult {
+        request: ConfirmNativeResult {
+            key: request.key.clone(),
+            request_fingerprint: request.request_fingerprint,
+            observation: NativeResultObservation::Durable {
+                evidence: NativeResultReference {
+                    operation_id: binding.operation_id,
+                    workspace: binding.workspace,
+                    document: binding.target,
+                    version: vec![7, 7, 7],
+                    title: "Approved page".into(),
+                    confirmed_at_ms: koru_delegate_runtime::test_support::FIXTURE_NOW_MS,
+                    kind: NativeResultKind::EditedPage,
+                },
+            },
+        },
+    });
+    assert!(
+        matches!(&confirmed, Ok(BotReply::NativeResult { .. })),
+        "{confirmed:?}"
+    );
+    let decided = ledger(&mut actor)
+        .bot_decision(owner, run, prepared.decision)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (
+            decided.receipt.state.authorization,
+            decided.receipt.state.phase,
+            decided.receipt.closure.map(|closure| closure.reason)
+        ),
+        (
+            DecisionAuthorization::Consumed,
+            DecisionPhase::Settled,
+            Some(DecisionClosureReason::Completed)
+        ),
+        "settled on the confirmed save"
+    );
+
+    // The actor's own maintenance publishes the owed Control, settles the
+    // wait and republishes the Run's classification.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while ledger(&mut actor)
+        .decision_wait_execution(owner, run)
+        .unwrap()
+        .is_some()
+    {
+        assert!(Instant::now() < deadline, "the wait did not settle");
+        turn_once(&mut actor);
+    }
+    turn_once(&mut actor);
+    assert_eq!(
+        waits.get(run),
+        None,
+        "the Run no longer classifies as waiting"
+    );
+    assert!(!actor.orchestrator.run_publication_pending(run));
+    assert_eq!(
+        actor
+            .orchestrator
+            .ports_mut()
+            .store
+            .native_results()
+            .unwrap()
+            .native_result(&request.key)
+            .unwrap()
+            .unwrap()
+            .stage,
+        NativeResultStage::Registered
+    );
+    // The successor is an ordinary executing attempt.
+    assert_eq!(
+        ledger(&mut actor)
+            .bot_execution(run)
+            .unwrap()
+            .unwrap()
+            .state,
+        BotAdmissionState::Executing
+    );
+    let row = actor
+        .orchestrator
+        .ports_mut()
+        .store
+        .current_attempt(run)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        (row.attempt, row.generation, row.retired),
+        (consumer.attempt, consumer.generation, false)
+    );
+    // The model's exact retry of the consume after settlement saves nothing.
+    let replay = actor.bot_command(BotCommand::ConsumeDecisionEdit {
+        fence: consumer,
+        request,
+        payload: binding.payload.clone(),
+        proof: prepared.proof.clone(),
+        boot: prepared.boot,
+    });
+    assert!(
+        !matches!(&replay, Ok(BotReply::NativeResult { intent })
+            if intent.disposition == NativeResultDisposition::Execute),
+        "{replay:?}"
+    );
+}

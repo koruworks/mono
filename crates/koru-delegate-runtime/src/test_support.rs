@@ -63,7 +63,7 @@ mod sessions;
 #[cfg(test)]
 mod tests;
 
-pub use inert::DocumentFaults;
+pub use inert::{DocumentFaults, PublishedWaits};
 pub use sessions::{SessionCall, SessionScript};
 
 /// The instant the shared clock starts at (epoch milliseconds). It never
@@ -258,6 +258,9 @@ pub struct DecisionChain {
     /// The in-memory documents' fault script and preparation count. Nothing
     /// is refused unless a test asks.
     pub documents: DocumentFaults,
+    /// The decision waits published for each Run's tool classification
+    /// (O147), as the host's projection receives them.
+    pub waits: PublishedWaits,
     pub prepared: PreparedDecision,
 }
 
@@ -362,6 +365,7 @@ pub fn decision_chain() -> DecisionChain {
     .expect("open the in-memory ledger");
     let documents = inert::MemoryRunDocuments::new();
     let faults = documents.faults();
+    let waits = PublishedWaits::default();
     let ports = Ports {
         store: Box::new(ledger::UncountedLedger(store)),
         documents: Box::new(documents),
@@ -372,7 +376,7 @@ pub fn decision_chain() -> DecisionChain {
         events: Box::new(inert::InertEvents),
         preamble: Box::new(inert::FixedPreamble),
         roots: Box::new(inert::FixtureRoots),
-        mcp: Box::new(inert::RecordingMcp::new()),
+        mcp: Box::new(inert::RecordingMcp::new(waits.clone())),
         registrations: Box::new(inert::NoRegistrations),
         clock: Box::new(inert::SharedClock(Arc::clone(&clock))),
         sleep: Box::new(inert::NoSleep),
@@ -480,6 +484,7 @@ pub fn decision_chain() -> DecisionChain {
         sessions,
         clock,
         documents: faults,
+        waits,
         prepared,
     }
 }

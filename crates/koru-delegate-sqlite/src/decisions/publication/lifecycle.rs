@@ -269,6 +269,13 @@ impl RunsDb {
     ) -> Result<DecisionRecord, BotLedgerError> {
         self.write_with_error(crate::WriteOp::RecordDecisionProjection, |tx, now| {
             let result = mutation::settle_effect_on(tx, expected, outcome, now)?;
+            // A settled replay is retained truth (a lost reply, or a second
+            // caller that recorded the same save): it records no projection,
+            // whatever transition the retrying caller minted. The first
+            // settlement's Control was committed with that settlement.
+            if result.outcome == crate::WriteOutcome::AlreadyApplied {
+                return Ok(result.record);
+            }
             commit_control(
                 tx,
                 transition,
