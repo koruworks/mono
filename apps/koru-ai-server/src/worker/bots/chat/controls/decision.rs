@@ -97,6 +97,17 @@ pub(in crate::worker) fn native_answer_key(
         .map_err(|_| tool_decision_conflict())
 }
 
+/// An Allow on a private read whose connection changed since the question
+/// was asked. Nothing was forwarded and nothing was read. The text is fixed:
+/// it names no account and no file.
+pub(in crate::worker) fn private_connection_changed() -> Failure {
+    failure(
+        "bot_connection_changed",
+        "This connection changed, so this can no longer be allowed. Nothing was read.",
+        false,
+    )
+}
+
 /// The person's choice on this card, in the decision's own vocabulary.
 pub(in crate::worker) fn card_choice(
     binding: &DecisionBindingV1,
@@ -108,7 +119,9 @@ pub(in crate::worker) fn card_choice(
         return Err(tool_decision_conflict());
     }
     match binding {
-        DecisionBindingV1::KoruEdit(_) => {
+        // A private read is answered as an edit is (M5): Allow once or Deny,
+        // with no offered choice. "Allow once" changes no grant.
+        DecisionBindingV1::KoruEdit(_) | DecisionBindingV1::PrivateOperation(_) => {
             if choice.is_some() {
                 return Err(tool_decision_conflict());
             }
@@ -121,9 +134,6 @@ pub(in crate::worker) fn card_choice(
         DecisionBindingV1::NativeApproval(native) => Ok(DecisionAnswerChoice::Native {
             offered: native_choice(native.choices.as_slice(), choice, approve)?,
         }),
-        // M5 piece A: a private-operation card is not answerable until the AI
-        // worker's piece (F) composes its owner. Refuse; nothing is forwarded.
-        DecisionBindingV1::PrivateOperation(_) => Err(tool_decision_conflict()),
     }
 }
 
@@ -355,8 +365,14 @@ impl WorkerState {
                 v.routine.is_some(),
                 false,
             ),
-            // M5 piece A: refused until the AI worker's piece (F) owns it.
-            DecisionBindingV1::PrivateOperation(_) => return Err(tool_decision_conflict()),
+            DecisionBindingV1::PrivateOperation(v) => (
+                v.owner,
+                v.bot,
+                v.run,
+                v.human_profile,
+                v.routine.is_some(),
+                true,
+            ),
         };
         if receipt.decision != card.decision
             || bot_id != bot.id
@@ -370,6 +386,12 @@ impl WorkerState {
         // grant (P4.3 section 4.10). A native prompt on a Routine Run is not
         // a decision (O125) and stays refused.
         if routine && !koru {
+            return Err(tool_not_resumable());
+        }
+        // A Routine Run never has a private question (M5, D6). The delegate
+        // refuses to prepare one; a receipt that claims one is not answered.
+        let private = crate::worker::connections::plan::private_binding(&receipt.binding);
+        if routine && private.is_some() {
             return Err(tool_not_resumable());
         }
         let routine = self.decision_routine_proof(bot, &receipt.binding)?;
@@ -397,6 +419,25 @@ impl WorkerState {
                 false,
             ),
         };
+        // Before a first Allow of a private read is forwarded, the
+        // connection and the item are read again (M5, contract 3.6): if the
+        // account is no longer connected at the revision the question was
+        // asked for, or the file is no longer the one chosen, the Allow is
+        // not sent. A Deny is always forwarded, and an Allow already sent is
+        // replayed as it was.
+        if let Some(private) = private
+            && approve
+            && !replay
+            && !self.private_question_current(
+                BotOwner {
+                    user_scope: bot.user_scope,
+                    device: bot.owner_device,
+                },
+                &private.proposal(),
+            )
+        {
+            return Err(private_connection_changed());
+        }
         let global = match self.lifecycle_policy_barrier(bot)? {
             Some(barrier) => barrier,
             None => super::super::super::policy::barrier(bot)?,

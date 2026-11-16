@@ -447,6 +447,12 @@ impl WorkerState {
                 }
                 self.bot_boot.observed = Some(observed);
                 if changed {
+                    // An adopted owner (or a new delegate boot) is owed this
+                    // process's dispatcher announce (M5): the delegate then
+                    // closes what a previous process left open.
+                    if let Some(hosted) = &self.connections {
+                        hosted.announce.adopted(owner);
+                    }
                     self.routine_listings.invalidate();
                     self.memory_reads.invalidate();
                     self.memory_writes.invalidate();

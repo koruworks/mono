@@ -452,3 +452,45 @@ fn routine_decision_proof_is_the_routines_current_grant() {
         inactive.code
     );
 }
+
+#[test]
+fn m5_private_card_a_private_question_is_answered_allow_once_or_deny() {
+    use crate::fixtures::connections::{
+        PrivateDelegate, PrivateWorld, SUBJECT_A, captured, fence, owner, proof,
+    };
+    use koru_delegate_api::bots::{BotCommand, BotDelegatePort, BotReply};
+    let owner = owner();
+    let world = PrivateWorld::new(owner);
+    let connection = world.connect("Work files", SUBJECT_A, &["doc-1"]);
+    let fence = fence(owner);
+    let policy = captured(koru_delegate_core::WorkspaceId::new(), &[]);
+    let port = PrivateDelegate::new(&world, fence.clone(), policy.clone());
+    let boot = port.script().boot;
+    let Ok(BotReply::Decision { decision: view }) =
+        port.execute(BotCommand::PreparePrivateDecision {
+            fence: fence.clone(),
+            operation: world.proposal(uuid::Uuid::new_v4(), connection.id, "doc-1"),
+            proof: proof(&fence, &policy),
+            boot,
+        })
+    else {
+        panic!("the question was not asked");
+    };
+    let binding = &view.receipt.binding;
+    // "Allow once" and "Don't allow". It changes no grant, and the card has
+    // no other choice: an offered choice or an answer set is refused.
+    assert_eq!(
+        card_choice(binding, None, false, true).unwrap(),
+        DecisionAnswerChoice::AllowOnce {}
+    );
+    assert_eq!(
+        card_choice(binding, None, false, false).unwrap(),
+        DecisionAnswerChoice::Deny {}
+    );
+    assert!(card_choice(binding, Some("always"), false, true).is_err());
+    assert!(card_choice(binding, None, true, true).is_err());
+    // The refusal of an Allow on a changed connection names nothing.
+    let changed = private_connection_changed();
+    assert_eq!(changed.code, "bot_connection_changed");
+    assert!(!changed.retryable);
+}

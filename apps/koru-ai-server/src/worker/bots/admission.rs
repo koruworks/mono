@@ -975,7 +975,10 @@ pub(super) fn make_library_intent(
                     BotAccess::Workspace => d::BotAccess::Workspace,
                 },
                 selected_pages: bot.selected_pages.iter().map(|p| p.document).collect(),
-                connections: Default::default(),
+                // The Bot's grants as they are now (M5). A Run is captured
+                // with them, so a granted Bot's Run reads without asking; a
+                // grant given later does not broaden a Run already admitted.
+                connections: bot.connections.clone(),
             },
             request: d::DelegationRequest {
                 run: RunId::mint(),

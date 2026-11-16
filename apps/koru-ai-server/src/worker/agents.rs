@@ -516,7 +516,11 @@ impl WorkerState {
                 // The agent's words are the row's, stored: the label it gave
                 // the call and what it asked the tool to do (schema 8).
                 row.agent_label = (!label.is_empty()).then_some(label);
-                row.agent_input = input.as_deref().and_then(bound_agent_content);
+                row.agent_input = if private_tool_label(&row) {
+                    None
+                } else {
+                    input.as_deref().and_then(bound_agent_content)
+                };
                 self.repository.create_tool_activity(&row).and_then(|()| {
                     row.text_offset = self.recorded_text_offset(invocation)?;
                     row.status = ToolActivityStatus::Running;
@@ -539,7 +543,12 @@ impl WorkerState {
                 // the one Koru's own tools already keep theirs in. What the
                 // tool produced is the row's too (schema 8, UC17).
                 row.error_message = if succeeded { None } else { detail };
-                row.agent_output = output.as_deref().and_then(bound_agent_content);
+                if private_tool_label(row) {
+                    row.agent_input = None;
+                    row.agent_output = None;
+                } else {
+                    row.agent_output = output.as_deref().and_then(bound_agent_content);
+                }
                 // A kind the agent left unnamed is read from the call's
                 // label: *Read README.md* is filed as a read.
                 row.tool_name = tool
@@ -1647,6 +1656,22 @@ fn steer_unavailable() -> Failure {
         "This reply cannot take a message now; it will be sent when the reply ends.",
         true,
     )
+}
+
+/// The Run tools whose input and output the worker never keeps (M5,
+/// contract 2.6): what one is asked may hold a link a model supplied, and
+/// what one returns is a private file's content or its titles.
+pub(crate) const PRIVATE_TOOL_NAMES: [&str; 2] = ["read_connection_item", "list_connection_items"];
+
+/// Whether the label the agent gave this call names a private tool. The
+/// worker does not see a tool's registered name, so this is recognition by
+/// the agent's own words; a turn that planned a private read keeps nothing
+/// for any of its rows, whatever their labels say.
+pub(in crate::worker) fn private_tool_label(row: &ToolActivity) -> bool {
+    row.agent_label.as_deref().is_some_and(|label| {
+        let label = label.to_ascii_lowercase();
+        PRIVATE_TOOL_NAMES.iter().any(|name| label.contains(name))
+    })
 }
 
 pub(super) fn agent_row(

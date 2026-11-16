@@ -645,17 +645,30 @@ impl FakeLedger {
         proposal: PrivateOperationProposal,
         dispatcher: PrivateDispatcherId,
     ) -> PrivateEffectView {
-        let run = RunId::mint();
+        let key = PrivateEffectKey {
+            run: RunId::mint(),
+            operation_id: proposal.operation_id,
+            attempt: RunAttemptId::mint(),
+            generation: AttemptGeneration::FIRST,
+            turn: AgentTurnId::mint(),
+        };
+        self.open_keyed(key, proposal, dispatcher, None)
+    }
+    /// The same first commit under a key the caller names, for a scripted
+    /// delegate that answers a Run's own prepare or consume. `decision` is
+    /// the consumed decision of an approved read; a granted read has none.
+    pub fn open_keyed(
+        &self,
+        key: PrivateEffectKey,
+        proposal: PrivateOperationProposal,
+        dispatcher: PrivateDispatcherId,
+        decision: Option<koru_delegate_core::decisions::DecisionId>,
+    ) -> PrivateEffectView {
+        let run = key.run;
         let view = PrivateEffectView {
-            key: PrivateEffectKey {
-                run,
-                operation_id: proposal.operation_id,
-                attempt: RunAttemptId::mint(),
-                generation: AttemptGeneration::FIRST,
-                turn: AgentTurnId::mint(),
-            },
+            key,
             dispatcher,
-            decision: None,
+            decision,
             operation: proposal,
             config_revision: 1,
             policy_revision: 1,

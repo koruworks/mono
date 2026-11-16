@@ -174,7 +174,14 @@ pub(super) async fn handle(
         Err(error) => return refuse(StatusCode::SERVICE_UNAVAILABLE, error),
     };
     let is_bot = classification.bot_subject().is_some();
-    authenticated_message(is_bot, body, |params| async move {
+    // Whether the private read is listed for this Run (M5): never while its
+    // gate is closed, which it is in this build.
+    let private = classification
+        .bot_subject()
+        .is_some_and(|(provenance, policy)| {
+            native::private::listed_for(&state, provenance, policy)
+        });
+    authenticated_message_listing(is_bot, private, body, |params| async move {
         match classification {
             RunToolAuthority::Bot { provenance, policy } => {
                 native::call(&state, authority, provenance, policy, false, params).await
@@ -192,7 +199,23 @@ pub(super) async fn handle(
 
 /// Shared transport after bearer authentication and current Run classification.
 /// The callback owns dispatch only; this function never establishes authority.
+#[cfg_attr(not(test), allow(dead_code))]
 async fn authenticated_message<F, R>(is_bot: bool, body: Bytes, dispatch: F) -> Response
+where
+    F: FnOnce(rmcp::model::CallToolRequestParams) -> R,
+    R: std::future::Future<Output = rmcp::model::CallToolResult>,
+{
+    authenticated_message_listing(is_bot, false, body, dispatch).await
+}
+
+/// [`authenticated_message`] for a Bot Run whose catalog may also list the
+/// private read.
+async fn authenticated_message_listing<F, R>(
+    is_bot: bool,
+    private: bool,
+    body: Bytes,
+    dispatch: F,
+) -> Response
 where
     F: FnOnce(rmcp::model::CallToolRequestParams) -> R,
     R: std::future::Future<Output = rmcp::model::CallToolResult>,
@@ -250,7 +273,7 @@ where
         ClientRequest::ListToolsRequest(_) => answer(
             id,
             ServerResult::ListToolsResult(ListToolsResult::with_all_items(if is_bot {
-                native::definitions()
+                native::definitions_for(private)
             } else {
                 tools::definitions()
             })),

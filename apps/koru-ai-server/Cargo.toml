@@ -12,7 +12,7 @@ name = "koru-ai-server"
 path = "src/main.rs"
 
 [features]
-fixtures = ["koru-ai-sqlite/fixtures"]
+fixtures = ["koru-ai-sqlite/fixtures", "koru-connections/test-support"]
 
 [dependencies]
 base64.workspace = true
@@ -26,6 +26,12 @@ koru-ai-provider = { path = "../../crates/koru-ai-provider" }
 koru-ai-provider-agent = { path = "../../crates/koru-ai-provider-agent" }
 koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite" }
 koru-ai-wire = { path = "../../crates/koru-ai-wire" }
+# Private connections (M5): the service this worker hosts and the credential
+# port it is composed with. **Never with `koru-oauth-credentials/desktop`**:
+# only the host that composes the worker constructs an OS credential store,
+# so no test of this crate can reach a real keychain.
+koru-connections = { path = "../../crates/koru-connections" }
+koru-oauth-credentials = { path = "../../crates/koru-oauth-credentials" }
 koru-delegate-api = { path = "../../crates/koru-delegate-api" }
 koru-delegate-core = { path = "../../crates/koru-delegate-core" }
 koru-delegate-document = { path = "../../crates/koru-delegate-document" }
@@ -50,6 +56,8 @@ zip.workspace = true
 
 [dev-dependencies]
 koru-ai-sqlite = { path = "../../crates/koru-ai-sqlite", features = ["fixtures"] }
+# The scripted vendor, ledger and lockable credential store.
+koru-connections = { path = "../../crates/koru-connections", features = ["test-support"] }
 # Reading every change's commit message, for the attribution sweep.
 loro.workspace = true
 koru-log = { path = "../../crates/koru-log" }

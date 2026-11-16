@@ -64,7 +64,7 @@ pub(super) struct DecisionPacing {
 }
 impl DecisionPacing {
     /// About two seconds in all, on the caller's blocking thread.
-    const PRODUCTION: Self = Self {
+    pub(super) const PRODUCTION: Self = Self {
         replays: 7,
         first: Duration::from_millis(25),
         ceiling: Duration::from_millis(500),

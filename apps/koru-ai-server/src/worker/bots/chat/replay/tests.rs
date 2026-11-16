@@ -385,3 +385,87 @@ fn committed_cursor_recovers_lost_ack_and_terminal_delivery_without_double_usage
         Some(25)
     );
 }
+
+/// One tool call of a Bot's turn, started and completed, with what the
+/// agent said it asked and what the tool returned. Returns the stored row.
+fn m5_tool_row(label: &str, private: bool) -> ToolActivity {
+    let (mut repo, id, mut chat) = setup();
+    let turn_id = chat.fence.as_ref().unwrap().turn.unwrap();
+    let call = s::ToolCallId::mint();
+    let started = observation(
+        &chat,
+        s::AGENT_EVENT_FIRST_SEQUENCE,
+        vec![AgentEvent::ToolStarted {
+            turn_id,
+            tool_call_id: call,
+            label: label.into(),
+            input: Some("MARK-INPUT https://vendor.example/item/doc-1".into()),
+        }],
+    );
+    // The turn is not yet known to be private when the call starts.
+    let staged = stage_observation_for(&repo, id, &chat, started, false)
+        .unwrap()
+        .unwrap();
+    repo.apply_bot_replay(&staged.batch, Timestamp::now())
+        .unwrap();
+    chat.mapper = Some(staged.mapper);
+    let completed = observation(
+        &chat,
+        s::AGENT_EVENT_FIRST_SEQUENCE + 1,
+        vec![AgentEvent::ToolCompleted {
+            turn_id,
+            tool_call_id: call,
+            succeeded: true,
+            tool: None,
+            failure: None,
+            detail: None,
+            output: Some("MARK-CONTENT of the file".into()),
+        }],
+    );
+    let staged = stage_observation_for(&repo, id, &chat, completed, private)
+        .unwrap()
+        .unwrap();
+    repo.apply_bot_replay(&staged.batch, Timestamp::now())
+        .unwrap();
+    let tool = repo
+        .bot_tool_source(id, &source(AgentSource::Tool(call)))
+        .unwrap()
+        .unwrap();
+    repo.tool_activity(tool).unwrap().unwrap()
+}
+
+#[test]
+fn m5_no_secret_surface_a_private_tool_row_keeps_no_input_and_no_output() {
+    // An ordinary tool of an ordinary turn keeps both, as before.
+    let row = m5_tool_row("Read file", false);
+    assert!(
+        row.agent_input
+            .as_deref()
+            .is_some_and(|i| i.contains("MARK-INPUT"))
+    );
+    assert!(
+        row.agent_output
+            .as_deref()
+            .is_some_and(|o| o.contains("MARK-CONTENT"))
+    );
+
+    // A call the agent's own label ties to a private tool keeps neither,
+    // from its start: the link the model supplied is never stored.
+    for label in [
+        "read_connection_item",
+        "koru: READ_CONNECTION_ITEM",
+        "list_connection_items",
+    ] {
+        let row = m5_tool_row(label, false);
+        assert_eq!((row.agent_input, row.agent_output), (None, None), "{label}");
+        assert_eq!(row.status, ToolActivityStatus::Complete);
+    }
+
+    // A row that cannot be tied to a private tool, in a turn that planned a
+    // private read: it keeps neither, and the input stored before the turn
+    // was known to be private is removed.
+    let row = m5_tool_row("Read file", true);
+    assert_eq!((row.agent_input, row.agent_output), (None, None));
+    assert_eq!(row.status, ToolActivityStatus::Complete);
+    assert!(row.agent_label.is_some(), "the row keeps what it was");
+}

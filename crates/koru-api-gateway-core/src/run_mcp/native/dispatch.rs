@@ -112,6 +112,11 @@ pub(in crate::run_mcp) async fn call(
     if super::memory::recognizes(params.name.as_ref()) {
         return super::memory::call(state, record, provenance, captured, params).await;
     }
+    // The private read (M5). Closed in this build: it answers its own typed
+    // refusal before any owner is asked.
+    if super::private::recognizes(params.name.as_ref()) {
+        return super::private::call(state, record, provenance, captured, waiting, params).await;
+    }
     if matches!(params.name.as_ref(), "create_document" | "edit_document")
         && !state.native_mutations_ready()
     {
@@ -241,32 +246,7 @@ fn invoke(
         return Err(failure("permission_denied"));
     }
     let expected_hash = fingerprint(&description.fingerprint)?;
-    let submission = BotSubmissionKey {
-        owner: provenance.owner,
-        bot: provenance.bot,
-        request: provenance.submission,
-    };
-    let fence = match owner_call(
-        port,
-        BotCommand::Reconcile {
-            key: submission.clone(),
-        },
-    )? {
-        BotReply::Admission { admission }
-            if admission.key == submission && admission.run == record.run =>
-        {
-            admission.fence
-        }
-        _ => None,
-    }
-    .ok_or_else(|| failure("native_execution_unavailable"))?;
-    if fence.owner != provenance.owner
-        || fence.bot != provenance.bot
-        || fence.run != record.run
-        || fence.generation != record.generation
-    {
-        return Err(failure("native_execution_unavailable"));
-    }
+    let fence = execution_fence(port, &provenance, record)?;
     let key = NativeResultKey {
         run: fence.run,
         attempt: fence.attempt,
@@ -434,9 +414,46 @@ fn invoke(
     effect::saved(&Host(policy), store, &authority, &registered)
 }
 
+/// The Run's live execution fence, from the owner's admission of its own
+/// submission: the attempt, generation, session and turn an effect is bound
+/// to. Anything that is not exactly this Run's is no fence.
+pub(super) fn execution_fence(
+    port: &dyn BotDelegatePort,
+    provenance: &BotProvenance,
+    record: &RunAuthorityRecord,
+) -> Result<BotExecutionFence, ToolFailure> {
+    let submission = BotSubmissionKey {
+        owner: provenance.owner,
+        bot: provenance.bot,
+        request: provenance.submission,
+    };
+    let fence = match owner_call(
+        port,
+        BotCommand::Reconcile {
+            key: submission.clone(),
+        },
+    )? {
+        BotReply::Admission { admission }
+            if admission.key == submission && admission.run == record.run =>
+        {
+            admission.fence
+        }
+        _ => None,
+    }
+    .ok_or_else(|| failure("native_execution_unavailable"))?;
+    if fence.owner != provenance.owner
+        || fence.bot != provenance.bot
+        || fence.run != record.run
+        || fence.generation != record.generation
+    {
+        return Err(failure("native_execution_unavailable"));
+    }
+    Ok(fence)
+}
+
 /// The existing fresh checks before a lease: current policy synchronization
 /// and the live effect fence with its unchanged captured policy.
-fn fresh_fence(
+pub(super) fn fresh_fence(
     port: &dyn BotDelegatePort,
     proof: &FreshBotPolicyProof,
     fence: &BotExecutionFence,

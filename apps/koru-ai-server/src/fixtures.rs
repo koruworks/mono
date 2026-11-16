@@ -4,6 +4,10 @@
 #[cfg(feature = "fixtures")]
 pub use koru_ai_sqlite::Repository;
 
+/// The private-connection world of M5: scripted vendor, credential store and
+/// delegate over the real ai.db writer on an in-memory database.
+pub mod connections;
+
 // Unix IPC endpoints use filesystem sockets. Only the named-pipe fixture is
 // qualified here; portable repository and pure owner tests remain independent.
 #[cfg(windows)]

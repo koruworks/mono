@@ -76,7 +76,10 @@ impl WorkerState {
             if self.repository.bot_delivery_receipt(id)?.is_some() {
                 return Ok(true);
             }
-            stage_observation(&self.repository, id, chat, observation)?
+            // A turn that planned a private read keeps no tool input and no
+            // tool output (M5, contract 2.6).
+            let private = self.private_attempts.contains(&id);
+            stage_observation_for(&self.repository, id, chat, observation, private)?
         };
         let Some(staged) = staged else {
             return Ok(false);
@@ -210,11 +213,24 @@ pub(super) struct Staged {
     terminal: bool,
     completed: bool,
 }
+#[cfg(test)]
 fn stage_observation(
     repository: &Repository,
     id: InferenceAttemptId,
     chat: &LiveChat,
     observation: BotObservation,
+) -> Result<Option<Staged>, AiError> {
+    stage_observation_for(repository, id, chat, observation, false)
+}
+
+/// `private`: the turn planned a private read, so no tool input and no tool
+/// output of this batch is kept (M5, contract 2.6).
+fn stage_observation_for(
+    repository: &Repository,
+    id: InferenceAttemptId,
+    chat: &LiveChat,
+    observation: BotObservation,
+    private: bool,
 ) -> Result<Option<Staged>, AiError> {
     let fence = chat.fence.clone().ok_or_else(bot_route_error)?;
     if observation.fence != fence {
@@ -386,8 +402,14 @@ fn stage_observation(
                             .cloned()
                             .or(repository.tool_activity(invocation)?);
                         let create = existing.is_none();
-                        let mut row =
-                            normalize_activity(&attempt, activity, existing, at, &mut transient)?;
+                        let mut row = normalize_activity(
+                            &attempt,
+                            activity,
+                            existing,
+                            at,
+                            &mut transient,
+                            private,
+                        )?;
                         if row.id != invocation {
                             return Err(bot_route_error());
                         }
@@ -495,6 +517,7 @@ fn normalize_activity(
     existing: Option<ToolActivity>,
     at: Timestamp,
     live: &mut HashMap<ToolInvocationId, AgentActivityLive>,
+    private: bool,
 ) -> Result<ToolActivity, AiError> {
     let fresh = |id, kind, approval| {
         crate::worker::agents::agent_row(
@@ -520,7 +543,13 @@ fn normalize_activity(
     match activity {
         A::ToolStarted { label, input, .. } => {
             row.agent_label = (!label.is_empty()).then_some(label);
-            row.agent_input = input;
+            // What a private tool was asked is not kept: its input may hold
+            // a link the model supplied (M5).
+            row.agent_input = if private || crate::worker::agents::private_tool_label(&row) {
+                None
+            } else {
+                input
+            };
             row.status = ToolActivityStatus::Running;
             row.started_at = Some(at);
         }
@@ -536,7 +565,18 @@ fn normalize_activity(
                 .refined(row.agent_label.as_deref())
                 .as_token()
                 .to_owned();
-            row.agent_output = output;
+            // What a private tool returned is the file's content: it is in
+            // the tool reply and nowhere in ai.db. The row keeps the tool's
+            // kind and whether it succeeded. A row of the same turn that
+            // cannot be told apart from a private tool keeps neither, and an
+            // input stored before the turn was known to be private is
+            // removed here.
+            if private || crate::worker::agents::private_tool_label(&row) {
+                row.agent_input = None;
+                row.agent_output = None;
+            } else {
+                row.agent_output = output;
+            }
             row.status = if succeeded {
                 ToolActivityStatus::Complete
             } else {

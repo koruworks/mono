@@ -65,6 +65,7 @@ pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
 pub(crate) mod bots;
+pub(crate) mod connections;
 pub(crate) mod native_recovery;
 mod removed;
 
@@ -97,6 +98,11 @@ pub struct WorkerConfig {
     /// The Store's data root beside this AI root, which no Bot's selected
     /// working folder may be (P1.8).
     store_root: Option<PathBuf>,
+    /// What private connections are composed from (M5). No production
+    /// composition supplies one yet: no vendor adapter exists.
+    connections: Option<connections::ConnectionsSetup>,
+    /// The composed service, handed from `spawn` to the writer thread.
+    connections_hosted: Option<connections::Hosted>,
     root: PathBuf,
     channel: String,
     providers: ProviderRegistry,
@@ -176,6 +182,14 @@ impl WorkerConfig {
         self.owner_zone = Some(zone);
         self
     }
+    /// Host private connections (M5): the one qualified vendor adapter, the
+    /// credential store and the credential context. Without this, or without
+    /// a Bot delegate, the worker hosts none and every private read plans as
+    /// unavailable.
+    pub fn with_connections(mut self, setup: connections::ConnectionsSetup) -> Self {
+        self.connections = Some(setup);
+        self
+    }
     /// The Store's data root, so a Bot's selected folder is never it.
     pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
         self.store_root = Some(store_root);
@@ -191,6 +205,8 @@ impl WorkerConfig {
             bot_authority: None,
             decision_wait_delegate: None,
             store_root: None,
+            connections: None,
+            connections_hosted: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -228,6 +244,8 @@ impl WorkerConfig {
             bot_authority: None,
             decision_wait_delegate: None,
             store_root: None,
+            connections: None,
+            connections_hosted: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -270,6 +288,8 @@ impl WorkerConfig {
             bot_authority: None,
             decision_wait_delegate: None,
             store_root: None,
+            connections: None,
+            connections_hosted: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -405,7 +425,7 @@ impl AiWorker {
         Self { config }
     }
 
-    pub fn spawn(self) -> Result<WorkerHandle, WorkerError> {
+    pub fn spawn(mut self) -> Result<WorkerHandle, WorkerError> {
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
         let routine_calls = routine_call::RoutineCallGates::default();
         let worker_routine_calls = routine_calls.clone();
@@ -418,6 +438,19 @@ impl AiWorker {
             .map(|config| config.gate.clone());
         let (ready_tx, ready_rx) = sync_channel(1);
         let shutdown = Arc::new(AtomicBool::new(false));
+        // Private connections (M5). The service's threads reach ai.db
+        // through this worker's own inbox and stop with its stop flag.
+        let hosted = connections::Hosted::compose(
+            self.config.connections.take(),
+            self.config.bot_delegate.clone(),
+            sender.clone(),
+            Arc::clone(&shutdown),
+        )
+        .map_err(|error| {
+            shutdown.store(true, Ordering::Release);
+            WorkerError::Startup(error)
+        })?;
+        self.config.connections_hosted = hosted.clone();
         let thread_shutdown = Arc::clone(&shutdown);
         let status = Arc::new(Mutex::new(WorkerStatus::Starting));
         let thread_status = Arc::clone(&status);
@@ -435,6 +468,9 @@ impl AiWorker {
                         worker_routine_calls,
                     )
                 }));
+                // However the writer ended, nothing of it is left to serve
+                // the connection threads, which watch this flag.
+                thread_shutdown.store(true, Ordering::Release);
                 let exit = match outcome {
                     Ok(Ok(())) => WorkerExit::Clean,
                     Ok(Err(message)) => WorkerExit::Failed(message),
@@ -450,7 +486,12 @@ impl AiWorker {
                 );
                 exit
             })
-            .map_err(|error| WorkerError::Startup(error.to_string()))?;
+            .map_err(|error| {
+                // The connection threads watch this flag: a worker that did
+                // not start leaves none running.
+                shutdown.store(true, Ordering::Release);
+                WorkerError::Startup(error.to_string())
+            })?;
 
         match ready_rx.recv_timeout(STARTUP_TIMEOUT) {
             Ok(Ok(info)) => {
@@ -461,12 +502,14 @@ impl AiWorker {
                     store_context,
                     native_mutations,
                     routine_calls,
+                    connections: hosted,
                     shutdown,
                     status,
                     join: Some(join),
                 })
             }
             Ok(Err(message)) => {
+                shutdown.store(true, Ordering::Release);
                 let _ = join.join();
                 Err(WorkerError::Startup(message))
             }
@@ -475,6 +518,7 @@ impl AiWorker {
                 Err(WorkerError::TimedOut)
             }
             Err(RecvTimeoutError::Disconnected) => {
+                shutdown.store(true, Ordering::Release);
                 let exit = join.join().unwrap_or(WorkerExit::Panicked);
                 Err(WorkerError::Startup(match exit {
                     WorkerExit::Failed(message) => message,
@@ -487,6 +531,7 @@ impl AiWorker {
 }
 
 pub struct WorkerHandle {
+    connections: Option<connections::Hosted>,
     routine_calls: routine_call::RoutineCallGates,
     native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
@@ -513,6 +558,7 @@ impl WorkerHandle {
             store_context: self.store_context.clone(),
             native_mutations: self.native_mutations.clone(),
             routine_calls: self.routine_calls.clone(),
+            connections: self.connections.clone(),
         }
     }
 
@@ -564,6 +610,8 @@ impl Drop for WorkerHandle {
 
 #[derive(Clone)]
 pub struct AiWorkerClient {
+    /// The private connections this worker hosts (M5), if any.
+    connections: Option<connections::Hosted>,
     routine_calls: routine_call::RoutineCallGates,
     native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
     sender: SyncSender<Envelope>,
@@ -1324,6 +1372,11 @@ enum Envelope {
     },
     NativeDrainWake,
     NativeDrained(native_recovery::NativeDrainResult),
+    /// One transaction on ai.db's connection rows, asked for by the
+    /// connection service from its own thread (M5).
+    Connections(connections::StoreCall),
+    /// The plan of one private read, or a Run's setup reason (M5).
+    PrivatePlan(connections::plan::Incoming),
     NativePolicy {
         request: bots::policy::NativePolicyRequest,
         reply: SyncSender<ApiResult<bots::policy::NativePolicyEvidence>>,
@@ -1744,6 +1797,13 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    /// The private connections this worker hosts (M5), if any.
+    connections: Option<connections::Hosted>,
+    /// Attempts whose turn planned a private read: no tool input and no tool
+    /// output is kept for them (M5, contract 2.6).
+    private_attempts: HashSet<InferenceAttemptId>,
+    /// Why a Run's last private read needed the person, for their card.
+    private_setup: HashMap<koru_delegate_core::RunId, connections::plan::PrivateSetupReason>,
     occurrences: bots::occurrence::OccurrenceDriver,
     decision_waits: bots::decision_wait::DecisionWaitDriver,
     bot_boot: bots::BootRecovery,
@@ -2036,6 +2096,9 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        connections: config.connections_hosted.take(),
+        private_attempts: HashSet::new(),
+        private_setup: HashMap::new(),
         native_recovery: config.native_recovery,
         native_drain_busy: false,
         bot_chats: HashMap::new(),
@@ -2220,6 +2283,17 @@ fn run_worker(
                 state.memory_writes.invalidate();
                 let _ = reply.send(());
             }
+            Ok(Envelope::Connections(call)) => {
+                // The service's own thread waits for this answer; a panic in
+                // one transaction leaves the writer serving the next.
+                if catch_unwind(AssertUnwindSafe(|| call(&mut state.repository))).is_err() {
+                    tracing::error!(
+                        target: "koru_ai::connections",
+                        "a connection row transaction panicked; worker remains available"
+                    );
+                }
+            }
+            Ok(Envelope::PrivatePlan(incoming)) => state.handle_private_plan(incoming),
             Ok(Envelope::NativePolicy {
                 request,
                 reply,

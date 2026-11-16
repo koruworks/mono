@@ -95,11 +95,11 @@ impl WorkerState {
             let (owner, bot, run) = match &view.receipt.binding {
                 DecisionBindingV1::KoruEdit(v) => (v.owner, v.bot, v.run),
                 DecisionBindingV1::NativeApproval(v) => (v.owner, v.bot, v.run),
-                // M5 piece A: no private-operation card is recorded until the
-                // AI worker's piece (F) composes its owner.
-                DecisionBindingV1::PrivateOperation(_) => {
-                    return Err(bot_failure(BotError::Invalid));
-                }
+                // A private read's question is a Koru decision (M5): its
+                // receipt is retained as an edit's is. The binding holds ids
+                // and digests only; the card's account and file lines are
+                // read from ai.db when it is drawn, never from here.
+                DecisionBindingV1::PrivateOperation(v) => (v.owner, v.bot, v.run),
             };
             // The receipt's Run must be one this AI owns, through its sole
             // admission decoder; a foreign or unknown Run is refused.

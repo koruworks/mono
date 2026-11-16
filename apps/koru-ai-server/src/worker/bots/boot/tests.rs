@@ -994,3 +994,81 @@ fn worker_completed_archive_replays_effects_off_after_role_deletion() {
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+/// Answers the dispatcher announce itself and records it; everything else is
+/// the scripted delegate's.
+struct Announcing {
+    inner: ScriptedDelegate,
+    announced: Arc<Mutex<Vec<(DelegateOwner, koru_delegate_core::PrivateDispatcherId)>>>,
+    lose_first: std::sync::atomic::AtomicBool,
+}
+impl BotDelegatePort for Announcing {
+    fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
+        if let D::AnnouncePrivateDispatcher { owner, dispatcher } = command {
+            self.announced.lock().unwrap().push((owner, dispatcher));
+            if self.lose_first.swap(false, Ordering::SeqCst) {
+                return Err(koru_delegate_api::Failure::unavailable());
+            }
+            return Ok(BotReply::PrivateDispatcher {
+                dispatcher,
+                resolved: 0,
+            });
+        }
+        self.inner.execute(command)
+    }
+}
+
+#[test]
+fn m5_announce_the_worker_announces_its_dispatcher_when_it_adopts_its_owner() {
+    let (mut repository, authority, command) = super::super::tests::fixture();
+    let bot = super::super::tests::created(&mut repository, authority.clone(), command);
+    let owner = delegate_owner(&bot);
+    let world = crate::fixtures::connections::PrivateWorld::new(owner);
+    let announced = Arc::new(Mutex::new(Vec::new()));
+    let (send, calls) = sync_channel(8);
+    let mut config = WorkerConfig::new(
+        PathBuf::from("unused-boot-announce"),
+        "internal-debug",
+        ProviderRegistry::default(),
+    )
+    .with_bot_authority(authority)
+    .with_connections(world.setup())
+    .with_bot_delegate(Arc::new(Announcing {
+        inner: ScriptedDelegate(send),
+        announced: announced.clone(),
+        lose_first: true.into(),
+    }));
+    config.test_repository = Some(repository);
+    config.test_bot_runtime_ready = true;
+    let worker = AiWorker::new(config).spawn().unwrap();
+    // Nothing is announced before an owner is adopted.
+    let (command, reply) = next(&calls);
+    assert!(matches!(
+        command,
+        D::Hello {
+            scan: BotBootScan::Probe {},
+            ..
+        }
+    ));
+    assert!(announced.lock().unwrap().is_empty());
+    hello(reply, DelegateBootId::mint(), vec![], None);
+    // The owner is adopted: the announce is sent with this process's one
+    // dispatcher id, and sent again because its first answer was lost.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while announced.lock().unwrap().len() < 2 {
+        assert!(Instant::now() < deadline, "the announce was not repeated");
+        // The boot walk goes on beside it.
+        if let Ok((_, reply)) = calls.recv_timeout(Duration::from_millis(20)) {
+            let _ = reply.send(Err(unavailable()));
+        }
+    }
+    let sent = announced.lock().unwrap().clone();
+    assert!(
+        sent.iter()
+            .all(|entry| *entry == (owner, koru_connections::process_dispatcher()))
+    );
+    // Acknowledged: it is not sent a third time.
+    std::thread::sleep(Duration::from_millis(700));
+    assert_eq!(announced.lock().unwrap().len(), 2);
+    worker.shutdown();
+}

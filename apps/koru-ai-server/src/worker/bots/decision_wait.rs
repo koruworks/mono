@@ -137,6 +137,19 @@ impl DecisionWaitDriver {
     ) -> Option<&koru_delegate_api::bots::DecisionReceiptView> {
         self.receipts.get(&decision)
     }
+    /// The private-read bindings among the retained receipts (M5).
+    pub(in crate::worker) fn private_bindings(
+        &self,
+    ) -> impl Iterator<Item = &koru_delegate_core::decisions::DecisionPrivateBinding> + '_ {
+        self.receipts
+            .values()
+            .filter_map(|view| match &view.receipt.binding {
+                koru_delegate_core::decisions::DecisionBindingV1::PrivateOperation(private) => {
+                    Some(private)
+                }
+                _ => None,
+            })
+    }
     /// Keep the newer of two receipts for one decision; `false` when full.
     pub(in crate::worker) fn remember(
         &mut self,

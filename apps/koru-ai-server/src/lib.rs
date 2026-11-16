@@ -15,6 +15,7 @@ pub mod fixtures;
 pub use bots::BotAuthorityAdapter;
 mod chat_tools;
 pub mod native_effect;
+pub mod private_effect;
 mod store_context;
 mod store_tools;
 mod worker;
@@ -36,6 +37,11 @@ pub use worker::bots::memory::{RunMemoryReadRequest, RunMemoryReadResult};
 pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
 pub use worker::bots::routine::model::{
     RunBotSubject, RunRoutineCreate, RunRoutineOperation, RunRoutineRequest, RunRoutineResult,
+};
+pub use worker::connections::ConnectionsSetup;
+pub use worker::connections::plan::{
+    PRIVATE_UNAVAILABLE, PrivateItemName, PrivateReadPlan, PrivateReadPlanRequest,
+    PrivateReadVerdict, PrivateSetupReason, ROUTINE_NOT_GRANTED,
 };
 pub use worker::native_recovery::{
     NativeMutationGate, NativeRecoveryAdmission, NativeRecoveryRefusal,

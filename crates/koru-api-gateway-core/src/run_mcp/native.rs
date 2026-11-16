@@ -12,6 +12,7 @@ mod decision;
 mod dispatch;
 mod memory;
 mod policy;
+pub(super) mod private;
 pub(super) mod routines;
 pub(super) use dispatch::call;
 
@@ -56,7 +57,15 @@ pub(super) async fn classify(
     }
 }
 
+#[cfg(test)]
 pub(super) fn definitions() -> Vec<Tool> {
+    definitions_for(false)
+}
+
+/// The Bot catalog for one Run. `private` says whether the private read is
+/// listed for it ([`private::listed_for`]): never in this build, where its
+/// gate is closed.
+pub(super) fn definitions_for(private: bool) -> Vec<Tool> {
     let mut tools: Vec<Tool> = koru_mcp_server::native::native_tool_catalog().into_iter().map(|tool| {
         let mutation=matches!(tool.name.as_str(),"create_document"|"edit_document");
         let mut schema=tool.input_schema;
@@ -79,6 +88,9 @@ pub(super) fn definitions() -> Vec<Tool> {
         tools.extend(memory::write_definitions());
     }
     tools.extend(routines::definitions());
+    if private {
+        tools.extend(private::definitions());
+    }
     tools
 }
 
