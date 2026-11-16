@@ -338,7 +338,7 @@ const ACTION_RECORDS: [Entry; 4] = [
         Some("C-ICON"),
         &["KoruIconButton"],
         ui("koru_ui::icon_button", ICON_BUTTON),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget_with(
                 "koru_ui::icon_button::IconButton",
@@ -365,7 +365,7 @@ const ACTION_RECORDS: [Entry; 4] = [
             "koru_ui::button_group",
             "crates/koru-ui/src/button_group.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::button_group::ButtonGroup"),
             support("koru_ui::button_group::slots_right"),
@@ -383,7 +383,7 @@ const ACTION_RECORDS: [Entry; 4] = [
             "koru_ui::split_button",
             "crates/koru-ui/src/split_button.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget_with("koru_ui::split_button::SplitButton", &[SPLIT_TONE]),
             support("koru_ui::split_button::SplitPart"),
@@ -401,7 +401,7 @@ const ACTION_RECORDS: [Entry; 4] = [
             "koru_ui::copy_affordance",
             "crates/koru-ui/src/copy_affordance.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::copy_affordance::CopyAffordance"),
             support("koru_ui::copy_affordance::Outcome"),
@@ -419,7 +419,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
         C_CHOICE,
         &["KoruChip"],
         ui("koru_ui::chip", "crates/koru-ui/src/chip.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             widget("koru_ui::chip::Chip"),
             support("koru_ui::chip::wrap"),
@@ -461,7 +461,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
         C_CHOICE,
         &["KoruToggle"],
         ui("koru_ui::toggle", "crates/koru-ui/src/toggle.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[widget("koru_ui::toggle::Toggle")],
     ),
     record(
@@ -488,7 +488,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
             "koru_ui::color_picker_row",
             "crates/koru-ui/src/color_picker_row.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget("koru_ui::color_picker_row::ColorPickerRow")],
     ),
     record(
@@ -533,7 +533,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
             "koru_ui::profile_picker",
             "crates/koru-ui/src/profile_picker.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::profile_picker::ProfileRow"),
             widget("koru_ui::profile_picker::draw_heading"),
@@ -552,7 +552,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
         C_CHOICE,
         &[],
         ui("koru_ui::badge", "crates/koru-ui/src/badge.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget("koru_ui::badge::NumericBadge")],
     ),
     record(
@@ -564,7 +564,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
         None,
         &["KoruLabelChip"],
         ui("koru_ui::label_chip", LABEL_CHIP),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget_with(
                 "koru_ui::label_chip::LabelChip",
@@ -585,7 +585,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
             "koru_ui::context_chip",
             "crates/koru-ui/src/context_chip.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget_with(
             "koru_ui::context_chip::ContextChip",
             &[CONTEXT_STATE],
@@ -600,7 +600,7 @@ const CHOICE_RECORDS: [Entry; 13] = [
         C_CHROME,
         &["KoruKeyChip"],
         ui("koru_ui::key_chip", "crates/koru-ui/src/key_chip.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget("koru_ui::key_chip::KeyChip")],
     ),
 ];
@@ -615,7 +615,7 @@ const INPUT_RECORDS: [Entry; 4] = [
         Some("C-INPUT"),
         &[],
         ui("koru_ui::text_field", TEXT_FIELD),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::text_field::TextField"),
             widget_with("koru_ui::text_field::draw_field", &[FIELD_CARET]),
@@ -634,7 +634,7 @@ const INPUT_RECORDS: [Entry; 4] = [
         Some("C-INPUT"),
         &[],
         ui("koru_ui::text_field", TEXT_FIELD),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[widget("koru_ui::text_field::TextArea")],
     ),
     record(
@@ -646,7 +646,7 @@ const INPUT_RECORDS: [Entry; 4] = [
         Some("C-INPUT"),
         &["KoruTextInput", "KoruInputEndIcon"],
         ui("koru_ui::text_input", TEXT_INPUT),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget_with("koru_ui::text_input::TextInput", &[END_ICON]),
             widget_with(
@@ -665,7 +665,7 @@ const INPUT_RECORDS: [Entry; 4] = [
         Some("C-PICKER"),
         &[],
         ui("koru_ui::date_grid", "crates/koru-ui/src/date_grid.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::date_grid::DateGrid"),
             widget("koru_ui::date_grid::draw"),
@@ -689,7 +689,7 @@ const LIST_RECORDS: [Entry; 6] = [
             "koru_ui::selectable_list",
             "crates/koru-ui/src/selectable_list.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             support("koru_ui::selectable_list::SelectableList"),
             support("koru_ui::selectable_list::ListScrollbar"),
@@ -704,7 +704,7 @@ const LIST_RECORDS: [Entry; 6] = [
         C_LIST,
         &[],
         ui("koru_ui::exit_list", "crates/koru-ui/src/exit_list.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[support("koru_ui::exit_list::ExitList")],
     ),
     record(
@@ -716,7 +716,7 @@ const LIST_RECORDS: [Entry; 6] = [
         C_LIST,
         &[],
         ui("koru_ui::table", "crates/koru-ui/src/table.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::table::Table"),
             widget_with("koru_ui::table::Table::paint_row_fill", &[ROW_STATE]),
@@ -749,7 +749,7 @@ const LIST_RECORDS: [Entry; 6] = [
         C_LIST,
         &["KoruChipNav"],
         ui("koru_ui::nav_list", "crates/koru-ui/src/nav_list.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget("koru_ui::nav_list::ChipNav")],
     ),
     record(
@@ -765,7 +765,7 @@ const LIST_RECORDS: [Entry; 6] = [
             module: "koru_draw::scrollbar",
             file: "crates/koru-draw/src/scrollbar.rs",
         },
-        DESKTOP_SHARED,
+        desktop_and(Availability::Unavailable, Availability::NativeOwned),
         &[
             widget("koru_draw::scrollbar::draw"),
             widget("koru_draw::scrollbar::draw_thumb"),
@@ -785,7 +785,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &["KoruPopover"],
         ui("koru_ui::popover", "crates/koru-ui/src/popover.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget_with("koru_ui::popover::PopoverShell", &[POPOVER_ALIGN]),
             widget("koru_ui::popover::PopoverShell::draw_with_content"),
@@ -804,7 +804,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
             "koru_ui::dialog_frame",
             "crates/koru-ui/src/dialog_frame.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::dialog_frame::KoruDialogFrame"),
             support("koru_ui::dialog_frame::KoruDialogFrameInspection"),
@@ -819,7 +819,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &["KoruModal"],
         ui("koru_ui::modal", "crates/koru-ui/src/modal.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[widget("koru_ui::modal::draw")],
     ),
     record(
@@ -834,7 +834,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
             "koru_ui::place_chooser",
             "crates/koru-ui/src/place_chooser.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::place_chooser::PlaceChooser"),
             support("koru_ui::place_chooser::Place"),
@@ -849,7 +849,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &["KoruPrompt"],
         ui("koru_ui::prompt", "crates/koru-ui/src/prompt.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::prompt::KoruPrompt"),
             support("koru_ui::prompt::KoruPromptAction"),
@@ -864,7 +864,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &["KoruMenu"],
         ui("koru_ui::menu", "crates/koru-ui/src/menu.rs"),
-        DESKTOP_SHARED,
+        desktop_and(Availability::NativePartial, Availability::NativeOwned),
         &[
             widget_with("koru_ui::menu::Menu", &[MENU_ANCHOR]),
             widget("koru_ui::menu::Menu::draw_with_inspection"),
@@ -882,7 +882,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &["KoruMenuItem"],
         ui("koru_ui::menu", "crates/koru-ui/src/menu/inspection.rs"),
-        DESKTOP_SHARED,
+        desktop_and(Availability::NativePartial, Availability::NativeOwned),
         &[
             widget("koru_ui::menu::MenuItem"),
             widget_with("koru_ui::menu::Control", &[MENU_CONTROL]),
@@ -897,7 +897,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &[],
         ui("koru_ui::confirm", "crates/koru-ui/src/confirm.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget_with("koru_ui::confirm::Confirm", &[CONFIRM_SHAPE]),
             widget("koru_ui::confirm::Confirm::with_alternative"),
@@ -913,7 +913,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_CHOICE,
         &[],
         ui("koru_ui::choice", "crates/koru-ui/src/choice.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::choice::Choice"),
             support("koru_ui::choice::ChoiceOutcome"),
@@ -928,7 +928,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &[],
         ui("koru_ui::tooltip", "crates/koru-ui/src/tooltip.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget_with("koru_ui::tooltip::Tooltip", &[TOOLTIP_PLACEMENT]),
             support("koru_ui::tooltip::TooltipContent"),
@@ -943,7 +943,7 @@ const OVERLAY_RECORDS: [Entry; 11] = [
         C_OVERLAY,
         &[],
         ui("koru_ui::toast", "crates/koru-ui/src/toast.rs"),
-        DESKTOP_SHARED,
+        desktop_and(Availability::NativeOwned, Availability::Unavailable),
         &[
             widget("koru_ui::toast::Toast"),
             support("koru_ui::toast::Outcome"),
@@ -964,7 +964,7 @@ const STATUS_RECORDS: [Entry; 4] = [
             "koru_ui::progress_bar",
             "crates/koru-ui/src/progress_bar.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[widget_with(
             "koru_ui::progress_bar::ProgressBar",
             &[PROGRESS_MODE],
@@ -982,7 +982,7 @@ const STATUS_RECORDS: [Entry; 4] = [
             "koru_ui::progress_ring",
             "crates/koru-ui/src/progress_ring.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget("koru_ui::progress_ring::ProgressRing")],
     ),
     record(
@@ -997,7 +997,7 @@ const STATUS_RECORDS: [Entry; 4] = [
             "koru_ui::pulsing_dots",
             "crates/koru-ui/src/pulsing_dots.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[widget("koru_ui::pulsing_dots::PulsingDots")],
     ),
     record(
@@ -1012,7 +1012,7 @@ const STATUS_RECORDS: [Entry; 4] = [
             "koru_ui::measurement_badge",
             "crates/koru-ui/src/measurement_badge.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::measurement_badge::KoruMeasurementBadge"),
             support("koru_ui::measurement_badge::KoruMeasurementGeometry"),
@@ -1054,7 +1054,7 @@ const TEXT_RECORDS: [Entry; 9] = [
         C_CHROME,
         &[],
         ui("koru_ui::divider", "crates/koru-ui/src/divider.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::divider::draw_vertical"),
             support("koru_ui::divider::VERTICAL_LANE_W"),
@@ -1069,7 +1069,7 @@ const TEXT_RECORDS: [Entry; 9] = [
         C_CHROME,
         &[],
         ui("koru_ui::file_icon", "crates/koru-ui/src/file_icon.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ui::file_icon::FileIcon"),
             support("koru_ui::file_icon::glyph"),
@@ -1087,7 +1087,7 @@ const TEXT_RECORDS: [Entry; 9] = [
             "koru_ui::font_preview",
             "crates/koru-ui/src/font_preview.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             widget("koru_ui::font_preview::FontPreview"),
             support("koru_ui::font_preview::FontSample"),
@@ -1105,7 +1105,7 @@ const TEXT_RECORDS: [Entry; 9] = [
             "koru_ui::highlighted_text",
             "crates/koru-ui/src/highlighted_text.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             widget("koru_ui::highlighted_text::draw_highlighted_line"),
             support("koru_ui::highlighted_text::Span"),
@@ -1122,7 +1122,7 @@ const TEXT_RECORDS: [Entry; 9] = [
         C_CHROME,
         &["KoruLogo"],
         ui("koru_ui::logo", "crates/koru-ui/src/logo.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[widget("koru_ui::logo::KoruLogo")],
     ),
     record(
@@ -1137,7 +1137,7 @@ const TEXT_RECORDS: [Entry; 9] = [
             "koru_ui::text_paragraph",
             "crates/koru-ui/src/text_paragraph.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             widget("koru_ui::text_paragraph::KoruTextParagraph"),
             widget("koru_ui::text_paragraph::draw_line"),
@@ -1152,7 +1152,7 @@ const TEXT_RECORDS: [Entry; 9] = [
         C_CHROME,
         &["KoruTextTitle"],
         ui("koru_ui::text_title", "crates/koru-ui/src/text_title.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[widget("koru_ui::text_title::KoruTextTitle")],
     ),
 ];
@@ -1167,7 +1167,7 @@ const SUPPORT_RECORDS: [Entry; 5] = [
         H_INPUT,
         &[],
         ui("koru_ui::clipboard", "crates/koru-ui/src/clipboard.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             support("koru_ui::clipboard::put_plain"),
             support("koru_ui::clipboard::plain"),
@@ -1183,7 +1183,7 @@ const SUPPORT_RECORDS: [Entry; 5] = [
         H_INPUT,
         &[],
         ui("koru_ui::cursor", "crates/koru-ui/src/cursor.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ui::cursor::PRESS"),
             support("koru_ui::cursor::IDLE"),
@@ -1198,7 +1198,7 @@ const SUPPORT_RECORDS: [Entry; 5] = [
         H_INPUT,
         &[],
         ui("koru_ui::keys", "crates/koru-ui/src/keys.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ui::keys::ctrl_letter"),
             support("koru_ui::keys::recover_modified_editing_key"),
@@ -1214,7 +1214,7 @@ const SUPPORT_RECORDS: [Entry; 5] = [
         H_INPUT,
         &[],
         ui("koru_ui::dictation", "crates/koru-ui/src/dictation.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ui::dictation::DictationTarget"),
             plain_with(
@@ -1234,7 +1234,7 @@ const SUPPORT_RECORDS: [Entry; 5] = [
         None,
         &[],
         ui("koru_ui::dates", "crates/koru-ui/src/dates.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             support("koru_ui::dates::month_start"),
             support("koru_ui::dates::days_in_month"),

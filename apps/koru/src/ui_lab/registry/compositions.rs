@@ -26,6 +26,7 @@ const fn record(
     catalog_family: Option<&'static str>,
     identities: &'static [&'static str],
     source: Source,
+    platforms: [(Platform, Availability); 5],
     apis: &'static [Api],
 ) -> Entry {
     Entry {
@@ -38,7 +39,7 @@ const fn record(
         catalog_family,
         identities,
         source,
-        platforms: DESKTOP_SHARED,
+        platforms,
         recipes: &[],
         apis,
     }
@@ -109,6 +110,7 @@ pub(super) const RECORDS: &[Entry] = &[
         Some("C-CHROME"),
         &[],
         ui("koru_ui::caption", CAPTION),
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain_with(
                 "koru_ui::caption::draw",
@@ -142,6 +144,7 @@ pub(super) const RECORDS: &[Entry] = &[
         Some("C-CHROME"),
         &["WelcomeFailure", "WelcomeCloudNote"],
         ui("koru_ui::welcome", WELCOME),
+        DESKTOP_ANDROID_PARTIAL,
         &[
             plain_with(
                 "koru_ui::welcome::Layout",
@@ -174,6 +177,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["KoruLauncher"],
         ui("koru_ui::launcher", "crates/koru-ui/src/launcher.rs"),
+        DESKTOP_NOT_ON_PHONES,
         &[
             composed("koru_ui::launcher::Launcher"),
             support("koru_ui::launcher::Tile"),
@@ -193,6 +197,7 @@ pub(super) const RECORDS: &[Entry] = &[
             "koru_ui::media_viewer",
             "crates/koru-ui/src/media_viewer.rs",
         ),
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain_with(
                 "koru_ui::media_viewer::MediaViewer",
@@ -215,6 +220,7 @@ pub(super) const RECORDS: &[Entry] = &[
         Some("C-LAYOUT"),
         &[],
         ui("koru_ui::page_shell", "crates/koru-ui/src/page_shell.rs"),
+        DESKTOP_NOT_ON_PHONES,
         &[support("koru_ui::page_shell::PageShell")],
     ),
 ];

@@ -28,7 +28,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_canvas_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_canvas_ui::CanvasSurface"),
             painter("koru_canvas_ui::CanvasSurface::new"),
@@ -60,7 +60,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_canvas_ui", CAMERA),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_canvas_ui::Camera"),
             support("koru_canvas_ui::Camera::new"),
@@ -83,7 +83,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_canvas_ui", MODEL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             boundary_with(
                 "koru_canvas_ui::SceneObject",

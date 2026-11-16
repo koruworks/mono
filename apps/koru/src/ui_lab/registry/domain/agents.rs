@@ -28,7 +28,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_agents_ui", SURFACE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_agents_ui::SessionSurface"),
             painter("koru_agents_ui::SessionSurface::new"),
@@ -58,7 +58,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_agents_ui::watching", WATCHING),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter_with(
                 "koru_agents_ui::watching::draw",

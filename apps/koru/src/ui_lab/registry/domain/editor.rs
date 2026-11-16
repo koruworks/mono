@@ -62,7 +62,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", EDITOR),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru_editor::Editor"),
             painter("koru_editor::Editor::over"),
@@ -149,7 +149,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", VIEW_STATE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::Embedded"),
             painter("koru_editor::draw::floating_panels"),
@@ -166,7 +166,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", POLICY),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support_with(
                 "koru_editor::Policy",
@@ -199,7 +199,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", PARAGRAPH),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             boundary("koru_editor::Paragraph"),
             boundary("koru_editor::TaskRow"),
@@ -233,7 +233,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", DRAW),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             boundary("koru_editor::draw::draw_image_row"),
             boundary("koru_editor::draw::missing_image_detail"),
@@ -275,7 +275,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::table", TABLE),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             boundary("koru_editor::table::TableVisual"),
             boundary("koru_editor::table::TableVisual::build"),
@@ -321,7 +321,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", DIAGRAM),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             boundary("koru_editor::DiagramState"),
             boundary("koru_editor::DiagramEntry"),
@@ -358,7 +358,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::draw", DRAW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::draw::draw_plus"),
             painter("koru_editor::draw::draw_plus_tooltip"),
@@ -379,7 +379,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::chips", CHIPS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::chips::draw_row_chips"),
             support("koru_editor::chips::chip_boxes"),
@@ -427,7 +427,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", DRAW),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru_editor::draw::draw_link_card"),
             painter("koru_editor::draw::draw_link_tooltip"),
@@ -465,7 +465,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", COMPONENTS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::draw::draw_overlay"),
             support_with(
@@ -513,7 +513,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components::command_menu", COMMAND_MENU),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::command_menu::CommandMenu"),
             painter("koru_editor::components::command_menu::CommandMenu::opened"),
@@ -574,7 +574,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["KoruEntityPicker"],
         source(OWNER, "koru_editor::components", ENTITY_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::entity_picker::EntityPicker"),
             painter("koru_editor::components::entity_picker::EntityPicker::new"),
@@ -623,7 +623,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", DATE_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::date_picker::DatePicker"),
             painter("koru_editor::components::date_picker::DatePicker::for_pill"),
@@ -650,7 +650,7 @@ pub(super) const RECORDS: &[Entry] = &[
         Some("C-CHOICE"),
         &["EmojiList", "Emoji", "EmojiCategoryBar"],
         source(OWNER, "koru_editor::components", EMOJI_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::emoji_picker::EmojiPicker"),
             painter("koru_editor::components::emoji_picker::EmojiPicker::standalone"),
@@ -693,7 +693,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::emoji", EMOJI),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::emoji::catalog"),
             support("koru_editor::emoji::EmojiRecord"),
@@ -719,7 +719,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", LANGUAGE_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::language_picker::LanguagePicker"),
             painter("koru_editor::components::language_picker::LanguagePicker::open_for"),
@@ -741,7 +741,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", LINK_PROMPT),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::link_prompt::LinkPrompt"),
             painter("koru_editor::components::draw::draw_link_prompt"),
@@ -779,7 +779,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", LIST_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::list_picker::ListPicker"),
             painter("koru_editor::components::list_picker::ListPicker::opened"),
@@ -813,7 +813,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", NAME_PROMPT),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::name_prompt::NamePrompt"),
             painter("koru_editor::components::draw::draw_name_prompt"),
@@ -838,7 +838,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", PRIORITY_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::priority_picker::PriorityPicker"),
             painter("koru_editor::components::priority_picker::PriorityPicker::open_for"),
@@ -861,7 +861,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", TAG_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::tag_picker::TagPicker"),
             painter("koru_editor::components::tag_picker::TagPicker::opened"),
@@ -887,7 +887,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", COLOR_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::color_picker::ColorPicker"),
             painter("koru_editor::components::color_picker::ColorPicker::open_for"),
@@ -910,7 +910,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::components", ATTR_MENU),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_editor::components::attr_menu::AttrMenu"),
             painter("koru_editor::components::attr_menu::AttrMenu::open"),
@@ -934,7 +934,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::accessibility", ACCESSIBILITY),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::accessibility::DocumentAccessibility"),
             support("koru_editor::accessibility::DocumentAccessibility::body"),
@@ -973,7 +973,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::input", KEYMAP),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::input::keymap::resolve"),
             support("koru_editor::input::keymap::Chord"),
@@ -995,7 +995,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::trigger", TRIGGER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::trigger::Trigger"),
             support("koru_editor::trigger::TriggerKind"),
@@ -1025,7 +1025,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::clipboard", CLIPBOARD),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             support("koru_editor::clipboard::put"),
             support("koru_editor::clipboard::put_plain"),
@@ -1055,7 +1055,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", DICTATION),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::Composition"),
             support("koru_editor::ProvisionalRun"),
@@ -1080,7 +1080,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::pillinfo", PILLINFO),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::pillinfo::info_for"),
             support("koru_editor::pillinfo::info_for_node"),
@@ -1102,7 +1102,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::reminders", REMINDERS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::reminders::Creation"),
             support("koru_editor::reminders::CreationState"),
@@ -1128,7 +1128,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor", TASKS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::tasks::task_ref"),
             support("koru_editor::tasks::today"),
@@ -1152,7 +1152,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_editor::utils", WHEN),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_editor::utils::when::parse"),
             support("koru_editor::utils::when::parse_due"),

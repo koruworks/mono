@@ -61,7 +61,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_search_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter_with(
                 "koru_search_ui::SearchSurface",
@@ -145,7 +145,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_search_ui", ENTITY_SEARCH),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             host_only("koru_search_ui::EntitySearch"),
             support("koru_search_ui::EntitySearch::new"),

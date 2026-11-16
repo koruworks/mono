@@ -161,8 +161,8 @@ fail until this table says what they compute.
 | Windows | 1 | 285 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
 | macOS | 0 | 1 | 285 | 0 | 1 | 3 | 34 | 8 | 0 |
 | Linux | 0 | 0 | 285 | 0 | 0 | 7 | 36 | 3 | 1 |
-| Android | 0 | 18 | 0 | 0 | 13 | 18 | 20 | 1 | 262 |
-| iOS | 0 | 14 | 0 | 1 | 13 | 18 | 24 | 1 | 261 |
+| Android | 0 | 18 | 0 | 73 | 13 | 195 | 28 | 3 | 2 |
+| iOS | 0 | 14 | 0 | 55 | 13 | 210 | 33 | 6 | 1 |
 <!-- cells:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
@@ -1782,6 +1782,326 @@ while the type's own documentation says adapters "must not embed an
 English fallback" (230–232). The Store's tray menu, backup dialogs and
 failure box are English throughout (`tray.rs` 119, 252–255, 409–433;
 `log.rs` 182; the crate has no `koru-i18n`), as batch 3 recorded.
+
+## Reconciliation — the phone cells of every earlier record
+
+Batches 1–3 left 262 Android and 261 iOS cells `NotAudited`. With every
+native UI file read (above), each was settled from the native source or a
+platform page, by four rules:
+
+- **Native partial** — a screen or control in that phone's own source plays
+  the record's role; the table names it. Never `Existing` for a desktop
+  record: the phones link no Koru drawing crate (`koru-mobile-host`,
+  `koru-mobile-native` and `koru-mobile-ios` use none of `koru-draw`,
+  `koru-ui`, vello, parley or winit), so a phone never ships the record's
+  own code. The phone's counterpart is its own record (`Existing` there).
+- **Native-owned** — what stands in its place there is the system's own
+  (a toast, the keyboard's composition, a system menu, scroll indicators).
+- **Not applicable** — only where a page decides it never crosses: mobile
+  CATCHUP's *Deliberately desktop* (the tray, the global shortcut, multiple
+  windows), *Starting a delegation* (never on the phone), *Auto-update*
+  (iOS only — the Android nightly has its own notice), and the platform
+  half of accessibility.
+- **Unavailable** — a page says the phone does not have it yet (search,
+  artifacts, reminders, voice, sessions, importers, iOS's account, Cloud
+  and run screens), or the full read of the phone's UI source finds no
+  counterpart. Unavailable records the fact of absence; where a page owes
+  a decision that would make a cell not applicable instead (PLATFORMS.md's
+  *KoruCaption* row, "native applicability decision owed"), the row says
+  so and leaves the decision to its owner.
+
+Earlier cells that pages had already settled (the A2UI catalog records,
+the element layer's `Planned`, the Settings controls, the search modal,
+Socials, the branch chip) were kept, with one correction:
+`C-SETTINGS-SURFACE` moves from `Unavailable` to native partial on both
+phones — batch 2a read PLATFORMS.md's sentence about the 2026-09-28
+Settings *controls* as the whole surface's, while each phone has its own
+Settings screen.
+
+**Moved: 260 Android and 260 iOS cells** out of `NotAudited` (plus the
+Settings correction on each). **Left `NotAudited`: 2 Android, 1 iOS** —
+`C-TASKS-VIEW` on both (CATCHUP says Android shows a Tasks page's rows,
+but whether a Tasks page reaches either phone's document view was not
+established), and `C-BUTTON` on Android: Material's `Button`,
+`OutlinedButton` and `TextButton` (with an error-colored text button for
+destructive answers) would make it native partial, but the Button is the
+shell's one `ENTRIES` record and its cells are pinned by
+`ids_are_unique_and_every_platform_has_an_answer`, so the change is left
+to the Button's owner.
+
+In the code, a shared-desktop record now names its phone cells with
+`registry.rs`'s `desktop_and` and its five named combinations
+(`DESKTOP_PHONES_PARTIAL`, `DESKTOP_ANDROID_PARTIAL`,
+`DESKTOP_IOS_PARTIAL`, `DESKTOP_NOT_ON_PHONES`, `DESKTOP_ONLY`);
+`DESKTOP_SHARED` remains for what is still not audited. The application
+compositions' helper takes the platforms as every other helper does.
+
+<!-- phones:begin -->
+| Record | Android | iOS | What stands in its place, or why nothing does |
+| --- | --- | --- | --- |
+| `H-APP-HOST` | native partial | native partial | the app's own process host: `MainActivity` and its container (C-ANDROID-APP), the SwiftUI `App` (C-IOS-APP) |
+| `C-DOCUMENT-WINDOW` | not applicable | not applicable | CATCHUP *Deliberately desktop*: the tray, the global shortcut and multiple windows are decided never |
+| `C-FORMAT-BUBBLE` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-DOCUMENT-MENUS` | unavailable | native partial | Android: absent (its document screen has no block or page menu); iOS: the block context menu (indent, outdent, delete) in C-IOS-DOCUMENT-VIEW |
+| `C-FIND-REPLACE` | unavailable | unavailable | CATCHUP *Global search*: no search on a phone at all |
+| `C-AGENT-SEARCH-WINDOW` | not applicable | not applicable | CATCHUP *Deliberately desktop*: the tray, the global shortcut and multiple windows are decided never |
+| `C-AGENT-VOICE-WINDOWS` | not applicable | not applicable | CATCHUP *Deliberately desktop*: the tray, the global shortcut and multiple windows are decided never |
+| `C-AGENT-TRAY` | not applicable | not applicable | CATCHUP *Deliberately desktop*: the tray, the global shortcut and multiple windows are decided never |
+| `H-APP-LEAF` | native partial | native partial | the document screen a document opens in: C-ANDROID-DOCUMENT-VIEWER, C-IOS-DOCUMENT-VIEW |
+| `H-MAIN-VIEW` | native partial | native partial | the navigation host: C-ANDROID-APP, C-IOS-APP |
+| `C-LANE` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `C-APP-CAPTION` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `C-PANE-SPLITS` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `C-APP-ZOOM-FLASH` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-ERROR-DIALOG` | native partial | native partial | the error dialog of C-ANDROID-APP (`AlertDialog` over `localizedFailure`) and the error alert of C-IOS-APP |
+| `C-CHAT-FILE-PREVIEW` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-LINK-DEVICE-PANEL` | native partial | native partial | C-ANDROID-LINK-DEVICE, C-IOS-DEVICES |
+| `C-DELEGATE-FORM` | not applicable | not applicable | CATCHUP *Starting a delegation*: decided never on the phone |
+| `C-RECORDING-SETUP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-AGENT-CLI-CARDS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-FONT-PICKER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-IMPORT-DIALOG` | unavailable | unavailable | CATCHUP *The other importers*: a phone has single-item share import only |
+| `C-MOVE-TO` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-NAME-PROMPTS` | native partial | native partial | the rename and create dialogs of C-ANDROID-PROFILES, -WORKSPACES, -DOCUMENTS and C-ANDROID-ENTITY-LIST; the rename alerts and creation sheet of C-IOS-APP, -WORKSPACES, -DOCUMENTS |
+| `C-REMINDER-EDITOR` | unavailable | unavailable | CATCHUP *Reminders*: wanted, phase 2; neither phone schedules or delivers |
+| `C-UPDATE-PROMPTS` | native partial | not applicable | Android: the nightly's C-ANDROID-UPDATE-NOTICE (stable builds and store installs have none); iOS: CATCHUP *Auto-update*: decided never; phones update through their stores |
+| `C-DICTATION-STRIP` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `C-PROFILE-WAIT` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-APP-MENUS` | native partial | native partial | the long-press action sheets (Android) and context menus (iOS) the list screens' own source calls each row's actions; PLATFORMS.md warns against *assuming* right-click becomes long-press, and this is the source's mapping, not an assumption |
+| `C-APP-WELCOME` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-MANAGE` | native partial | native partial | Android: C-ANDROID-PROFILES and C-ANDROID-ACCOUNT; iOS: the profiles list of C-IOS-APP (no sign-in) |
+| `C-MANAGE-WORKSPACES` | native partial | native partial | C-ANDROID-WORKSPACES, C-IOS-WORKSPACES |
+| `C-MANAGE-DEVICES` | native partial | native partial | C-ANDROID-LINK-DEVICE, C-IOS-DEVICES |
+| `C-MANAGE-CLOUD` | native partial | unavailable | Android: C-ANDROID-ACCOUNT's Cloud storage, C-ANDROID-CLOUD-INVENTORY, -CLOUD-COPY and -CLOUD-PROGRESS (no subscription: CATCHUP); iOS: CATCHUP *Manage Profiles' Cloud sync progress*: iOS has the bindings and no screen |
+| `C-TRASH-PAGE` | unavailable | unavailable | neither phone lists or restores trashed documents (CATCHUP says both restore; see the defects) |
+| `C-FEEDBACK-PAGE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-VERSION-COMPARE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-CANVAS-TAB` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): the phones draw a canvas block as its stored picture |
+| `C-CANVAS-TEXT-DIALOG` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SUPPORT-VIEW` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SUPPORT-FAB` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SESSION-OFFER` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-REMINDER-SETTINGS` | unavailable | unavailable | CATCHUP *Reminders*: wanted, phase 2; neither phone schedules or delivers |
+| `C-POPOUT-CLOSE-DIALOG` | not applicable | not applicable | CATCHUP *Deliberately desktop*: the tray, the global shortcut and multiple windows are decided never |
+| `H-MANAGER-VIEW` | native partial | native partial | the routes of C-ANDROID-APP and C-IOS-APP |
+| `H-APP-TAB-HOSTS` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `C-JUMP-LIST` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-EXPLORE` | native partial | native partial | the documents and files lists: C-ANDROID-DOCUMENTS, C-IOS-DOCUMENTS |
+| `C-APPS-RAIL` | unavailable | unavailable | PLATFORMS.md *Mini-app pin group*: no Android or iOS adapter |
+| `C-TASKS-RAIL` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-HOME-NAV` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-HOME-PAGE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-EXPLORE-POPOVERS` | native partial | native partial | the profile and workspace screens that switch between them: C-ANDROID-PROFILES/-WORKSPACES, C-IOS-APP/-WORKSPACES |
+| `C-CONTEXT-COLUMN` | native partial | unavailable | Android: C-ANDROID-FILE-TRANSFERS, the Cloud sync section's equivalent (CATCHUP *The Cloud sync tab as the one place*); iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TASKS-VIEW` | not audited | not audited | CATCHUP says Android shows a Tasks page's rows; both phones draw task blocks in their document view, but whether a Tasks page reaches them as a document was not established |
+| `C-CAPTION` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `C-WELCOME` | native partial | unavailable | Android: C-ANDROID-ACCOUNT's sign-in choices and its continue-offline action; iOS: CATCHUP *Hosted account parity*: iOS account surfaces remain I6; none in source |
+| `C-LAUNCHER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-MEDIA-VIEWER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): pictures stay inline; Android hands a file to another app |
+| `C-PAGE-SHELL` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-ICON-BUTTON` | native partial | native partial | Material `IconButton` (options, note, edit) / borderless glyph buttons and toolbar labels |
+| `C-BUTTON-GROUP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SPLIT-BUTTON` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-COPY` | native partial | native partial | the copy buttons for a link code and a workspace id (Android confirms with a system toast, iOS does not confirm) |
+| `C-CHIP` | native partial | unavailable | Android: Material `FilterChip` (theme, language, font); iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TOGGLE` | native partial | native partial | Material `Switch` / SwiftUI `Toggle` (relay, transfers, Cloud sync, filters) |
+| `C-COLOR-PICKER-ROW` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-PROFILE-PICKER` | native partial | native partial | the profile rows with initials tiles (C-ANDROID-PROFILES, the share screens' profile choice; `ProfileBadge`) |
+| `C-BADGE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-LABEL-CHIP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-CONTEXT-CHIP` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-KEY-CHIP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TEXT-FIELD` | native partial | native partial | Material `OutlinedTextField` / SwiftUI `TextField` |
+| `C-TEXT-AREA` | native partial | native partial | the share screens' multi-line note fields |
+| `C-TEXT-INPUT` | native partial | native partial | Material `OutlinedTextField` / SwiftUI `TextField` (link code, names) |
+| `C-DATE-GRID` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SELECTABLE-LIST` | native partial | native partial | the platform lists of C-ANDROID-ENTITY-LIST and C-IOS-ENTITY-LIST (no keyboard stepping) |
+| `C-EXIT-LIST` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TABLE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): a document's table is C-DOCUMENT-TABLE's |
+| `C-CHIP-NAV` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SCROLLBAR` | unavailable | native-owned | Android: Compose's lazy lists draw none; iOS: the system's own scroll indicator |
+| `C-POPOVER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-DIALOG-FRAME` | native partial | native partial | the rename dialogs (Material `AlertDialog` with a field) / rename alerts |
+| `C-MODAL` | native partial | native partial | Material `AlertDialog` and `ModalBottomSheet` / SwiftUI sheets |
+| `C-PLACE-CHOOSER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-PROMPT` | native partial | native partial | Material `AlertDialog` / SwiftUI alerts |
+| `C-MENU` | native partial | native-owned | Android: the action sheets of C-ANDROID-ENTITY-LIST; iOS: SwiftUI `Menu` and context menus, drawn by the system |
+| `C-MENU-ITEM` | native partial | native-owned | Android: `WorkspaceActionRow`; iOS: a system menu's items |
+| `C-CONFIRM` | native partial | native partial | the delete, start-over, free-up-space, remove and discard confirmations / `confirmationDialog` |
+| `C-CHOICE-DIALOG` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TOOLTIP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TOAST` | native-owned | unavailable | Android: the system `Toast` (no action); iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `C-PROGRESS-BAR` | native partial | unavailable | Android: Material `LinearProgressIndicator`; iOS: only the spinner |
+| `C-PROGRESS-RING` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-PULSING-DOTS` | native partial | native partial | the pending role is played by Material `CircularProgressIndicator` / SwiftUI `ProgressView` |
+| `C-MEASUREMENT-BADGE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-DIVIDER` | native partial | native partial | Material `HorizontalDivider` / a drawn rule and list separators |
+| `C-FILE-ICON` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): one generic file glyph |
+| `C-FONT-PREVIEW` | native partial | unavailable | Android: the font chips set in their own faces (C-ANDROID-SETTINGS); iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `C-HIGHLIGHTED-TEXT` | unavailable | unavailable | CATCHUP *Global search*: no search on a phone at all |
+| `C-LOGO` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-TEXT-PARAGRAPH` | native partial | native partial | the platform's wrapping `Text` |
+| `C-TEXT-TITLE` | native partial | native partial | the top app bar title / navigation title |
+| `H-CLIPBOARD` | native partial | native partial | `ClipboardManager` / `UIPasteboard` |
+| `H-CURSOR` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-KEYS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-DICTATION` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `H-DATES` | native partial | native partial | `DateUtils` relative times / `RelativeDateTimeFormatter` |
+| `C-SESSION-SURFACE` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-WATCH-BAND` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-AI-CHAT-SURFACE` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-CONVERSATION` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-TOOL-CALL-DETAIL` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-NEW-DIVIDER` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-COMPOSER` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-COMPOSER-DOCUMENT` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-COMPOSER-PLUS-MENU` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-ATTACHMENT-STRIP` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `H-AI-VIEWER-LIFT` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-MODEL-PICKER` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-AI-MICROPHONE-PANEL` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `C-AI-DICTATION-ROW` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `C-AI-PROVIDER-SETUP` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `H-AI-CHAT-STATUS` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `H-AI-CHAT-DIAGRAMS` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `H-AI-AGENT-PROVIDERS` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-SHELL-CAPTION` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `C-SHELL-POPOVER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-SHELL-ZOOM-LABEL` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-SHELL-PANEL` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `H-SHELL-TABS` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `H-SHELL-BANNER-STATE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-SHELL-HOST` | not applicable | not applicable | CATCHUP *Deliberately desktop*: the tray, the global shortcut and multiple windows are decided never |
+| `H-SHELL-SURFACE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-EMOJI-COLOR-PANEL` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-ARTIFACTS-COLUMN` | unavailable | unavailable | CATCHUP *The Artifacts surface*: wanted, after M7 |
+| `C-ARTIFACT-TAB` | unavailable | unavailable | CATCHUP *The Artifacts surface*: wanted, after M7 |
+| `C-CANVAS-SURFACE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): a canvas block is drawn as its stored picture |
+| `H-CANVAS-CAMERA` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-CANVAS-OBJECTS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): a canvas block is drawn as its stored picture |
+| `C-CHATS-LIST` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `H-CHAT-STATUS` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-DOCUMENT-EDITOR` | native partial | native partial | C-ANDROID-DOCUMENT-VIEWER with C-ANDROID-RICH-EDITOR (text editing only); C-IOS-DOCUMENT-VIEW with C-IOS-RICH-TEXT (reading; its edits are refused) |
+| `H-EDITOR-EMBEDDED` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `H-EDITOR-POLICY` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-DOCUMENT-TEXT` | native partial | native partial | `RichTextBlock` / `NativeRichTextEditor`: marks, pills, headings, lists |
+| `C-DOCUMENT-IMAGE` | native partial | native partial | `BlobImage` on both phones |
+| `C-DOCUMENT-TABLE` | native partial | native partial | `TableBlock` on both phones (one Markdown reader) |
+| `C-DOCUMENT-DIAGRAM` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): an unsupported block's label |
+| `C-ROW-GUTTER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-ROW-ATTRIBUTE-CHIPS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-LINK-CARD` | native partial | native partial | Android's `ReferenceCard`; iOS's labelled link row (CATCHUP *Tables render as a placeholder*) |
+| `C-EDITOR-OVERLAY` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-COMMAND-MENU` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-ENTITY-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-DATE-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-EMOJI-LIST` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `H-EMOJI-CATALOG` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-LANGUAGE-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-LINK-PROMPT` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-LIST-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-NAME-PROMPT` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-PRIORITY-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-TAG-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-ACCENT-COLOR-PICKER` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-ATTR-MENU` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `H-EDITOR-ACCESSIBILITY` | unavailable | unavailable | CATCHUP *Native accessibility semantics*: decided not yet |
+| `H-EDITOR-KEYMAP` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `H-EDITOR-TRIGGERS` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `H-EDITOR-CLIPBOARD` | native partial | unavailable | Android: the platform field's own paste, split into paragraphs (CATCHUP *Writing in a document body*); iOS: edits are refused |
+| `H-EDITOR-DICTATION` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `H-PILL-INFO` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `H-EDITOR-REMINDERS` | unavailable | unavailable | CATCHUP *Reminders*: wanted, phase 2; neither phone schedules or delivers |
+| `H-EDITOR-TASKS` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `H-EDITOR-DATES` | unavailable | unavailable | neither phone's document UI has this kind of editing tool (CATCHUP *Writing in a document body*: Android edits plain text, with no formatting controls or pickers; iOS's only tools are the add-block bar and a block menu) |
+| `C-MARKDOWN-VIEW` | unavailable | unavailable | CATCHUP *The other importers*: a phone stores a `.md` as an opaque file |
+| `C-MARKDOWN-DOCUMENT` | unavailable | unavailable | CATCHUP *The other importers*: a phone stores a `.md` as an opaque file |
+| `C-RUNS-SURFACE` | native partial | unavailable | Android: C-ANDROID-RUN, Overview and Activity without Result or controls (CATCHUP *The run's three views*); iOS: CATCHUP *Delegated work*: iOS is catch-up row I7; no run screen in source |
+| `H-RUN-SUMMARY` | native partial | unavailable | Android: `RunPresentation` (glyph, overview, pill label); iOS: CATCHUP *Delegated work*: iOS is catch-up row I7; no run screen in source |
+| `C-SEARCH-SURFACE` | unavailable | unavailable | CATCHUP *Global search*: no search on a phone at all |
+| `H-ENTITY-SEARCH` | unavailable | unavailable | CATCHUP *Global search*: no search on a phone at all |
+| `C-TERMINAL-VIEW` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `H-TERMINAL-STYLE` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-TERMINAL-CONTENT` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-MANAGED-SESSION-VIEW` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-MANAGED-TRANSCRIPT` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-PENDING-INPUT-VIEW` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `H-SESSION-INTERACTION` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `C-SETTINGS-SURFACE` | native partial | native partial | C-ANDROID-SETTINGS, C-IOS-SETTINGS (appearance, language, font, transfers): batch 2a read PLATFORMS.md's sentence about the Settings *controls* as the whole surface's |
+| `C-STATUS-CHIP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-STATUS-MARK` | unavailable | unavailable | no AI chat in either phone's UI source |
+| `C-TAB-STRIP` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `P-PAGE-EMOJI` | native partial | unavailable | Android: a document's emoji tile in C-ANDROID-DOCUMENTS; iOS: documents show none |
+| `H-BANNER-SLOTS` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `H-CAPTION-LAYOUT` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `H-LANE-LAYOUT` | unavailable | unavailable | the phones show one screen at a time (`NavHost`, `NavigationStack`); no tabs, panes or sidebar in their source |
+| `H-WINDOW-REGIONS` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `H-DRAG-REORDER` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `C-VOICE-SURFACE` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `C-VOICE-HUD` | unavailable | unavailable | CATCHUP *Voice input*: wanted; neither phone has capture |
+| `C-WEB-SURFACE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): both phones hand a URL to the browser |
+| `H-WINDOW-RUNNERS` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-WINDOW-ACCESSIBILITY` | not applicable | not applicable | CATCHUP *Native accessibility semantics*: the platform half (`koru_window::accessibility`) must not cross |
+| `C-WINDOW-FRAME` | unavailable | unavailable | no window chrome in either phone's source; PLATFORMS.md still owes the native applicability decision (KoruCaption row), which would make this not applicable |
+| `C-IME-COMPOSITION` | native-owned | native-owned | the system keyboard composes in the platform field (`EditText`, which C-ANDROID-RICH-EDITOR leaves alone while a composing span is open; `UITextView`); PLATFORMS.md's *Not audited* is about the P1 extension's own adapter, which is still not implemented |
+| `H-WINDOW-INPUT` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-WINDOW-RENDERER` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-SYSTEM-APPEARANCE` | native partial | native partial | both follow the system's light and dark (`isSystemInDarkTheme`, SwiftUI's color scheme) with an override (T-ANDROID-THEME, C-IOS-SETTINGS) |
+| `C-ONBOARDING` | native partial | unavailable | Android: C-ANDROID-ACCOUNT's sign-in and profile enrollment (no profile creation: CATCHUP); iOS: CATCHUP *Hosted account parity*: iOS account surfaces remain I6; none in source |
+| `C-ACCOUNT-SWITCHER` | native partial | unavailable | Android: the held accounts of C-ANDROID-ACCOUNT; iOS: CATCHUP *Hosted account parity*: iOS account surfaces remain I6; none in source |
+| `H-ACCOUNT-STATE` | native partial | unavailable | Android: `AccountPresentation`'s screen state (services, searched); iOS: CATCHUP *Hosted account parity*: iOS account surfaces remain I6; none in source |
+| `H-VIEW-HOST` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-WORKSPACE-ACCESSIBILITY` | unavailable | unavailable | CATCHUP *Native accessibility semantics*: the vocabulary could cross; decided not yet |
+| `H-NATIVE-SURFACE` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `C-SYSTEM-MENUS` | unavailable | native-owned | Android: no system menu in source (its sheets are the app's own); iOS: SwiftUI context menus and `Menu`, drawn by the system |
+| `C-FILE-DIALOGS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): Android's system chooser hands a file out, nothing picks one |
+| `H-KEYBOARD-ROUTING` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-PROFILE` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `T-SPACE` | native partial | native partial | `KoruSpacing` / `KoruSpace`: five of the fifteen steps (4, 8, 16, 24, 32) |
+| `T-RADIUS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full): raw corner radii |
+| `T-ICON-SIZE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-METRICS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-ALIASES` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-TEXT-ROLES` | native partial | native partial | Material typography overrides / `KoruType` |
+| `T-SURFACE` | native partial | native partial | Material color scheme in Koru's values / `KoruColor.surface` |
+| `T-INK` | native partial | native partial | Material `onSurface`/`onSurfaceVariant` / `KoruColor.subtle` |
+| `T-LINE` | native partial | unavailable | Android: Material `outline` in Koru's values; iOS: a raw opacity |
+| `T-ACCENT` | native partial | native partial | Material `primary` / `KoruColor.accent` (they differ: see the defects) |
+| `T-THEMES` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-CONTRAST` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-PALETTE` | native partial | native partial | the light and dark Material schemes / `KoruColor` |
+| `T-TYPE-SCALE` | native partial | native partial | Material typography / `KoruType` and the document ramp |
+| `T-ACCENT-CHOICES` | native partial | unavailable | Android: the callout accent tokens (`calloutTint`); iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `T-NAMED-COLORS` | native partial | native partial | the workspace color names, light and dark, in `EntityTileColors` / `KoruEntityColor` |
+| `T-TERMINAL-PALETTE` | unavailable | unavailable | CATCHUP *Watching a run's session*: not on a phone (D15, follows M8) |
+| `T-APPEARANCE` | native partial | native partial | `KoruThemePreference` / `SettingsScreen.Appearance` (system, light, dark) |
+| `T-CARET` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-FONTS` | native partial | unavailable | Android: `KoruFontChoice`; iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `T-DOCUMENT-TYPE` | native partial | native partial | Android maps to Material's ramp (TECHDEBT 84); iOS pins the desktop's ramp by value (ADR-412) |
+| `T-LAYOUT-CONSTANTS` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `T-MOTION` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `T-POPOVER-GEOMETRY` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-APPEARANCE-PREVIEW` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `P-FLOATING-PANEL` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `P-CHECKBOX` | native partial | native partial | Material `Checkbox` / a checkmark symbol (task markers, profile choice) |
+| `H-ATTRIBUTE-CHIP` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `P-PILL` | native partial | native partial | the reference pills: Android's annotated text and `ReferenceSpan`, iOS's attachment image |
+| `P-IMAGE` | native partial | native partial | `BlobImage` on both phones |
+| `P-TILE` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `P-BRAND` | native partial | unavailable | Android: the provider mark on the sign-in button; iOS: no counterpart anywhere in the phone's UI source (read in full) |
+| `P-ICONS` | native partial | native partial | Material icons / SF Symbols, not Koru's icon pack |
+| `P-DIAGRAM` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `P-SHAPES` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `P-TEXT-PAINT` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `P-STATUS-BAR` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `P-SMALL-MARKS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-GEOMETRY` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-TEXT-ENGINE` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-ANIMATION` | unavailable | unavailable | the phones link no Koru drawing crate (`koru-mobile-*` use none of koru-draw, koru-ui, vello, parley or winit); no counterpart in their UI source |
+| `H-INSPECT` | unavailable | unavailable | COMPONENTS.md: inspector enablement on mobile native hosts is outside the coverage claim; no inspector in either phone's source |
+| `H-INSTALLED-FONTS` | unavailable | unavailable | no counterpart anywhere in the phone's UI source (read in full) |
+| `H-EMOJI` | native partial | native partial | the leading-emoji split the profile and workspace tiles draw (`leadingEmoji`) |
+<!-- phones:end -->
 
 ## Notes for later batches
 

@@ -34,7 +34,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", CHROME),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_app_shell::chrome::draw_band"),
             painter("koru_app_shell::chrome::draw_banner"),
@@ -83,7 +83,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", POPOVER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_app_shell::Popover"),
             painter("koru_app_shell::Popover::open"),
@@ -122,7 +122,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", ZOOM_LABEL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_app_shell::ZoomLabel"),
             painter("koru_app_shell::ZoomLabel::new"),
@@ -148,7 +148,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", PANEL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_app_shell::Panel"),
             support("koru_app_shell::Panel::new"),
@@ -180,7 +180,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", TABSTRIP),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_app_shell::TabStrip"),
             support("koru_app_shell::TabStrip::new"),
@@ -225,7 +225,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", BANNER_STATE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_app_shell::BannerState"),
             support("koru_app_shell::BannerState::offered"),
@@ -270,7 +270,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", STATE),
-        DESKTOP_SHARED,
+        DESKTOP_ONLY,
         &[
             support("koru_app_shell::ShellState"),
             support("koru_app_shell::ShellState::new"),
@@ -335,7 +335,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_app_shell", SURFACE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_app_shell::Surface"),
             support("koru_app_shell::SurfaceCx"),

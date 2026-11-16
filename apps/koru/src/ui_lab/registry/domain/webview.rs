@@ -32,8 +32,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::NativeOwned),
             (Platform::Linux, Availability::Unavailable),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::Unavailable),
+            (Platform::Ios, Availability::Unavailable),
         ],
         &[
             boundary("koru_webview::WebSurface"),

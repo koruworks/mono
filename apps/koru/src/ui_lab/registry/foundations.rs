@@ -128,7 +128,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain_with(
             "koru_draw::theme::Profile",
             &[values(
@@ -149,7 +149,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[api(
             "koru_draw::theme::Space",
             &[SPACE],
@@ -184,7 +184,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[api(
             "koru_draw::theme::Radius",
             &[RADIUS],
@@ -211,7 +211,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain_with(
             "koru_draw::theme::IconSize",
             &[values(
@@ -239,7 +239,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain_with(
             "koru_draw::theme::metrics",
             &[values(
@@ -277,7 +277,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain_with(
             "koru_draw::theme::alias",
             &[values(
@@ -302,7 +302,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[api(
             "koru_draw::theme::roles",
             &[values(
@@ -341,7 +341,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[api(
             "koru_draw::theme::Surface",
             &[values(
@@ -372,7 +372,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[api(
             "koru_draw::theme::Ink",
             &[values(
@@ -409,7 +409,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[plain_with(
             "koru_draw::theme::Line",
             &[LINE],
@@ -424,7 +424,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", TOKENS),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[plain_with(
             "koru_draw::theme::Accent",
             &[values(
@@ -450,7 +450,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEMES),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain_with(
                 "koru_draw::theme::Theme",
@@ -484,7 +484,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEMES),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain_with(
             "koru_draw::theme::Contrast",
             &[values(
@@ -505,7 +505,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain("koru_draw::theme::Palette", Story::NoStoryYet),
             plain("koru_draw::theme::LIGHT", Story::NoStoryYet),
@@ -520,7 +520,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain_with(
                 "koru_draw::theme::text_metrics",
@@ -597,7 +597,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             plain("koru_draw::theme::ACCENT_CHOICES_LIGHT", Story::NoStoryYet),
             plain("koru_draw::theme::ACCENT_CHOICES_DARK", Story::NoStoryYet),
@@ -615,7 +615,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain_with(
                 "koru_draw::theme::highlight_names",
@@ -688,7 +688,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::theme::TerminalPalette", Story::NoStoryYet),
             plain("koru_draw::theme::terminal_palette", Story::NoStoryYet),
@@ -702,7 +702,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain_with(
                 "koru_draw::theme::ThemePreference",
@@ -741,7 +741,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain_with(
                 "koru_draw::theme::CaretColor",
@@ -797,7 +797,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             plain_with(
                 "koru_draw::theme::FontChoice",
@@ -868,7 +868,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain("koru_draw::theme::TypeStep", Story::NoStoryYet),
             plain("koru_draw::theme::DocMetrics", Story::NoStoryYet),
@@ -904,7 +904,7 @@ const THEME_RECORDS: [Entry; 15] = [
         Kind::Token,
         P_DRAW,
         draw("koru_draw::theme", THEME),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain("koru_draw::theme", Story::NoStoryYet)],
     ),
     record(
@@ -918,7 +918,7 @@ const THEME_RECORDS: [Entry; 15] = [
             "koru_draw::theme::motion",
             "crates/koru-draw/src/theme/motion.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::theme::motion::tooltip", Story::NoStoryYet),
             plain("koru_draw::theme::motion::pane_fold", Story::NoStoryYet),
@@ -935,7 +935,7 @@ const THEME_RECORDS: [Entry; 15] = [
             "koru_draw::theme::overlay",
             "crates/koru-draw/src/theme/overlay.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain(
             "koru_draw::theme::overlay::popover",
             Story::NoStoryYet,
@@ -952,7 +952,7 @@ const THEME_RECORDS: [Entry; 15] = [
             "koru_draw::theme::preview",
             "crates/koru-draw/src/theme/preview.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::theme::preview::Preview", Story::Nonvisual),
             plain_with(
@@ -1323,7 +1323,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::scene", SCENE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain_with(
                 "koru_draw::scene::floating_panel",
@@ -1349,7 +1349,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::checkbox", "crates/koru-draw/src/checkbox.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain("koru_draw::checkbox::outline", Story::NoStoryYet),
             plain("koru_draw::checkbox::ticked", Story::NoStoryYet),
@@ -1363,7 +1363,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Support,
         P_DRAW,
         draw("koru_draw::chip", "crates/koru-draw/src/chip.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain_with(
                 "koru_draw::chip::ChipKind",
@@ -1394,7 +1394,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::pill", "crates/koru-draw/src/pill.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain_with(
                 "koru_draw::pill::PillKind",
@@ -1432,7 +1432,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw", "crates/koru-draw/src/image.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain("koru_draw::scene::draw_image", Story::NoStoryYet),
             plain("koru_draw::image::ImageCache", Story::Nonvisual),
@@ -1447,7 +1447,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::tile", "crates/koru-draw/src/tile.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain("koru_draw::tile::Tile", Story::NoStoryYet)],
     ),
     record(
@@ -1458,7 +1458,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::brand", "crates/koru-draw/src/brand.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             plain("koru_draw::brand::draw_logo", Story::NoStoryYet),
             plain("koru_draw::brand::draw_logo_tinted", Story::NoStoryYet),
@@ -1484,7 +1484,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::icons", "crates/koru-draw/src/icons.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             plain("koru_draw::icons::ALL", Story::NoStoryYet),
             plain_with(
@@ -1514,7 +1514,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         None,
         draw("koru_draw::diagram", "crates/koru-draw/src/diagram.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::diagram::PreparedDiagram", Story::Boundary),
             plain("koru_draw::diagram::paint", Story::Boundary),
@@ -1529,7 +1529,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::scene", SCENE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::scene::fill", Story::Boundary),
             plain("koru_draw::scene::stroke", Story::Boundary),
@@ -1546,7 +1546,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::scene", SCENE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::scene::draw_layout", Story::Boundary),
             plain("koru_draw::scene::draw_layout_first_line", Story::Boundary),
@@ -1571,7 +1571,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::scene", SCENE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[plain(
             "koru_draw::scene::draw_status_bar",
             Story::NoStoryYet,
@@ -1585,7 +1585,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Primitive,
         P_DRAW,
         draw("koru_draw::scene", SCENE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::scene::grip_dots", Story::NoStoryYet),
             plain("koru_draw::scene::dots_three", Story::NoStoryYet),
@@ -1602,7 +1602,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Support,
         P_DRAW,
         draw("koru_draw", "crates/koru-draw/src/geometry.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::geometry::Rect", Story::Nonvisual),
             plain("koru_draw::geometry::text_x", Story::Nonvisual),
@@ -1620,7 +1620,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Support,
         P_DRAW,
         draw("koru_draw::text", "crates/koru-draw/src/text.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::text::TextEngine", Story::Nonvisual),
             plain("koru_draw::text::RangeStyle", Story::Nonvisual),
@@ -1634,7 +1634,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Support,
         P_DRAW,
         draw("koru_draw", "crates/koru-draw/src/tween.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::tween::Tween", Story::Nonvisual),
             plain("koru_draw::anim::ease_out_cubic", Story::Nonvisual),
@@ -1649,7 +1649,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Support,
         None,
         draw("koru_draw::inspect", "crates/koru-draw/src/inspect.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain("koru_draw::inspect::scope", Story::Nonvisual),
             plain("koru_draw::inspect::scope_hoisted", Story::Nonvisual),
@@ -1670,7 +1670,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
             "koru_draw::installed_fonts",
             "crates/koru-draw/src/installed_fonts.rs",
         ),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             plain(
                 "koru_draw::installed_fonts::installed_fonts",
@@ -1691,7 +1691,7 @@ const DRAWING_RECORDS: [Entry; 19] = [
         Kind::Support,
         P_DRAW,
         draw("koru_draw::emoji", "crates/koru-draw/src/emoji.rs"),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[plain(
             "koru_draw::emoji::split_leading_emoji",
             Story::Nonvisual,

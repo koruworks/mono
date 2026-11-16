@@ -54,7 +54,7 @@ pub(super) const RECORDS: &[Entry] = &[
             "WorkspaceNameField",
         ],
         source(OWNER, "koru_workspace_host::onboarding", ONBOARDING),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             painter("koru_workspace_host::onboarding::OnboardingView"),
             painter("koru_workspace_host::onboarding::OnboardingView::draw"),
@@ -109,7 +109,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_workspace_host::account_ui::switcher", SWITCHER),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             painter("koru_workspace_host::account_ui::switcher::AccountSwitcher"),
             painter("koru_workspace_host::account_ui::switcher::AccountSwitcher::draw"),
@@ -130,7 +130,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_workspace_host::account_ui", ACCOUNT_UI),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             support("koru_workspace_host::account_ui::project"),
             support("koru_workspace_host::account_ui::project_for_lang"),
@@ -189,7 +189,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_workspace_host", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_workspace_host::View"),
             support("koru_workspace_host::Host"),
@@ -244,7 +244,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_workspace_host::accessibility", ACCESSIBILITY),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             host_only("koru_workspace_host::accessibility::ControlPart"),
             host_only("koru_workspace_host::accessibility::Occurrence"),
@@ -289,7 +289,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_workspace_host::native_surface", NATIVE_SURFACE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_workspace_host::native_surface::NativeSurface"),
             support("koru_workspace_host::native_surface::Placement"),
@@ -322,8 +322,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::NativeOwned),
             (Platform::Linux, Availability::Unavailable),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::Unavailable),
+            (Platform::Ios, Availability::NativeOwned),
         ],
         &[
             boundary("koru_workspace_host::menus::Popup"),
@@ -356,8 +356,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::NativeOwned),
             (Platform::Linux, Availability::NativeOwned),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::Unavailable),
+            (Platform::Ios, Availability::Unavailable),
         ],
         &[
             boundary("koru_workspace_host::dialogs::pick_open_file"),
@@ -378,7 +378,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_workspace_host::routing", ROUTING),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_workspace_host::routing::Blockers"),
             support("koru_workspace_host::routing::Blockers::is_blocking"),

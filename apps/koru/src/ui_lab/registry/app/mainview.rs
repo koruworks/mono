@@ -47,7 +47,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", MAINVIEW),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             support("koru::mainview::MainView"),
             painter("koru::mainview::MainView::draw_frame"),
@@ -77,7 +77,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", DRAW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::MainView::draw_lane"),
             painter("koru::mainview::MainView::draw_lane_controls"),
@@ -97,7 +97,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", DRAW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::MainView::draw_caption"),
             painter("koru::mainview::MainView::draw_caption_band"),
@@ -120,7 +120,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", PANES),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::panes::draw_split_preview"),
             support("koru::mainview::panes::PaneTree"),
@@ -139,7 +139,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", ZOOM),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::MainView::draw_zoom_label"),
             support("koru::mainview::zoomlabel::ZoomLabel"),
@@ -156,7 +156,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", ERROR_DIALOG),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::mainview::error_dialog::ErrorDialog"),
             painter("koru::mainview::MainView::draw_error"),
@@ -189,7 +189,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["ChatFilePreview"],
         source(KORU, "koru::mainview", FILE_PREVIEW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[painter("koru::mainview::file_preview::FilePreview")],
     ),
     // Construction: asks the Agent for a pairing code and draws its QR
@@ -203,7 +203,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["QRFloatingPanel"],
         source(KORU, "koru::mainview", LINK_DEVICE),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::mainview::link_device::LinkDevice"),
             painter("koru::mainview::MainView::draw_link_device"),
@@ -223,7 +223,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["KoruDelegateForm"],
         source(KORU, "koru::mainview", DELEGATE_PAINT),
-        DESKTOP_SHARED,
+        DESKTOP_ONLY,
         &[
             painter("koru::mainview::delegate::paint::draw"),
             support("koru::mainview::delegate::modal::Delegation"),
@@ -257,7 +257,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", RECORDING),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::recording::paint::draw"),
             painter("koru::mainview::recording::paint::draw_countdown"),
@@ -275,7 +275,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", AGENT_CARDS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::MainView::draw_agent_cli_cards"),
             support("koru::mainview::agent_cli_updates::Cards"),
@@ -293,7 +293,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", FONT_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::font_picker::FontPickerSurface"),
             painter("koru::mainview::MainView::draw_font_picker"),
@@ -311,7 +311,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", IMPORT_DIALOG),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::import_dialog::ImportDialog"),
             support_with(
@@ -337,7 +337,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", MOVE_TO),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::move_to::MoveToSurface"),
             support("koru::mainview::move_to::Destination"),
@@ -356,7 +356,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", NEW_DOCUMENT),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::mainview::new_document::NewDocument"),
             painter("koru::mainview::snapshot_prompt::SnapshotPrompt"),
@@ -386,7 +386,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", REMINDER_CREATION),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::reminder_creation::Surface"),
             painter("koru::mainview::reminder_management::Management"),
@@ -405,7 +405,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", UPDATE_UI),
-        DESKTOP_SHARED,
+        desktop_and(Availability::NativePartial, Availability::NotApplicable),
         &[
             painter("koru::mainview::MainView::draw_update_banner"),
             support("koru::mainview::update_ui::Action"),
@@ -422,7 +422,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", DICTATION),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::mainview::dictation::Listening"),
             support("koru::mainview::dictation::Geometry"),
@@ -440,7 +440,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", PROFILE_WAIT),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[painter("koru::mainview::profile_wait::WaitPane")],
     ),
     // Construction: the container's menus are koru-ui's Menu over the
@@ -455,7 +455,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::mainview", CONTEXT_MENU),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::mainview::MainView::draw_menu"),
             painter("koru::mainview::MainView::draw_place_chooser"),

@@ -32,7 +32,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_runs_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             painter("koru_runs_ui::RunsSurface"),
             support("koru_runs_ui::RunsSurface::new"),
@@ -107,7 +107,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_runs_ui", SUMMARY),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             support("koru_runs_ui::Summary"),
             support("koru_runs_ui::summary"),

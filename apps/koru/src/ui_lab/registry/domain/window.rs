@@ -33,7 +33,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_window", APP),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_window::WindowApp"),
             support("koru_window::run"),
@@ -72,8 +72,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::Existing),
             (Platform::MacOs, Availability::Planned),
             (Platform::Linux, Availability::Unavailable),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::NotApplicable),
+            (Platform::Ios, Availability::NotApplicable),
         ],
         &[
             support("koru_window::accessibility::WindowBridge"),
@@ -99,8 +99,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::NativeOwned),
             (Platform::Linux, Availability::NotAudited),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::Unavailable),
+            (Platform::Ios, Availability::Unavailable),
         ],
         &[
             boundary("koru_window::frame::apply"),
@@ -143,8 +143,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::NativeOwned),
             (Platform::Linux, Availability::NativeOwned),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::NativeOwned),
+            (Platform::Ios, Availability::NativeOwned),
         ],
         &[boundary_with(
             "koru_window::ImeEvent",
@@ -173,7 +173,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_window", INPUT),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_window::RichKeyEvent"),
             support("koru_window::RichMouseEvent"),
@@ -199,7 +199,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_window", RENDERER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support_with(
                 "koru_window::RendererBackend",
@@ -250,7 +250,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_window", APPEARANCE),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             support("koru_window::Appearance"),
             support("koru_window::Appearance::from_section"),

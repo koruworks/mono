@@ -60,7 +60,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::status_chip", STATUS_CHIP),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_shell_chrome::status_chip::draw"),
             support("koru_shell_chrome::status_chip::Text"),
@@ -80,7 +80,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::status_mark", STATUS_MARK),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter_with(
                 "koru_shell_chrome::status_mark::draw",
@@ -114,7 +114,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::tabs", TABS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_shell_chrome::tabs::draw"),
             painter("koru_shell_chrome::tabs::draw_icon"),
@@ -156,7 +156,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::title_icon", TITLE_ICON),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             painter("koru_shell_chrome::title_icon::draw_page_emoji"),
             support("koru_shell_chrome::title_icon::PAGE_EMOJI_SIZE"),
@@ -174,7 +174,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::banner", BANNER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support_with(
                 "koru_shell_chrome::banner::Slots",
@@ -206,7 +206,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::caption", CAPTION),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_shell_chrome::caption::sidebar_toggle"),
             support("koru_shell_chrome::caption::context_toggle"),
@@ -229,7 +229,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::lane", LANE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_shell_chrome::lane::solve"),
             support("koru_shell_chrome::lane::LaneRects"),
@@ -260,7 +260,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::regions", REGIONS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_shell_chrome::regions::solve"),
             support("koru_shell_chrome::regions::Regions"),
@@ -280,7 +280,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_shell_chrome::reorder", REORDER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_shell_chrome::reorder::drop_index"),
             support("koru_shell_chrome::reorder::carry"),

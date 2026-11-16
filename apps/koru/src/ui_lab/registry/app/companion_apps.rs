@@ -37,7 +37,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru", MAIN),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[support("koru::Manager")],
     ),
     // Construction: open(ws, root) is in-memory over the host's resident
@@ -52,7 +52,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(DOCUMENT, "koru_document", DOC_LIB),
-        DESKTOP_SHARED,
+        DESKTOP_ONLY,
         &[
             painter("koru_document::BuiltInDocument"),
             painter("koru_document::BuiltInDocument::draw_confirm"),
@@ -75,7 +75,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(DOCUMENT, "koru_document", DOC_BUBBLE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_document::bubble::draw"),
             painter("koru_document::bubble::draw_tooltip"),
@@ -108,7 +108,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(DOCUMENT, "koru_document", DOC_MENU),
-        DESKTOP_SHARED,
+        DESKTOP_IOS_PARTIAL,
         &[
             painter("koru_document::menu::Menu"),
             support_with(
@@ -148,7 +148,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(DOCUMENT, "koru_document", DOC_SEARCH),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[painter("koru_document::search::LocalSearch")],
     ),
     // Construction: the Agent's own window loop (koru_window::run), and a
@@ -163,7 +163,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(AGENT, "koru_agent", AGENT_APP),
-        DESKTOP_SHARED,
+        DESKTOP_ONLY,
         &[painter("koru_agent::app::Agent")],
     ),
     // Construction: pure views over the dictation coordinator's phase; the
@@ -178,7 +178,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(AGENT, "koru_agent", AGENT_VOICE),
-        DESKTOP_SHARED,
+        DESKTOP_ONLY,
         &[
             painter("koru_agent::voice_window::VoiceWindowHost"),
             painter("koru_agent::voice_window::VoiceWindowHost::draw"),
@@ -200,8 +200,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::NativeOwned),
             (Platform::Linux, Availability::NativeOwned),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::NotApplicable),
+            (Platform::Ios, Availability::NotApplicable),
         ],
         &[
             boundary("koru_agent::tray::Tray"),

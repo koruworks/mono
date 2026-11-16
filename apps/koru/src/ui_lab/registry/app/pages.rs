@@ -48,7 +48,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["KoruWelcome"],
         source(KORU, "koru::welcome", WELCOME),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::welcome::WelcomeView"),
             painter("koru::welcome::draw::draw_page"),
@@ -84,7 +84,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["KoruManage"],
         source(KORU, "koru::manage", MANAGE),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::manage::ManageView"),
             painter("koru::manage::ManageView::paint_page"),
@@ -144,7 +144,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::manage", MANAGE_WORKSPACES),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::manage::workspaces::paint_workspaces_section"),
             support("koru::manage::workspaces::WorkspacesSection"),
@@ -173,7 +173,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::manage", MANAGE_DEVICES),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::manage::devices::paint_devices_page"),
             painter("koru::manage::devices::history::paint_history"),
@@ -195,7 +195,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::manage", MANAGE_CLOUD),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             painter("koru::manage::cloud::paint_cloud_page"),
             painter("koru::manage::cloud::progress::disclosure"),
@@ -233,7 +233,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::trash", TRASH_VIEW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::trash::TrashView"),
             painter("koru::trash::TrashView::paint"),
@@ -252,7 +252,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::feedback", FEEDBACK),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::feedback::FeedbackView"),
             support_with(
@@ -303,7 +303,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::diff", DIFF),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::diff::DiffView"),
             support("koru::diff::Comparison"),
@@ -322,7 +322,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::canvas_view", CANVAS_VIEW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::canvas_view::CanvasView"),
             painter("koru::canvas_view::CanvasView::draw_rename"),
@@ -343,7 +343,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["KoruCanvasTextDialog"],
         source(KORU, "koru::canvas_view", DIALOG),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::canvas_view::dialog::TextDialog"),
             painter("koru::canvas_view::dialog::TextDialog::draw"),
@@ -382,7 +382,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::support", SUPPORT_VIEW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::support::view::SupportView"),
             painter("koru::support::view::SupportView::draw"),
@@ -435,7 +435,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::support", SUPPORT_FAB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::support::fab::FabView"),
             painter("koru::support::fab::FabView::draw"),
@@ -454,7 +454,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::session_offer", SESSION_OFFER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::session_offer::Offer"),
             painter("koru::session_offer::Offer::draw"),
@@ -482,7 +482,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::settings_view", SETTINGS_REMINDERS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::settings_view::reminders::ReminderSurface"),
             painter("koru::settings_view::reminders::ReminderSurface::draw"),
@@ -501,7 +501,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::manager_view", MANAGER_VIEW),
-        DESKTOP_SHARED,
+        DESKTOP_ONLY,
         &[
             painter("koru::manager_view::CloseDialog"),
             painter("koru::manager_view::CloseDialog::draw"),
@@ -530,7 +530,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::manager_view", MANAGER_VIEW),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             support("koru::manager_view::ManagerView"),
             support("koru::manager_view::DocumentPane"),
@@ -549,7 +549,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru", TAB_HOSTS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru::ai_chat_view::AiChatView"),
             support("koru::search::SearchSurface"),
@@ -579,8 +579,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::NativeOwned),
             (Platform::MacOs, Availability::Unavailable),
             (Platform::Linux, Availability::Unavailable),
-            (Platform::Android, Availability::NotAudited),
-            (Platform::Ios, Availability::NotAudited),
+            (Platform::Android, Availability::Unavailable),
+            (Platform::Ios, Availability::Unavailable),
         ],
         &[
             boundary("koru::taskbar::install_jump_list"),

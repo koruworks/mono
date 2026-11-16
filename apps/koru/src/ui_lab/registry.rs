@@ -440,6 +440,44 @@ const DESKTOP_SHARED: [(Platform, Availability); 5] = [
     (Platform::Ios, Availability::NotAudited),
 ];
 
+/// Shared desktop Rust, with what each phone has in its place. The phones
+/// link no Koru drawing crate, so a phone cell is never this source: it is
+/// the phone's own screen or control that plays the role
+/// ([`Availability::NativePartial`], named in `registry/MANIFEST.md`), the
+/// system's ([`Availability::NativeOwned`]), nothing
+/// ([`Availability::Unavailable`]) or a decision that it never crosses
+/// ([`Availability::NotApplicable`]). Settled against the native sources in
+/// batch 4; the desktop cells are [`DESKTOP_SHARED`]'s.
+const fn desktop_and(android: Availability, ios: Availability) -> [(Platform, Availability); 5] {
+    [
+        (Platform::Windows, Availability::Existing),
+        (Platform::MacOs, Availability::SharedSourceUnverified),
+        (Platform::Linux, Availability::SharedSourceUnverified),
+        (Platform::Android, android),
+        (Platform::Ios, ios),
+    ]
+}
+
+/// Each phone has a native screen or control in this record's role.
+const DESKTOP_PHONES_PARTIAL: [(Platform, Availability); 5] =
+    desktop_and(Availability::NativePartial, Availability::NativePartial);
+
+/// Android has a native counterpart; iOS has none.
+const DESKTOP_ANDROID_PARTIAL: [(Platform, Availability); 5] =
+    desktop_and(Availability::NativePartial, Availability::Unavailable);
+
+/// iOS has a native counterpart; Android has none.
+const DESKTOP_IOS_PARTIAL: [(Platform, Availability); 5] =
+    desktop_and(Availability::Unavailable, Availability::NativePartial);
+
+/// Neither phone has it.
+const DESKTOP_NOT_ON_PHONES: [(Platform, Availability); 5] =
+    desktop_and(Availability::Unavailable, Availability::Unavailable);
+
+/// Decided desktop-only: it has no role on a phone.
+const DESKTOP_ONLY: [(Platform, Availability); 5] =
+    desktop_and(Availability::NotApplicable, Availability::NotApplicable);
+
 /// The catalog ID of the shared button.
 pub(crate) const BUTTON: &str = "C-BUTTON";
 

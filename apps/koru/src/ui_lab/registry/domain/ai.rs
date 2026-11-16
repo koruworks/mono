@@ -42,7 +42,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["ComposerQueue"],
         source(OWNER, "koru_ai_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_ai_ui::ChatSurface"),
             painter("koru_ai_ui::ChatSurface::new"),
@@ -95,7 +95,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::ChatSurface::conversation_scroll"),
             painter("koru_ai_ui::ChatSurface::restore_conversation_scroll"),
@@ -115,7 +115,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", TOOL_OUTPUT),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_ai_ui::ChatSurface::offer_reveal_paths"),
             support("koru_ai_ui::ChatSurface::take_reveal_path_request"),
@@ -133,7 +133,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", NEW_DIVIDER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[painter("koru_ai_ui::ChatSurface::show_new_from")],
     ),
     // Construction: built inside ChatSurface::new_at with the rest of the
@@ -150,7 +150,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", COMPOSER_SHELL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_ai_ui::ChatSurface::attach_document"),
             support("koru_ai_ui::ChatSurface::dictation_anchor"),
@@ -172,7 +172,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", COMPOSER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             boundary("koru_ai_ui::ChatComposer"),
             boundary("koru_ai_ui::ChatComposer::text"),
@@ -194,7 +194,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", COMPOSER_PLUS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support_with(
                 "koru_ai_ui::ComputerPickerKind",
@@ -228,7 +228,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", ATTACHMENTS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::AttachmentOpenRequest"),
             painter_with(
@@ -257,7 +257,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", ATTACHMENTS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::ViewerLift"),
             support("koru_ai_ui::ChatSurface::set_viewer_lift"),
@@ -282,7 +282,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", MODEL_PICKER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::FavoriteModel"),
             support("koru_ai_ui::FavoriteModel::new"),
@@ -306,7 +306,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", MICROPHONE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::MicrophoneDevice"),
             support("koru_ai_ui::MicrophoneDevice::new"),
@@ -342,7 +342,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", DICTATION),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::DictationShown"),
             support_with(
@@ -375,7 +375,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_ai_ui::ChatSurface::open_setup"),
             support("koru_ai_ui::ChatSurface::setup_open"),
@@ -405,7 +405,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", CHAT_STATUS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::ChatSurface::chat_status"),
             support("koru_ai_ui::ChatSurface::is_working"),
@@ -428,7 +428,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", DIAGRAMS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::ChatSurface::take_diagram_requests"),
             support("koru_ai_ui::ChatSurface::diagram_result"),
@@ -448,7 +448,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_ai_ui", AGENTS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_ai_ui::AgentDefaults"),
             support_with(

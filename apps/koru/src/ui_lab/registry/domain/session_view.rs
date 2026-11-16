@@ -35,7 +35,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", RENDER),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_session_view::TerminalView"),
             painter("koru_session_view::TerminalView::new"),
@@ -111,7 +111,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", STYLE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_session_view::TerminalAppearance"),
             support("koru_session_view::TerminalStyle"),
@@ -195,7 +195,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", MODEL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             boundary("koru_session_view::TerminalModel"),
             boundary("koru_session_view::TerminalModel::from_snapshot"),
@@ -223,7 +223,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", MANAGED),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_session_view::ManagedSessionView"),
             painter("koru_session_view::ManagedSessionView::new"),
@@ -286,7 +286,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", MANAGED_MODEL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             boundary("koru_session_view::ManagedTranscriptItem"),
             boundary_with(
@@ -330,7 +330,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", PENDING),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_session_view::PendingInputView"),
             painter("koru_session_view::PendingInputView::new"),
@@ -410,7 +410,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_session_view", SURFACE),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support("koru_session_view::SessionSurfaceInteraction"),
             support("koru_session_view::SessionSurfaceIntent"),

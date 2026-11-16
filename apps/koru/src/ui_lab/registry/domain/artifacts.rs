@@ -27,7 +27,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_artifacts_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_artifacts_ui::ArtifactsSurface"),
             painter("koru_artifacts_ui::ArtifactsSurface::new"),
@@ -69,7 +69,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_artifacts_ui", TAB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_artifacts_ui::ArtifactTab"),
             painter("koru_artifacts_ui::ArtifactTab::new"),

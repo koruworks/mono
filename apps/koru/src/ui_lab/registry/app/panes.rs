@@ -30,7 +30,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes::explore", EXPLORE),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::panes::explore::ExploreView"),
             painter("koru::panes::explore::ExploreView::draw"),
@@ -73,7 +73,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes", RAIL_ELEMENTS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::panes::sidebar::rail_elements::Rail"),
             painter("koru::panes::sidebar::rail_elements::Layout"),
@@ -104,7 +104,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes::explore", RAIL),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::panes::explore::rail::TasksRail"),
             support("koru::panes::explore::rail::RailTarget"),
@@ -139,7 +139,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes::explore", HOME_NAV),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::panes::explore::home_nav::HomeNav"),
             painter("koru::panes::explore::home_nav::HomeNav::draw"),
@@ -173,7 +173,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes::home", HOME),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru::panes::home::HomePage"),
             support("koru::panes::home::HomeWant"),
@@ -192,7 +192,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes::explore", POPOVER_ELEMENTS),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             painter("koru::panes::explore::ExploreView::draw_popover"),
             painter("koru::panes::explore::popover_elements::TileLeaf"),
@@ -231,7 +231,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::panes::context", CONTEXT),
-        DESKTOP_SHARED,
+        DESKTOP_ANDROID_PARTIAL,
         &[
             painter("koru::panes::context::ContextView"),
             painter("koru::panes::context::ContextView::draw"),

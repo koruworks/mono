@@ -26,7 +26,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_voice_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_voice_ui::VoiceSurface"),
             painter("koru_voice_ui::VoiceSurface::new"),
@@ -112,7 +112,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_voice_ui", HUD),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_voice_ui::VoiceHud"),
             painter_with(

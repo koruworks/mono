@@ -24,7 +24,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(KORU, "koru::leaf", LEAF_FILE),
-        DESKTOP_SHARED,
+        DESKTOP_PHONES_PARTIAL,
         &[
             host_only("koru::leaf::Leaf"),
             support("koru::leaf::Leaf::document"),

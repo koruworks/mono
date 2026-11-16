@@ -28,7 +28,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_chats_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_chats_ui::ChatsSurface"),
             painter("koru_chats_ui::ChatsSurface::new"),
@@ -67,7 +67,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_chats_ui::status", STATUS),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             support_with(
                 "koru_chats_ui::status::ChatStatus",

@@ -25,7 +25,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &["EmojiColorPanel"],
         source(OWNER, "koru_appearance_ui", LIB),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_appearance_ui::EmojiColorPanel"),
             painter("koru_appearance_ui::EmojiColorPanel::new"),

@@ -37,8 +37,8 @@ pub(super) const RECORDS: &[Entry] = &[
             (Platform::Windows, Availability::Existing),
             (Platform::MacOs, Availability::SharedSourceUnverified),
             (Platform::Linux, Availability::SharedSourceUnverified),
-            (Platform::Android, Availability::Unavailable),
-            (Platform::Ios, Availability::Unavailable),
+            (Platform::Android, Availability::NativePartial),
+            (Platform::Ios, Availability::NativePartial),
         ],
         &[
             painter("koru_settings_ui::SettingsSurface"),

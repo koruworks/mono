@@ -27,7 +27,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_markdown_view", VIEW),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             painter("koru_markdown_view::MarkdownView"),
             painter("koru_markdown_view::MarkdownView::new"),
@@ -98,7 +98,7 @@ pub(super) const RECORDS: &[Entry] = &[
         None,
         &[],
         source(OWNER, "koru_markdown_view", DOCUMENT),
-        DESKTOP_SHARED,
+        DESKTOP_NOT_ON_PHONES,
         &[
             boundary("koru_markdown_view::MarkdownDocument"),
             boundary("koru_markdown_view::MarkdownDocument::of"),
