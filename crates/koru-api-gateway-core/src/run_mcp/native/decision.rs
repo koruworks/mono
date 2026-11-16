@@ -25,7 +25,7 @@
 //! **Closed in this build** ([`EDIT_DECISIONS_AVAILABLE`]): the delivery lead
 //! reviews the coupled exposure candidate before any availability change.
 use super::dispatch::failure;
-use koru_ai_server::native_effect::probe_boot;
+use koru_ai_server::native_effect::{SaveProof, decision_consumed, probe_boot};
 use koru_artifact_wire::run_tools::ToolFailure;
 use koru_delegate_api::bots::{
     BotCommand, BotDelegatePort, BotReply, DecisionEditProposal, DecisionReceiptView,
@@ -198,6 +198,34 @@ pub(super) fn decide(
         Sent::Owned => Err(in_progress(edit.key)),
         Sent::Conflict => Err(failure("native_operation_conflict")),
         Sent::Unknown => Err(status_unknown(edit.key)),
+    }
+}
+
+/// The save proof the exact retry of a retained intent needs while the Run
+/// waits on a decision (O152). Only a positive, read-only replay of this
+/// exact edit's decision whose acknowledged consumer is this fence and
+/// whose binding names exactly `intent` makes it the decision's own
+/// consumed edit; anything else (no boot, another decision, a refusal, an
+/// unknown answer) keeps today's proof and today's answers.
+pub(super) fn retry_proof(
+    port: &dyn BotDelegatePort,
+    owner: BotOwner,
+    edit: &DeniedEdit<'_>,
+    proof: &FreshBotPolicyProof,
+    intent: &koru_delegate_core::NativeResultIntentView,
+) -> SaveProof {
+    let Some(boot) = probe_boot(port, owner) else {
+        return SaveProof::Registered;
+    };
+    match send(port, edit, proof, boot) {
+        Sent::Decision(view)
+            if same_edit(&view, edit)
+                && consumer(&view, edit.fence)
+                && decision_consumed(&view, edit.fence, intent) =>
+        {
+            SaveProof::DecisionConsumed
+        }
+        _ => SaveProof::Registered,
     }
 }
 

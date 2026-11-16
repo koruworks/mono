@@ -80,6 +80,11 @@ struct Script {
     receipts: usize,
     lose_consume_reply: bool,
     lose_receipt_reply: bool,
+    /// Answer a receipt as the real owner does while the decision holds the
+    /// Run document: `Verified` with the exact evidence, registration owed.
+    hold_registration: bool,
+    /// Answer a receipt with evidence other than what was sent.
+    alter_receipt: bool,
     no_boot: bool,
     log: Vec<&'static str>,
 }
@@ -201,8 +206,17 @@ impl BotDelegatePort for Ledger {
                         if std::mem::take(&mut s.lose_receipt_reply) {
                             return Err(koru_delegate_api::Failure::unavailable());
                         }
-                        intent.stage = NativeResultStage::Registered;
-                        intent.disposition = NativeResultDisposition::AlreadyRegistered;
+                        if s.alter_receipt {
+                            let mut other = intent.clone();
+                            if let Some(evidence) = other.verified.as_mut() {
+                                evidence.title.push_str(" (other)");
+                            }
+                            return Ok(BotReply::NativeResult { intent: other });
+                        }
+                        if !s.hold_registration {
+                            intent.stage = NativeResultStage::Registered;
+                            intent.disposition = NativeResultDisposition::AlreadyRegistered;
+                        }
                     }
                     NativeResultObservation::NotApplied { .. } => {
                         intent.stage = NativeResultStage::Refused;
@@ -462,6 +476,8 @@ impl Fixture {
             receipts: 0,
             lose_consume_reply: false,
             lose_receipt_reply: false,
+            hold_registration: false,
+            alter_receipt: false,
             no_boot: false,
             log: Vec::new(),
         })))
@@ -871,4 +887,102 @@ fn a_persistently_failing_trigger_makes_a_bounded_number_of_attempts() {
     progress.stop();
     assert!(!progress.due(&granted));
     assert_eq!(progress.attempts(), 0);
+}
+
+// ------------------------------------------------------------------- O152
+
+/// While the decision holds the Run document the owner answers Koru's
+/// receipt `Verified` with exactly the evidence sent; for the decision's own
+/// consumed edit that is a positive save. The model's exact retry then
+/// answers `saved` with the same reference. One lease, one Store effect.
+#[test]
+fn a_verified_receipt_with_the_exact_evidence_is_a_positive_save_of_the_approved_edit() {
+    let f = Fixture::new();
+    let ledger = f.ledger();
+    let human = f.human();
+    ledger.script().hold_registration = true;
+    let report = f.work(&ledger, &human).run();
+    assert_eq!(
+        report,
+        ApplyReport {
+            outcome: ApplyOutcome::Saved,
+            settled: true,
+            uncertain: None,
+        }
+    );
+    let once = f.text_count();
+    assert!(once > 0, "the approved edit was saved");
+    {
+        let s = ledger.script();
+        assert_eq!((s.consumes, s.leases, s.receipts), (1, 1, 1));
+        assert_eq!(
+            s.intent.as_ref().unwrap().stage,
+            NativeResultStage::Verified,
+            "registration is still owed to the owner"
+        );
+    }
+    let first = f.model_retry(&ledger).unwrap();
+    assert_eq!(first["status"], "saved");
+    assert_eq!(first["operation_id"], json!(f.binding().operation_id));
+    assert_eq!(first["document_id"], json!(f.document));
+    let reference = ledger
+        .script()
+        .intent
+        .as_ref()
+        .unwrap()
+        .verified
+        .clone()
+        .unwrap();
+    assert_eq!(
+        first["base_revision"],
+        json!(
+            reference
+                .version
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
+        )
+    );
+    assert_eq!(f.model_retry(&ledger).unwrap(), first, "the same reference");
+    let s = ledger.script();
+    assert_eq!((s.consumes, s.leases), (3, 1), "replays license nothing");
+    drop(s);
+    assert_eq!(f.text_count(), once, "never a second save");
+}
+
+/// Evidence other than what was sent is never a positive save.
+#[test]
+fn a_verified_receipt_with_other_evidence_stays_unknown() {
+    let f = Fixture::new();
+    let ledger = f.ledger();
+    let human = f.human();
+    {
+        let mut s = ledger.script();
+        s.hold_registration = true;
+        s.alter_receipt = true;
+    }
+    assert_eq!(f.work(&ledger, &human).run().outcome, ApplyOutcome::Unknown);
+    assert_eq!(f.model_retry(&ledger).unwrap_err(), "save_status_unknown");
+    let s = ledger.script();
+    assert_eq!(s.leases, 1);
+}
+
+/// A receipt whose acknowledged consumer is not the one consuming keeps
+/// today's proof: a `Verified` answer is not a positive save for it.
+#[test]
+fn a_verified_receipt_the_decision_does_not_name_stays_unknown() {
+    let mut f = Fixture::new();
+    if let Some(DecisionResume {
+        consumer: DecisionConsumer::RecordedSuccessor { attempt, .. },
+        ..
+    }) = f.view.resume.as_mut()
+    {
+        *attempt = d::RunAttemptId::mint();
+    }
+    let ledger = f.ledger();
+    let human = f.human();
+    ledger.script().hold_registration = true;
+    assert_eq!(f.work(&ledger, &human).run().outcome, ApplyOutcome::Unknown);
+    let s = ledger.script();
+    assert_eq!((s.leases, s.receipts), (1, 1));
 }

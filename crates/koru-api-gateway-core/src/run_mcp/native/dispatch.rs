@@ -300,8 +300,29 @@ fn invoke(
         Err(error) if (denial.is_some() || waiting) && error.code == "publication_pending" => None,
         _ => return Err(failure("native_owner_unavailable")),
     };
-    if let Some(intent) = &retained
-        && let Some(answer) = effect::recover_retained(
+    if let Some(intent) = &retained {
+        // O152: while the Run waits, the exact retry of a decision's own
+        // consumed edit is answered from a `Verified` save too; only the
+        // decision's read-only replay can say that it is. Everything else
+        // keeps today's proof.
+        let proof = match (waiting, denial, payload.as_ref()) {
+            (true, Some(denial), Some(payload)) => super::decision::retry_proof(
+                port,
+                provenance.owner,
+                &super::decision::DeniedEdit {
+                    fence: &fence,
+                    key: &key,
+                    denial,
+                    fingerprint: expected_hash,
+                    expected_revision: description.expected_revision.as_deref().unwrap_or_default(),
+                    payload,
+                },
+                &current.proof,
+                intent,
+            ),
+            _ => effect::SaveProof::Registered,
+        };
+        if let Some(answer) = effect::recover_retained_as(
             &Host(policy),
             port,
             store,
@@ -310,9 +331,10 @@ fn invoke(
             NativeEffectSubject::of(&provenance),
             &prepared,
             intent,
-        )
-    {
-        return answer;
+            proof,
+        ) {
+            return answer;
+        }
     }
     let mut synchronized = false;
     if retained.is_none()

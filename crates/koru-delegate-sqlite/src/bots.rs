@@ -380,6 +380,15 @@ pub trait BotLedger {
         run: RunId,
         decision: koru_delegate_core::decisions::DecisionId,
     ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError>;
+    /// Whether a native effect other than this decision's own positively
+    /// Durable consumed save (O152) still blocks final cleanup: a held lease
+    /// or verified evidence owing registration. Read-only.
+    fn decision_other_effects_pending(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<bool, BotLedgerError>;
     /// Record a delivery receipt (successor-aware, as `record_bot_delivery`)
     /// and its owed Delivery Control atomically while the handle is held
     /// exclusively. `artifacts` is D's observed count, used only by Completed.

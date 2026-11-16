@@ -665,6 +665,14 @@ impl BotLedger for RunsDb {
     ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError> {
         RunsDb::decision_retained_effect(self, owner, run, decision)
     }
+    fn decision_other_effects_pending(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: koru_delegate_core::decisions::DecisionId,
+    ) -> Result<bool, BotLedgerError> {
+        RunsDb::decision_other_effects_pending(self, owner, run, decision)
+    }
     fn record_decision_source(
         &mut self,
         owner: BotOwner,

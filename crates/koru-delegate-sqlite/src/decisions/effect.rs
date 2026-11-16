@@ -120,6 +120,47 @@ pub(super) fn retained_outcome_on(
     }))
 }
 
+/// Whether the Run still has a native effect that blocks final cleanup: a
+/// held lease (it may still commit) or verified evidence that still owes its
+/// registration. The one exception (O152) is this decision's own consumed
+/// effect when its retained outcome is positively Durable: exact verified
+/// evidence under the companion's immutable first consuming key, with a
+/// settled lease. Final cleanup carries that outcome, the drain already
+/// accepts it, and its registration follows once the handle is ordinary
+/// again; it is never cleared. Any other held or verified effect, and this
+/// one while unresolved, still blocks exactly as before.
+pub(super) fn other_effects_pending_on(
+    conn: &Connection,
+    owner: BotOwner,
+    run: RunId,
+    decision: DecisionId,
+) -> Result<bool, BotLedgerError> {
+    let own = match retained_outcome_on(conn, owner, run, decision) {
+        Ok(Some(DecisionRetainedEffect::Durable { key, .. })) => Some(key),
+        Ok(_) | Err(BotLedgerError::Fenced) => None,
+        Err(error) => return Err(error),
+    };
+    let query = "SELECT EXISTS(SELECT 1 FROM native_result_intents WHERE run_id=?1
+        AND (lease_state='held' OR stage='verified')
+        AND NOT (?2 IS NOT NULL AND operation_id=?2 AND attempt_id=?3 AND generation=?4
+                 AND turn_id=?5 AND lease_state='settled'))";
+    let (operation, attempt, generation, turn) = match &own {
+        Some(key) => (
+            Some(key.operation_id.to_string()),
+            Some(key.attempt.to_storage()),
+            Some(key.generation.get()),
+            Some(key.turn.to_string()),
+        ),
+        None => (None, None, None, None),
+    };
+    conn.query_row(
+        query,
+        params![run.to_storage(), operation, attempt, generation, turn],
+        |r| r.get(0),
+    )
+    .map_err(sql)
+}
+
 impl RunsDb {
     /// The exact retained effect outcome a consumed Koru edit's final cleanup
     /// must carry. Read-only; it grants no cleanup or settlement by itself.
@@ -130,6 +171,18 @@ impl RunsDb {
         decision: DecisionId,
     ) -> Result<Option<DecisionRetainedEffect>, BotLedgerError> {
         retained_outcome_on(self.conn(), owner, run, decision)
+    }
+
+    /// [`other_effects_pending_on`]: whether a native effect other than this
+    /// decision's own positively Durable save still blocks final cleanup.
+    /// Read-only; it grants no cleanup by itself.
+    pub fn decision_other_effects_pending(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        decision: DecisionId,
+    ) -> Result<bool, BotLedgerError> {
+        other_effects_pending_on(self.conn(), owner, run, decision)
     }
 }
 

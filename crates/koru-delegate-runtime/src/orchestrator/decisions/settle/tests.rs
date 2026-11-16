@@ -670,3 +670,190 @@ fn a_restart_after_the_early_settlement_recovers_with_the_fence_down_and_no_seco
         assert!(!row.retired, "the successor's attempt is untouched");
     }
 }
+
+/// The delegate restarts over the same ledger, documents and session host;
+/// the new process's published classification starts empty.
+fn restarted(r: Resumed) -> Resumed {
+    let Resumed {
+        chain,
+        consumer,
+        creation,
+        approved,
+        payload,
+    } = r;
+    let DecisionChain {
+        orchestrator,
+        sessions,
+        clock,
+        documents,
+        waits,
+        prepared,
+    } = chain;
+    let orchestrator = Orchestrator::new(
+        orchestrator.into_ports(),
+        crate::Options {
+            reask_attempts: 3,
+            ..Default::default()
+        },
+    );
+    waits.clear();
+    Resumed {
+        chain: DecisionChain {
+            orchestrator,
+            sessions,
+            clock,
+            documents,
+            waits,
+            prepared,
+        },
+        consumer,
+        creation,
+        approved,
+        payload,
+    }
+}
+
+impl Resumed {
+    fn occupied(&mut self) -> usize {
+        let device = self.device();
+        self.chain
+            .orchestrator
+            .bot_ledger()
+            .unwrap()
+            .bot_execution_inventory(device)
+            .unwrap()
+            .occupied
+    }
+
+    /// The decision's cleanup, owned since a Stop or a process end arrived
+    /// after the settlement and before the wait settled, finishes: the
+    /// cleanup tick retires the consumer and records the final evidence
+    /// carrying the Durable save, the owed Controls publish, the wait settles
+    /// and the save is registered once; then the existing terminal cleanup
+    /// settles the admission and releases capacity.
+    fn finish_window_cleanup(&mut self) {
+        let run = self.run();
+        let owner = self.chain.prepared.owner;
+        let _ = self.chain.orchestrator.bot_budget_tick(run);
+        let execution = self
+            .chain
+            .orchestrator
+            .bot_ledger()
+            .unwrap()
+            .decision_wait_execution(owner, run)
+            .unwrap()
+            .expect("the wait is still open until its Controls publish");
+        assert!(
+            matches!(
+                execution.wait.cleanup,
+                Some(koru_delegate_core::decisions::ConsumerCleanup::Confirmed {
+                    retained_effect_outcome: Some(
+                        koru_delegate_core::decisions::DecisionRetainedEffect::Durable { .. }
+                    ),
+                    ..
+                })
+            ),
+            "the final cleanup carries the Durable save: {:?}",
+            execution.wait.phase
+        );
+        assert!(settled(&decision(&mut self.chain)), "never reopened");
+        // A later cleanup retry (the loop ticks again before the worker
+        // publishes) must not supersede the still-unpublished final Control.
+        let before = self.projections();
+        assert!(
+            self.chain
+                .orchestrator
+                .request_publication_cleanup(run, DecisionClosureReason::AuthorityChanged)
+                .is_err()
+        );
+        assert_eq!(self.projections(), before, "no request after final cleanup");
+        assert!(
+            !self.publish_and_settle_wait(),
+            "a retired consumer has no stream to resume"
+        );
+        assert!(!self.wait_open(), "the wait settled");
+        assert_eq!(self.native_stage(), NativeResultStage::Registered);
+        assert_eq!(self.published(), None);
+        for _ in 0..4 {
+            if self.admission() == BotAdmissionState::Settled {
+                break;
+            }
+            let _ = self.chain.orchestrator.bot_budget_tick(run);
+        }
+        assert_eq!(self.admission(), BotAdmissionState::Settled);
+        assert_eq!(self.occupied(), 0, "capacity released");
+        // Exactly one intent for the approved operation, registered once.
+        assert!(self.consume_after_wait().is_err());
+        assert_eq!(self.native_stage(), NativeResultStage::Registered);
+    }
+
+    fn consume_after_wait(&mut self) -> Result<koru_delegate_sqlite::NativeLeaseOutcome, RunError> {
+        let device = self.device();
+        self.chain.orchestrator.bot_consume_decision_edit(
+            &self.consumer,
+            device,
+            &self.approved,
+            &self.payload,
+            &self.chain.prepared.proof,
+            self.chain.prepared.boot,
+        )
+    }
+}
+
+#[test]
+fn a_stop_after_the_settlement_and_before_the_wait_settles_finishes() {
+    let mut r = resumed();
+    let run = r.run();
+    assert!(r.consume().execute.is_some());
+    assert_eq!(r.confirm(&r.durable()), NativeResultStage::Verified);
+    assert!(settled(&decision(&mut r.chain)));
+    assert!(r.wait_open(), "the settlement's Control is still owed");
+    assert_eq!(r.occupied(), 1);
+    let creation = r.creation;
+    r.chain
+        .sessions
+        .lock()
+        .unwrap()
+        .script_retirement(creation, CreationLookup::NoEvidence);
+    let consumer = r.consumer.clone();
+    let device = r.device();
+    let key = koru_delegate_core::BotRunKey {
+        owner: consumer.owner,
+        bot: consumer.bot,
+        run,
+    };
+    // The decision-managed Stop: its cleanup is requested and the consumer
+    // retired; publication is still owed.
+    let stopped = r.chain.orchestrator.bot_stop(&key, device, Some(&consumer));
+    assert!(
+        matches!(&stopped, Err(RunError::Port(error)) if error.code == "publication_pending"),
+        "{stopped:?}"
+    );
+    r.finish_window_cleanup();
+}
+
+#[test]
+fn a_process_end_and_a_restart_after_the_settlement_recover_and_finish() {
+    let mut r = resumed();
+    let run = r.run();
+    assert!(r.consume().execute.is_some());
+    assert_eq!(r.confirm(&r.durable()), NativeResultStage::Verified);
+    // The successor's process ended on its own before the wait settled: the
+    // cleanup owner is requested as a positive native end requests it.
+    assert!(
+        r.chain
+            .orchestrator
+            .request_publication_cleanup(run, DecisionClosureReason::AuthorityChanged)
+            .unwrap()
+    );
+    // The delegate restarts before anything else happened.
+    let mut r = restarted(r);
+    let creation = r.creation;
+    r.chain
+        .sessions
+        .lock()
+        .unwrap()
+        .script_retirement(creation, CreationLookup::NoEvidence);
+    assert!(matches!(r.published(), Some((_, DecisionPhase::Settled))));
+    r.finish_window_cleanup();
+}

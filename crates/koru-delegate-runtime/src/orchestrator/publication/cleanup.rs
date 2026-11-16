@@ -269,8 +269,20 @@ impl Orchestrator {
             Some(retained) => retained,
             None => {
                 // A held lease may still commit; pending verified evidence
-                // still needs its owner. Neither is drained absence.
-                if self.native_effects_pending(run)? {
+                // still needs its owner. Neither is drained absence. The one
+                // exception is this decision's own positively Durable save
+                // (O152): the record below carries it as the retained
+                // outcome, and its registration follows once the handle is
+                // ordinary again. Anything else pending still refuses.
+                let pending = match execution.expected.decision.as_ref() {
+                    Some(decision) => self.bot_ledger()?.decision_other_effects_pending(
+                        owner,
+                        run,
+                        decision.decision,
+                    )?,
+                    None => self.native_effects_pending(run)?,
+                };
+                if pending {
                     return Ok(false);
                 }
                 let (attempt, generation) = execution.cleanup_target.attempt();
