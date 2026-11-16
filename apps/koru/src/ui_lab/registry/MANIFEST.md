@@ -114,10 +114,17 @@ fail until this table says what they compute.
 | app modules classified | 245 |
 | app modules excluded | 117 |
 | records: app crates | 60 |
-| records | 293 |
-| records: foundations | 59 |
-| records: controls | 80 |
-| records: application compositions | 154 |
+| native files: Android | 24 |
+| native files: iOS | 0 |
+| native files: macOS | 0 |
+| native composables | 89 |
+| native views | 0 |
+| native entry points baselined | 19 |
+| records: native platforms | 19 |
+| records | 312 |
+| records: foundations | 60 |
+| records: controls | 82 |
+| records: application compositions | 170 |
 | records: domain crates | 113 |
 | kind: token | 25 |
 | kind: primitive | 24 |
@@ -125,26 +132,38 @@ fail until this table says what they compute.
 | kind: support | 71 |
 | kind: domain composition | 57 |
 | kind: app-local | 55 |
+| kind: native adapter | 19 |
 | token values listed | 174 |
-| symbols | 2170 |
+| symbols | 2307 |
 | symbols with typed recipes | 2 |
 | inspector identities | 60 |
 | inspector identity registration sites | 63 |
 | disposition: story exists | 1 |
 | disposition: no story yet | 211 |
 | disposition: nonvisual | 62 |
-| disposition: platform-only | 0 |
-| disposition: boundary | 19 |
+| disposition: platform-only | 18 |
+| disposition: boundary | 20 |
 | symbol story: available | 1 |
 | symbol story: no story yet | 451 |
-| symbol story: nonvisual | 1567 |
-| symbol story: boundary | 151 |
+| symbol story: nonvisual | 1632 |
+| symbol story: platform-only | 67 |
+| symbol story: boundary | 156 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2118 |
+| A2UI: not supported | 2255 |
 <!-- counts:end -->
+
+<!-- cells:begin -->
+| Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows | 1 | 285 | 0 | 0 | 0 | 0 | 19 | 7 | 0 |
+| macOS | 0 | 0 | 285 | 0 | 1 | 1 | 19 | 6 | 0 |
+| Linux | 0 | 0 | 285 | 0 | 0 | 4 | 19 | 3 | 1 |
+| Android | 0 | 18 | 0 | 0 | 13 | 17 | 1 | 1 | 262 |
+| iOS | 0 | 0 | 0 | 1 | 13 | 17 | 20 | 0 | 261 |
+<!-- cells:end -->
 
 A module is not a component: `koru-ui`'s 58 public modules hold the records
 above, some modules two (`card`, `menu`, `nav_list`, `text_field`), one a
@@ -1461,29 +1480,143 @@ From batch 2b:
   for Leaf`) the app's documents use; `koru-document` embeds an `Editor`,
   as the editor's crate documentation says.
 
-## Batch 4 — native platform adapters (not started)
+## Batch 4 — native platform adapters
 
-| Owner | Count |
-| --- | --- |
-| `apps/ios` Swift files | 32 |
-| `apps/ios` `struct … : View` occurrences | 22 |
-| `apps/android/app/src/main/java/app/koru/mobile/ui` Kotlin files | 17 |
-| Its `@Composable` occurrences | 101 |
+Reviewed at `f44f0a99` (branch `ui-lab/l1b`), 16 November 2026, by the
+batch's author directly, with no delegated reader. The records are in
+`native/`, a file per platform (`native.rs` holds what they share); the
+checks are `tests/drift/native.rs`.
 
-Known records owed: iOS `KoruPrimaryButton`, `KoruEmptyState` and `KoruRow`
-(`apps/ios/KoruMobile/Theme.swift`), and Android's Compose/Material base and
-theme. Their availability goes in the record of the shared component they
-stand in for where one exists (`C-BUTTON` already says `NativePartial` on
-iOS), and in a `NativeAdapter` record of their own otherwise.
+### How native symbols are written and checked
 
-From batch 2b: every Android and iOS cell of these seven crates' records is
-`NotAudited`. The ones a native audit can settle first: `C-WEB-SURFACE`
-(does a mobile app host its own web view?), `C-WINDOW-FRAME` and
-`C-SYSTEM-MENUS` (likely `NotApplicable` or `NativeOwned`, but no page
-says so), `C-IME-COMPOSITION` (PLATFORMS.md says the P1 adapter is not
-implemented on mobile and equivalence is not audited),
-`C-FILE-DIALOGS` (the platform pickers), and the editor and session
-views' mobile equivalents.
+A native record's module is the platform's own name for the code — the
+Android Gradle namespace `app.koru.mobile`, or an Xcode target / `swiftc`
+module qualified by its app folder (`ios/KoruMobile`, `ios/KoruShare`,
+`macos/KoruShare`; the iOS and macOS share extensions are both the module
+`KoruShare`) — and `::` separates it from the declaration:
+`app.koru.mobile::ui.editor.DocumentViewer` is the Kotlin package
+`ui.editor` below the namespace, `ios/KoruMobile::DevicesScreen` a type in
+the target. Every visible symbol is `Story::PlatformOnly` (the Lab is a
+Windows window and cannot draw a Compose screen or a SwiftUI view), what
+the system draws for the app is `Story::Boundary`, and the code beside a
+view is nonvisual. No native symbol is in an A2UI catalog. Each native
+record is `Existing` on its own platform (`NativeOwned` for the system
+surfaces) and `NotApplicable` everywhere else: the other platforms have
+their own records for the same role, or none, and this code has no role
+there. The `#[expect(dead_code)]` on `Kind::NativeAdapter` and
+`Story::PlatformOnly` said they would fail once used; both are removed.
+
+`tests/drift/native.rs` compiles in every native file a record is written
+from and reads it in its own syntax:
+
+- every native symbol against a Kotlin `fun`, `class`, `object` or
+  `interface` in the files of its package (each file's `package` line must
+  agree), or a Swift `struct`, `class`, `enum`, `func` or top-level `let`
+  in its target's folder;
+- every native option set against the members of its Kotlin `enum class`
+  or Swift `enum`;
+- every `@Composable` function and every Swift type conforming to `View`,
+  `App`, `ViewModifier`, a `…Representable` or a view controller in a
+  compiled-in file against a record that names it, so a new composable or
+  view in a classified file fails until it is recorded;
+- every native record a native adapter on a native file, with no
+  inspector identity, no A2UI claim and exactly one platform it ships on;
+- the doors a new native surface has to come through, against baselines:
+  the Android manifest's components (activities, aliases, services,
+  receivers, providers — so a new activity, share target, widget receiver
+  or notification service fails), its navigation routes (each also opened
+  by the navigation host) and its Gradle modules.
+
+**What it cannot see.** A native file that is renamed or deleted stops the
+suite compiling; a file that is *added* is not seen, because Gradle lists
+no sources, Xcode's synchronized folders list no files and the suite reads
+nothing at run time. A new screen in a new file behind an existing route is
+therefore hand review, as a new painter in an app is.
+
+### Android (`apps/android`)
+
+68 non-test Kotlin files under `app/src/main/java/app/koru/mobile`. 24 are
+compiled into the checks and were **read in full**: all 17 under `ui/`
+(`AccountScreen`, `BlobTransferPanel`, `CloudInventoryScreen`,
+`CloudProgressScreen`, `CloudStorageSection`, `EntityTileColors`,
+`KoruApp` — 2,203 lines —, `OpenSourceLicensesScreen`, `QrScanButton`,
+`SettingsScreen`, `editor/{CloudCopyBody, CloudCopyScreen, DocumentEditor,
+NativeRichEditor}`, `run/{RunPresentation, RunScreen}`, `theme/Theme`),
+the three activities (`MainActivity`, `ShareActivity`,
+`BrowserSignInReturnActivity`), and the four services that hand a person to
+a system surface (`AndroidGoogleAccountDialog`, `AndroidQrScanner`,
+`BrowserSignIn`, and `AppUpdates`, read to line 150 of 212 with its restore
+and parsing helpers searched). The other 44 were **searched** for any
+Compose, `android.widget`, dialog, notification or widget use (none
+outside the files above; `BlobTransfer.kt` names Compose only in a comment)
+and draw nothing: `AppContainer` and `AppViewModel` (the service container
+and the screens' state), `domain/` (4, the model), `logging/AppLogger`,
+the other 33 `services/` (account, vault, blob, Cloud presentation,
+contract, store and run adapters, mocks), and `sharing/` (4, the share
+intent reader, staging, recent destinations and text normalization). The
+47 test files (`app/src/test`, `app/src/androidTest`) are left out. The
+manifest (`AndroidManifest.xml`, and the nightly overlay, which adds only
+the installer permission) declares no service, receiver, widget, alias or
+notification channel; the app posts no notification.
+
+89 `@Composable` functions are declared in the compiled-in files (the
+"101 occurrences" of the reconnaissance counted the annotation where it
+types a parameter, too). Records (`*` minted here, `C-`/`T-` and the
+platform's name):
+
+| Record | Draws | Desktop records it stands beside |
+| --- | --- | --- |
+| `T-ANDROID-THEME`* | Material theme in Koru's colors, `KoruSpacing` (xs…xl, five steps), theme and font choices, workspace and callout colors | `T-SPACE`, `T-SURFACE`, `T-INK`, `T-ACCENT`, `T-APPEARANCE`, `T-FONTS`, `T-NAMED-COLORS` |
+| `C-ANDROID-APP`* | `MainActivity`, the `NavHost` and its routes, the error dialog | `H-MAIN-VIEW`, `H-MANAGER-VIEW` |
+| `C-ANDROID-ENTITY-LIST`* | the list scaffold every list screen uses, entity tiles, action rows, empty state, create dialog | none: each desktop list is its surface's own rows |
+| `C-ANDROID-LINK-DEVICE`* | link tabs (show QR, enter code, linked devices), relay switch, device history sheet, identity reset, QR scan button | `C-LINK-DEVICE-PANEL`, `C-MANAGE-DEVICES` |
+| `C-ANDROID-PROFILES`* | the start screen, the profile sheet with Cloud sync switch | `C-MANAGE`, `C-EXPLORE-POPOVERS` (profile switcher) |
+| `C-ANDROID-UPDATE-NOTICE`* | the nightly's update card and installer hand-off | `C-UPDATE-PROMPTS` |
+| `C-ANDROID-WORKSPACES`* | workspaces with filters, sort and the action and debug sheets | `C-MANAGE-WORKSPACES`, `C-EXPLORE-POPOVERS` (workspace switcher) |
+| `C-ANDROID-DOCUMENTS`* | Documents/Files tabs, file sheet, rename, trash | `C-EXPLORE` |
+| `C-ANDROID-FILE-TRANSFERS`* | the Files tab's transfer card | `C-CONTEXT-COLUMN` (its Cloud sync section) |
+| `C-ANDROID-ACCOUNT`* | sign-in, held accounts, profile enrollment, Cloud storage | `C-ONBOARDING` (sign-in), `C-ACCOUNT-SWITCHER`, `C-MANAGE-CLOUD` |
+| `C-ANDROID-CLOUD-INVENTORY`* | the paged Cloud listing | `C-MANAGE-CLOUD` |
+| `C-ANDROID-CLOUD-COPY`* | one Cloud copy, read-only, with file removal | `C-MANAGE-CLOUD` |
+| `C-ANDROID-CLOUD-PROGRESS`* | a profile's Sync status screen | `C-MANAGE-CLOUD` (the progress disclosure) |
+| `C-ANDROID-DOCUMENT-VIEWER`* | a document's blocks, edit mode, pictures, reference and contact cards | `C-DOCUMENT-EDITOR`, `C-DOCUMENT-TEXT`, `C-DOCUMENT-IMAGE`, `C-DOCUMENT-TABLE` |
+| `C-ANDROID-RICH-EDITOR`* | the `EditText` one block is edited in | `C-DOCUMENT-EDITOR`, `C-IME-COMPOSITION` (the platform IME) |
+| `C-ANDROID-RUN`* | a run's Overview and Activity, read-only | `C-RUNS-SURFACE` (without Result; CATCHUP *The run's three views*) |
+| `C-ANDROID-SETTINGS`* | theme, language, font, transfers, licenses, diagnostics | `C-SETTINGS-SURFACE` |
+| `C-ANDROID-SHARE`* | `ShareActivity` and the destination screen | none on Windows; the share extensions on Apple (below) |
+| `C-ANDROID-SYSTEM-SURFACES`* | Credential Manager's account sheet, Google Play services' code scanner, the browser for provider sign-in and the no-display return activity, the system app chooser | the OS-owned desktop boundaries `C-FILE-DIALOGS` and `C-SYSTEM-MENUS` in kind; the browser sign-in `C-ONBOARDING` starts |
+
+Option sets, each held to its Kotlin enum: `KoruThemePreference`,
+`KoruFontChoice`, `WorkspaceAction`, `WorkspaceSort`,
+`DocumentProjection`, `CloudCopyPhase`, `RunGlyph`. They are listed as
+their identifiers: the Lab never offers a platform-only choice to a person.
+Dispositions: 18 platform-only, 1 boundary (`C-ANDROID-SYSTEM-SURFACES`).
+
+Defects found here (not fixed):
+
+- **Hard-coded text and fixed formats a person reads**: `deviceEventLabel`
+  shows an unknown event kind as its identifier with `_` replaced and an
+  eight-character id (`KoruApp.kt` 976–996); the link-code failure puts an
+  exception's message, or `unknown_error`, inside a translated sentence
+  (405, 465); the developer screen's `Android {release}` and `koru.v1`
+  (2170–2172); fixed separators join translated parts — `" · "` and a
+  newline in the linked-device rows (704, 806, 829), `" — "` in the relay
+  line (658–660), `" · "` and `", "` on the Sync status screen
+  (`CloudProgressScreen.kt` 168, 183–184, 191, 231–232) and in the run pill
+  (`RunPresentation.kt` 101); list ordinals are Kotlin templates with ASCII
+  digits (`"$ordinal."`, `DocumentEditor.kt` 734) — the number trap the
+  mobile README names.
+- **Local values beside the theme**: the highlight and inline-code
+  backgrounds are raw colors, twice (`DocumentEditor.kt` 683, 687;
+  `NativeRichEditor.kt` 207); the headings use Material's ramp, a size
+  apart from the desktop's (TECHDEBT 84, already filed).
+- **Docs and source disagree**: mobile CATCHUP files *Auto-update* under
+  "Decided: never — phones update through the App Store and Play Store",
+  while the nightly Android app carries its own update notice, download
+  and installer hand-off (`AppUpdates.kt`, `UpdateBanner`); CATCHUP's
+  accessibility section says "Android draws its own reminder surfaces",
+  while its *Reminders* row says neither phone schedules or delivers
+  reminders and the Android source has no reminder UI.
 
 ## Notes for later batches
 

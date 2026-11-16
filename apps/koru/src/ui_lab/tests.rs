@@ -137,6 +137,14 @@ const LAB_SOURCES: &[(&str, &str)] = &[
         "ui_lab/registry/foundations.rs",
         include_str!("registry/foundations.rs"),
     ),
+    (
+        "ui_lab/registry/native.rs",
+        include_str!("registry/native.rs"),
+    ),
+    (
+        "ui_lab/registry/native/android.rs",
+        include_str!("registry/native/android.rs"),
+    ),
     ("ui_lab/shell.rs", include_str!("shell.rs")),
     ("ui_lab/story.rs", include_str!("story.rs")),
     ("ui_lab/tokens.rs", include_str!("tokens.rs")),
@@ -334,6 +342,8 @@ const RECORD_FILES: &[&str] = &[
     "ui_lab/registry/domain/window.rs",
     "ui_lab/registry/domain/workspace_host.rs",
     "ui_lab/registry/foundations.rs",
+    "ui_lab/registry/native.rs",
+    "ui_lab/registry/native/android.rs",
 ];
 
 /// `line` with the contents of every `"…"` literal removed, quotes kept.

@@ -36,9 +36,10 @@
 //! [`compositions`] (whole surfaces assembled from controls). The domain
 //! crates' records are in [`domain`], a file per crate, because a crate's
 //! surfaces, controls and support are reviewed together against its source;
-//! each record still names the group it is shown under. A later batch adds
-//! its records the same way, with the [`Kind`] and [`Source::owner`] that say
-//! where they came from.
+//! each record still names the group it is shown under. The apps' own UI is
+//! in `app`, a file per area, and the native platforms' — Kotlin and Swift,
+//! written as string literals — in [`native`], a file per platform, each with
+//! the [`Kind`] and [`Source::owner`] that say where it came from.
 
 use koru_ui::button::{ActionStyle, ButtonRole};
 
@@ -47,6 +48,7 @@ mod compositions;
 mod controls;
 mod domain;
 mod foundations;
+mod native;
 
 /// The three groups the navigator files entries under.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -94,10 +96,6 @@ pub(crate) enum Kind {
     /// A control or painter private to one application.
     AppLocal,
     /// A platform's own control standing in for a shared one.
-    #[expect(
-        dead_code,
-        reason = "the native-adapter batch registers these; the expectation fails once one does"
-    )]
     NativeAdapter,
 }
 
@@ -169,10 +167,6 @@ pub(crate) enum Story {
     /// It draws nothing: a rule, a model or plumbing a component uses.
     Nonvisual,
     /// It exists only as a native adapter on a platform the Lab does not run on.
-    #[expect(
-        dead_code,
-        reason = "the native-adapter batch records these; the expectation fails once one does"
-    )]
     PlatformOnly,
     /// Below the component level or owned by content: raw paint, text runs,
     /// a document's own marks. Recorded so it is accounted for, shown through
@@ -614,6 +608,7 @@ pub(crate) const CATALOG: &[&[Entry]] = &[
     app::MAINVIEW,
     app::PANES,
     app::COMPANION_APPS,
+    native::ANDROID,
 ];
 
 /// Every record, flattened.

@@ -267,8 +267,12 @@ fn every_record_names_its_symbols_under_its_own_module() {
             entry.source.module,
             entry.source.owner
         );
+        // A native adapter is written from Kotlin or Swift; everything else
+        // from Rust.
+        let native = entry.source.file.ends_with(".kt") || entry.source.file.ends_with(".swift");
         assert!(
-            entry.source.file.ends_with(".rs") && !entry.source.file.contains('\\'),
+            (entry.source.file.ends_with(".rs") || native && entry.kind == Kind::NativeAdapter)
+                && !entry.source.file.contains('\\'),
             "{}",
             entry.catalog_id
         );

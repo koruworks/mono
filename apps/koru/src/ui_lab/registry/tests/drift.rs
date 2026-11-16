@@ -828,9 +828,25 @@ fn every_option_set_is_its_source_declaration() {
         .copied()
         .chain([DIALOG_OPTIONS, COMPACT_OPTIONS])
     {
-        let text = source(set.file);
         let own = set.source.rsplit("::").next().unwrap();
         let idents: Vec<&str> = set.members.iter().map(|m| m.ident).collect();
+        // A native enum is Kotlin or Swift: read in its own syntax.
+        if native::is_native_file(set.file) {
+            assert_eq!(set.declared, Declared::Enum, "{}", set.source);
+            // `ui.theme.KoruThemePreference`, `SettingsScreen.Appearance`:
+            // the enum is the last segment.
+            let name = own.rsplit('.').next().unwrap();
+            assert_eq!(
+                idents,
+                native::enum_members(set.file, name),
+                "{} in {}",
+                set.source,
+                set.file
+            );
+            checked += 1;
+            continue;
+        }
+        let text = source(set.file);
         // An app's types are rarely `pub`: read them whatever their visibility.
         if app::is_app_file(set.file) {
             match set.declared {
@@ -986,6 +1002,24 @@ fn declares(text: &str, item: &str) -> bool {
 #[test]
 fn every_symbol_is_declared_under_its_path() {
     for entry in catalog() {
+        // A native symbol is a Kotlin or Swift declaration, read in its own
+        // syntax from the files of its package or target.
+        if native::owns(entry.source.owner) {
+            for (symbol, _, _) in symbols(entry) {
+                assert!(
+                    native::declared(symbol),
+                    "{}: {symbol} is not declared",
+                    entry.catalog_id
+                );
+            }
+            assert!(
+                native::is_native_file(entry.source.file),
+                "{}: {} is not a compiled-in native source",
+                entry.catalog_id,
+                entry.source.file
+            );
+            continue;
+        }
         // An app's symbols are read whatever their visibility.
         if app::owns(entry.source.owner) {
             for (symbol, _, _) in symbols(entry) {
@@ -1681,6 +1715,7 @@ fn counts() -> Vec<(&'static str, usize)> {
         ("domain crate modules excluded", domain_excluded),
     ];
     rows.extend(app::counts());
+    rows.extend(native::counts());
     rows.extend([
         ("records", entries.len()),
         (
@@ -1705,6 +1740,10 @@ fn counts() -> Vec<(&'static str, usize)> {
             count(&|e| e.kind == Kind::DomainComposition),
         ),
         ("kind: app-local", count(&|e| e.kind == Kind::AppLocal)),
+        (
+            "kind: native adapter",
+            count(&|e| e.kind == Kind::NativeAdapter),
+        ),
         ("token values listed", option_members(Kind::Token)),
         ("symbols", all_symbols.len()),
         (
@@ -1742,6 +1781,10 @@ fn counts() -> Vec<(&'static str, usize)> {
             story(|s| *s == Story::NoStoryYet),
         ),
         ("symbol story: nonvisual", story(|s| *s == Story::Nonvisual)),
+        (
+            "symbol story: platform-only",
+            story(|s| *s == Story::PlatformOnly),
+        ),
         ("symbol story: boundary", story(|s| *s == Story::Boundary)),
         ("A2UI: component", a2ui(|a| matches!(a, A2ui::Component(_)))),
         (
@@ -1790,5 +1833,92 @@ fn the_manifests_counts_are_the_registrations() {
     );
 }
 
+/// The availability values, in the order the manifest's platform table
+/// lists them. Every member is matched, so a value added to [`Availability`]
+/// stops this compiling until the table has a column for it.
+const AVAILABILITIES: [(Availability, &str); 9] = [
+    (Availability::Available, "available"),
+    (Availability::Existing, "existing"),
+    (Availability::SharedSourceUnverified, "shared source"),
+    (Availability::NativePartial, "native partial"),
+    (Availability::Planned, "planned"),
+    (Availability::Unavailable, "unavailable"),
+    (Availability::NotApplicable, "not applicable"),
+    (Availability::NativeOwned, "native-owned"),
+    (Availability::NotAudited, "not audited"),
+];
+
+const fn column(availability: Availability) -> usize {
+    match availability {
+        Availability::Available => 0,
+        Availability::Existing => 1,
+        Availability::SharedSourceUnverified => 2,
+        Availability::NativePartial => 3,
+        Availability::Planned => 4,
+        Availability::Unavailable => 5,
+        Availability::NotApplicable => 6,
+        Availability::NativeOwned => 7,
+        Availability::NotAudited => 8,
+    }
+}
+
+/// The manifest's platform table is the registration's: one row per
+/// platform, one column per availability, each cell the number of records
+/// that say that about that platform.
+#[test]
+fn the_manifests_platform_cells_are_the_registrations() {
+    for (slot, (availability, _)) in AVAILABILITIES.iter().enumerate() {
+        assert_eq!(column(*availability), slot);
+    }
+    let platforms = [
+        (Platform::Windows, "Windows"),
+        (Platform::MacOs, "macOS"),
+        (Platform::Linux, "Linux"),
+        (Platform::Android, "Android"),
+        (Platform::Ios, "iOS"),
+    ];
+    let mut table = String::from("| Platform |");
+    for (_, name) in AVAILABILITIES {
+        table.push_str(&format!(" {name} |"));
+    }
+    table.push_str("\n| --- |");
+    for _ in AVAILABILITIES {
+        table.push_str(" --- |");
+    }
+    table.push('\n');
+    for (platform, name) in platforms {
+        let mut cells = [0usize; 9];
+        for entry in catalog() {
+            for (p, availability) in entry.platforms {
+                if p == platform {
+                    cells[column(availability)] += 1;
+                }
+            }
+        }
+        table.push_str(&format!("| {name} |"));
+        for cell in cells {
+            table.push_str(&format!(" {cell} |"));
+        }
+        table.push('\n');
+    }
+    let marker = MANIFEST
+        .find("<!-- cells:begin -->")
+        .expect("the manifest has a platform table");
+    let start = marker
+        + MANIFEST[marker..]
+            .find('\n')
+            .expect("the marker ends its line")
+        + 1;
+    let end = MANIFEST
+        .find("<!-- cells:end -->")
+        .expect("the platform table ends");
+    assert_eq!(
+        MANIFEST[start..end].replace("\r\n", "\n"),
+        table,
+        "the manifest's platform table should read:\n{table}"
+    );
+}
+
 mod app;
 mod domain;
+mod native;
