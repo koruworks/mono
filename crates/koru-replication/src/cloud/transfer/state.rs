@@ -250,9 +250,11 @@ pub struct Stream {
     scope: Scope,
     expires: u64,
     initialized_by: u64,
-    local: (i64, usize),
+    /// Each direction's policy identity: generation, automatic ceiling and
+    /// whether every start waits for its decision. Learned anew per stream.
+    local: (i64, usize, bool),
     local_sent: bool,
-    peer: Option<(i64, usize)>,
+    peer: Option<(i64, usize, bool)>,
     incoming: Option<Incoming>,
     rejected: Option<Incoming>,
     outgoing: Option<Sending>,
@@ -297,7 +299,7 @@ impl Stream {
             initialized_by: mono_now_ms
                 .checked_add(CONTROL_WAIT_MS)
                 .ok_or(Error::Invalid)?,
-            local: (1, automatic_limit),
+            local: (1, automatic_limit, false),
             local_sent: false,
             peer: None,
             incoming: None,
@@ -309,6 +311,22 @@ impl Stream {
             draining: false,
             closed: None,
         })
+    }
+    /// Advertise, from this stream's first policy, that every start it
+    /// receives waits for its exact decision, whatever its length. Only before
+    /// that policy is sent: a later change is [`Stream::change_policy_deciding`].
+    pub fn decision_required(mut self, required: bool) -> Result<Self, Error> {
+        if self.local_sent {
+            return Err(Error::Invalid);
+        }
+        self.local.2 = required;
+        Ok(self)
+    }
+    /// True only while the peer's current policy admits content and requires
+    /// a decision for every start. Unknown, paused and absent are all false;
+    /// nothing is remembered from another stream.
+    pub fn peer_decision_required(&self) -> bool {
+        self.closed.is_none() && matches!(self.peer, Some((_, limit, true)) if limit != 0)
     }
     /// The scope as it stands, including a manifest identity bound by the
     /// first manifest transfer; a worker refreshes its own copy from here
@@ -420,11 +438,26 @@ impl Stream {
             return Err(self.cancel(Error::Invalid));
         }
         self.local_sent = true;
-        Ok(Control::policy(self.local.0, self.local.1))
+        Ok(Control::policy_deciding(
+            self.local.0,
+            self.local.1,
+            self.local.2,
+        ))
     }
     /// Called on every relevant observation change, even equal numeric ceilings.
     /// A caller must write this returned policy before receiving new starts.
     pub fn change_policy(&mut self, limit: usize, now: u64) -> Result<Control, Error> {
+        self.change_policy_deciding(limit, self.local.2, now)
+    }
+    /// [`Stream::change_policy`] that may also change whether every start
+    /// waits for its decision. Both values move only with the next generation
+    /// and behind the same fence.
+    pub fn change_policy_deciding(
+        &mut self,
+        limit: usize,
+        decision_required: bool,
+        now: u64,
+    ) -> Result<Control, Error> {
         self.check(now)?;
         if !self.local_sent || ![0, RESTRICTED_LIMIT, MAX_PAYLOAD].contains(&limit) {
             return Err(self.cancel(Error::Invalid));
@@ -438,8 +471,13 @@ impl Stream {
                 .checked_add(1)
                 .ok_or_else(|| self.cancel(Error::Invalid))?,
             limit,
+            decision_required,
         );
-        Ok(Control::policy(self.local.0, limit))
+        Ok(Control::policy_deciding(
+            self.local.0,
+            limit,
+            decision_required,
+        ))
     }
     fn deadline(&self, start: &Start, first: u64, now: u64) -> Result<u64, Error> {
         if now < first || now - first >= CONTROL_WAIT_MS {
@@ -518,19 +556,20 @@ impl Stream {
             Control::TransferPolicy {
                 policy_generation: g,
                 automatic_limit_bytes: l,
+                decision_required: d,
                 ..
             } => {
                 match self.peer {
                     None if g == 1 => {}
-                    Some(old) if old == (g, l) => return Ok(Admission::Policy),
-                    Some((old, _)) if old.checked_add(1) == Some(g) => {
+                    Some(old) if old == (g, l, d) => return Ok(Admission::Policy),
+                    Some((old, ..)) if old.checked_add(1) == Some(g) => {
                         if self.outgoing.is_some() {
                             return Err(Error::PolicyChanged);
                         }
                     }
                     _ => return Err(Error::Invalid),
                 }
-                self.peer = Some((g, l));
+                self.peer = Some((g, l, d));
                 Ok(Admission::Policy)
             }
             Control::TransferStart(start) => {
@@ -575,13 +614,16 @@ impl Stream {
                 let deadline = self.deadline(&start, first, now)?;
                 self.rejected = None;
                 if reject {
-                    if start.total_length <= self.local.1 {
+                    // A sender told to wait for its decision has no body in
+                    // flight: there is no discard window, and a frame that
+                    // follows this refusal is invalid like any other.
+                    if !self.local.2 && start.total_length <= self.local.1 {
                         self.rejected =
                             Some(Incoming::discard(start, room, deadline, &self.budget)?);
                     }
                     return Ok(Admission::Deferred);
                 }
-                if start.total_length <= self.local.1 {
+                if !self.local.2 && start.total_length <= self.local.1 {
                     self.incoming = Some(Incoming::new(start, room, deadline, &self.budget)?);
                     Ok(Admission::Automatic)
                 } else {
@@ -823,7 +865,7 @@ impl Stream {
             if context.claim.is_some() && self.claims != ClaimReferences::Sent {
                 return Err(Error::Invalid);
             }
-            let (generation, limit) = self.peer.ok_or(Error::Invalid)?;
+            let (generation, limit, decision_required) = self.peer.ok_or(Error::Invalid)?;
             if limit == 0 {
                 unavailable(
                     "peer_limit_zero",
@@ -846,7 +888,9 @@ impl Stream {
                 &self.budget,
             )?;
             let deadline = self.deadline(&export.start, first, now)?;
-            let accepted = export.start.total_length <= limit;
+            // No body frame is released before the exact Accept when the
+            // peer requires its decision, whatever the length.
+            let accepted = !decision_required && export.start.total_length <= limit;
             let control = Control::TransferStart(export.start.clone());
             self.outgoing = Some(Sending {
                 export,

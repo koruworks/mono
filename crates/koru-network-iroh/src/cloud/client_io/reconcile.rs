@@ -278,6 +278,11 @@ where
         }
     }
 
+    /// [`Client::upload_decision_required`] for the unit scheduler: the only
+    /// condition under which a timed resource retry may offer its start.
+    pub fn upload_decision_required(&self) -> bool {
+        self.client.upload_decision_required()
+    }
     pub fn change_policy(&mut self, limit: usize) -> Result<(), Error> {
         self.client.change_policy(limit).map_err(|e| self.cancel(e))
     }
