@@ -52,6 +52,11 @@ struct Script {
     consumes: usize,
     leases: usize,
     ordinary_refusal: bool,
+    /// Answer a receipt as the real owner does while the decision holds the
+    /// Run document: `Verified` with the exact evidence, registration owed.
+    hold_registration: bool,
+    /// Answer a receipt with evidence other than what was sent.
+    alter_receipt: bool,
     log: Vec<&'static str>,
     proposals: Vec<DecisionEditProposal>,
     hello_gate: Option<std::sync::mpsc::Receiver<()>>,
@@ -82,6 +87,8 @@ impl DecisionOwner {
             consumes: 0,
             leases: 0,
             ordinary_refusal: false,
+            hold_registration: false,
+            alter_receipt: false,
             log: Vec::new(),
             proposals: Vec::new(),
             hello_gate: None,
@@ -404,13 +411,27 @@ impl BotDelegatePort for DecisionOwner {
             }
             BotCommand::ConfirmNativeResult { request } => {
                 s.log.push("confirm");
+                let (hold, alter) = (s.hold_registration, s.alter_receipt);
                 let intent = s.intent.as_mut().unwrap();
                 assert_eq!(intent.key, request.key);
                 match request.observation {
                     NativeResultObservation::Durable { evidence } => {
                         intent.verified = Some(evidence);
-                        intent.stage = NativeResultStage::Registered;
-                        intent.disposition = NativeResultDisposition::AlreadyRegistered;
+                        if alter {
+                            let mut other = intent.clone();
+                            intent.stage = NativeResultStage::Verified;
+                            other.stage = NativeResultStage::Verified;
+                            if let Some(evidence) = other.verified.as_mut() {
+                                evidence.title.push_str(" (other)");
+                            }
+                            return Ok(BotReply::NativeResult { intent: other });
+                        }
+                        if hold {
+                            intent.stage = NativeResultStage::Verified;
+                        } else {
+                            intent.stage = NativeResultStage::Registered;
+                            intent.disposition = NativeResultDisposition::AlreadyRegistered;
+                        }
                     }
                     NativeResultObservation::NotApplied { .. } => {
                         intent.stage = NativeResultStage::Refused
@@ -1252,4 +1273,139 @@ fn the_fence_lifts_when_the_wait_settles_or_closes() {
         "native_owner_unavailable"
     );
     assert!(owner.script().log.contains(&"ordinary_prepare"));
+}
+
+// ---------------------------------------------------------------- O152 save
+
+/// A granted decision whose consumer is now the Run bearer; the owner holds
+/// the Run document (as while the decision's wait is open) and answers a
+/// receipt `Verified`.
+fn held(f: &mut Fixture, owner: &DecisionOwner, arguments: &Value) {
+    assert_eq!(
+        edit(f, owner, arguments.clone()).unwrap_err().code,
+        "permission_pending"
+    );
+    let consumer = successor(f, owner);
+    let mut s = owner.script();
+    s.publication_pending = true;
+    s.hold_registration = true;
+    s.grant(consumer);
+}
+
+fn waiting_edit(
+    f: &Fixture,
+    owner: &DecisionOwner,
+    arguments: &Value,
+    decisions: EditDecisions,
+) -> Result<Value, ToolFailure> {
+    tool_while(
+        f,
+        owner,
+        "edit_document",
+        arguments.clone(),
+        decisions,
+        true,
+    )
+}
+
+#[test]
+fn the_approved_edits_verified_save_answers_saved_and_its_exact_retry_the_same_reference() {
+    let mut f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    held(&mut f, &owner, &arguments);
+    // The consumer's consume runs the Store effect once; the owner records
+    // it Verified with exactly the evidence sent: a positive save.
+    let saved = waiting_edit(&f, &owner, &arguments, EditDecisions::Open(PACING)).unwrap();
+    assert_eq!(saved["status"], "saved");
+    assert_eq!(saved["operation_id"], operation_of(&arguments));
+    let once = text_count(&f, &arguments, "Needs approval");
+    assert!(once > 0, "the approved edit was applied");
+    assert_eq!(
+        owner.script().intent.as_ref().unwrap().stage,
+        NativeResultStage::Verified
+    );
+    // The model's exact retry finds the retained intent; the decision's
+    // read-only replay names it as its consumed edit, so the same Verified
+    // save answers with the same reference, without waiting for the fence.
+    let before = owner.script().log.len();
+    let retried = waiting_edit(&f, &owner, &arguments, EditDecisions::Open(PACING)).unwrap();
+    assert_eq!(retried, saved);
+    let s = owner.script();
+    assert_eq!(
+        s.log[before..],
+        [
+            "reconcile",
+            "native_lookup",
+            "hello",
+            "prepare_decision",
+            "confirm"
+        ]
+    );
+    assert_eq!((s.consumes, s.leases), (1, 1), "never a second license");
+    assert!(!s.log.contains(&"ordinary_prepare"));
+    drop(s);
+    assert_eq!(text_count(&f, &arguments, "Needs approval"), once);
+}
+
+#[test]
+fn a_verified_save_with_other_evidence_stays_unknown() {
+    let mut f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    held(&mut f, &owner, &arguments);
+    owner.script().alter_receipt = true;
+    assert_eq!(
+        waiting_edit(&f, &owner, &arguments, EditDecisions::Open(PACING))
+            .unwrap_err()
+            .code,
+        "save_status_unknown"
+    );
+    assert_eq!(
+        waiting_edit(&f, &owner, &arguments, EditDecisions::Open(PACING))
+            .unwrap_err()
+            .code,
+        "save_status_unknown"
+    );
+    assert_eq!(owner.script().leases, 1);
+}
+
+/// Outside a proven decision context a `Verified` reply keeps today's
+/// answer: not waiting, or with edit decisions closed (no decision replay).
+#[test]
+fn a_verified_reply_without_the_decisions_replay_keeps_todays_answer() {
+    let mut f = Fixture::new();
+    let arguments = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    held(&mut f, &owner, &arguments);
+    assert_eq!(
+        waiting_edit(&f, &owner, &arguments, EditDecisions::Open(PACING)).unwrap()["status"],
+        "saved"
+    );
+    let before = owner.script().log.len();
+    assert_eq!(
+        tool_while(
+            &f,
+            &owner,
+            "edit_document",
+            arguments.clone(),
+            EditDecisions::Open(PACING),
+            false
+        )
+        .unwrap_err()
+        .code,
+        "save_status_unknown"
+    );
+    assert_eq!(
+        waiting_edit(&f, &owner, &arguments, EditDecisions::Closed)
+            .unwrap_err()
+            .code,
+        "save_status_unknown"
+    );
+    let s = owner.script();
+    assert!(
+        !s.log[before..].contains(&"prepare_decision"),
+        "no decision replay outside its context"
+    );
+    assert_eq!((s.consumes, s.leases), (1, 1));
 }

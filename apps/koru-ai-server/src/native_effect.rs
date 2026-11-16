@@ -19,7 +19,7 @@ use crate::store_tools::{NativeStoreAuthority, native_document_title};
 use koru_delegate_api::bots::{
     BotBootScan, BotCommand, BotDelegatePort, BotReply, DecisionReceiptView,
 };
-use koru_delegate_core::decisions::{DecisionBindingV1, DecisionPayload};
+use koru_delegate_core::decisions::{DecisionBindingV1, DecisionPayload, DecisionResumeState};
 use koru_delegate_core::{
     BotExecutionFence, BotId, BotOwner, BotProvenance, ConfirmNativeResult, DelegateBootId,
     FreshBotPolicyProof, NativeEffectPurpose, NativeResultDisposition, NativeResultIntentView,
@@ -75,6 +75,67 @@ pub struct ApprovedEdit<'a> {
     pub key: &'a NativeResultKey,
     pub fingerprint: [u8; 32],
     pub payload: &'a DecisionPayload,
+}
+
+/// What a positive save confirmation must show.
+///
+/// The owner registers a confirmed page result in the Run document when it
+/// can; while a Koru edit decision holds that document, the result it just
+/// recorded comes back `Verified` with the exact evidence and its
+/// registration follows once the decision's wait has settled (O150, O152).
+/// Only for the decision's own consumed edit is that reply a positive save;
+/// every other result still needs `Registered`, exactly as before.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SaveProof {
+    /// `Registered` with the exact evidence (every ordinary page result).
+    Registered,
+    /// The decision's own consumed edit: `Registered`, or `Verified`
+    /// carrying exactly the evidence that was sent.
+    DecisionConsumed,
+}
+
+/// Whether `intent` is the edit `view`'s decision consumed: the exact
+/// operation, target, workspace and fingerprint of its binding, under the
+/// acknowledged consumer its retained resume names (attempt, generation,
+/// session and accepted turn), which is also `fence`. Read from the owner's
+/// exact receipt; anything else, including a receipt without an acknowledged
+/// resume, is not.
+pub fn decision_consumed(
+    view: &DecisionReceiptView,
+    fence: &BotExecutionFence,
+    intent: &NativeResultIntentView,
+) -> bool {
+    let DecisionBindingV1::KoruEdit(binding) = &view.receipt.binding else {
+        return false;
+    };
+    let Some(resume) = view.resume.as_ref() else {
+        return false;
+    };
+    let (attempt, generation, session, _) = resume.consumer_identity();
+    let turn = match &resume.state {
+        DecisionResumeState::InputAcknowledged { acknowledgment }
+        | DecisionResumeState::Closed {
+            acknowledgment: Some(acknowledgment),
+        } => acknowledgment.turn,
+        _ => return false,
+    };
+    let key = &intent.key;
+    resume.decision == view.receipt.decision
+        && intent.purpose == (NativeEffectPurpose::Result {})
+        && intent.kind == NativeResultOperation::EditPage
+        && binding.run == key.run
+        && binding.operation_id == key.operation_id
+        && binding.target == intent.target
+        && binding.workspace == intent.destination
+        && binding.edit_fingerprint == intent.request_fingerprint
+        && attempt == key.attempt
+        && generation == key.generation
+        && turn == key.turn
+        && session == Some(fence.session)
+        && fence.run == key.run
+        && fence.attempt == key.attempt
+        && fence.generation == key.generation
+        && fence.turn == Some(key.turn)
 }
 
 /// The stable code a shared builder or Store refusal maps to.
@@ -179,6 +240,27 @@ pub fn execute_record<F>(
     uncertain: impl FnOnce() -> Result<(), F>,
     fail: &dyn Fn(&'static str) -> F,
 ) -> Result<NativeResultIntentView, F> {
+    execute_record_as(
+        port,
+        intent,
+        SaveProof::Registered,
+        execute,
+        settled,
+        uncertain,
+        fail,
+    )
+}
+
+/// [`execute_record`] with the positive save `proof` this intent needs.
+pub fn execute_record_as<F>(
+    port: &dyn BotDelegatePort,
+    intent: &NativeResultIntentView,
+    proof: SaveProof,
+    execute: impl FnOnce() -> Result<NativeWriteEvidence, NativeWriteError>,
+    settled: impl FnOnce(),
+    uncertain: impl FnOnce() -> Result<(), F>,
+    fail: &dyn Fn(&'static str) -> F,
+) -> Result<NativeResultIntentView, F> {
     if intent.disposition != NativeResultDisposition::Execute
         || intent.stage != NativeResultStage::Prepared
         || intent.verified.is_some()
@@ -187,7 +269,7 @@ pub fn execute_record<F>(
     }
     match execute() {
         Ok(evidence) => {
-            let registered = confirm_record(port, intent, evidence, fail)?;
+            let registered = confirm_record_as(port, intent, evidence, proof, fail)?;
             settled();
             Ok(registered)
         }
@@ -250,6 +332,18 @@ pub fn confirm_record<F>(
     evidence: NativeWriteEvidence,
     fail: &dyn Fn(&'static str) -> F,
 ) -> Result<NativeResultIntentView, F> {
+    confirm_record_as(port, intent, evidence, SaveProof::Registered, fail)
+}
+
+/// [`confirm_record`] with the positive save `proof` this intent needs. The
+/// owner's reply must carry exactly the evidence sent, whatever the proof.
+pub fn confirm_record_as<F>(
+    port: &dyn BotDelegatePort,
+    intent: &NativeResultIntentView,
+    evidence: NativeWriteEvidence,
+    proof: SaveProof,
+    fail: &dyn Fn(&'static str) -> F,
+) -> Result<NativeResultIntentView, F> {
     let reference = NativeResultReference {
         operation_id: intent.key.operation_id,
         workspace: evidence.workspace,
@@ -284,7 +378,9 @@ pub fn confirm_record<F>(
                 && observed.target == intent.target
                 && observed.kind == intent.kind
                 && observed.verified.as_ref() == Some(&reference)
-                && observed.stage == NativeResultStage::Registered =>
+                && (observed.stage == NativeResultStage::Registered
+                    || (proof == SaveProof::DecisionConsumed
+                        && observed.stage == NativeResultStage::Verified)) =>
         {
             observed
         }
@@ -327,8 +423,9 @@ fn confirm<H: NativeEffectHost + ?Sized>(
     authority: &NativeStoreAuthority,
     intent: &NativeResultIntentView,
     evidence: NativeWriteEvidence,
+    proof: SaveProof,
 ) -> Result<Value, H::Failure> {
-    let observed = confirm_record(port, intent, evidence, &|code| host.failure(code))?;
+    let observed = confirm_record_as(port, intent, evidence, proof, &|code| host.failure(code))?;
     host.settled();
     saved(host, store, authority, &observed)
 }
@@ -347,6 +444,32 @@ pub fn recover_retained<H: NativeEffectHost + ?Sized>(
     subject: NativeEffectSubject,
     prepared: &PreparedNativeWrite,
     intent: &NativeResultIntentView,
+) -> Option<Result<Value, H::Failure>> {
+    recover_retained_as(
+        host,
+        port,
+        store,
+        backend,
+        authority,
+        subject,
+        prepared,
+        intent,
+        SaveProof::Registered,
+    )
+}
+
+/// [`recover_retained`] with the positive save `proof` this intent needs.
+#[allow(clippy::too_many_arguments)]
+pub fn recover_retained_as<H: NativeEffectHost + ?Sized>(
+    host: &H,
+    port: &dyn BotDelegatePort,
+    store: &StoreWorkerClient,
+    backend: &LocalBackend,
+    authority: &NativeStoreAuthority,
+    subject: NativeEffectSubject,
+    prepared: &PreparedNativeWrite,
+    intent: &NativeResultIntentView,
+    proof: SaveProof,
 ) -> Option<Result<Value, H::Failure>> {
     let key = &intent.key;
     if intent.stage == NativeResultStage::Registered {
@@ -383,14 +506,15 @@ pub fn recover_retained<H: NativeEffectHost + ?Sized>(
                 title: evidence.title.clone(),
                 confirmed_at_ms: evidence.confirmed_at_ms,
             },
+            proof,
         ));
     }
     // Recover original Store proof before asking for fresh execution rights.
     // This can register a held creation after an access-narrowing barrier.
     match backend.reconcile_native_write(prepared, store_identity(subject, intent)) {
-        Ok(NativeReconciliation::Verified(evidence)) => {
-            Some(confirm(host, port, store, authority, intent, evidence))
-        }
+        Ok(NativeReconciliation::Verified(evidence)) => Some(confirm(
+            host, port, store, authority, intent, evidence, proof,
+        )),
         Ok(NativeReconciliation::Unconfirmed) if intent.stage == NativeResultStage::Prepared => {
             None
         }
@@ -454,10 +578,19 @@ pub fn consume<H: NativeEffectHost + ?Sized>(
         _ => return Err(fail("save_status_unknown")),
     };
     validate_intent(&intent, edit.key, prepared, edit.fingerprint, &fail)?;
+    // The owner returned this intent for the one-use consume; it is the
+    // decision's own edit only when the receipt's binding and acknowledged
+    // consumer name exactly it (O152). Otherwise today's proof applies.
+    let proof = if decision_consumed(view, edit.fence, &intent) {
+        SaveProof::DecisionConsumed
+    } else {
+        SaveProof::Registered
+    };
     if intent.disposition == NativeResultDisposition::Execute {
-        let registered = execute_record(
+        let registered = execute_record_as(
             port,
             &intent,
+            proof,
             || backend.execute_native_write(prepared, store_identity(subject, &intent)),
             || host.settled(),
             || host.uncertain(subject.owner, subject.bot, edit.key.clone()),
@@ -467,8 +600,8 @@ pub fn consume<H: NativeEffectHost + ?Sized>(
     }
     // Consumed replay is reconcile-only: never another Execute or Store
     // request, even when the original lease's outcome is still unknown.
-    recover_retained(
-        host, port, store, backend, authority, subject, prepared, &intent,
+    recover_retained_as(
+        host, port, store, backend, authority, subject, prepared, &intent, proof,
     )
     .unwrap_or_else(|| Err(fail("save_status_unknown")))
 }
