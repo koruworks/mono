@@ -505,3 +505,77 @@ fn the_faces_share_one_deadline_and_ask_for_none_while_nothing_works() {
         "no face of a working Bot is on screen"
     );
 }
+
+/// **The dialog's picked face moves by the window's one clock, and the
+/// clock stops with the dialog.** With nothing working and no dialog the
+/// window asks for no frame. Opening the dialog starts the clock, which is
+/// the one deadline (the start of its next step); the dialog's picked face
+/// takes that clock's pose and no other tile moves. Reduced motion ends the
+/// deadline and stills the face. Closing the dialog ends the deadline: no
+/// wake-up is asked for once it is gone.
+#[test]
+fn the_dialogs_picked_face_moves_by_the_windows_clock_and_stops_with_it() {
+    let (mut v, mut w) = on_bots();
+    listed(&mut v, Vec::new());
+    assert!(!v.sync_bot_faces(Instant::now()));
+    assert_eq!(v.bot_faces_deadline(), None, "nothing moves yet");
+
+    assert!(v.open_new_bot_dialog(Opener::Elsewhere));
+    assert!(v.new_bot_open());
+    assert!(v.bot_faces().animating(), "the clock runs from the open");
+    let now = Instant::now();
+    let due = v.bot_faces().deadline(now).expect("a deadline");
+    assert!(
+        due > now && due <= now + Duration::from_millis(koru_draw::face::FACE_FRAME_MS),
+        "the start of the clock's next step"
+    );
+    assert!(v.bot_faces_deadline().is_some());
+
+    let later = Instant::now() + Duration::from_secs(1);
+    assert!(v.sync_bot_faces(later), "a step passed: repaint");
+    let dialog = |v: &MainView| {
+        v.first_bot
+            .dialog
+            .as_ref()
+            .expect("the dialog")
+            .poses_at(later)
+    };
+    let poses = dialog(&v);
+    assert_eq!(
+        poses[0],
+        v.bot_faces().pose(0, true, later),
+        "the picked face, in the window clock's pose"
+    );
+    assert_ne!(poses[0], FacePose::STILL);
+    assert!(
+        poses[1..].iter().all(|pose| *pose == FacePose::STILL),
+        "every other face rests"
+    );
+    // One wake-up per step, however often the window is asked.
+    assert!(
+        !v.sync_bot_faces(later),
+        "the same step: nothing to repaint"
+    );
+    assert_eq!(
+        v.bot_faces().deadline(later),
+        v.bot_faces().deadline(later + Duration::from_millis(1))
+    );
+
+    // Reduced motion: no deadline, and the picked face rests.
+    v.reduced_motion = true;
+    assert!(v.sync_bot_faces(later));
+    assert_eq!(v.bot_faces_deadline(), None);
+    assert!(dialog(&v).iter().all(|pose| *pose == FacePose::STILL));
+    v.reduced_motion = false;
+    assert!(v.sync_bot_faces(later));
+    assert!(v.bot_faces_deadline().is_some());
+    assert_ne!(dialog(&v)[0], FacePose::STILL);
+
+    // Closed: the clock stops, and nothing is asked for.
+    assert!(press(&mut v, &mut w, named(NamedKey::Escape), None));
+    assert!(!v.new_bot_open());
+    assert!(v.sync_bot_faces(later), "the clock stopped: repaint");
+    assert!(!v.bot_faces().animating());
+    assert_eq!(v.bot_faces_deadline(), None, "no wake-up once it is closed");
+    assert!(!v.sync_bot_faces(later + Duration::from_secs(1)));
+}

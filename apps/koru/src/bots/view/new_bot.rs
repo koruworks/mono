@@ -35,8 +35,19 @@
 //!
 //! **What it decides that the form does not** is in `bots::first_bot`: the
 //! first agent of the person's list, the agent's automatic mode, a folder
-//! of its own under Koru's local data. A face is always picked, the first
-//! of the table until the person picks another.
+//! of its own under Koru's local data. A face is always picked, the default
+//! one (`koru_ai_core::bots::DEFAULT_AVATAR`, the first of the table) until
+//! the person picks another.
+//!
+//! **The picked face moves; no other does.** The preview and the picked
+//! tile sway and blink together, in one pose read from the copy of the
+//! window's one face clock the window hands in ([`NewBotDialog::set_face_clock`],
+//! `MainView::sync_bot_faces`). The dialog owns no clock, asks for no frame
+//! and has no deadline for it: the window's clock runs while the dialog
+//! stands and stops when it goes, and under reduced motion every face here
+//! is still. A tile the pointer is over stays still, and so does the tile
+//! the keyboard rests on while the picked face is in the other twelve: only
+//! the picked one moves.
 //!
 //! **Nothing is lost by closing it.** With nothing sent, Cancel, Escape and
 //! Close drop the draft and nothing was created. Once the owner may hold
@@ -57,13 +68,13 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
-use koru_ai_core::bots::BotId;
+use koru_ai_core::bots::{BotId, DEFAULT_AVATAR};
 use koru_ai_core::{AiProviderId, ModelSelection, ReasoningChoice};
 use koru_draw::el::{
     Action, El, ElState, Frame, FrameCx, Interaction, Key, Leaf, Look, Ring, Role, SemNode,
     StateRecipe, TextCache, col, divider, icon, leaf, row, scroll_y, spacer, text,
 };
-use koru_draw::face::{FACE_COUNT, Face};
+use koru_draw::face::{FACE_COUNT, Face, FaceClock, FacePose};
 use koru_draw::geometry::Rect;
 use koru_draw::icons;
 use koru_draw::scene;
@@ -228,9 +239,12 @@ static AGENT_STATES: StateRecipe = StateRecipe {
 /// is picked (the reading ink, as the design draws it), the pointer's (the
 /// border) or the keyboard's (the focus line). A picked face is also the
 /// preview and is published as pressed, so the ring is never the only sign.
+/// The picked tile is also the only one that moves: `pose` is the window
+/// clock's for it and [`FacePose::STILL`] for every other.
 struct TileLeaf {
     face: u8,
     name: String,
+    pose: FacePose,
 }
 
 impl Leaf for TileLeaf {
@@ -255,7 +269,9 @@ impl Leaf for TileLeaf {
         let plate = faces::centred(at, faces::TILE.value);
         let inset = (faces::TILE.value - faces::TILE_FACE.value) * 0.5;
         let face = faces::centred(at, (plate.w - inset * 2.0).max(0.0));
-        Face::new(self.face, &self.name).draw_in(scene, root, engine, face, palette);
+        Face::new(self.face, &self.name)
+            .posed(self.pose)
+            .draw_in(scene, root, engine, face, palette);
         let ring = if state.focused {
             Some(Line::Focus.of(palette))
         } else if state.selected {
@@ -269,10 +285,12 @@ impl Leaf for TileLeaf {
             return;
         };
         // The face's own corner, grown by the gap the ring stands off at.
+        // The tile itself never moves (a pose turns the head inside it), so
+        // the ring is the resting one whatever the pose.
         let width = koru_draw::theme::BORDER_W * 2.0;
         let gap = inset * 0.5;
         let side = face.w + gap * 2.0;
-        let corner = koru_draw::face::geometry(self.face, side, koru_draw::face::FacePose::STILL)
+        let corner = koru_draw::face::geometry(self.face, side, FacePose::STILL)
             .tile
             .radii()
             .top_left as f32;
@@ -335,10 +353,15 @@ pub(crate) struct NewBotDialog {
     lang: Lang,
     /// A pass has run: the catalog was asked for the agents at least once.
     passed: bool,
+    /// **A copy of the window's one face clock**, handed in by the window
+    /// (`set_face_clock`): what the picked face is posed from. The dialog
+    /// owns no clock and asks for no frame. Until the window hands one in
+    /// it is a clock that never started, and every face is still.
+    face_clock: FaceClock,
 }
 
 impl NewBotDialog {
-    /// **A new dialog for `home`**: a fresh draft, the first face picked,
+    /// **A new dialog for `home`**: a fresh draft, the default face picked,
     /// the keyboard in the name field.
     pub(crate) fn open(
         home: WorkspaceId,
@@ -357,7 +380,7 @@ impl NewBotDialog {
     ) -> Self {
         if let Some(create) = host.create.as_deref_mut() {
             create.first_bot = true;
-            create.form.choose_avatar(Some(0));
+            create.form.choose_avatar(Some(DEFAULT_AVATAR));
         }
         let lang = host.lang;
         Self {
@@ -374,6 +397,7 @@ impl NewBotDialog {
             cache: RefCell::new(TextCache::default()),
             lang,
             passed: false,
+            face_clock: FaceClock::new(),
         }
     }
 
@@ -402,13 +426,36 @@ impl NewBotDialog {
     pub(crate) fn face(&self) -> u8 {
         self.form()
             .and_then(|form| form.draft().avatar)
-            .unwrap_or(0)
+            .unwrap_or(DEFAULT_AVATAR)
+    }
+
+    /// **The window's face clock**, as it stands this pass
+    /// (`MainView::sync_bot_faces`): what the picked face moves by.
+    pub(crate) fn set_face_clock(&mut self, clock: &FaceClock) {
+        self.face_clock = clock.clone();
+    }
+
+    /// **The pose `face` is drawn in at `now`**: the window clock's for the
+    /// picked face, so the preview and its tile move as one, and
+    /// [`FacePose::STILL`] for every other. Still for all of them while the
+    /// clock is stopped or the person asked for reduced motion.
+    pub(crate) fn pose_of(&self, face: u8, now: std::time::Instant) -> FacePose {
+        self.face_clock.pose(face, face == self.face(), now)
     }
 
     /// **What the preview draws**: the face picked, wearing the initial of
     /// the name typed so far.
     pub(crate) fn preview(&self) -> (u8, String) {
         (self.face(), koru_draw::face::initial(&self.name()))
+    }
+
+    /// The pose of every face of the table at `now`, by its index. Test
+    /// only.
+    #[cfg(test)]
+    pub(crate) fn poses_at(&self, now: std::time::Instant) -> Vec<FacePose> {
+        (0..FACE_COUNT)
+            .map(|face| self.pose_of(face, now))
+            .collect()
     }
 
     /// Which twelve faces the grid shows.
@@ -602,7 +649,7 @@ impl NewBotDialog {
             .name_text(words)
     }
 
-    fn grid(&self, locked: bool) -> El {
+    fn grid(&self, locked: bool, now: std::time::Instant) -> El {
         let name = self.name();
         let picked = self.face();
         let first = self.set * SET;
@@ -622,6 +669,7 @@ impl NewBotDialog {
                         TileLeaf {
                             face,
                             name: name.clone(),
+                            pose: self.pose_of(face, now),
                         },
                     )
                     .semantic()
@@ -871,6 +919,9 @@ impl NewBotDialog {
             return col("New bot dialog").id(ROOT);
         };
         let locked = !form.editable();
+        // One instant for the whole frame: the preview and the picked tile
+        // are the same face in the same pose.
+        let now = std::time::Instant::now();
         let header = row("New bot header")
             .id(HEADER)
             .pad_start(Space::S5)
@@ -921,7 +972,12 @@ impl NewBotDialog {
                     .child(
                         leaf("New bot preview", {
                             let (face, initial) = self.preview();
-                            FaceLeaf::still(face, &initial, faces::PREVIEW_FACE)
+                            FaceLeaf {
+                                face,
+                                name: initial,
+                                pose: self.pose_of(face, now),
+                                size: faces::PREVIEW_FACE,
+                            }
                         })
                         .semantic()
                         .id(PREVIEW)
@@ -952,7 +1008,7 @@ impl NewBotDialog {
             .child(
                 col("New bot faces block")
                     .gap(Space::S2)
-                    .child(self.grid(locked))
+                    .child(self.grid(locked, now))
                     .child(
                         row("New bot others row")
                             .child(spacer())

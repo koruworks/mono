@@ -3,7 +3,7 @@
 //! the Bot, replayed exactly with and without one, across a restart, and a
 //! conflict when the same request names another.
 use super::*;
-use koru_ai_core::bots::{BOT_AVATAR_COUNT, derived_avatar};
+use koru_ai_core::bots::{BOT_AVATAR_COUNT, DEFAULT_AVATAR};
 
 /// `command` with `avatar` in place of the face it named.
 fn with_avatar(command: &BotCommand, avatar: Option<u8>) -> BotCommand {
@@ -81,7 +81,7 @@ fn a_creation_with_a_face_makes_a_bot_wearing_it_and_replays_exactly() {
 }
 
 #[test]
-fn a_creation_without_a_face_replays_exactly_and_its_bot_wears_the_derived_one() {
+fn a_creation_without_a_face_replays_exactly_and_its_bot_wears_the_default_one() {
     let owner = FakeOwner::new();
     let fs = FakeFs::with(&[root()]);
     let h = start(Repository::in_memory().unwrap(), &owner, &fs);
@@ -93,9 +93,9 @@ fn a_creation_without_a_face_replays_exactly_and_its_bot_wears_the_derived_one()
     let done = h.settle(request);
     assert_eq!(done.stage, BotCreationStage::Completed, "{done:?}");
     let bot = done.bot.clone().expect("the completed Bot");
+    assert_eq!(bot.id, bot_id);
     assert_eq!(bot.config.avatar, None);
-    assert_eq!(bot.avatar(), derived_avatar(bot_id));
-    assert!(bot.avatar() < BOT_AVATAR_COUNT);
+    assert_eq!(bot.avatar(), DEFAULT_AVATAR);
     let (calls, creates) = (owner.store_calls(), fs.creates().len());
     // Replayed as it was sent, and as the same input spelled with an
     // explicit absent face: the same completed Bot, nothing made again.

@@ -450,10 +450,10 @@ fn a_picked_face_is_stored_read_back_changed_and_cleared_and_none_stays_null() {
         )
         .unwrap();
     assert!(!outcome.contains("avatar"), "{outcome}");
-    // The face it draws is the one derived from its id, inside the table.
+    // The face it draws is the default one: none was picked.
     assert_eq!(
         repo.bot(plain.id).unwrap().unwrap().avatar(),
-        derived_avatar(plain.id)
+        koru_ai_core::bots::DEFAULT_AVATAR
     );
 
     // A picked face, at both ends of the table.
@@ -482,7 +482,7 @@ fn a_picked_face_is_stored_read_back_changed_and_cleared_and_none_stays_null() {
     let listed = repo.bots(bot.user_scope, bot.home_workspace).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].config.avatar, Some(0));
-    // Cleared: back to the derived face.
+    // Cleared: back to the default face.
     bot.config.avatar = None;
     bot.revision = 3;
     repo.save_bot(&bot, profile, BotRequestId::mint(), "clear", Some(2))
@@ -490,7 +490,7 @@ fn a_picked_face_is_stored_read_back_changed_and_cleared_and_none_stays_null() {
     assert_eq!(stored(&repo, bot.id), None);
     assert_eq!(
         repo.bot(bot.id).unwrap().unwrap().avatar(),
-        derived_avatar(bot.id)
+        koru_ai_core::bots::DEFAULT_AVATAR
     );
     // A value outside the table never reaches the row.
     bot.config.avatar = Some(BOT_AVATAR_COUNT);

@@ -210,7 +210,7 @@ fn the_dialogs_defaults_reach_the_creation_command() {
     assert!(!form.choose_avatar(Some(3)));
 }
 
-/// A draft that picks no face sends none: the owner derives it.
+/// A draft that picks no face sends none: the Bot wears the default one.
 #[test]
 fn a_draft_with_no_face_sends_no_avatar() {
     let mut form = CreateForm::new(WorkspaceId::new());

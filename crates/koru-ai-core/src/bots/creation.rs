@@ -85,7 +85,7 @@ pub struct BotCreationConfig {
     pub mode: Option<String>,
     pub fast: Option<bool>,
     /// The face the person picked ([`BotConfig::avatar`]). Absent means
-    /// none: the Bot's face is derived from its id. Omitted when absent, so
+    /// none: the Bot wears the default face. Omitted when absent, so
     /// a request that names no face has the bytes, and so the fingerprint,
     /// it had before the field existed, and a `creation_v2` receipt written
     /// before it still decodes and still matches its replay.

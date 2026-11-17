@@ -23,11 +23,12 @@
 //!
 //! **Plain values in, paint out.** A face is an index and a name. This crate
 //! does not know what a Bot is: which face a Bot wears (its stored choice, or
-//! the one derived from its id) is decided by `koru_ai_core::bots::bot_avatar`,
-//! and whether it moves is the host's to say.
+//! the default one) is decided by `koru_ai_core::bots::bot_avatar`, and
+//! whether it moves is the host's to say.
 //!
 //! **Still unless told otherwise.** [`FacePose::STILL`] is the default. A
-//! face moves only while its host says its Bot is working, and then every
+//! face moves only while its host says so (its Bot is working, or it is the
+//! face picked in a face picker that is open), and then every
 //! face in the window takes its pose from one [`FaceClock`], which owns one
 //! repaint deadline for all of them. The motion is paint-only: it changes
 //! two transforms, never a size, so nothing is measured or laid out again.
@@ -47,9 +48,8 @@ use crate::{scene, theme};
 /// must equal it: `apps/koru` asserts that at compile time.
 ///
 /// **The table is append-only.** A face's index is stored per Bot, and the
-/// face of a Bot with no stored choice is derived from its id modulo this
-/// count, so reordering rows or changing the count would change faces people
-/// already know.
+/// face of a Bot with no stored choice is row 0, so reordering rows would
+/// change faces people already know.
 pub const FACE_COUNT: u8 = 24;
 
 /// The side of the box the design is drawn in.
@@ -269,12 +269,13 @@ impl Default for FacePose {
 /// **The one clock every face in a window moves by.**
 ///
 /// A host keeps one of these beside the views that draw faces (the roster,
-/// the open Bot tab). Each frame it says whether *any* Bot it shows is
-/// working ([`set_working`](Self::set_working)), asks for each face's pose
-/// ([`pose`](Self::pose)), and reports [`deadline`](Self::deadline) as its
-/// maintenance deadline. That is one wake-up per [`FACE_FRAME_MS`] for the
-/// whole window however many faces move, and none at all while no Bot is
-/// working, the clock is told nothing is shown, or the person asked for
+/// the open Bot tab, a face picker). Each frame it says whether *any* face
+/// it shows should move ([`set_working`](Self::set_working): a Bot is
+/// working, or a picker is open on a picked face), asks for each face's
+/// pose ([`pose`](Self::pose)), and reports [`deadline`](Self::deadline) as
+/// its maintenance deadline. That is one wake-up per [`FACE_FRAME_MS`] for
+/// the whole window however many faces move, and none at all while nothing
+/// should move, the clock is told nothing is shown, or the person asked for
 /// reduced motion.
 ///
 /// It holds an `Instant` and a flag; it owns no thread and no timer.
@@ -289,9 +290,10 @@ impl FaceClock {
         Self::default()
     }
 
-    /// Say whether any face this clock serves belongs to a working Bot *and
-    /// is on screen*. A hidden roster says `false`. Returns whether that
-    /// changed, which is when a repaint is owed.
+    /// Say whether any face this clock serves should move (its Bot is
+    /// working, or it is the picked face of an open picker) *and is on
+    /// screen*. A hidden roster says `false`. Returns whether that changed,
+    /// which is when a repaint is owed.
     ///
     /// The clock restarts from zero each time work begins, so a face always
     /// eases into its sway rather than resuming mid-swing.
@@ -323,7 +325,8 @@ impl FaceClock {
     }
 
     /// The pose to draw face `face` in at `now`. `working` is whether *this*
-    /// face's Bot is working: an idle Bot beside a working one stays still.
+    /// face should move: an idle Bot beside a working one stays still, and
+    /// so does every tile of a picker but the picked one.
     pub fn pose(&self, face: u8, working: bool, now: Instant) -> FacePose {
         match self.started {
             Some(started) if working && !self.reduced_motion => {

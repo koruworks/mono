@@ -92,6 +92,34 @@ pub enum TabIcon<'a> {
     /// program it runs (TERMINATAB Q-E6 P3/P4). Vector rather than a glyph
     /// because the icon font carries no other product's logo.
     Brand(&'static koru_draw::brand::BrandIcon),
+    /// **A face** (`koru_draw::face`): row `face` of its table, wearing the
+    /// initial of `name`. Plain values, as the face primitive takes them:
+    /// the strip does not know whose face it is, the host says which one.
+    ///
+    /// Drawn as vector geometry at the icon's own box ([`face_rect`]), not a
+    /// resample of a larger one, in its own tones whether or not the tab is
+    /// selected, and always at rest: a tab whose owner is working shows the
+    /// status ring in this slot instead (`Tab::status`), so a face here has
+    /// nothing to move for and the strip asks for no frame.
+    Face {
+        face: u8,
+        name: &'a str,
+    },
+}
+
+/// **Where a tab's face is drawn**: the square of the icon slot's own side
+/// ([`PAGE_ICON_SLOT`](crate::PAGE_ICON_SLOT)) in the middle of the slot at
+/// `icon_x`, never taller than the pill. The slot's full width rather than
+/// the smaller glyph size: a glyph is strokes with air round them, a face is
+/// a filled tile, and at the glyph's size its eyes are a pixel.
+pub fn face_rect(icon_x: f32, pill: Rect) -> Rect {
+    let side = crate::PAGE_ICON_SLOT.min(pill.h).max(0.0);
+    Rect::new(
+        icon_x + (crate::PAGE_ICON_SLOT - side) * 0.5,
+        pill.y + (pill.h - side) * 0.5,
+        side,
+        side,
+    )
 }
 
 /// Preferred width of one tab in the current UI font, clamped to
@@ -675,6 +703,13 @@ fn draw_tab(
             ),
             colour,
             brand,
+        ),
+        Some(TabIcon::Face { face, name }) => koru_draw::face::Face::new(face, name).draw_in(
+            scene,
+            root,
+            engine,
+            face_rect(icon_x, pill),
+            p,
         ),
         None => {}
     }

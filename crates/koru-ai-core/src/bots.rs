@@ -59,7 +59,7 @@ pub struct BotConfig {
     pub fast: Option<bool>,
     /// The face the person picked for the Bot: an index into the face table
     /// ([`BOT_AVATAR_COUNT`]). Absent means none was picked, and the face is
-    /// derived from the Bot's id ([`Bot::avatar`]). Omitted when absent, so
+    /// the default one ([`Bot::avatar`]). Omitted when absent, so
     /// a Bot with no choice serializes, and every stored receipt, captured
     /// Routine source and request fingerprint that holds one is, exactly as
     /// before the field existed (ai.db 24).

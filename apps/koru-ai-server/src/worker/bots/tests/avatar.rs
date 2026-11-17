@@ -2,7 +2,7 @@
 //! A Bot's face (ai.db 24): picked, changed and cleared through the Bot's
 //! ordinary `Update`, replayed exactly, and refused outside the face table.
 use super::*;
-use koru_ai_core::bots::{BOT_AVATAR_COUNT, derived_avatar};
+use koru_ai_core::bots::{BOT_AVATAR_COUNT, DEFAULT_AVATAR};
 
 fn update(
     repo: &mut Repository,
@@ -25,10 +25,9 @@ fn read(repo: &mut Repository, authority: &Arc<Authority>, bot: BotId) -> Bot {
 fn an_update_picks_changes_and_clears_a_face_and_replays_exactly() {
     let (mut repo, authority, command) = fixture();
     let bot = created(&mut repo, authority.clone(), command);
-    // Made with no face: none stored, and the one it wears is derived.
+    // Made with no face: none stored, and it wears the default one.
     assert_eq!(bot.config.avatar, None);
-    assert_eq!(bot.avatar(), derived_avatar(bot.id));
-    assert!(bot.avatar() < BOT_AVATAR_COUNT);
+    assert_eq!(bot.avatar(), DEFAULT_AVATAR);
 
     // Pick one. Only the face moves; the revision moves once.
     let mut config = bot.config.clone();
@@ -116,7 +115,7 @@ fn an_update_picks_changes_and_clears_a_face_and_replays_exactly() {
     );
     assert_eq!(read(&mut repo, &authority, bot.id), kept);
 
-    // Cleared: the derived face again.
+    // Cleared: the default face again.
     let mut cleared = kept.config.clone();
     cleared.avatar = None;
     let plain = update(
@@ -131,7 +130,7 @@ fn an_update_picks_changes_and_clears_a_face_and_replays_exactly() {
     )
     .unwrap();
     assert_eq!(plain.config.avatar, None);
-    assert_eq!(plain.avatar(), derived_avatar(bot.id));
+    assert_eq!(plain.avatar(), DEFAULT_AVATAR);
     // Listed with the workspace's Bots as it reads.
     let Ok(BotResponse::List { bots }) = execute_bot_command(
         &mut repo,

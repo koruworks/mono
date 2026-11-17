@@ -666,9 +666,9 @@ fn a_creation_receipt_keeps_its_face_and_one_written_before_ai24_still_decodes()
     let bot = done.bot(9).unwrap();
     assert_eq!(bot.config.avatar, Some(23));
     assert_eq!(bot.avatar(), 23);
-    let derived = authored(BotCreationPhase::RoleVerified).bot(9).unwrap();
-    assert_eq!(derived.config.avatar, None);
-    assert_eq!(derived.avatar(), derived_avatar(derived.id));
+    let unpicked = authored(BotCreationPhase::RoleVerified).bot(9).unwrap();
+    assert_eq!(unpicked.config.avatar, None);
+    assert_eq!(unpicked.avatar(), DEFAULT_AVATAR);
     // A face outside the table is refused before anything is stored.
     let mut outside = plain.clone();
     outside.config.avatar = Some(BOT_AVATAR_COUNT);

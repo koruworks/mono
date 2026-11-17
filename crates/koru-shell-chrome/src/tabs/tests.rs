@@ -488,3 +488,56 @@ fn an_icon_only_pin_centres_its_icon() {
     };
     assert!(pin.is_icon_only());
 }
+
+/// **A face is drawn in the icon's own box**: the square of the slot's side,
+/// where a glyph's slot starts, centred on the pill; on a pill shorter than
+/// the slot it shrinks to fit and stays centred in the slot. It is plain
+/// values (a row of the face table and a name), so the strip can compare it
+/// like every other icon.
+#[test]
+fn a_face_is_the_square_of_the_icon_slot_centred_in_the_pill() {
+    let pill = Rect::new(100.0, 4.0, 160.0, 28.0);
+    let x = icon_slot_x(pill, false);
+    let face = face_rect(x, pill);
+    assert_eq!(
+        (face.w, face.h),
+        (crate::PAGE_ICON_SLOT, crate::PAGE_ICON_SLOT),
+        "the slot's own side, a square"
+    );
+    assert_eq!(face.x, x, "it starts where a glyph's slot starts");
+    assert_eq!(face.y + face.h * 0.5, pill.y + pill.h * 0.5);
+    assert!(face.y >= pill.y && face.y + face.h <= pill.y + pill.h);
+
+    // An icon-only pin: the same square, in the middle of the chip.
+    let pin = Rect::new(0.0, 4.0, theme::TAB_PINNED_W, 28.0);
+    let face = face_rect(icon_slot_x(pin, true), pin);
+    assert_eq!(face.x + face.w * 0.5, pin.x + pin.w * 0.5);
+
+    // Never taller than the pill, and still in the middle of its slot.
+    let short = Rect::new(0.0, 0.0, 160.0, 12.0);
+    let x = icon_slot_x(short, false);
+    let face = face_rect(x, short);
+    assert_eq!((face.w, face.h), (12.0, 12.0));
+    assert_eq!(face.x + face.w * 0.5, x + crate::PAGE_ICON_SLOT * 0.5);
+    assert_eq!(face.y, short.y);
+
+    let icon = TabIcon::Face {
+        face: 3,
+        name: "Scout",
+    };
+    assert_eq!(
+        icon,
+        TabIcon::Face {
+            face: 3,
+            name: "Scout"
+        }
+    );
+    assert_ne!(icon, TabIcon::Glyph(icons::ROBOT));
+    assert_ne!(
+        icon,
+        TabIcon::Face {
+            face: 4,
+            name: "Scout"
+        }
+    );
+}

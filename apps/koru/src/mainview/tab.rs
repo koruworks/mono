@@ -384,7 +384,9 @@ impl TabView {
                 Some(koru_draw::brand::ProfileMark::Glyph(glyph)) => glyph,
                 _ => koru_draw::icons::CHATS_CIRCLE,
             }),
-            // A Bot tab wears the Bots view's robot, the roster's mark.
+            // A Bot tab wears its Bot's face ([`face`](Self::face)); the
+            // Bots view's robot, the roster's mark, is what it wears until
+            // the face is known, and what keeps its slot in the strip.
             Self::Bot(_) => Some(koru_draw::icons::ROBOT),
             Self::Socials(_) => Some(koru_draw::icons::MEGAPHONE),
             // **A canvas wears its kind**, the way a note tab wears the file
@@ -422,6 +424,20 @@ impl TabView {
                 Some(koru_draw::brand::ProfileMark::Brand(brand)) => Some(brand),
                 _ => None,
             },
+            _ => None,
+        }
+    }
+
+    /// **The face a Bot tab wears in the strip**: which row of the face
+    /// table, and the name whose initial it wears. Beside
+    /// [`icon`](Self::icon) rather than inside it for the reason
+    /// [`brand`](Self::brand) is: a face is drawn geometry, not a `char`.
+    /// The strip asks for this before the glyph, so a Bot tab whose face is
+    /// not known yet (its Bot not read, the roster not loaded) wears the
+    /// robot and changes to the face when it is. `None` on every other tab.
+    pub fn face(&self) -> Option<(u8, &str)> {
+        match self {
+            Self::Bot(b) => b.tab_face(),
             _ => None,
         }
     }

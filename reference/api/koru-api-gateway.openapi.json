@@ -4871,7 +4871,7 @@
         "additionalProperties": false,
         "properties": {
           "avatar": {
-            "description": "The face the person picked for the Bot: an index into the face table\n([`BOT_AVATAR_COUNT`]). Absent means none was picked, and the face is\nderived from the Bot's id ([`Bot::avatar`]). Omitted when absent, so\na Bot with no choice serializes, and every stored receipt, captured\nRoutine source and request fingerprint that holds one is, exactly as\nbefore the field existed (ai.db 24).",
+            "description": "The face the person picked for the Bot: an index into the face table\n([`BOT_AVATAR_COUNT`]). Absent means none was picked, and the face is\nthe default one ([`Bot::avatar`]). Omitted when absent, so\na Bot with no choice serializes, and every stored receipt, captured\nRoutine source and request fingerprint that holds one is, exactly as\nbefore the field existed (ai.db 24).",
             "format": "uint8",
             "maximum": 23,
             "minimum": 0,
@@ -5032,7 +5032,7 @@
         "description": "A new Bot's name and runtime defaults. Its Role and folder come from the\ncreation's own choices.",
         "properties": {
           "avatar": {
-            "description": "The face the person picked ([`BotConfig::avatar`]). Absent means\nnone: the Bot's face is derived from its id. Omitted when absent, so\na request that names no face has the bytes, and so the fingerprint,\nit had before the field existed, and a `creation_v2` receipt written\nbefore it still decodes and still matches its replay.",
+            "description": "The face the person picked ([`BotConfig::avatar`]). Absent means\nnone: the Bot wears the default face. Omitted when absent, so\na request that names no face has the bytes, and so the fingerprint,\nit had before the field existed, and a `creation_v2` receipt written\nbefore it still decodes and still matches its replay.",
             "format": "uint8",
             "maximum": 23,
             "minimum": 0,

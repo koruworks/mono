@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use koru_ai_core::bots::{BotId, derived_avatar};
+use koru_ai_core::bots::{BotId, DEFAULT_AVATAR};
 use koru_draw::el::Name;
 use koru_i18n::Key as Words;
 use koru_store_core::ids::WorkspaceId;
@@ -39,11 +39,12 @@ fn a_face_is_a_square_in_the_middle_of_its_allocation() {
 }
 
 /// **A Bot's row and its tab wear the Bot's face**: the one the person
-/// picked when one is stored, else the one its id gives it, as the Bot
-/// itself says. The row draws it at the row's size, before the name, and
-/// says where the Bot runs with a mark that has words of its own.
+/// picked when one is stored, else the default one (row 0 of the table, the
+/// gray face with two dot eyes), as the Bot itself says. The row draws it at
+/// the row's size, before the name, and says where the Bot runs with a mark
+/// that has words of its own.
 #[test]
-fn a_row_shows_the_stored_face_and_the_derived_one() {
+fn a_row_shows_the_stored_face_and_the_default_one() {
     let home = WorkspaceId::new();
     let mut picked = bot(BotId::mint(), home, "Scout", false);
     picked.config.avatar = Some(7);
@@ -55,15 +56,13 @@ fn a_row_shows_the_stored_face_and_the_derived_one() {
         RosterBot::from(plain.clone()),
     ];
     assert_eq!(rows[0].avatar, 7, "the stored choice");
-    assert_eq!(
-        rows[1].avatar,
-        derived_avatar(plain.id),
-        "derived from its id"
-    );
+    assert_eq!(rows[1].avatar, 0, "none stored: the first of the table");
+    assert_eq!(rows[1].avatar, DEFAULT_AVATAR);
     assert_eq!(rows[1].avatar, plain.avatar(), "as the Bot itself says");
     // The tab's header reads the same two.
     assert_eq!(BotFacts::from(picked.clone()).avatar, 7);
-    assert_eq!(BotFacts::from(&rows[1]).avatar, derived_avatar(plain.id));
+    assert_eq!(BotFacts::from(&rows[1]).avatar, DEFAULT_AVATAR);
+    assert_eq!(BotFacts::from(plain.clone()).avatar, DEFAULT_AVATAR);
 
     let mut roster = BotsRoster::new();
     roster.listed_for_test(rows.to_vec());

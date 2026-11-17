@@ -964,6 +964,8 @@ impl MainView {
                         && let Some(listed) = roster.bots().iter().find(|row| row.id == bot)
                     {
                         view.know_name(&listed.name);
+                        // And its face in the strip, the same way.
+                        moved |= view.know_face(listed.avatar);
                     }
                     if let Some(home) = view.home()
                         && let Some((_, name)) = names.iter().find(|(id, _)| *id == home)

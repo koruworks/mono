@@ -6,11 +6,12 @@
 //! working, which is what moves its face.
 //!
 //! **Which face** a Bot wears is decided in one place
-//! (`koru_ai_core::bots::Bot::avatar`: the stored choice, else the one
-//! derived from its id). **Whether it moves** is decided by the window's one
+//! (`koru_ai_core::bots::Bot::avatar`: the stored choice, else the default
+//! one). **Whether it moves** is decided by the window's one
 //! [`FaceClock`](koru_draw::face::FaceClock) (`MainView::sync_bot_faces`):
-//! a face is still unless its Bot is working, and no face asks for a frame
-//! while nothing works. A leaf here only draws the pose it is handed.
+//! a face is still unless its Bot is working or it is the face picked in
+//! the standing *New bot* dialog, and no face asks for a frame while
+//! neither is on screen. A leaf here only draws the pose it is handed.
 //!
 //! The face has no accessible name of its own: it stands beside its Bot's
 //! name, so it is decorative there, and the *New bot* dialog names its
@@ -45,7 +46,7 @@ pub(crate) const PREVIEW_FACE: Metric = Metric::new("BOT_FACE_PREVIEW", 96.0);
 
 /// **One face, drawn at `size`** in the middle of whatever it is given, in
 /// the pose its host read from the window's clock ([`FacePose::STILL`] for a
-/// face that never moves: the dialog's and the empty view's).
+/// face that never moves: the empty view's, a create tab's).
 pub(crate) struct FaceLeaf {
     /// An index into `koru_draw::face::ROWS`.
     pub(crate) face: u8,

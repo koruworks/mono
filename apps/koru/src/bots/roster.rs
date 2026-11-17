@@ -247,7 +247,7 @@ pub(crate) struct RosterBot {
     /// (`held_by`): what the tab's Unarchive names before its own read.
     pub held_by: Option<koru_ai_core::bots::BotLifecycleHolder>,
     /// **The face the Bot wears** (QUESTIONS O155): the one the person
-    /// picked, else the one derived from its id, as the Bot itself says
+    /// picked, else the default one, as the Bot itself says
     /// (`Bot::avatar`). An index into `koru_draw::face::ROWS`.
     pub avatar: u8,
 }

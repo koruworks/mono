@@ -231,9 +231,10 @@ impl TabGroup {
     /// The icon chain answers the same question the window-level strip always
     /// did: a Tasks tab over a list wears that list's colour (the swatch is
     /// precomputed by `draw_strip` because the token is borrowed from it), a
-    /// session tab shows its profile's brand mark, then the view glyph, the
-    /// bin glyph for a root that has been trashed, the note file glyph, the
-    /// tab's own emoji, and the pinned-document fallback.
+    /// session tab shows its profile's brand mark, a Bot tab its Bot's face
+    /// once that is known, then the view glyph, the bin glyph for a root
+    /// that has been trashed, the note file glyph, the tab's own emoji, and
+    /// the pinned-document fallback.
     fn tab_item<'a>(
         t: &'a Tab,
         carried: Option<(usize, f32)>,
@@ -254,6 +255,13 @@ impl TabGroup {
             // glyph chain below is unchanged and catches everything else
             // (including the same session when its profile has no brand mark).
             .or_else(|| t.view.brand().map(tabs::TabIcon::Brand))
+            // A Bot tab wears its Bot's face; until the face is known the
+            // glyph chain below gives it the Bots mark, as before.
+            .or_else(|| {
+                t.view
+                    .face()
+                    .map(|(face, name)| tabs::TabIcon::Face { face, name })
+            })
             .or_else(|| {
                 t.view
                     .icon()
@@ -1295,6 +1303,120 @@ mod tests {
         let mut t = Tab::welcome();
         t.label = label.to_string();
         t
+    }
+
+    /// The icon the strip is told to draw for `t`, standing alone in a
+    /// strip with no pins.
+    fn icon_of<'a>(
+        t: &'a Tab,
+        notes: &'a std::collections::HashSet<koru_core::DocumentId>,
+        ws: &'a koru_core::schema::WorkspaceDoc,
+    ) -> Option<tabs::TabIcon<'a>> {
+        TabGroup::tab_item(t, None, 0, 0, None, notes, ws).icon
+    }
+
+    /// **A Bot's tab wears the Bot's face in the strip**, in place of the
+    /// Bots mark: the face it stored, or the default one (row 0) when it
+    /// stored none, with the Bot's name for the initial. A Bot tab whose
+    /// face is not known yet (restored, its Bot not read) keeps the mark
+    /// and changes to the face as soon as the roster's row says which. A
+    /// create tab wears the face picked in the *New bot* dialog, and the
+    /// mark when no face was picked. Every other tab is as it was.
+    #[test]
+    fn a_bot_tab_wears_its_bots_face_and_every_other_tab_its_own_icon() {
+        use crate::bots::BotView;
+        use crate::bots::roster::RosterBot;
+        use koru_ai_core::bots::BotId;
+        use koru_store_core::ids::WorkspaceId;
+
+        let (_v, w) = crate::mainview::harness::on_document();
+        let notes = std::collections::HashSet::new();
+        let home = WorkspaceId::new();
+        let robot = Some(tabs::TabIcon::Glyph(icons::ROBOT));
+        let opened = |name: &str, avatar: Option<u8>| {
+            let mut bot = crate::bots::tests::bot(BotId::mint(), home, name, false);
+            bot.config.avatar = avatar;
+            let row = RosterBot::from(bot);
+            Tab::bot(BotView::opened_on(&row, row.main_chat, None))
+        };
+
+        let picked = opened("Scout", Some(7));
+        assert_eq!(
+            icon_of(&picked, &notes, &w.ws),
+            Some(tabs::TabIcon::Face {
+                face: 7,
+                name: "Scout"
+            })
+        );
+        let plain = opened("Ledger", None);
+        assert_eq!(
+            icon_of(&plain, &notes, &w.ws),
+            Some(tabs::TabIcon::Face {
+                face: 0,
+                name: "Ledger"
+            }),
+            "no stored face: the default one"
+        );
+        // The slot is the one the mark had: the strip's width does not move.
+        assert!(picked.view.icon().is_some());
+
+        // Restored and not read yet: the mark, then the roster's face.
+        let mut restored = Tab::bot(BotView::restored(BotId::mint(), koru_ai_ui::ChatId::new()));
+        assert_eq!(restored.view.face(), None);
+        assert_eq!(icon_of(&restored, &notes, &w.ws), robot);
+        let TabView::Bot(view) = &mut restored.view else {
+            panic!("a Bot tab");
+        };
+        assert!(view.know_name("Cy"));
+        assert!(view.know_face(5), "the strip's icon moved");
+        assert!(!view.know_face(5), "told again: nothing moved");
+        assert_eq!(
+            icon_of(&restored, &notes, &w.ws),
+            Some(tabs::TabIcon::Face {
+                face: 5,
+                name: "Cy"
+            })
+        );
+
+        // The create form: the mark; the dialog's draft: the face picked.
+        let form = Tab::bot(BotView::creating(home, None));
+        assert_eq!(icon_of(&form, &notes, &w.ws), robot);
+        let draft = Tab::bot(
+            crate::bots::view::new_bot::NewBotDialog::open(home, None, None, (1200.0, 800.0))
+                .into_tab(),
+        );
+        assert_eq!(
+            icon_of(&draft, &notes, &w.ws),
+            Some(tabs::TabIcon::Face { face: 0, name: "" })
+        );
+
+        // Every other kind of tab: no face, and the icon it had.
+        for other in [
+            Tab::welcome(),
+            Tab::home(),
+            Tab::trash(),
+            Tab::settings(),
+            Tab::ai_chat(),
+        ] {
+            assert_eq!(other.view.face(), None, "{}", other.label);
+            let icon = icon_of(&other, &notes, &w.ws);
+            assert!(
+                !matches!(icon, Some(tabs::TabIcon::Face { .. })),
+                "{}",
+                other.label
+            );
+            let before = other
+                .view
+                .brand()
+                .map(tabs::TabIcon::Brand)
+                .or_else(|| other.view.icon().map(tabs::TabIcon::Glyph))
+                .or_else(|| other.icon.as_deref().map(tabs::TabIcon::Emoji));
+            assert_eq!(icon, before, "{}", other.label);
+        }
+        assert_eq!(
+            icon_of(&Tab::home(), &notes, &w.ws),
+            Some(tabs::TabIcon::Glyph(icons::HOUSE))
+        );
     }
 
     #[test]

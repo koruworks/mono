@@ -2,10 +2,6 @@
 use super::super::*;
 use crate::{DocumentId, WorkspaceId};
 
-fn id(text: &str) -> BotId {
-    text.parse().unwrap()
-}
-
 fn config(home: WorkspaceId, avatar: Option<u8>) -> BotConfig {
     BotConfig {
         name: "Scout".into(),
@@ -25,47 +21,28 @@ fn config(home: WorkspaceId, avatar: Option<u8>) -> BotConfig {
     }
 }
 
+/// **A Bot that never picked a face wears the first of the table**: one
+/// plain default, the same for every Bot on every device, and never a
+/// function of its id. (`Bot::avatar` over a real record is pinned in
+/// `creation/tests.rs`.)
 #[test]
-fn the_derived_face_of_an_id_is_pinned_for_ever() {
-    // FNV-1a 64 over the id's 16 bytes, modulo 24, computed outside this
-    // crate. A change to any of these changes the face of Bots people
-    // already know: it needs a stored value for every Bot first.
-    for (bot, face) in [
-        ("00000000-0000-4000-8000-000000000000", 13),
-        ("11111111-2222-4333-8444-555555555555", 21),
-        ("ffffffff-ffff-4fff-bfff-ffffffffffff", 13),
-        ("6f1d2c3b-4a59-4e68-9777-8695a4b3c2d1", 8),
-        ("0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d", 5),
-    ] {
-        assert_eq!(derived_avatar(id(bot)), face, "{bot}");
-        // Stable: asked again, and through the Bot-facing rule.
-        assert_eq!(derived_avatar(id(bot)), face);
-        assert_eq!(bot_avatar(id(bot), None), face);
-    }
+fn a_bot_with_no_stored_face_wears_the_first_of_the_table() {
+    assert_eq!(DEFAULT_AVATAR, 0, "row 0: the gray face with two dot eyes");
+    assert_eq!(bot_avatar(None), DEFAULT_AVATAR);
+    assert_eq!(bot_avatar(Some(7)), 7, "a choice wins");
+    assert_eq!(bot_avatar(Some(DEFAULT_AVATAR)), DEFAULT_AVATAR);
 }
 
 #[test]
-fn every_derived_face_is_inside_the_table_and_every_face_is_reached() {
-    let mut seen = [false; BOT_AVATAR_COUNT as usize];
-    for _ in 0..2000 {
-        let face = derived_avatar(BotId::mint());
-        assert!(face < BOT_AVATAR_COUNT);
-        seen[usize::from(face)] = true;
-    }
-    assert!(seen.iter().all(|seen| *seen), "{seen:?}");
-}
-
-#[test]
-fn a_stored_choice_wins_and_one_outside_the_table_falls_back_to_the_derived_face() {
-    let bot = id("6f1d2c3b-4a59-4e68-9777-8695a4b3c2d1");
+fn a_stored_choice_wins_and_one_outside_the_table_falls_back_to_the_default_face() {
     for face in 0..BOT_AVATAR_COUNT {
-        assert_eq!(bot_avatar(bot, Some(face)), face);
+        assert_eq!(bot_avatar(Some(face)), face);
         assert_eq!(validate_avatar(Some(face)), Ok(()));
     }
     assert_eq!(validate_avatar(None), Ok(()));
     for outside in [BOT_AVATAR_COUNT, 100, u8::MAX] {
         assert_eq!(validate_avatar(Some(outside)), Err(BotError::Invalid));
-        assert_eq!(bot_avatar(bot, Some(outside)), 8);
+        assert_eq!(bot_avatar(Some(outside)), DEFAULT_AVATAR);
     }
 }
 

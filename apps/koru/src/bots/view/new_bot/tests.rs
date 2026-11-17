@@ -1011,3 +1011,102 @@ fn every_new_word_is_in_all_eight_languages() {
         assert!(!en(Words::BotsIntroExamples).contains(promise), "{promise}");
     }
 }
+
+/// **A new dialog opens on the default face**: row 0 of the table, the gray
+/// face with two dot eyes. It is the preview, the pressed tile, and what
+/// Create sends when the person picks no other.
+#[test]
+fn a_new_dialog_opens_on_the_default_face() {
+    let mut fx = open();
+    assert_eq!(koru_ai_core::bots::DEFAULT_AVATAR, 0);
+    assert_eq!(fx.dialog.face(), 0);
+    assert_eq!(fx.dialog.preview(), (0, String::new()));
+    assert_eq!(fx.selected(face_key(0)), Some(true));
+    assert!(
+        (1..SET).all(|face| fx.selected(face_key(face)) == Some(false)),
+        "and no other"
+    );
+    fx.dialog.type_name("Scout");
+    assert_eq!(fx.press(CREATE), Outcome::Changed);
+    let BotCommand::CreateBotWithRole { config, .. } = fx.sent() else {
+        panic!("a create");
+    };
+    assert_eq!(config.avatar, Some(0), "the default face is the face sent");
+}
+
+/// **Only the picked face moves, and only by the window's clock.** With no
+/// clock handed in every face is still. With the window's clock running the
+/// picked face takes that clock's pose (the preview and its tile read the
+/// same one, so they move as one) and every other tile is still: the one
+/// the pointer is over and the one the keyboard rests on included. Picking
+/// another face moves the motion to it. *Show me others* leaves the pick
+/// moving in the preview with no tile moving. A stopped clock, and reduced
+/// motion, still every face.
+#[test]
+fn only_the_picked_face_moves_and_only_by_the_windows_clock() {
+    use std::time::{Duration, Instant};
+
+    let mut fx = open();
+    let start = Instant::now();
+    let later = start + Duration::from_secs(1);
+    let moving = |fx: &Fx, at: Instant| -> Vec<u8> {
+        (0..FACE_COUNT)
+            .filter(|face| fx.dialog.pose_of(*face, at) != FacePose::STILL)
+            .collect()
+    };
+    assert!(moving(&fx, later).is_empty(), "no clock yet: all still");
+
+    let mut clock = FaceClock::new();
+    assert!(clock.set_working(true, start));
+    fx.dialog.set_face_clock(&clock);
+    assert_eq!(moving(&fx, later), [0], "the picked face, and no other");
+    let pose = fx.dialog.pose_of(0, later);
+    assert_eq!(pose, clock.pose(0, true, later), "the window clock's pose");
+    assert_eq!(pose, FacePose::at(1000, 0), "the one pose function");
+    assert_eq!(
+        fx.dialog.pose_of(fx.dialog.preview().0, later),
+        pose,
+        "the preview is that face in that pose"
+    );
+    // Every instant of one step draws the same pose: a repaint between two
+    // steps moves nothing.
+    assert_eq!(
+        fx.dialog.pose_of(0, later + Duration::from_millis(20)),
+        pose
+    );
+
+    // The pointer over one tile and the keyboard on another, neither
+    // picked: both stay still.
+    let (x, y) = fx.centre(face_key(3));
+    fx.dialog.mouse_move(x, y);
+    fx.dialog.set_focus(face_key(5));
+    assert_eq!(fx.dialog.focus(), face_key(5));
+    assert_eq!(fx.dialog.face(), 0, "neither is a pick");
+    assert_eq!(moving(&fx, later), [0]);
+
+    // Picking moves the motion.
+    assert_eq!(fx.press(face_key(4)), Outcome::Changed);
+    assert_eq!(moving(&fx, later), [4]);
+    assert_eq!(fx.dialog.pose_of(4, later), clock.pose(4, true, later));
+
+    // The other twelve: the pick is not among the tiles, and still moves
+    // in the preview.
+    assert_eq!(fx.press(OTHERS), Outcome::Changed);
+    assert!((12..24).all(|face| fx.dialog.pose_of(face, later) == FacePose::STILL));
+    assert_eq!(fx.dialog.preview().0, 4);
+    assert_ne!(fx.dialog.pose_of(4, later), FacePose::STILL);
+
+    // Reduced motion: every face rests.
+    let mut reduced = clock.clone();
+    assert!(reduced.set_reduced_motion(true));
+    assert_eq!(reduced.deadline(later), None);
+    fx.dialog.set_face_clock(&reduced);
+    assert!(moving(&fx, later).is_empty());
+
+    // The clock stopped (the window does that when the dialog goes).
+    assert!(clock.set_working(false, later));
+    assert_eq!(clock.deadline(later), None);
+    fx.dialog.set_face_clock(&clock);
+    assert!(moving(&fx, later).is_empty());
+    fx.well_formed();
+}

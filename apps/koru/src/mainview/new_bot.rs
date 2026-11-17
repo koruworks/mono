@@ -15,12 +15,13 @@
 //!   stands. Its Create goes through the create form's own command path;
 //!   when the owner answers that the Bot is made, the dialog's host is that
 //!   Bot's tab and is put in the strip here.
-//! - **The faces** move only while their Bot is working. Which Bots are
+//! - **The faces** move only while their Bot is working, and the face
+//!   picked in the standing dialog moves while it stands. Which Bots are
 //!   working is read from what the window already holds: the roster's
 //!   activity read, and the status the chat pass gives every Bot tab's
 //!   conversation. Nothing is asked for it and nothing is scanned on a
-//!   timer; the one deadline is the clock's own, and there is none while no
-//!   working Bot's face is on screen.
+//!   timer; the one deadline is the clock's own, and there is none while
+//!   neither a working Bot's face nor the dialog is on screen.
 
 use std::time::Instant;
 
@@ -101,6 +102,9 @@ impl MainView {
             self.viewport,
         )));
         self.first_bot.opener = opener;
+        // The picked face moves from the dialog's first frame: the clock is
+        // told the dialog stands now, not at the next pass.
+        self.sync_bot_faces(Instant::now());
         true
     }
 
@@ -483,9 +487,12 @@ impl MainView {
     /// is running (read only while the roster is shown), or when a Bot tab's
     /// conversation says so (the status the chat pass sets on every tab).
     /// The clock runs only while a working Bot's face is on screen: a row
-    /// of the shown roster, or the header of a Bot tab in front. `true`
-    /// when a repaint is owed: the clock started or stopped, a step of the
-    /// motion passed, or a header's pose moved.
+    /// of the shown roster, or the header of a Bot tab in front; **or while
+    /// the *New bot* dialog stands**, whose picked face (its preview and
+    /// that face's tile) moves by the same clock, so the dialog adds no
+    /// deadline of its own. `true` when a repaint is owed: the clock
+    /// started or stopped, a step of the motion passed, or a header's pose
+    /// moved.
     pub(super) fn sync_bot_faces(&mut self, now: Instant) -> bool {
         let roster_shown = self.sidebar.is_open() && self.explore.showing_bots();
         let mut working: Vec<BotId> = if roster_shown {
@@ -516,6 +523,8 @@ impl MainView {
                 .bots()
                 .iter()
                 .any(|row| working.contains(&row.id));
+        // The dialog's picked face is on screen for as long as it stands.
+        shown |= self.first_bot.dialog.is_some();
         let mut changed = self.first_bot.faces.set_working(shown, now);
         changed |= self.first_bot.faces.set_reduced_motion(self.reduced_motion);
         // A pass at or after the deadline last handed out: a step passed.
@@ -525,6 +534,9 @@ impl MainView {
         self.first_bot.faces_due = self.first_bot.faces.deadline(now);
         let clock = self.first_bot.faces.clone();
         self.explore.bots_mut().set_faces(&clock, &working);
+        if let Some(dialog) = self.first_bot.dialog.as_mut() {
+            dialog.set_face_clock(&clock);
+        }
         for (_, group) in self.panes.iter_groups_mut() {
             let active = group.active();
             for (index, tab) in group.iter_tabs_mut().enumerate() {
@@ -544,8 +556,8 @@ impl MainView {
     }
 
     /// **The one deadline every moving face shares**: the start of the
-    /// clock's next step. `None` while no working Bot's face is on screen,
-    /// and under reduced motion.
+    /// clock's next step. `None` while neither a working Bot's face nor the
+    /// *New bot* dialog is on screen, and under reduced motion.
     pub(super) fn bot_faces_deadline(&self) -> Option<Instant> {
         self.first_bot.faces.deadline(Instant::now())
     }

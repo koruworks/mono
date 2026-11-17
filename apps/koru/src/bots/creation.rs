@@ -372,7 +372,7 @@ impl CreateForm {
 
     /// **The face the person picked** in the *New bot* dialog. Only a face
     /// of the table is taken; like every input, it cannot change once the
-    /// owner holds the creation. `None` returns to the derived face.
+    /// owner holds the creation. `None` returns to the default face.
     pub(crate) fn choose_avatar(&mut self, avatar: Option<u8>) -> bool {
         if !self.editable()
             || avatar.is_some_and(|face| face >= koru_ai_core::bots::BOT_AVATAR_COUNT)

@@ -196,7 +196,7 @@ pub(crate) struct BotFacts {
     pub provider: AiProviderId,
     pub main_chat: ChatId,
     /// The face the Bot wears (QUESTIONS O155): its stored choice, else the
-    /// one its id gives it (`Bot::avatar`).
+    /// default one (`Bot::avatar`).
     pub avatar: u8,
 }
 
@@ -283,6 +283,9 @@ pub(crate) struct BotView {
     /// The name the conversation's Bot label carried, for the tab's name
     /// until the Bot is read.
     label_name: Option<String>,
+    /// The face the roster lists for this Bot, for the tab strip until the
+    /// Bot is read (`know_face`).
+    listed_face: Option<u8>,
     /// The message block a link or a search hit named, shown once the
     /// conversation is bound.
     pending_block: Option<koru_ai_ui::MessageBlockId>,
@@ -465,6 +468,7 @@ impl BotView {
             bot,
             opening: Opening::Asking,
             label_name: None,
+            listed_face: None,
             pending_block: None,
             chat,
             facts: None,
@@ -701,6 +705,41 @@ impl BotView {
         }
         self.label_name = Some(name.to_owned());
         true
+    }
+
+    /// **The window knows this Bot's face** — the roster lists it — while
+    /// the tab has read nothing yet: a tab restored behind another wears
+    /// its Bot's face in the strip rather than the Bots mark until it is
+    /// opened. The tab's own read wins once it has one. `true` when the
+    /// strip's icon moved.
+    pub(crate) fn know_face(&mut self, face: u8) -> bool {
+        if self.facts.is_some() || self.create.is_some() {
+            return false;
+        }
+        let moved = self.listed_face != Some(face);
+        self.listed_face = Some(face);
+        moved
+    }
+
+    /// **The face the tab strip draws for this tab**, and the name whose
+    /// initial it wears: the Bot's as the tab read it; before that, the
+    /// one the roster lists (`know_face`); for a create tab, the face
+    /// picked in the *New bot* dialog, as its header shows it. `None` while
+    /// none of those is known (a tab restored before the roster answered,
+    /// a conversation whose Bot is still being found, the full create form
+    /// with no face picked): the strip draws the Bots mark until it is.
+    pub(crate) fn tab_face(&self) -> Option<(u8, &str)> {
+        if let Some(facts) = &self.facts {
+            return Some((facts.avatar, facts.name.trim()));
+        }
+        if let Some(create) = self.create.as_deref() {
+            let draft = create.form.draft();
+            return Some((draft.avatar?, draft.name.trim()));
+        }
+        Some((
+            self.listed_face?,
+            self.label_name.as_deref().unwrap_or_default().trim(),
+        ))
     }
 
     /// Whether this tab is still finding out whose its conversation is.
