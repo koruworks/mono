@@ -442,7 +442,10 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         ["native:images:1"],
         "one turn, one native image"
     );
-    assert!(trace.lines().any(|line| line == "native:catalog:4"));
+    // Today's Bot catalog, exact in the fixture: four page tools, five Memory
+    // tools and four Routine tools; the private read and the three tools
+    // that ask another Bot are not listed while their gates are closed.
+    assert!(trace.lines().any(|line| line == "native:catalog:13"));
     assert_eq!(
         trace
             .lines()
@@ -611,7 +614,7 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     );
     assert_eq!(operation.run_id, Some(task_run));
     eprintln!(
-        "scripted native Bot verified: four-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
+        "scripted native Bot verified: thirteen-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
     );
 }
 

@@ -105,8 +105,8 @@ function Native-Call([string]$id, [string]$name, [object]$arguments, [bool]$refu
 function Native-Discover {
     $catalog = Native-Rpc 'tools/list' @{}
     $names = @($catalog.tools | ForEach-Object { $_.name } | Sort-Object)
-    if (($names -join ',') -ne 'create_document,edit_document,read_document,search_documents') { throw 'native catalog mismatch' }
-    Trace-Fixture 'native:catalog:4'
+    if (($names -join ',') -ne 'correct_memory,create_document,create_routine,edit_document,forget_memory,list_memory,list_routines,read_document,read_memory,read_routine_creation,remember_memory,retry_routine_creation,search_documents') { Trace-Fixture ('native:catalog-mismatch:' + $names.Count); throw 'native catalog mismatch' }
+    Trace-Fixture 'native:catalog:13'
 }
 function Invoke-NativePages {
     Trace-Fixture 'native:turn'

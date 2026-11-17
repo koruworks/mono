@@ -116,8 +116,10 @@ def native_call(identity, name, arguments, refused=False):
 
 def native_discover():
     names = sorted(tool["name"] for tool in native_rpc("tools/list", {})["tools"])
-    assert names == ["create_document", "edit_document", "read_document", "search_documents"], "native catalog mismatch"
-    trace("native:catalog:4")
+    if names != ["correct_memory", "create_document", "create_routine", "edit_document", "forget_memory", "list_memory", "list_routines", "read_document", "read_memory", "read_routine_creation", "remember_memory", "retry_routine_creation", "search_documents"]:
+        trace("native:catalog-mismatch:" + str(len(names)))
+        raise AssertionError("native catalog mismatch")
+    trace("native:catalog:13")
 
 
 def native_pages():
