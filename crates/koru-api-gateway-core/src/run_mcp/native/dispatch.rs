@@ -98,14 +98,32 @@ fn owner_call(port: &dyn BotDelegatePort, command: BotCommand) -> Result<BotRepl
     effect::owner_call(port, command, &failure)
 }
 
+/// The mutating tools a child wait refuses here, before any owner is asked
+/// (contract M6 4.6): a Memory write and a Routine Create or Retry. The two
+/// document mutations take the native path below, which settles a retained
+/// save from its own evidence first; `ask_bot` and the private read answer
+/// the fence in their own modules.
+pub(super) fn child_fenced_here(name: &str) -> bool {
+    matches!(name, "remember_memory" | "correct_memory" | "forget_memory")
+        || super::routines::mutation(name)
+}
+
 pub(in crate::run_mcp) async fn call(
     state: &Arc<GatewayState>,
     record: Arc<RunAuthorityRecord>,
     provenance: BotProvenance,
     captured: CapturedBotPolicy,
-    waiting: bool,
+    wait: RunWait,
     params: CallToolRequestParams,
 ) -> CallToolResult {
+    // The three tools that ask another Bot (M6). Closed in this build: each
+    // answers `unknown_tool` before any owner is asked.
+    if super::children::recognizes(params.name.as_ref()) {
+        return super::children::call(state, record, provenance, captured, wait, params).await;
+    }
+    if wait == RunWait::Child && child_fenced_here(params.name.as_ref()) {
+        return super::children::fenced(state, &record, &provenance).await;
+    }
     if super::routines::recognizes(params.name.as_ref()) {
         return super::routines::call(state, record, provenance, captured, params).await;
     }
@@ -115,7 +133,7 @@ pub(in crate::run_mcp) async fn call(
     // The private read (M5). Closed in this build: it answers its own typed
     // refusal before any owner is asked.
     if super::private::recognizes(params.name.as_ref()) {
-        return super::private::call(state, record, provenance, captured, waiting, params).await;
+        return super::private::call(state, record, provenance, captured, wait, params).await;
     }
     if matches!(params.name.as_ref(), "create_document" | "edit_document")
         && !state.native_mutations_ready()
@@ -137,7 +155,7 @@ pub(in crate::run_mcp) async fn call(
     };
     let store = state.store.client();
     let result = tokio::task::spawn_blocking(move || {
-        invoke(
+        invoke_for(
             &store,
             &client,
             port.as_ref(),
@@ -147,7 +165,7 @@ pub(in crate::run_mcp) async fn call(
             params.name.as_ref(),
             Value::Object(params.arguments.unwrap_or_default()),
             EditDecisions::production(),
-            waiting,
+            wait,
         )
     })
     .await;
@@ -177,8 +195,42 @@ pub(super) fn fingerprint(raw: &str) -> Result<[u8; 32], ToolFailure> {
     effect::parse_fingerprint(raw).ok_or_else(|| failure("invalid_request"))
 }
 
+/// [`invoke_for`] for a Run that is not waiting (`false`) or waits on a
+/// decision (`true`): the shape every existing caller and test uses.
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn invoke(
+    store: &StoreWorkerClient,
+    policy: &dyn PolicySource,
+    port: &dyn BotDelegatePort,
+    record: &RunAuthorityRecord,
+    provenance: BotProvenance,
+    captured: CapturedBotPolicy,
+    tool: &str,
+    arguments: Value,
+    decisions: EditDecisions,
+    waiting: bool,
+) -> Result<Value, ToolFailure> {
+    invoke_for(
+        store,
+        policy,
+        port,
+        record,
+        provenance,
+        captured,
+        tool,
+        arguments,
+        decisions,
+        if waiting {
+            RunWait::Decision
+        } else {
+            RunWait::None
+        },
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn invoke_for(
     store: &StoreWorkerClient,
     policy: &dyn PolicySource,
     port: &dyn BotDelegatePort,
@@ -188,8 +240,11 @@ fn invoke(
     tool: &str,
     mut arguments: Value,
     decisions: EditDecisions,
-    waiting: bool,
+    wait: RunWait,
 ) -> Result<Value, ToolFailure> {
+    let waiting = wait.waiting();
+    // A child wait never prepares a decision (contract M6 4.6).
+    let decisions = decisions.for_wait(wait);
     let mutation = match tool {
         "create_document" | "edit_document" => true,
         "search_documents" | "read_document" => false,
@@ -364,9 +419,19 @@ fn invoke(
     // O147: while the Run's decision wait is open, nothing new is accepted
     // here. Reads returned above; a retained intent was settled from its own
     // evidence above; the exact decision retry and consume took the decision
-    // path. Anything else would need a fresh lease.
-    if waiting {
-        return Err(super::decision::in_progress(&key));
+    // path. Anything else would need a fresh lease. A child wait (M6 4.6)
+    // has no decision path at all: every new mutation is refused here.
+    match wait {
+        RunWait::Decision => return Err(super::decision::in_progress(&key)),
+        RunWait::Child => {
+            return Err(super::children::in_progress(
+                port,
+                &provenance,
+                record,
+                Some(key.operation_id),
+            ));
+        }
+        RunWait::None => {}
     }
     if !synchronized {
         fresh_fence(port, &current.proof, &fence, &captured)?;

@@ -2077,3 +2077,66 @@ conversation references do not establish execution authority. Complete JSON-RPC
 frames, including the exact ID, are bounded at4MiB. If acceptance is unknown, read
 the original identity rather than allocating a replacement. Accepted recovery may
 finish after the originating Run or caller ends.
+
+A Bot's saved receipt from `create_document` or `edit_document` carries
+`version_id`, the immutable Store version that save produced (M6). It is left
+out only for a result registered before versions were kept. It names what the
+save wrote; it is not an argument any tool accepts.
+
+### Asking another Bot (closed in this build)
+
+Three more Bot Run tools let one Bot ask another Bot of the same person, home
+workspace and computer, and read what it saved: `list_askable_bots`, `ask_bot`
+and `read_bot_request`. **They are behind `CHILD_REQUESTS_AVAILABLE`, which is
+`false`**: they are not listed, the endpoint's instructions do not name them,
+and a call answers `unknown_tool` before any owner is asked. The gate opens only
+for the P6.5 acceptance run. What follows is the contract they keep when it
+does.
+
+They are listed only to a Bot Run that is not itself a child request (depth
+one); the two ask tools also need the Bot's "May ask other bots" switch.
+`read_bot_request` does not. With all three listed the catalog has sixteen tools
+and the instructions say so.
+
+| Tool | Input | Output |
+| --- | --- | --- |
+| `list_askable_bots` | `{}` | `{ bots: [ { bot_id, name } ] }`, at most 64. A paused Bot is listed; asking it is refused. |
+| `ask_bot` | `{ ask_key, requests: [ { bot_id, task, documents } ] }`: one to three requests, each a different Bot, at most 16 pages each; `ask_key` a canonical v4 UUID the model mints for the call | `{ status: "child_pending", message, requests: [ { child_request_id, bot_id } ] (input order), requests_used, budget_ms: 900000 }` |
+| `read_bot_request` | `{ child_request_id, document_id? }` | Without a page: `{ child_request_id, bot_id, state: open \| settled, child: queued \| running \| finished, outcome?, pages: [ { document_id, title, kind, availability: pinned \| not_pinned } ] (at most 20), pages_more, no_page_saved }`. With a page: `{ child_request_id, document_id, version_id, title, content, truncated }`. |
+
+**An ask is all or nothing.** If any request is refused none is admitted, and
+the failure names the item by `details.index`. **The answer is held**: after
+the requests are admitted the gateway reads them until the asking Run's wait
+has left `hold_requested`, for at most ten seconds, so a model that ends its
+turn at once does not cancel what it asked. Normally the Run is stopped while
+the call is held and the answer is never seen; the task continues as a new
+turn of the same Run when every request is settled, with only ids and outcome
+tokens in its input. An unknown outcome is `child_status_unknown`: retry with
+the same `ask_key` and identical requests, never a new key.
+
+**While a Run waits on other Bots** it keeps every read, `read_bot_request`,
+and the exact retry of its own ask. Every other mutation answers
+`child_wait_in_progress` with `details.child_request_ids`: a new page or edit,
+a Memory write, a Routine Create or Retry, the private read, and `ask_bot`
+under another key. An edit that would have asked a person's decision asks
+none. A Run waiting on a decision cannot ask another Bot
+(`decision_in_progress`). A child Run never asks a private-operation question.
+
+**A result is a pinned page, read with the asking Bot's own access.** Only a
+request that reads `completed` has results: one entry per page the child Run
+saved, at the version its last save in that Run produced. The model names the
+page; the version id comes from the child Run's own record and is never an
+argument. The page is read under the asking Bot's current read check, the one
+`read_document` passes, and rendered as `read_document` renders. The live page
+is never returned in its place: `result_version_unavailable` with
+`details.reason` `missing`, `corrupt`, `not_pinned` or `too_large`;
+`result_not_readable` when the asking Bot may not read the page now (in Trash,
+for example); `result_not_ready` before the request completed. A rendered page
+above 1 MiB keeps a prefix of its nodes and says `truncated: true`. Titles and
+content appear only in the asking Bot's tool answer, never in a log or event.
+
+Other codes: `ask_not_allowed`, `recipient_unavailable`, `recipient_paused`,
+`recipient_full`, `recipient_folder_overlap`, `self_ask`, `would_wait_on_itself`
+and `page_unavailable` (each with `details.index`; the last with
+`details.document_id` too), `recipient_limit` (`details.used`),
+`child_capacity`, `child_budget_low`, `ask_key_conflict`, `request_not_found`.

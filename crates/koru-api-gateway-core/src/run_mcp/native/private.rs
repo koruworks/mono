@@ -332,7 +332,7 @@ pub(in crate::run_mcp) async fn call(
     record: Arc<RunAuthorityRecord>,
     provenance: BotProvenance,
     captured: CapturedBotPolicy,
-    waiting: bool,
+    wait: RunWait,
     params: CallToolRequestParams,
 ) -> CallToolResult {
     let gate = PrivateGate::production();
@@ -340,6 +340,11 @@ pub(in crate::run_mcp) async fn call(
     if !gate.tools {
         return error(failure("private_unavailable"));
     }
+    // M6 (contract 4.6): a Run waiting on another Bot reads nothing private.
+    if wait == RunWait::Child {
+        return super::children::fenced(state, &record, &provenance).await;
+    }
+    let waiting = wait == RunWait::Decision;
     let call = match parse(Value::Object(params.arguments.unwrap_or_default())) {
         Ok(call) => call,
         Err(refusal) => return error(refusal),
@@ -455,6 +460,11 @@ pub(super) fn invoke(
             .map_err(|refusal| refused(refusal, routine));
     }
 
+    // A child Run (M6, contract 3.3) never asks a private-operation
+    // question: an ungranted read gets M5's ungranted refusal, as a Routine's
+    // does. The ledger refuses such a decision for a child Run too.
+    let questions = gate.questions.filter(|_| provenance.parent.is_none());
+
     // 2. The plan. No credential is opened and no vendor is called.
     let plan = owners
         .planner
@@ -467,7 +477,7 @@ pub(super) fn invoke(
                 item: call.item,
                 connection: call.connection,
             },
-            gate.questions.is_some(),
+            questions.is_some(),
         )
         .map_err(|error| keyed(operation_id, static_code(&error)))?;
     if !super::policy::matches(&plan.proof, &provenance, &captured, record.workspace) {
@@ -488,7 +498,7 @@ pub(super) fn invoke(
     //    the Run's decision wait is open, this is the only way through: the
     //    delegate answers the Run's own decision to its exact retry and
     //    refuses anything else as owned (O147).
-    if let (Some(proposal), Some(pacing)) = (&plan.proposal, gate.questions)
+    if let (Some(proposal), Some(pacing)) = (&plan.proposal, questions)
         && (waiting || verdict == PrivateReadVerdict::Ask)
     {
         let question = Question {

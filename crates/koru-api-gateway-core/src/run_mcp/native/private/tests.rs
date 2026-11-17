@@ -237,7 +237,7 @@ fn m5_tool_output_the_private_read_is_closed_in_this_build() {
         .collect();
     assert!(!listed.iter().any(|name| name == READ_TOOL));
     assert_eq!(
-        definitions_for(false)
+        definitions_for(false, super::super::children::ChildTools::NONE)
             .into_iter()
             .map(|tool| tool.name.to_string())
             .collect::<Vec<_>>(),
@@ -285,7 +285,7 @@ fn m5_tool_listing_follows_the_gate_the_host_and_a_routines_grant() {
     assert!(listed(OPEN, true, &routine, &one));
 
     // When it is listed it is one tool with a closed schema.
-    let tools = definitions_for(true);
+    let tools = definitions_for(true, super::super::children::ChildTools::NONE);
     let read = tools
         .iter()
         .find(|tool| tool.name == READ_TOOL)
@@ -304,7 +304,10 @@ fn m5_tool_listing_follows_the_gate_the_host_and_a_routines_grant() {
         properties,
         ["connection_id", "item_id", "item_link", "operation_id"]
     );
-    assert_eq!(tools.len(), definitions_for(false).len() + 1);
+    assert_eq!(
+        tools.len(),
+        definitions_for(false, super::super::children::ChildTools::NONE).len() + 1
+    );
     assert!(recognizes(READ_TOOL));
     assert!(!recognizes("read_document"));
 }
@@ -452,6 +455,37 @@ fn m5_tool_question_none_is_asked_while_the_decision_gate_is_closed() {
     assert!(
         tool.call(tool.by_id(Uuid::new_v4()), NO_QUESTIONS, false)
             .is_ok()
+    );
+}
+
+/// M6 contract 3.3: a child Run never asks a private-operation question,
+/// even with both gates open; its ungranted read gets M5's ungranted
+/// refusal. The ledger refuses such a decision for a child Run as well
+/// (`koru-delegate-sqlite`, `m6_child_resume_rows_a_child_run_never_asks_a_private_question`).
+#[test]
+fn m6_tool_fence_a_child_runs_private_read_never_becomes_a_question() {
+    let mut tool = Tool::new(false);
+    tool.provenance.parent = Some(koru_delegate_core::ChildParent {
+        run: koru_delegate_core::RunId::mint(),
+        bot: koru_delegate_core::BotId::mint(),
+        chat_id: Uuid::new_v4(),
+        child_request: koru_delegate_core::ChildRequestId::mint(),
+    });
+    let operation_id = Uuid::new_v4();
+    let failure = refused(tool.call(tool.by_id(operation_id), OPEN, false));
+    assert_eq!(failure.code, "private_read_needs_person");
+    only_the_operation(&failure, operation_id);
+    // The plan was asked without questions, and none was prepared.
+    assert_eq!(tool.plans().questions, [false]);
+    assert_eq!(tool.delegate.count("prepare_decision"), 0);
+    assert_eq!(tool.delegate.script().decisions_created, 0);
+    assert_eq!(tool.world.vendor.content_reads(), 0);
+    nothing_private(&json!(failure).to_string());
+    // The same Run that is not a child asks, as before.
+    tool.provenance.parent = None;
+    assert_eq!(
+        refused(tool.call(tool.by_id(Uuid::new_v4()), OPEN, false)).code,
+        "permission_pending"
     );
 }
 

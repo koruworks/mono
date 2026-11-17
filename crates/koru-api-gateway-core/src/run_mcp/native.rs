@@ -8,6 +8,7 @@ use koru_delegate_core::RunToolAuthority;
 use rmcp::model::{CallToolResult, Tool};
 use serde_json::json;
 use std::sync::Arc;
+pub(super) mod children;
 mod decision;
 mod dispatch;
 mod memory;
@@ -15,6 +16,30 @@ mod policy;
 pub(super) mod private;
 pub(super) mod routines;
 pub(super) use dispatch::call;
+
+/// Which wait, if any, the Run's current classification reports. A waiting
+/// Run keeps its reads; its new mutations are refused with the wait's own
+/// code (O147 for a decision, contract M6 4.6 for a child wait).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::run_mcp) enum RunWait {
+    None,
+    /// `RunToolAuthority::BotDecisionWait`: `decision_in_progress`.
+    Decision,
+    /// `RunToolAuthority::BotChildWait`: `child_wait_in_progress`.
+    Child,
+}
+impl RunWait {
+    pub(in crate::run_mcp) fn of(authority: &RunToolAuthority) -> Self {
+        match authority {
+            RunToolAuthority::Ordinary {} | RunToolAuthority::Bot { .. } => Self::None,
+            RunToolAuthority::BotDecisionWait { .. } => Self::Decision,
+            RunToolAuthority::BotChildWait { .. } => Self::Child,
+        }
+    }
+    pub(super) fn waiting(self) -> bool {
+        self != Self::None
+    }
+}
 
 fn unavailable() -> ToolFailure {
     ToolFailure::new(
@@ -59,13 +84,14 @@ pub(super) async fn classify(
 
 #[cfg(test)]
 pub(super) fn definitions() -> Vec<Tool> {
-    definitions_for(false)
+    definitions_for(false, children::ChildTools::NONE)
 }
 
 /// The Bot catalog for one Run. `private` says whether the private read is
-/// listed for it ([`private::listed_for`]): never in this build, where its
-/// gate is closed.
-pub(super) fn definitions_for(private: bool) -> Vec<Tool> {
+/// listed for it ([`private::listed_for`]), and `children` which of the
+/// three tools that ask another Bot are ([`children::listed_for`]): none of
+/// them in this build, where both gates are closed.
+pub(super) fn definitions_for(private: bool, children: children::ChildTools) -> Vec<Tool> {
     let mut tools: Vec<Tool> = koru_mcp_server::native::native_tool_catalog().into_iter().map(|tool| {
         let mutation=matches!(tool.name.as_str(),"create_document"|"edit_document");
         let mut schema=tool.input_schema;
@@ -91,6 +117,7 @@ pub(super) fn definitions_for(private: bool) -> Vec<Tool> {
     if private {
         tools.extend(private::definitions());
     }
+    tools.extend(children::definitions(children));
     tools
 }
 

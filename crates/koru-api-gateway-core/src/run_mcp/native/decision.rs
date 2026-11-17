@@ -85,6 +85,17 @@ impl EditDecisions {
             Self::Closed
         }
     }
+    /// M6 (contract 4.6, decision A5): a Run with an open child wait never
+    /// prepares a decision. An edit that would have asked one keeps the
+    /// ordinary path, which refuses it with the wait's fence. The ledger
+    /// would refuse the decision too (a Run has one open wait,
+    /// `bot_wait_runtime_open_run`); this check is why it is never sent.
+    pub(super) fn for_wait(self, wait: super::RunWait) -> Self {
+        match wait {
+            super::RunWait::Child => Self::Closed,
+            super::RunWait::None | super::RunWait::Decision => self,
+        }
+    }
 }
 
 /// A positively typed selected-page write denial of one existing page.

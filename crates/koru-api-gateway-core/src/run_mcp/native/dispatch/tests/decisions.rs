@@ -450,6 +450,12 @@ impl BotDelegatePort for DecisionOwner {
                 }
                 Err(refusal("bot_native_unavailable"))
             }
+            // M6: the child-wait fence names the open wait's requests when the
+            // owner can say them; this owner cannot.
+            BotCommand::ReadChildRequests { .. } => {
+                s.log.push("read_children");
+                Err(koru_delegate_api::Failure::unavailable())
+            }
             // A Routine Run's ordinary path also synchronizes its grant.
             BotCommand::SynchronizeRoutinePolicy { barrier } => {
                 s.log.push("routine_sync");
@@ -1244,6 +1250,79 @@ fn while_a_decision_waits_reads_pass_and_new_mutations_are_refused_typed() {
     let s = owner.script();
     assert!(!s.log.contains(&"ordinary_prepare"));
     assert!(!s.log.contains(&"consume"));
+}
+
+/// M6 contract 4.6: the same Bot Run while it waits on another Bot.
+#[test]
+fn m6_tool_fence_during_a_child_wait_reads_pass_mutations_are_refused_and_no_decision_is_asked() {
+    let f = Fixture::new();
+    let denied = denied_edit(&f);
+    let owner = DecisionOwner::new(&f);
+    let child = |tool: &str, arguments: Value, decisions: EditDecisions| {
+        invoke_for(
+            &f.memory.client(),
+            &f.policy,
+            &owner,
+            &f.record,
+            f.provenance.clone(),
+            f.owner.policy.clone(),
+            tool,
+            arguments,
+            decisions,
+            RunWait::Child,
+        )
+    };
+    // A read passes and asks the owner nothing.
+    let read = child(
+        "read_document",
+        json!({"workspace_id":f.record.workspace,"document_id":denied["document_id"]}),
+        EditDecisions::Open(PACING),
+    )
+    .unwrap();
+    assert!(read.get("revision").is_some());
+    assert!(owner.script().log.is_empty());
+    // A new page: refused with the child wait's code, keyed by its operation.
+    let arguments = f.arguments();
+    let created = child("create_document", arguments.clone(), EditDecisions::Closed).unwrap_err();
+    assert_eq!(created.code, "child_wait_in_progress");
+    assert_eq!(
+        created.details,
+        Some(json!({"operation_id": arguments["operation_id"]}))
+    );
+    // An edit that would have asked a decision, with decisions open: no
+    // decision is prepared; it gets the plain refusal of the wait.
+    let edited = child("edit_document", denied.clone(), EditDecisions::Open(PACING)).unwrap_err();
+    assert_eq!(edited.code, "child_wait_in_progress");
+    let s = owner.script();
+    assert!(!s.log.contains(&"prepare_decision"), "{:?}", s.log);
+    assert!(!s.log.contains(&"hello"));
+    assert!(!s.log.contains(&"ordinary_prepare"));
+    assert!(!s.log.contains(&"effect_fence"));
+    assert_eq!(s.log.iter().filter(|e| **e == "read_children").count(), 2);
+    drop(s);
+    // The same edit while a decision waits keeps today's answer.
+    assert_eq!(
+        tool_while(
+            &f,
+            &owner,
+            "edit_document",
+            denied,
+            EditDecisions::Closed,
+            true
+        )
+        .unwrap_err()
+        .code,
+        "decision_in_progress"
+    );
+    // The open-child-wait check is the decision builder's own.
+    assert!(matches!(
+        EditDecisions::Open(PACING).for_wait(RunWait::Child),
+        EditDecisions::Closed
+    ));
+    assert!(matches!(
+        EditDecisions::Open(PACING).for_wait(RunWait::Decision),
+        EditDecisions::Open(_)
+    ));
 }
 
 #[test]

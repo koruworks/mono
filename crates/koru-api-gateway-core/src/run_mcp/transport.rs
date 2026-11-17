@@ -114,7 +114,19 @@ fn answer(id: RequestId, result: ServerResult) -> Response {
 /// What `initialize` answers. The protocol version is the client's when
 /// this SDK knows it, else the latest this SDK speaks — the SDK server's
 /// own negotiation rule.
+#[cfg(test)]
 fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
+    initialize_listing(offered, bot, native::children::ChildTools::NONE)
+}
+
+/// [`initialize`] for a Bot Run whose catalog may list the tools that ask
+/// another Bot (M6): their sentence, and the count, appear only when they
+/// are listed. In this build they never are, and the text is unchanged.
+fn initialize_listing(
+    offered: &ProtocolVersion,
+    bot: bool,
+    children: native::children::ChildTools,
+) -> InitializeResult {
     let negotiated = if ProtocolVersion::KNOWN_VERSIONS.contains(offered) {
         offered.clone()
     } else {
@@ -122,16 +134,19 @@ fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
     };
     InitializeResult::new(ServerCapabilities::builder().enable_tools().build())
         .with_protocol_version(negotiated)
-        .with_server_info(Implementation::new(
-            "koru-run",
-            env!("CARGO_PKG_VERSION"),
-        ))
+        .with_server_info(Implementation::new("koru-run", env!("CARGO_PKG_VERSION")))
         .with_instructions(if bot {
-            "This Bot endpoint exposes thirteen scoped tools. search_documents, read_document, create_document and edit_document use effective document permissions; create_document and edit_document save ordinary Run results after durable verification and registration. list_memory/read_memory inspect this Bot's lifetime Memory page without granting generic page access. remember_memory/correct_memory/forget_memory change only that Memory; their saved receipts never become Run results. Use a stable operation_id and identical arguments on every document or Memory mutation retry. Memory edits require an exact history version from list_memory/read_memory; only first-use remember_memory may omit it to use the original empty seed. After saving, read Current for the next edit. Unknown outcomes must retain the same operation and body. create_routine, read_routine_creation, retry_routine_creation and list_routines operate only on this Run's own Bot. Obtain expected_bot_revision from list_routines. Creation retains an initially Paused Routine with an independent copied grant; it never enables work or creates a Run result. Reuse the original request_id and identical Create body after uncertainty. Read creation state before retrying with its observed_token; never replace a lost token or mint a new request automatically. Listing reports applied observations and local references, not current execution or permission authority. Access refusals require an owner grant and explicit continuation."
+            native::children::instructions(BOT_INSTRUCTIONS, children)
         } else {
-            "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input."
+            ORDINARY_INSTRUCTIONS.to_owned()
         })
 }
+
+/// The Bot endpoint's instructions for its thirteen tools.
+const BOT_INSTRUCTIONS: &str = "This Bot endpoint exposes thirteen scoped tools. search_documents, read_document, create_document and edit_document use effective document permissions; create_document and edit_document save ordinary Run results after durable verification and registration. list_memory/read_memory inspect this Bot's lifetime Memory page without granting generic page access. remember_memory/correct_memory/forget_memory change only that Memory; their saved receipts never become Run results. Use a stable operation_id and identical arguments on every document or Memory mutation retry. Memory edits require an exact history version from list_memory/read_memory; only first-use remember_memory may omit it to use the original empty seed. After saving, read Current for the next edit. Unknown outcomes must retain the same operation and body. create_routine, read_routine_creation, retry_routine_creation and list_routines operate only on this Run's own Bot. Obtain expected_bot_revision from list_routines. Creation retains an initially Paused Routine with an independent copied grant; it never enables work or creates a Run result. Reuse the original request_id and identical Create body after uncertainty. Read creation state before retrying with its observed_token; never replace a lost token or mint a new request automatically. Listing reports applied observations and local references, not current execution or permission authority. Access refusals require an owner grant and explicit continuation.";
+
+/// An ordinary Run's artifact endpoint instructions.
+const ORDINARY_INSTRUCTIONS: &str = "This is the run's artifact endpoint. Write results under your .artifacts/<RunId>/ folder, then register them with `create`; use `create_version` for a further version of a result, `get`/`read` to inspect one, `search` to find earlier results in the workspaces granted to this run, and `attach_to_run` to record one as your input.";
 
 #[cfg(test)]
 mod tests;
@@ -181,26 +196,40 @@ pub(super) async fn handle(
         .is_some_and(|(provenance, policy)| {
             native::private::listed_for(&state, provenance, policy)
         });
-    authenticated_message_listing(is_bot, private, body, |params| async move {
+    // Which of the three tools that ask another Bot are listed (M6): none
+    // while their gate is closed, which it is in this build; nobody is asked.
+    let children = match classification.bot_subject() {
+        Some((provenance, policy)) => {
+            native::children::listed_for(&state, &authority, provenance, policy).await
+        }
+        None => native::children::ChildTools::NONE,
+    };
+    let wait = native::RunWait::of(&classification);
+    let listing = Listing { private, children };
+    authenticated_message_listing(is_bot, listing, body, |params| async move {
         match classification {
-            RunToolAuthority::Bot { provenance, policy } => {
-                native::call(&state, authority, provenance, policy, false, params).await
+            // O147 (a decision wait) and M6 4.6 (a child wait): the same Bot
+            // tools; new mutations are refused in dispatch with the wait's
+            // own code, and the AI owner rechecks its own Routine work.
+            RunToolAuthority::Bot { provenance, policy }
+            | RunToolAuthority::BotDecisionWait {
+                provenance, policy, ..
             }
-            // O147: the same Bot tools; new unrelated mutations are refused
-            // in dispatch, and the AI owner rechecks its own Routine/Memory work.
-            RunToolAuthority::BotDecisionWait {
+            | RunToolAuthority::BotChildWait {
                 provenance, policy, ..
-            } => native::call(&state, authority, provenance, policy, true, params).await,
-            // M6 sweep: a Run in a child wait is fenced exactly as a Run in a
-            // decision wait (reads pass, new mutations are refused). Nothing
-            // produces this classification until the child tools exist.
-            RunToolAuthority::BotChildWait {
-                provenance, policy, ..
-            } => native::call(&state, authority, provenance, policy, true, params).await,
+            } => native::call(&state, authority, provenance, policy, wait, params).await,
             RunToolAuthority::Ordinary {} => tools::call(&state, authority, params).await,
         }
     })
     .await
+}
+
+/// What a Bot Run's catalog lists beyond the thirteen tools every Bot Run
+/// has. Both parts are empty in this build.
+#[derive(Clone, Copy, Debug, Default)]
+struct Listing {
+    private: bool,
+    children: native::children::ChildTools,
 }
 
 /// Shared transport after bearer authentication and current Run classification.
@@ -211,14 +240,14 @@ where
     F: FnOnce(rmcp::model::CallToolRequestParams) -> R,
     R: std::future::Future<Output = rmcp::model::CallToolResult>,
 {
-    authenticated_message_listing(is_bot, false, body, dispatch).await
+    authenticated_message_listing(is_bot, Listing::default(), body, dispatch).await
 }
 
 /// [`authenticated_message`] for a Bot Run whose catalog may also list the
-/// private read.
+/// private read and the tools that ask another Bot.
 async fn authenticated_message_listing<F, R>(
     is_bot: bool,
-    private: bool,
+    listing: Listing,
     body: Bytes,
     dispatch: F,
 ) -> Response
@@ -270,16 +299,17 @@ where
     match request.request {
         ClientRequest::InitializeRequest(initialize_request) => answer(
             id,
-            ServerResult::InitializeResult(initialize(
+            ServerResult::InitializeResult(initialize_listing(
                 &initialize_request.params.protocol_version,
                 is_bot,
+                listing.children,
             )),
         ),
         ClientRequest::PingRequest(_) => answer(id, ServerResult::empty(())),
         ClientRequest::ListToolsRequest(_) => answer(
             id,
             ServerResult::ListToolsResult(ListToolsResult::with_all_items(if is_bot {
-                native::definitions_for(private)
+                native::definitions_for(listing.private, listing.children)
             } else {
                 tools::definitions()
             })),
