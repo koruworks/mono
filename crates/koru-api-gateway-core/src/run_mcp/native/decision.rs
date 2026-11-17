@@ -22,8 +22,9 @@
 //! operation id. The acknowledged consumer's retry of the same edit is handed
 //! back to the caller for the one atomic consume.
 //!
-//! **Closed in this build** ([`EDIT_DECISIONS_AVAILABLE`]): the delivery lead
-//! reviews the coupled exposure candidate before any availability change.
+//! **Open in this build** ([`EDIT_DECISIONS_AVAILABLE`]): the product owner
+//! opened it on 2026-11-17 to test it. Only Koru's own page-access question
+//! is covered (O144); an agent's own permission prompt is unchanged.
 use super::dispatch::failure;
 use koru_ai_server::native_effect::{SaveProof, decision_consumed, probe_boot};
 use koru_artifact_wire::run_tools::ToolFailure;
@@ -48,10 +49,12 @@ use std::time::Duration;
 ///
 /// The decision-wait mutation fence (O147) has landed: while a decision
 /// waits the Run classifies as `BotDecisionWait` and new unrelated model
-/// mutations, AI Routine Create/Retry included, are refused. What still
-/// gates this constant is the delivery lead's exposure review (with O144
-/// and O128); it is not turned on here.
-pub(super) const EDIT_DECISIONS_AVAILABLE: bool = false;
+/// mutations, AI Routine Create/Retry included, are refused.
+///
+/// **Opened by the product owner on 2026-11-17**, to test it. This does not
+/// open [`super::private::PRIVATE_OPERATIONS_AVAILABLE`], which stays `false`:
+/// with it closed no private-read question is ever asked.
+pub(super) const EDIT_DECISIONS_AVAILABLE: bool = true;
 
 /// How long the immediate response may wait for the initial projection's
 /// positive acknowledgment, as a bounded number of exact replays.

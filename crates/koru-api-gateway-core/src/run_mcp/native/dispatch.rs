@@ -116,7 +116,7 @@ pub(in crate::run_mcp) async fn call(
     wait: RunWait,
     params: CallToolRequestParams,
 ) -> CallToolResult {
-    // The three tools that ask another Bot (M6). Closed in this build: each
+    // The three tools that ask another Bot (M6). Under a closed gate each
     // answers `unknown_tool` before any owner is asked.
     if super::children::recognizes(params.name.as_ref()) {
         return super::children::call(state, record, provenance, captured, wait, params).await;

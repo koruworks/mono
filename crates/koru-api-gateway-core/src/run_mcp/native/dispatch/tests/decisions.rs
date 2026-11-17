@@ -653,7 +653,14 @@ fn exact_denied_body_and_version_vector_are_bound_and_a_changed_retry_is_a_confl
 
 #[test]
 fn non_grant_refusals_keep_the_existing_lease_path_and_send_no_decision() {
-    // The gate is closed in this build: a denied edit takes the ordinary path.
+    // The pin: the product owner opened edit decisions on 2026-11-17, so
+    // this build's gate asks. Changing the constant fails here, on purpose.
+    assert!(super::super::super::decision::EDIT_DECISIONS_AVAILABLE);
+    assert!(matches!(
+        EditDecisions::production(),
+        EditDecisions::Open(pacing) if pacing.replays == DecisionPacing::PRODUCTION.replays
+    ));
+    // Under a closed gate a denied edit takes the ordinary path.
     let f = Fixture::new();
     let arguments = denied_edit(&f);
     let owner = DecisionOwner::new(&f);
@@ -664,13 +671,12 @@ fn non_grant_refusals_keep_the_existing_lease_path_and_send_no_decision() {
             &f.policy,
             &owner,
             arguments.clone(),
-            EditDecisions::production()
+            EditDecisions::Closed
         )
         .unwrap_err()
         .code,
         "native_owner_unavailable"
     );
-    assert!(!super::super::super::decision::EDIT_DECISIONS_AVAILABLE);
     let ordinary = vec![
         "reconcile",
         "native_lookup",
@@ -1526,13 +1532,15 @@ fn as_routine(f: &mut Fixture) {
     });
 }
 
-/// P4.3 section 4.10. With decisions switched off (this build) a Routine
-/// Run's edit outside its grant behaves exactly as before and exactly as a
-/// manual Run's: the ordinary lease path, its existing refusal, and no
-/// decision command. Only an opened gate asks, once, for the Routine too.
+/// P4.3 section 4.10. With decisions switched off (a closed gate, passed
+/// here as a value) a Routine Run's edit outside its grant behaves exactly
+/// as before and exactly as a manual Run's: the ordinary lease path, its
+/// existing refusal, and no decision command. Only an opened gate asks,
+/// once, for the Routine too. This build's gate is open (the product owner,
+/// 2026-11-17), which the first line pins.
 #[test]
 fn a_routine_runs_denied_edit_is_unchanged_while_decisions_are_off_and_asks_when_on() {
-    assert!(!super::super::super::decision::EDIT_DECISIONS_AVAILABLE);
+    assert!(super::super::super::decision::EDIT_DECISIONS_AVAILABLE);
     let ordinary = vec![
         "reconcile",
         "native_lookup",
@@ -1555,7 +1563,7 @@ fn a_routine_runs_denied_edit_is_unchanged_while_decisions_are_off_and_asks_when
                 &f.policy,
                 &owner,
                 arguments.clone(),
-                EditDecisions::production()
+                EditDecisions::Closed
             )
             .unwrap_err()
             .code,

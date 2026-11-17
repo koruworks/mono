@@ -49,8 +49,9 @@ use super::roster::RosterBot;
 /// `LINKED_BOT_CONTROL_AVAILABLE` (`koru-api-gateway`, `composition.rs`),
 /// which this crate cannot name: while that is `false` nothing is copied
 /// anywhere, and a sentence saying it is would not be true. **Whoever opens
-/// that switch opens this one in the same change.**
-pub(crate) const COPIES_DISCLOSED: bool = false;
+/// that switch opens this one in the same change: the product owner opened
+/// both on 2026-11-17.**
+pub(crate) const COPIES_DISCLOSED: bool = true;
 
 /// The Bot service's refusals that are about another computer
 /// (`koru_ai_wire::bot_linked_codes`, which this crate does not name).

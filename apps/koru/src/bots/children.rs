@@ -65,8 +65,8 @@ use super::link::{Answer, BotsLink, Command, Failure};
 /// children.rs`), which this crate cannot name: while it is `false` the
 /// asking tools are not listed to any Bot, and the settings say the switch is
 /// kept for later rather than promising it does anything. **P6.5 opens both
-/// together.**
-pub(crate) const ASKING_OPEN: bool = false;
+/// together: the product owner opened them on 2026-11-17.**
+pub(crate) const ASKING_OPEN: bool = true;
 
 /// How often an open request is read again while its conversation is shown.
 pub(crate) const OPEN_POLL: Duration = Duration::from_secs(3);

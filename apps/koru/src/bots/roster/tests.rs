@@ -2359,10 +2359,10 @@ impl Fixture {
     }
 }
 
-/// **With no linked Bots the roster is exactly today's roster** — the pin
-/// of the closed switch on this side. A Koru that keeps no copy answers the
-/// linked read with no computer (as it does while the gateway's
-/// `LINKED_BOT_CONTROL_AVAILABLE` is `false`); the roster then draws, lays
+/// **With no linked Bots the roster is exactly today's roster.** A Koru
+/// that keeps no copy answers the linked read with no computer (a Koru with
+/// no linked computer, or a build whose gateway keeps
+/// `LINKED_BOT_CONTROL_AVAILABLE` `false`); the roster then draws, lays
 /// out, publishes and walks precisely what it did before that answer
 /// existed, sends nothing more, and keeps no clock. The same when that read
 /// is refused or lost.

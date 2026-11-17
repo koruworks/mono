@@ -560,20 +560,54 @@ fn nothing_private(text: &str) {
 
 // ---- m6_tool_listing -------------------------------------------------------------
 
+/// The pin of the three gates. The product owner opened this one and the
+/// edit decisions on 2026-11-17; the private read stays closed. Changing any
+/// of the three fails here, on purpose.
+///
+/// The closed gate is still held, as a value: nothing listed, and a call
+/// answers `unknown_tool` before any owner is asked.
 #[test]
-fn m6_tool_listing_the_gate_is_closed_in_this_build_and_nothing_is_listed() {
-    assert!(!CHILD_REQUESTS_AVAILABLE);
-    assert!(!ChildGate::production().tools);
-    // Neither neighboring gate moved.
-    assert!(!super::super::decision::EDIT_DECISIONS_AVAILABLE);
+fn m6_tool_listing_the_gate_is_open_in_this_build_and_a_closed_gate_lists_nothing() {
+    assert!(CHILD_REQUESTS_AVAILABLE);
+    assert!(ChildGate::production().tools);
+    assert_eq!(ChildGate::production().hold.budget, Duration::from_secs(10));
+    // The neighboring gates: decisions opened the same day, the private
+    // read not.
+    assert!(super::super::decision::EDIT_DECISIONS_AVAILABLE);
     assert!(!super::super::private::PRIVATE_OPERATIONS_AVAILABLE);
     let f = Fixture::new();
+    // This build's gate: a Bot Run that is not a child is offered the read,
+    // and the two ask tools with `may_ask`; a child Run none.
+    assert_eq!(
+        listed(ChildGate::production().tools, &f.provenance, true),
+        ChildTools {
+            ask: true,
+            read: true
+        }
+    );
+    assert_eq!(
+        listed(ChildGate::production().tools, &f.provenance, false),
+        ChildTools {
+            ask: false,
+            read: true
+        }
+    );
+    assert_eq!(
+        listed(
+            ChildGate::production().tools,
+            &f.child_provenance(),
+            true
+        ),
+        ChildTools::NONE
+    );
+    // A closed gate lists nothing, whatever the Bot's switch says.
     for may_ask in [false, true] {
         assert_eq!(
-            listed(ChildGate::production().tools, &f.provenance, may_ask),
+            listed(CLOSED.tools, &f.provenance, may_ask),
             ChildTools::NONE
         );
     }
+    // The catalog with none of the three is the thirteen tools.
     let catalog = super::super::definitions();
     assert_eq!(catalog.len(), 13);
     for name in [LIST_TOOL, ASK_TOOL, READ_TOOL] {

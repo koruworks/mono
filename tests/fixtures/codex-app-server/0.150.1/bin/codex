@@ -116,10 +116,13 @@ def native_call(identity, name, arguments, refused=False):
 
 def native_discover():
     names = sorted(tool["name"] for tool in native_rpc("tools/list", {})["tools"])
-    if names != ["correct_memory", "create_document", "create_routine", "edit_document", "forget_memory", "list_memory", "list_routines", "read_document", "read_memory", "read_routine_creation", "remember_memory", "retry_routine_creation", "search_documents"]:
+    # Fourteen at thread start: the thirteen and read_bot_request. The two ask
+    # tools are listed only once the AI worker has bound this Run's turn,
+    # which is after thread start.
+    if names != ["correct_memory", "create_document", "create_routine", "edit_document", "forget_memory", "list_memory", "list_routines", "read_bot_request", "read_document", "read_memory", "read_routine_creation", "remember_memory", "retry_routine_creation", "search_documents"]:
         trace("native:catalog-mismatch:" + str(len(names)))
         raise AssertionError("native catalog mismatch")
-    trace("native:catalog:13")
+    trace("native:catalog:14")
 
 
 def native_pages():

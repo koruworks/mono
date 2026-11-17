@@ -196,8 +196,9 @@ pub(super) async fn handle(
         .is_some_and(|(provenance, policy)| {
             native::private::listed_for(&state, provenance, policy)
         });
-    // Which of the three tools that ask another Bot are listed (M6): none
-    // while their gate is closed, which it is in this build; nobody is asked.
+    // Which of the three tools that ask another Bot are listed (M6). Their
+    // gate is open in this build, so for every message of a Bot Run that is
+    // not a child the AI worker is asked whether the Bot may ask (5 s bound).
     let children = match classification.bot_subject() {
         Some((provenance, policy)) => {
             native::children::listed_for(&state, &authority, provenance, policy).await
@@ -225,7 +226,7 @@ pub(super) async fn handle(
 }
 
 /// What a Bot Run's catalog lists beyond the thirteen tools every Bot Run
-/// has. Both parts are empty in this build.
+/// has. The private read is never listed in this build (its gate is closed).
 #[derive(Clone, Copy, Debug, Default)]
 struct Listing {
     private: bool,

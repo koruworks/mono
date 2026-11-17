@@ -19,9 +19,9 @@
 //!   read authority, checked now**, and the version id comes from the child
 //!   Run's header, never from the model. No path here reads the live page.
 //!
-//! **Closed in this build** ([`CHILD_REQUESTS_AVAILABLE`]): the tools are not
-//! listed and each call answers `unknown_tool` before any owner is asked. The
-//! contract opens the gate only for P6.5, by the product owner.
+//! **Open in this build** ([`CHILD_REQUESTS_AVAILABLE`]): the product owner
+//! opened the gate on 2026-11-17 for P6.5. With the gate closed the tools are
+//! not listed and each call answers `unknown_tool` before any owner is asked.
 //!
 //! Nothing here writes a task, a title, a page or a Bot's name to a log, an
 //! event or an error text. Titles and page content go only into the asking
@@ -58,10 +58,12 @@ use uuid::Uuid;
 /// "All stay behind a closed gate, `CHILD_REQUESTS_AVAILABLE = false`, until
 /// P6.5"). While `false` the tools are not listed and every call answers
 /// `unknown_tool` before any owner is asked. Switching it on for the P6.5 run
-/// is the product owner's alone (contract section 11); it is not turned on
-/// here, and opening it does not open [`super::decision::EDIT_DECISIONS_AVAILABLE`]
-/// or [`super::private::PRIVATE_OPERATIONS_AVAILABLE`].
-pub(super) const CHILD_REQUESTS_AVAILABLE: bool = false;
+/// is the product owner's alone (contract section 11): **he opened it on
+/// 2026-11-17**, together with the app's `ASKING_OPEN` and the three names in
+/// the delegate's `BOT_RUN_TOOLS`. Opening it does not open
+/// [`super::decision::EDIT_DECISIONS_AVAILABLE`] or
+/// [`super::private::PRIVATE_OPERATIONS_AVAILABLE`]; each has its own switch.
+pub(super) const CHILD_REQUESTS_AVAILABLE: bool = true;
 
 pub(super) const LIST_TOOL: &str = "list_askable_bots";
 pub(super) const ASK_TOOL: &str = "ask_bot";
@@ -188,7 +190,7 @@ pub(in crate::run_mcp) async fn listed_for(
 }
 
 /// The Bot endpoint's instructions with the child tools' sentence when any of
-/// them is listed. Unchanged when none is, as in this build.
+/// them is listed. Unchanged when none is (a child Run, or a closed gate).
 pub(in crate::run_mcp) fn instructions(base: &str, tools: ChildTools) -> String {
     if tools == ChildTools::NONE {
         return base.to_owned();

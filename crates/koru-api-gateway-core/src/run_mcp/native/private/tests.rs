@@ -224,9 +224,11 @@ fn nothing_private(text: &str) {
 
 #[test]
 fn m5_tool_output_the_private_read_is_closed_in_this_build() {
-    // Both constants are off, and nothing here turns either on.
+    // The private read's own constant is off. The edit decisions were opened
+    // by the product owner on 2026-11-17; that alone asks no private-read
+    // question, because the question also needs this gate's `tools`.
     assert!(!PRIVATE_OPERATIONS_AVAILABLE);
-    assert!(!EDIT_DECISIONS_AVAILABLE);
+    assert!(EDIT_DECISIONS_AVAILABLE);
     let production = PrivateGate::production();
     assert!(!production.tools);
     assert!(production.questions.is_none());

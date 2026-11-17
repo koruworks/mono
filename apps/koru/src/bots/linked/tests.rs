@@ -825,17 +825,25 @@ fn m8_ui_executing_only_what_stays_on_the_other_computer_is_said() {
 // ------------------------------------------------- disclosure and languages
 
 /// **The disclosure is said only by a build that copies** (contract 6.5,
-/// D22). This build copies nothing — the gateway's switch is closed — so
-/// neither sentence is drawn anywhere; a build that copies says both, in
-/// every language.
+/// D22). This build copies: the product owner opened the gateway's switch
+/// and this one on 2026-11-17, so it says both sentences, in every
+/// language. A build that copies nothing says neither.
 #[test]
 fn m8_ui_linked_roster_the_disclosure_is_said_only_by_a_build_that_copies() {
     assert!(
-        !COPIES_DISCLOSED,
-        "opened only together with the gateway's LINKED_BOT_CONTROL_AVAILABLE"
+        COPIES_DISCLOSED,
+        "open only together with the gateway's LINKED_BOT_CONTROL_AVAILABLE"
     );
-    assert_eq!(disclosure(Lang::En), None);
-    assert_eq!(unlink_disclosure(Lang::En), None);
+    assert_eq!(
+        disclosure(Lang::En),
+        Some("Bot chats and results are copied to your linked desktops.")
+    );
+    assert_eq!(
+        unlink_disclosure(Lang::En),
+        Some("Unlinking removes the copy the next time that computer is on.")
+    );
+    assert_eq!(disclosure_when(Lang::En, false), None);
+    assert_eq!(unlink_disclosure_when(Lang::En, false), None);
     assert_eq!(
         disclosure_when(Lang::En, true),
         Some("Bot chats and results are copied to your linked desktops.")
@@ -848,6 +856,7 @@ fn m8_ui_linked_roster_the_disclosure_is_said_only_by_a_build_that_copies() {
         assert!(disclosure_when(lang, true).is_some_and(|words| !words.trim().is_empty()));
         assert!(unlink_disclosure_when(lang, true).is_some_and(|words| !words.trim().is_empty()));
         assert_eq!(disclosure_when(lang, false), None);
+        assert_eq!(unlink_disclosure_when(lang, false), None);
     }
 }
 

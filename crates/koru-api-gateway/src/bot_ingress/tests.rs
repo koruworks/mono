@@ -726,7 +726,7 @@ async fn m8_owner_wiring_a_worker_with_no_bot_authority_serves_no_linked_device(
 }
 
 // ----------------------------------------------------------------------
-// m8_linked_switch: both directions of Bots on linked computers are closed
+// m8_linked_switch: both directions of Bots on linked computers are open
 // ----------------------------------------------------------------------
 
 /// The bridge link as the Bot client would use it: it counts every open
@@ -754,21 +754,27 @@ impl koru_network_edge::NetworkEgress for CountingEgress {
     }
 }
 
-/// The switch is `false`, and with it `false` the composition's own step
-/// opens neither direction: with an AI worker that could do both (a Bot
+/// The switch is `true`: the product owner opened it on 2026-11-17 to test
+/// Bots on two linked desktops (P8.4). With it `true` the composition's own
+/// step opens both directions for an AI worker that can do both (a Bot
 /// authority, and an admission port that names an own device a client and
-/// an owner), **nothing is dialed**, no mirror is started (so nothing ever
-/// writes a copy table and the gateway's AI client is the worker's own, not
-/// the routing port), and no owner server is installed, so a linked
-/// device's stream is still answered `bots_unavailable`.
+/// an owner): **a mirror is started and dials the linked device**, so the
+/// gateway's AI client routes by owner, and the owner server is installed,
+/// so a linked device's stream is answered by this computer's Bot engine
+/// instead of `bots_unavailable`.
 ///
-/// Flipping the constant fails this case, on purpose: it is flipped only
-/// after the exposure review with a person.
+/// With no device network (no ingress) the same step still does nothing.
+///
+/// Flipping the constant back fails this case, on purpose. Until
+/// 2026-11-17 this case was
+/// `m8_linked_switch_is_closed_and_nothing_serves_or_dials` and asserted
+/// the opposite: no dial, no mirror, `bots_unavailable`. The step reads the
+/// constant itself, so the closed switch can no longer be driven here.
 #[tokio::test]
-async fn m8_linked_switch_is_closed_and_nothing_serves_or_dials() {
+async fn m8_linked_switch_is_open_and_the_composition_serves_and_dials() {
     assert!(
-        !crate::composition::LINKED_BOT_CONTROL_AVAILABLE,
-        "Bots on linked computers stay closed until the exposure review"
+        crate::composition::LINKED_BOT_CONTROL_AVAILABLE,
+        "opened by the product owner on 2026-11-17, with the app's COPIES_DISCLOSED"
     );
     let memory = koru_store_server::memory::MemoryStore::open("bot-linked-switch").unwrap();
     let this_computer = DeviceId::new();
@@ -785,21 +791,37 @@ async fn m8_linked_switch_is_closed_and_nothing_serves_or_dials() {
     let bots = BotIngress::new(peers);
     let egress = Arc::new(CountingEgress::default());
 
-    crate::composition::connect_linked_bots(&worker, Some(&bots), Some(egress.clone()));
-
+    // No device network: there is no ingress, and the step does nothing.
     // Long enough for a mirror, had one been started, to read the port and
     // dial the owner it names: its first dial has no pause before it.
+    crate::composition::connect_linked_bots(&worker, None, Some(egress.clone()));
     tokio::time::sleep(Duration::from_millis(600)).await;
     assert_eq!(
         egress.opened.load(std::sync::atomic::Ordering::SeqCst),
         0,
-        "nothing dials a linked device while the switch is closed"
+        "nothing dials a linked device without a device network"
     );
+    assert!(worker.linked_bots().is_none(), "and no mirror was started");
+
+    crate::composition::connect_linked_bots(&worker, Some(&bots), Some(egress.clone()));
+
+    // The following direction: a mirror was started, and it dials the owner
+    // the port names (here the link refuses every open).
     assert!(
-        worker.linked_bots().is_none(),
-        "no mirror was started, so no copy table is ever written"
+        worker.linked_bots().is_some(),
+        "a mirror was started, so the gateway's AI client routes by owner"
     );
-    // The serving direction: no owner server behind the adapter.
+    let mut dialed = 0;
+    for _ in 0..500 {
+        dialed = egress.opened.load(std::sync::atomic::Ordering::SeqCst);
+        if dialed > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(dialed > 0, "the mirror dialed the linked device");
+    // The serving direction: the AI worker's owner server is behind the
+    // adapter, and answers a linked own device as this computer.
     let (mut client_half, gateway_half) = stream(linked, bots_token());
     send(
         &client_half,
@@ -807,10 +829,24 @@ async fn m8_linked_switch_is_closed_and_nothing_serves_or_dials() {
     )
     .await;
     bots.admit(gateway_half);
+    let answer = owner_hello_of(&mut client_half).await;
+    assert_eq!(answer.owner_device, this_computer);
+    assert_eq!(answer.version, 1);
+    // A device the port does not name is still refused by the adapter: the
+    // switch opened nothing for a stranger.
+    let stranger = DeviceId::new();
+    let (mut other_half, gateway_half) = stream(stranger, bots_token());
+    send(
+        &other_half,
+        WireMessage::ClientHello(hello(stranger, Role::Feed)),
+    )
+    .await;
+    bots.admit(gateway_half);
     assert_eq!(
-        refusal_of(&mut client_half).await.reason,
-        refusal::BOTS_UNAVAILABLE
+        refusal_of(&mut other_half).await.reason,
+        refusal::NOT_OWN_DEVICE
     );
+    drop(client_half);
     worker.shutdown();
     let _ = worker.join();
 }

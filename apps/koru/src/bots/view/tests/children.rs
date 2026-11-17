@@ -249,9 +249,10 @@ fn m6_ui_request_card_a_hidden_tab_reads_nothing() {
 }
 
 /// Cohort `m6_ui_may_ask`: **the switch is in the settings' access card**,
-/// published as a toggle in its state, with what it allows and — while this
-/// build keeps asking closed — that it is kept for later. Pressing it is an
-/// access edit, saved with the card's *Save*.
+/// published as a toggle in its state, with what it allows. A build that
+/// keeps asking closed also says that it is kept for later; this build asks
+/// (the product owner opened it on 2026-11-17) and does not say so. Pressing
+/// it is an access edit, saved with the card's *Save*.
 #[test]
 fn m6_ui_may_ask_the_switch_is_a_toggle_in_the_access_card() {
     let mut f = fixture();
@@ -268,10 +269,16 @@ fn m6_ui_may_ask_the_switch_is_a_toggle_in_the_access_card() {
     assert_eq!(switch.label, "May ask other bots");
     let labels: Vec<&str> = published.iter().map(|c| c.label.as_str()).collect();
     assert!(labels.contains(&t(Lang::En, Words::BotsMayAskHelp)));
+    // The pin of the app's half of the switch: open, with the gateway's.
+    assert!(children::ASKING_OPEN);
     assert_eq!(
         labels.contains(&t(Lang::En, Words::BotsMayAskNotYet)),
         !children::ASKING_OPEN,
         "the sentence is true for this build"
+    );
+    assert!(
+        !labels.contains(&t(Lang::En, Words::BotsMayAskNotYet)),
+        "a build that asks does not say asking is kept for later"
     );
     assert!(f.view.focus_order().contains(&region::MAY_ASK));
     f.view.focus = Some(region::MAY_ASK);

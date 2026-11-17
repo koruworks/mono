@@ -48,9 +48,10 @@ use crate::lifecycle::GatewayConfig;
 ///   stream to another device and writes nothing to the copy tables, and
 ///   the two linked reads answer "no linked Bots".
 ///
-/// `false` until the exposure review with a person (P8.4).
-/// `m8_linked_switch_is_closed_and_nothing_serves_or_dials` pins it.
-pub(crate) const LINKED_BOT_CONTROL_AVAILABLE: bool = false;
+/// **Opened by the product owner on 2026-11-17**, to test it on two
+/// desktops (P8.4), together with the app's `COPIES_DISCLOSED`.
+/// `m8_linked_switch_is_open_and_the_composition_serves_and_dials` pins it.
+pub(crate) const LINKED_BOT_CONTROL_AVAILABLE: bool = true;
 
 /// Open both directions of Bots on linked computers for one AI worker,
 /// **only when [`LINKED_BOT_CONTROL_AVAILABLE`] is `true`**: install the
@@ -140,8 +141,9 @@ pub(crate) fn open(
     let artifacts_root = koru_channel::artifacts_root_beside(store_root);
     let legacy_events_root = store_root.join("events");
 
-    // The bridge link is also where this computer would open a Bot stream
-    // to a linked device. Nothing opens one unless the switch is open.
+    // The bridge link is also where this computer opens a Bot stream to a
+    // linked device. Nothing opens one unless the switch is open, which it
+    // is in this build.
     let bot_egress = bridge
         .as_ref()
         .map(|bridge| Arc::new(bridge.clone()) as Arc<dyn koru_network_edge::NetworkEgress>);
@@ -340,8 +342,8 @@ pub(crate) fn open(
     }) {
         Ok(ai_worker) => {
             // Bots on linked computers (M8), both directions, behind one
-            // switch. Closed until the exposure review with a person
-            // (P8.4): nothing is installed and nothing is started.
+            // switch, open in this build (the product owner, 2026-11-17):
+            // the owner server is installed and the mirror is started.
             connect_linked_bots(&ai_worker, bot_ingress.as_ref(), bot_egress);
             GatewayState::with_ai_events_and_services(
                 segment.to_owned(),

@@ -2071,7 +2071,8 @@ Only an exact Prepared Execute intent enters the shared Store executor and
 confirmation path. Cancellation cannot abandon an acquired lease; uncertain
 lease or settlement replies recover the known operation without reexecution.
 The Bot launch allowlist and gateway catalog expose the same thirteen native tools,
-including `list_memory` and `read_memory`. Ordinary Runs retain their artifact
+including `list_memory` and `read_memory`, and the tools of "Asking another Bot"
+below where the gateway lists them. Ordinary Runs retain their artifact
 catalog. The Memory tools cannot widen generic document permissions; their
 saved receipts do not become Run results. Actual provider/client and desktop
 acceptance remain separate from the in-memory composition evidence.
@@ -2094,20 +2095,22 @@ A Bot's saved receipt from `create_document` or `edit_document` carries
 out only for a result registered before versions were kept. It names what the
 save wrote; it is not an argument any tool accepts.
 
-### Asking another Bot (closed in this build)
+### Asking another Bot
 
 Three more Bot Run tools let one Bot ask another Bot of the same person, home
 workspace and computer, and read what it saved: `list_askable_bots`, `ask_bot`
 and `read_bot_request`. **They are behind `CHILD_REQUESTS_AVAILABLE`, which is
-`false`**: they are not listed, the endpoint's instructions do not name them,
-and a call answers `unknown_tool` before any owner is asked. The gate opens only
-for the P6.5 acceptance run. What follows is the contract they keep when it
-does.
+`true`** since 2026-11-17, when the product owner opened it for the P6.5
+acceptance run. In a build where it is `false` they are not listed, the
+endpoint's instructions do not name them, and a call answers `unknown_tool`
+before any owner is asked.
 
 They are listed only to a Bot Run that is not itself a child request (depth
-one); the two ask tools also need the Bot's "May ask other bots" switch.
-`read_bot_request` does not. With all three listed the catalog has sixteen tools
-and the instructions say so.
+one); the two ask tools also need the Bot's "May ask other bots" switch, and
+are listed only while the AI worker answers for the Run's bound turn.
+`read_bot_request` needs neither. With all three listed the catalog has sixteen
+tools and the instructions say so; with only `read_bot_request`, fourteen. The
+Bot launch allowlist names all sixteen; it lists nothing by itself.
 
 | Tool | Input | Output |
 | --- | --- | --- |

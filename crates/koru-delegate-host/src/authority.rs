@@ -66,9 +66,13 @@ fn allowlist() -> McpToolAllowlist {
     .expect("six names are under the allowlist bound")
 }
 
-/// The Bot endpoint's native document, own-Memory and own-Routine setup tools. Keep this exact
-/// vocabulary aligned with the gateway's catalog test; it grants no page access.
-const BOT_RUN_TOOLS: [&str; 13] = [
+/// The Bot endpoint's native document, own-Memory and own-Routine setup tools, and the three
+/// tools that ask another Bot (M6, opened by the product owner on 2026-11-17 with the gateway's
+/// `CHILD_REQUESTS_AVAILABLE`). Keep this exact vocabulary aligned with the gateway's catalog
+/// test; it grants no page access. A name here only lets an agent call a tool the gateway
+/// lists: which of the last three a Run is offered (none for a child Run, no ask tool while
+/// "May ask other bots" is off) is the gateway's listing, and every call is checked there.
+const BOT_RUN_TOOLS: [&str; 16] = [
     "search_documents",
     "read_document",
     "create_document",
@@ -82,6 +86,9 @@ const BOT_RUN_TOOLS: [&str; 13] = [
     "read_routine_creation",
     "retry_routine_creation",
     "list_routines",
+    "list_askable_bots",
+    "ask_bot",
+    "read_bot_request",
 ];
 
 fn launch_tools(
@@ -94,7 +101,7 @@ fn launch_tools(
                 .into_iter()
                 .map(|name| name.parse().expect("native tool name")),
         )
-        .expect("thirteen Bot tools")
+        .expect("sixteen Bot tools")
     } else {
         ordinary.clone()
     }

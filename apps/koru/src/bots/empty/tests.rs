@@ -14,10 +14,15 @@ fn rect(view: &EmptyView, area: Rect, key: Key) -> Rect {
     view.with_frame(area, LANG, |frame| frame.node(key).expect("drawn").rect)
 }
 
-/// **The empty view is the heading, the paragraph, *New bot* and the
-/// examples**, in that order, no wider than the design's measure, in the
-/// middle of the content area; every part an assistive technology hears is
-/// named.
+/// **The empty view is the heading, the paragraph, *New bot*, the examples
+/// and the line that says Bot chats are copied to linked desktops**, in
+/// that order, no wider than the design's measure, in the middle of the
+/// content area; every part an assistive technology hears is named.
+///
+/// The last line is drawn because this build copies (`COPIES_DISCLOSED`,
+/// opened by the product owner on 2026-11-17 with the gateway's switch).
+/// Until then this case held the view without it: four names, and the
+/// examples as the bottom of the centred block.
 #[test]
 fn the_view_is_the_pitch_and_one_button_in_the_middle() {
     let view = EmptyView::default();
@@ -38,8 +43,10 @@ fn the_view_is_the_pitch_and_one_button_in_the_middle() {
                 Name::Key(Words::BotsIntroBody),
                 Name::Key(Words::BotsNewBot),
                 Name::Key(Words::BotsIntroExamples),
+                Name::Key(Words::BotsLinkedDisclosure),
             ]
         );
+        assert!(crate::bots::linked::COPIES_DISCLOSED);
         let button = &roots[0].children[2];
         assert_eq!(button.role, Role::Button);
         assert_eq!(button.actions, [Action::Click, Action::Focus]);
@@ -56,7 +63,9 @@ fn the_view_is_the_pitch_and_one_button_in_the_middle() {
         rect(&view, area, NEW_BOT),
         rect(&view, area, EXAMPLES),
     );
+    let copies = rect(&view, area, COPIES);
     assert!(title.y < body.y && body.y < button.y && button.y < examples.y);
+    assert!(examples.y + examples.h <= copies.y, "the copies line is last");
     let faces = view.with_frame(area, LANG, |frame| {
         frame.rect_of("Bots empty faces").expect("the faces")
     });
@@ -73,7 +82,7 @@ fn the_view_is_the_pitch_and_one_button_in_the_middle() {
     assert!((body.x + body.w * 0.5 - middle).abs() < 1.0, "{body:?}");
     let (top, bottom) = (
         faces.y - area.y,
-        area.y + area.h - (examples.y + examples.h),
+        area.y + area.h - (copies.y + copies.h),
     );
     assert!((top - bottom).abs() < 1.5, "above {top}, below {bottom}");
 }
@@ -85,7 +94,7 @@ fn a_narrow_area_wraps_the_words() {
     let view = EmptyView::default();
     let narrow = Rect::new(0.0, 0.0, 260.0, 700.0);
     let wide_body = rect(&view, area(), BODY);
-    for key in [TITLE, BODY, NEW_BOT, EXAMPLES] {
+    for key in [TITLE, BODY, NEW_BOT, EXAMPLES, COPIES] {
         let at = rect(&view, narrow, key);
         assert!(
             at.x >= narrow.x && at.x + at.w <= narrow.x + narrow.w + 0.5,

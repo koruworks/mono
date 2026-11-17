@@ -443,9 +443,17 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
         "one turn, one native image"
     );
     // Today's Bot catalog, exact in the fixture: four page tools, five Memory
-    // tools and four Routine tools; the private read and the three tools
-    // that ask another Bot are not listed while their gates are closed.
-    assert!(trace.lines().any(|line| line == "native:catalog:13"));
+    // tools, four Routine tools and `read_bot_request`. The private read is
+    // not listed while its gate is closed. The gate of the three tools that
+    // ask another Bot was opened on 2026-11-17, but the fixture lists at
+    // thread start, before the AI worker has bound this Run's turn, and the
+    // worker answers "may this Bot ask" only for a bound turn: so the two ask
+    // tools (`list_askable_bots`, `ask_bot`) are not in this listing.
+    // NOT RUN since the gate opened: fourteen is read from the code
+    // (`children::listed_for`, `retained_child_subject`), not observed. A
+    // trace of `native:catalog-mismatch:16` here means the turn was bound
+    // first and the fixture's list is the one to correct.
+    assert!(trace.lines().any(|line| line == "native:catalog:14"));
     assert_eq!(
         trace
             .lines()
@@ -614,7 +622,7 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     );
     assert_eq!(operation.run_id, Some(task_run));
     eprintln!(
-        "scripted native Bot verified: thirteen-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
+        "scripted native Bot verified: fourteen-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
     );
 }
 

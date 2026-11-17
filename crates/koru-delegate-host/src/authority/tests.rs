@@ -5,7 +5,7 @@ use koru_delegate_core::{
 };
 
 #[test]
-fn launch_selection_allows_thirteen_bot_tools_and_preserves_six_ordinary_tools() {
+fn launch_selection_allows_sixteen_bot_tools_and_preserves_six_ordinary_tools() {
     let workspace = WorkspaceId::new();
     let bot = RunToolAuthority::Bot {
         provenance: BotProvenance {
@@ -53,9 +53,15 @@ fn launch_selection_allows_thirteen_bot_tools_and_preserves_six_ordinary_tools()
             "read_routine_creation",
             "retry_routine_creation",
             "list_routines",
+            // The three tools that ask another Bot, opened with the
+            // gateway's gate by the product owner on 2026-11-17.
+            "list_askable_bots",
+            "ask_bot",
+            "read_bot_request",
         ]
         .into()
     );
+    assert_eq!(selected.len(), 16);
     let selected = launch_tools(&RunToolAuthority::Ordinary {}, &ordinary);
     assert_eq!(selected, ordinary);
     assert_eq!(selected.len(), 6);
