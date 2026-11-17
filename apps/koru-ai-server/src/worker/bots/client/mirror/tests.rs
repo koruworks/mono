@@ -44,6 +44,9 @@ use super::super::owner::tests::{
 };
 use super::super::owner::{BotClientStream, BotOwnerServer};
 use super::*;
+use crate::worker::bots::events::recorder::{
+    BotEventRecorder, RecordedBotEvent, assert_holds_none_of,
+};
 use crate::worker::bots::tests::chat::Native;
 use crate::worker::bots::tests::{Authority, created, fixture};
 use crate::worker::{AiWorker, WorkerConfig, WorkerExit, WorkerHandle};
@@ -345,6 +348,8 @@ struct Desk {
     delegate: Option<Arc<Delegate>>,
     /// A Bot this desktop runs itself.
     local: Option<Bot>,
+    /// Every Bot event this start of the desktop's worker published.
+    events: Arc<BotEventRecorder>,
 }
 
 /// A worker for a linked desktop over `kept`, with no mirror started.
@@ -353,9 +358,20 @@ fn spawn(
     authority: &Arc<Authority>,
     delegate: &Option<Arc<Delegate>>,
 ) -> (WorkerHandle, Receiver<Repository>) {
+    spawn_recorded(kept, authority, delegate, BotEventRecorder::new())
+}
+
+/// [`spawn`], publishing the worker's Bot events to `events`.
+fn spawn_recorded(
+    kept: &mut Option<Repository>,
+    authority: &Arc<Authority>,
+    delegate: &Option<Arc<Delegate>>,
+    events: Arc<BotEventRecorder>,
+) -> (WorkerHandle, Receiver<Repository>) {
     let (return_tx, returned) = sync_channel(1);
     let mut config =
         WorkerConfig::deterministic_mock(PathBuf::from("unused-mirror"), "internal-debug")
+            .with_bot_events(events)
             .with_bot_authority(authority.clone());
     if let Some(delegate) = delegate {
         config = config.with_bot_delegate(delegate.clone());
@@ -411,7 +427,9 @@ impl Desk {
         } = kept;
         let device = authority.owner().unwrap().device;
         assert_ne!(device, world.owner.device);
-        let (worker, returned) = spawn(&mut Some(repository), &authority, &delegate);
+        let events = BotEventRecorder::new();
+        let (worker, returned) =
+            spawn_recorded(&mut Some(repository), &authority, &delegate, events.clone());
         let hooks = Arc::new(Hooks {
             server: world.server.clone(),
             owner: world.owner.device,
@@ -448,6 +466,7 @@ impl Desk {
             authority,
             delegate,
             local,
+            events,
         }
     }
 
@@ -1961,3 +1980,6 @@ fn m8_end_to_end_pair() {
     assert_eq!(world.begun(), 1, "nothing ran twice");
     audit_refused_nothing(&world);
 }
+
+// Cohort `m8_events_content_free`: the two rows a linked desktop publishes.
+mod events;

@@ -27,12 +27,20 @@
 //! `bots_unavailable`, "not ready, retry later". Nothing is left open and
 //! nothing waits.
 //!
+//! **Every stream that ends here is published** as one `bots.client.session`
+//! row, when the composition gave the adapter a sink: `refused` with the
+//! reason it was answered (or `timeout` for a stream that said nothing),
+//! `closed` for one whose other end went away first. A stream handed to the
+//! owner server is published by that server, not here. A row holds the
+//! device's id, the hello's role when one was read, and that reason.
+//!
 //! No frame, device name, hello or scope is logged here.
 
 use std::collections::BTreeSet;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
+use koru_ai_server::{BotEvents, BotStreamTurnedAway};
 use koru_api_gateway_core::{BOTS_CONFIGURE_SCOPE, GatewayPrincipal};
 use koru_bot_client_wire::{
     BUILT_CAPABILITIES, ClientHello, FrameDecoder, Negotiated, Refused, WireMessage, encode,
@@ -92,6 +100,9 @@ pub(crate) struct BotIngress {
 struct Inner {
     peers: BotPeers,
     owner: RwLock<Option<Arc<dyn BotOwnerServer>>>,
+    /// Where a stream that ends in this adapter is published. A default
+    /// one publishes nothing.
+    events: RwLock<BotEvents>,
     hello_timeout: Duration,
 }
 
@@ -105,6 +116,7 @@ impl BotIngress {
             inner: Arc::new(Inner {
                 peers,
                 owner: RwLock::new(None),
+                events: RwLock::new(BotEvents::default()),
                 hello_timeout,
             }),
         }
@@ -127,6 +139,24 @@ impl BotIngress {
             .unwrap_or_else(|error| error.into_inner()) = Some(server);
     }
 
+    /// Publish the streams that end in this adapter to `events`. Called once
+    /// by the composition, when this gateway has an events worker.
+    pub(crate) fn set_events(&self, events: BotEvents) {
+        *self
+            .inner
+            .events
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = events;
+    }
+
+    fn events(&self) -> BotEvents {
+        self.inner
+            .events
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+
     /// Take one session carrying the Bots token. Returns at once; the
     /// stream is read on its own task. **Called from inside the runtime.**
     pub(crate) fn admit(&self, session: TransportSession) {
@@ -142,6 +172,8 @@ impl BotIngress {
             session.reset(1);
             return;
         };
+        let events = self.events();
+        let peer = device.device_id;
         let mut decoder = FrameDecoder::new();
         let first = tokio::time::timeout(
             self.inner.hello_timeout,
@@ -151,21 +183,36 @@ impl BotIngress {
         let hello = match first {
             // No hello in time: the stream is closed, and nothing is said.
             Err(_) => {
+                events.stream_turned_away(peer, None, BotStreamTurnedAway::TimedOut);
                 session.reset(1);
                 return;
             }
             // The client went away before it said anything.
-            Ok(First::Closed) => return,
+            Ok(First::Closed) => {
+                events.stream_turned_away(peer, None, BotStreamTurnedAway::Closed);
+                return;
+            }
             Ok(First::Message(WireMessage::ClientHello(hello))) => hello,
             // A malformed or oversized frame, or a first message that is not
             // a hello.
             Ok(First::Malformed | First::Message(_)) => {
+                events.stream_turned_away(
+                    peer,
+                    None,
+                    BotStreamTurnedAway::Refused(refusal::PROTOCOL_ERROR),
+                );
                 refuse(session, Refused::new(refusal::PROTOCOL_ERROR)).await;
                 return;
             }
         };
+        let role = Some(hello.role);
         let peers = self.inner.peers.current();
         let Some(scopes) = peers.client_scopes(&device.device_id).cloned() else {
+            events.stream_turned_away(
+                peer,
+                role,
+                BotStreamTurnedAway::Refused(refusal::NOT_OWN_DEVICE),
+            );
             refuse(session, Refused::new(refusal::NOT_OWN_DEVICE)).await;
             return;
         };
@@ -197,6 +244,14 @@ impl BotIngress {
                         Err(refusal) => refusal,
                         Ok(_) => Refused::new(refusal::BOTS_UNAVAILABLE),
                     };
+                // Only a reason of this build is published: the first of its
+                // refusals that this one equals, never the frame's own text.
+                let reason = refusal::ALL
+                    .iter()
+                    .copied()
+                    .find(|known| *known == refusal.reason)
+                    .unwrap_or("other");
+                events.stream_turned_away(peer, role, BotStreamTurnedAway::Refused(reason));
                 refuse(session, refusal).await;
             }
         }

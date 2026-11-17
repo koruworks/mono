@@ -5264,6 +5264,7 @@ dependencies = [
  "koru-delegate-document",
  "koru-device",
  "koru-env",
+ "koru-events",
  "koru-export",
  "koru-export-markdown",
  "koru-import-markdown",

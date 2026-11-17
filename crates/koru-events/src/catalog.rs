@@ -204,6 +204,9 @@ macro_rules! payload {
     };
 }
 
+// After `payload!`, which the child module uses.
+pub mod bots;
+
 /// How a workspace came to be — `workspace.created`'s `source` vocabulary.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OnboardingEntryChoice {

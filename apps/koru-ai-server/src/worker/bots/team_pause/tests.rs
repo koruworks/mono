@@ -8,6 +8,7 @@
 //! same epoch with other content is `bot_team_conflict`). No Store, provider,
 //! browser or network is opened.
 use super::*;
+use crate::worker::bots::events::recorder::{BotEventRecorder, assert_holds_none_of};
 use crate::worker::bots::tests::{Authority, created, fixture};
 use koru_delegate_api::bots::{BotCommand as D, BotDelegatePort, team_failure, team_stale};
 use koru_delegate_core as d;
@@ -36,19 +37,24 @@ struct Run {
     gate: Option<(SyncSender<()>, Receiver<()>)>,
 }
 
-struct Owner(Mutex<Run>);
+/// The scripted delegate, and what every worker started over it published
+/// (`bots.team_pause.changed`), kept across a restart of the worker.
+struct Owner(Mutex<Run>, Arc<BotEventRecorder>);
 
 impl Owner {
     fn new() -> Arc<Self> {
-        Arc::new(Self(Mutex::new(Run {
-            boot: DelegateBootId::mint(),
-            team: None,
-            bots: Vec::new(),
-            seen: Vec::new(),
-            away: false,
-            garbled: false,
-            gate: None,
-        })))
+        Arc::new(Self(
+            Mutex::new(Run {
+                boot: DelegateBootId::mint(),
+                team: None,
+                bots: Vec::new(),
+                seen: Vec::new(),
+                away: false,
+                garbled: false,
+                gate: None,
+            }),
+            BotEventRecorder::new(),
+        ))
     }
     fn with<T>(&self, work: impl FnOnce(&mut Run) -> T) -> T {
         work(&mut self.0.lock().unwrap())
@@ -192,6 +198,7 @@ fn spawn(
         ProviderRegistry::default(),
     )
     .with_bot_authority(authority)
+    .with_bot_events(owner.1.clone())
     .with_bot_delegate(owner);
     config.test_repository = Some(repository);
     config.test_repository_return = Some(return_tx);
@@ -839,3 +846,6 @@ fn m8_team_races_a_bot_is_created_and_edited_while_the_team_is_paused() {
     f.acknowledged(2, false);
     assert!(f.on_writer(move |state| state.repository.bot_admitting(new).unwrap()));
 }
+
+// Cohort `m8_events_content_free`: `bots.team_pause.changed`.
+mod events;

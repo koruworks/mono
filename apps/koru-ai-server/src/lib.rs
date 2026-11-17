@@ -35,6 +35,7 @@ pub use worker::bots::client::owner::{BotClientStream, BotOwnerServer};
 pub use worker::bots::decision_wait::{
     BotDelegateDecisionWait, DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject,
 };
+pub use worker::bots::events::{BotEventDraft, BotEventSink, BotEvents, BotStreamTurnedAway};
 pub use worker::bots::memory::{
     MemoryBaseEvidence, MemoryBaseSelection, MemoryEditBaseRequest, MemoryWriteAuthorityEvidence,
     MemoryWriteAuthorityRequest, MemoryWriteSubjectEvidence, RunMemoryEnsureRequest,

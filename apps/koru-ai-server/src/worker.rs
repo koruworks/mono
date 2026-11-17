@@ -110,6 +110,9 @@ pub struct WorkerConfig {
     /// The writer's half of what it publishes for linked devices' streams,
     /// handed from `spawn` to the writer thread.
     bot_client_hint: Option<bots::client::owner::WriterHint>,
+    /// Where the six diagnostic events of M8 go (`bots::events`). Without a
+    /// sink nothing is published.
+    pub(crate) bot_events: bots::events::BotEvents,
     root: PathBuf,
     channel: String,
     providers: ProviderRegistry,
@@ -204,6 +207,13 @@ impl WorkerConfig {
         self.bot_admission = Some(Arc::new(peers));
         self
     }
+    /// Publish the worker's Bot events (M8) to `sink`: the team pause, and
+    /// the streams and copies of linked computers. The sink must not block;
+    /// it is called on the writer.
+    pub fn with_bot_events(mut self, sink: Arc<dyn bots::events::BotEventSink>) -> Self {
+        self.bot_events = bots::events::BotEvents::new(sink);
+        self
+    }
     /// The Store's data root, so a Bot's selected folder is never it.
     pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
         self.store_root = Some(store_root);
@@ -223,6 +233,7 @@ impl WorkerConfig {
             connections_hosted: None,
             bot_admission: None,
             bot_client_hint: None,
+            bot_events: bots::events::BotEvents::default(),
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -264,6 +275,7 @@ impl WorkerConfig {
             connections_hosted: None,
             bot_admission: None,
             bot_client_hint: None,
+            bot_events: bots::events::BotEvents::default(),
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -310,6 +322,7 @@ impl WorkerConfig {
             connections_hosted: None,
             bot_admission: None,
             bot_client_hint: None,
+            bot_events: bots::events::BotEvents::default(),
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -484,6 +497,7 @@ impl AiWorker {
                 admission: Arc::clone(admission),
                 head,
                 feed_streams,
+                events: self.config.bot_events.clone(),
             }),
             _ => None,
         };
@@ -1934,6 +1948,8 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    /// Where the six diagnostic events of M8 go (`bots::events`).
+    bot_events: bots::events::BotEvents,
     /// What the writer keeps for linked desktops (M8): this start, the
     /// feed, the pages waiting for its budget, and the live watches.
     bot_clients: bots::client::owner::Writer,
@@ -2241,6 +2257,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        bot_events: config.bot_events.clone(),
         bot_clients,
         connections: config.connections_hosted.take(),
         private_attempts: HashSet::new(),

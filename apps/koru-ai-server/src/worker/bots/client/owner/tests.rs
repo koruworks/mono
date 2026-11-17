@@ -41,12 +41,17 @@ use uuid::Uuid;
 
 use super::command::{Applied, LocalCommands, PortCommands};
 use super::*;
+use crate::worker::bots::events::recorder::{
+    BotEventRecorder, RecordedBotEvent, assert_holds_none_of,
+};
 use crate::worker::bots::tests::chat::Native;
 use crate::worker::bots::tests::{Authority, created, fixture};
 use crate::worker::{AiWorker, AiWorkerClient, WorkerConfig, WorkerExit, WorkerHandle};
 
 mod authority;
 mod commands;
+// Cohort `m8_events_content_free`: the three rows the owner server publishes.
+mod events;
 mod feed_role;
 mod limits_cases;
 mod live_role;
@@ -254,6 +259,9 @@ pub(in crate::worker::bots::client) struct World {
     timing: Timing,
     pub(in crate::worker::bots::client) bot: Bot,
     pub(in crate::worker::bots::client) owner: BotOwner,
+    /// Every Bot event this computer's worker published, across its
+    /// restarts.
+    pub(in crate::worker::bots::client) events: Arc<BotEventRecorder>,
 }
 
 fn spawn(
@@ -262,6 +270,7 @@ fn spawn(
     port: Arc<Port>,
     delegate: Arc<Delegate>,
     timing: Timing,
+    events: Arc<BotEventRecorder>,
 ) -> (
     WorkerHandle,
     Receiver<Repository>,
@@ -275,6 +284,7 @@ fn spawn(
     let mut config =
         WorkerConfig::deterministic_mock(PathBuf::from("unused-owner-server"), "internal-debug")
             .with_bot_authority(authority)
+            .with_bot_events(events)
             .with_bot_delegate(delegate);
     config.bot_admission = Some(port);
     config.test_repository = Some(repository);
@@ -307,12 +317,14 @@ impl World {
         });
         let port = Arc::new(Port::default());
         let delegate = Arc::new(Delegate { native });
+        let events = BotEventRecorder::new();
         let (worker, returned, server, local) = spawn(
             repository,
             authority.clone(),
             port.clone(),
             delegate.clone(),
             timing,
+            events.clone(),
         );
         Self {
             runtime: tokio::runtime::Builder::new_multi_thread()
@@ -330,6 +342,7 @@ impl World {
             timing,
             bot,
             owner,
+            events,
         }
     }
 
@@ -360,6 +373,7 @@ impl World {
             self.port.clone(),
             self.delegate.clone(),
             self.timing,
+            self.events.clone(),
         );
         self.worker = Some(worker);
         self.returned = returned;

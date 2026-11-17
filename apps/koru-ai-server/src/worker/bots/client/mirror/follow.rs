@@ -31,6 +31,7 @@ use koru_bot_client_wire::{
 use koru_network_edge::{NetworkTarget, ProtocolToken};
 
 use super::{Owner, Read, Shared, Wire, copy, lock, now_ms};
+use crate::worker::bots::events::{Copies, CopyChange};
 
 /// Why a stream to an owner could not be opened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,19 +145,16 @@ impl Shared {
                     let Some(row) = state.repository.mirror_owner(device)? else {
                         return Ok(());
                     };
-                    if unsupported {
-                        state.repository.mirror_set_state(
-                            device,
-                            LinkedOwnerState::Unsupported,
-                            now,
-                        )
+                    let (to, why) = if unsupported {
+                        (LinkedOwnerState::Unsupported, CopyChange::NeedsUpdate)
                     } else if row.state == LinkedOwnerState::Current {
-                        state
-                            .repository
-                            .mirror_set_state(device, LinkedOwnerState::Stale, now)
+                        (LinkedOwnerState::Stale, CopyChange::StreamLost)
                     } else {
-                        Ok(())
-                    }
+                        return Ok(());
+                    };
+                    state.mirror_change(Copies::One(device), why, false, |state| {
+                        state.repository.mirror_set_state(device, to, now)
+                    })
                 })
                 .await;
             if marked.is_none() || matches!(end, End::Gone) {
@@ -195,7 +193,14 @@ impl Shared {
         let Ok(row) = self
             .link
             .on_writer(move |state| {
-                state.repository.mirror_discard_staging(device, now)?;
+                // What an interrupted reset left is dropped here; a copy
+                // with nothing staged is not touched.
+                state.mirror_change(
+                    Copies::One(device),
+                    CopyChange::ResetDropped,
+                    false,
+                    |state| state.repository.mirror_discard_staging(device, now),
+                )?;
                 state.repository.mirror_owner(device)
             })
             .await
@@ -284,9 +289,22 @@ impl Shared {
             };
             drop(page);
             let now = now_ms();
+            // A page that begins a reset from the start: the copy's row
+            // looks the same before and after it when one was already being
+            // received.
+            let began_again = mirror_page.reset && mirror_page.from_cursor == 0;
             let applied = match self
                 .link
-                .on_writer(move |state| state.repository.mirror_apply_page(&mirror_page, now))
+                .on_writer(move |state| {
+                    // A page that is refused writes nothing and says
+                    // nothing; so does one that was sent again.
+                    state.mirror_change(
+                        Copies::One(device),
+                        CopyChange::CaughtUp,
+                        began_again,
+                        |state| state.repository.mirror_apply_page(&mirror_page, now),
+                    )
+                })
                 .await
             {
                 Err(_) => return End::Gone,

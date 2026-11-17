@@ -211,6 +211,17 @@ pub(crate) fn open(
         Some(events) => worker_config.with_events(events),
         None => worker_config,
     };
+    // The AI worker's Bot events (M8) go to the same journal, through a
+    // queue of their own so the AI writer never waits for it. Without an
+    // events worker nothing is published. The Bot ingress adapter publishes
+    // the streams it turns away to the same sink.
+    let bot_events = events
+        .clone()
+        .and_then(crate::bot_events::BotEventJournal::start)
+        .map(|journal| journal as Arc<dyn koru_ai_server::BotEventSink>);
+    if let (Some(ingress), Some(sink)) = (&bot_ingress, &bot_events) {
+        ingress.set_events(koru_ai_server::BotEvents::new(Arc::clone(sink)));
+    }
     let worker = koru_store_server::StoreWorker::new(worker_config)
         .spawn()
         .map_err(|error| error.to_string())?;
@@ -294,6 +305,10 @@ pub(crate) fn open(
             .with_store_root(store_root.to_path_buf());
         let ai_config = match bot_peers {
             Some(peers) => ai_config.with_bot_peers(peers),
+            None => ai_config,
+        };
+        let ai_config = match bot_events {
+            Some(sink) => ai_config.with_bot_events(sink),
             None => ai_config,
         };
         match config.bootstrap.as_ref().and_then(|b| {

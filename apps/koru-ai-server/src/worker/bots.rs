@@ -60,6 +60,7 @@ pub(in crate::worker) mod chat;
 pub(crate) mod children;
 pub(crate) mod client;
 pub(crate) mod decision_wait;
+pub(crate) mod events;
 mod library;
 mod lifecycle;
 pub(crate) mod memory;

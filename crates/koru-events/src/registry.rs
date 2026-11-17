@@ -484,6 +484,12 @@ pub const AREAS: &[&str] = &[
     // service, and the distinct id its batches carry is a keyed hash of an
     // app connection, never an installation's.
     "mcp",
+    // Bots as the AI worker sees them (M8): the team pause, and the streams
+    // and copies of this person's linked computers. Its own area rather than
+    // a corner of `delegate`: none of these is a fact about a run, and the
+    // emitter is the AI worker (with the gateway's Bot ingress for a stream
+    // it turns away), which publishes no `delegate.*` row.
+    "bots",
 ];
 
 /// Which speech runtime ran — `voice.dictation.completed`'s and
@@ -589,6 +595,120 @@ pub const MCP_TEARDOWN_REASONS: &[&str] = &[
     "refused_after_write",
     "cloud_unresponsive",
 ];
+
+// ------------------------------------------------ the Bots vocabularies (M8)
+//
+// Each closed set below is spelled once more as an enum in
+// [`crate::catalog::bots`], and `m8_events_content_free_tokens_are_the_vocabularies`
+// holds the two equal. The emitter maps its own closed enums to those by
+// exhaustive `match`, and maps a code it holds as text by lookup, so a code
+// outside a set becomes `other` **on this machine** (the `LANGUAGE_TOKENS`
+// rule) and never a token outside the row.
+
+/// `bots.team_pause.changed`'s `stage`: whether what runs the Bots has
+/// confirmed the row.
+pub const BOTS_TEAM_PAUSE_STAGES: &[&str] = &["pending", "acknowledged"];
+
+/// `bots.client.session`'s `stage`.
+pub const BOTS_SESSION_STAGES: &[&str] = &["admitted", "refused", "closed"];
+
+/// The three roles of a Bot client stream.
+pub const BOTS_CLIENT_ROLES: &[&str] = &["feed", "command", "live"];
+
+/// Why a Bot client stream was refused or closed: the eight refusals of Bot
+/// client protocol 1, then the endings that carry no refusal.
+pub const BOTS_SESSION_REASONS: &[&str] = &[
+    "unsupported_version",
+    "principal_mismatch",
+    "not_own_device",
+    "wrong_owner",
+    "busy",
+    "bots_unavailable",
+    "unsupported_message",
+    "protocol_error",
+    "closed",
+    "timeout",
+    "idle",
+    "other",
+];
+
+/// The eleven kinds a linked device may send, plus `other` for a recorded
+/// kind this build does not know.
+pub const BOTS_COMMAND_KINDS: &[&str] = &[
+    "send_turn",
+    "retry_turn",
+    "cancel_attempt",
+    "steer",
+    "create_chat",
+    "pause_bot",
+    "resume_bot",
+    "pause_team",
+    "resume_team",
+    "answer_decision",
+    "update_bot",
+    "other",
+];
+
+/// What a recorded command's receipt says became of it.
+pub const BOTS_COMMAND_OUTCOMES: &[&str] = &["completed", "accepted", "refused", "unknown"];
+
+/// The failure codes a receipt row is expected to keep. A receipt keeps the
+/// local command's own code, which is an open set; anything not listed here
+/// is `other`.
+pub const BOTS_COMMAND_FAILURES: &[&str] = &[
+    "executing_computer_only",
+    "not_applied",
+    "busy",
+    "chat_busy",
+    "invalid_request",
+    "not_found",
+    "wrong_owner",
+    "workspace_unavailable",
+    "request_conflict",
+    "revision_conflict",
+    "folder_locked",
+    "storage_error",
+    "bot_operation_pending",
+    "team_paused",
+    "team_revision_conflict",
+    "bots_unavailable",
+    "bot_unavailable",
+    "bot_stale",
+    "ai_worker_timeout",
+    "ai_unavailable",
+    "refused",
+    "other",
+];
+
+/// Why the owner did not accept a client's cursor: the `gap` reasons of Bot
+/// client protocol 1.
+pub const BOTS_RESET_REASONS: &[&str] = &[
+    "first_subscribe",
+    "feed_replaced",
+    "feed_rewound",
+    "client_requested",
+];
+
+/// What a copy of another computer's Bots is shown as.
+pub const BOTS_MIRROR_STATES: &[&str] =
+    &["never", "current", "stale", "unsupported", "withdrawing"];
+
+/// What happened to a copy: why its state changed, or which end of a reset
+/// this is.
+pub const BOTS_MIRROR_REASONS: &[&str] = &[
+    "linked",
+    "caught_up",
+    "stream_lost",
+    "worker_started",
+    "needs_update",
+    "unlinked",
+    "reset_started",
+    "reset_finished",
+    "reset_dropped",
+];
+
+/// Why a copy was deleted. One reason today: nothing purges a Bot yet.
+pub const BOTS_MIRROR_REMOVED_REASONS: &[&str] = &["unlinked"];
 
 /// The table. Domain lifecycle first, then app-side instrumentation.
 pub const REGISTRY: &[EventSpec] = &[
@@ -1936,6 +2056,200 @@ pub const REGISTRY: &[EventSpec] = &[
               committed, under an id derived from the request and its \
               revision. A wake: a reader reads the request from the delegate. \
               The actor is the orchestrator.",
+    },
+    // ------------------------------- team pause and linked desktops (M8)
+    //
+    // Six diagnostic rows. Content-free: device ids, a request id, closed
+    // tokens, a flag and counts. No row carries a Bot's name or id, a
+    // conversation, a message, a path, a credential, or the name of a person
+    // or a computer. No subscriber acts on one: a reader reads the team
+    // pause, a receipt or a copy from the AI worker.
+    //
+    // **One row per durable transition, none on a replay.** The emitter
+    // publishes after the commit that made the transition and only when that
+    // commit changed something: a repeated command answered from its row and
+    // a page that was sent again write nothing, so they publish nothing.
+    // Publication is best-effort: nothing is queued for a journal that did
+    // not take a row.
+    EventSpec {
+        name: "bots.team_pause.changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr(
+                "owner_device",
+                "The computer whose Bots the pause holds: this one.",
+            ),
+            count_attr(
+                "epoch",
+                "The team row's revision, which is the epoch sent to what runs \
+                 the Bots. Moves by one with every change.",
+            ),
+            flag_attr("paused", "Whether the row says the team is paused."),
+            token_attr(
+                "stage",
+                BOTS_TEAM_PAUSE_STAGES,
+                "`pending` when the row moved; `acknowledged` when what runs \
+                 the Bots confirmed that same epoch.",
+            ),
+        ],
+        doc: "The team pause row of this computer moved to a new epoch \
+              (`pending`), or the epoch it holds was confirmed by what runs \
+              the Bots (`acknowledged`). At most one row for each stage of an \
+              epoch. A pause or resume answered from the row, and an echo of \
+              an older epoch, publish nothing. The actor is the AI worker.",
+    },
+    EventSpec {
+        name: "bots.client.session",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr(
+                "peer_device",
+                "The linked device at the other end, as the device network \
+                 authenticated it.",
+            ),
+            token_attr(
+                "stage",
+                BOTS_SESSION_STAGES,
+                "`admitted` when the stream's hello was answered; `refused` \
+                 when it was turned away before that; `closed` when a stream \
+                 ended any other way.",
+            ),
+            optional(token_attr(
+                "role",
+                BOTS_CLIENT_ROLES,
+                "The role the stream's hello asked for. Absent when no hello \
+                 was read.",
+            )),
+            optional(count_attr(
+                "protocol_version",
+                "The Bot client protocol version the two agreed on. Absent \
+                 when none was agreed.",
+            )),
+            optional(token_attr(
+                "reason",
+                BOTS_SESSION_REASONS,
+                "Why, exactly for `refused` and `closed`: the refusal the \
+                 stream ended with, or how it ended without one.",
+            )),
+        ],
+        doc: "One Bot stream of a linked device, on the computer that runs \
+              the Bots: its hello was answered, it was refused, or it ended. \
+              A stream publishes `admitted` at most once and then exactly one \
+              of `refused` or `closed`. Says which devices connect, in which \
+              role, and why a stream does not stay open. The actor is the AI \
+              worker, or the gateway for a stream it turned away before the \
+              AI worker saw it.",
+    },
+    EventSpec {
+        name: "bots.client.command",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr("peer_device", "The linked device that sent the command."),
+            id_attr(
+                "request",
+                "The command's request id: the key of its receipt.",
+            ),
+            token_attr("kind", BOTS_COMMAND_KINDS, "Which command it was."),
+            token_attr(
+                "outcome",
+                BOTS_COMMAND_OUTCOMES,
+                "What the receipt records. `unknown` means the command may \
+                 have run and no answer was recorded; it is never applied \
+                 again.",
+            ),
+            optional(token_attr(
+                "failure",
+                BOTS_COMMAND_FAILURES,
+                "The code the receipt keeps, when it keeps one. A closed \
+                 code, never a message.",
+            )),
+        ],
+        doc: "A linked device's command was recorded with its outcome: its \
+              receipt was closed. Once per request id. A command refused \
+              before anything was recorded, and a repeat answered from its \
+              receipt, publish nothing. It carries no Bot, conversation or \
+              text. The actor is the AI worker.",
+    },
+    EventSpec {
+        name: "bots.client.reset",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr("peer_device", "The linked device whose copy is rebuilt."),
+            token_attr(
+                "reason",
+                BOTS_RESET_REASONS,
+                "Why its cursor was not accepted.",
+            ),
+        ],
+        doc: "The computer that runs the Bots did not accept a linked \
+              device's cursor: it said `gap` and sends the whole copy again. \
+              Published when the `gap` was written. A subscription that \
+              continues from its cursor publishes nothing. The actor is the \
+              AI worker.",
+    },
+    EventSpec {
+        name: "bots.mirror.state",
+        version: 1,
+        class: EventClass::Instrumentation,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr(
+                "owner_device",
+                "The linked computer that runs the Bots this copy is of.",
+            ),
+            token_attr(
+                "state",
+                BOTS_MIRROR_STATES,
+                "What the copy is shown as after the change.",
+            ),
+            token_attr(
+                "reason",
+                BOTS_MIRROR_REASONS,
+                "Why the state changed, or which end of a reset this is.",
+            ),
+            count_attr(
+                "cursor",
+                "The cursor of the copy that can be read, after the change. \
+                 A position in that computer's feed, never a count of \
+                 anything a person wrote.",
+            ),
+        ],
+        doc: "The copy this computer keeps of a linked computer's Bots \
+              changed state, or a reset of it started or ended (finished, or \
+              dropped before it finished). Published after the transaction \
+              that made the change, from the copy's own row before and after \
+              it, so a page that changes neither publishes nothing and a page \
+              that was sent again is refused and publishes nothing. The actor \
+              is the AI worker.",
+    },
+    EventSpec {
+        name: "bots.mirror.removed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr(
+                "owner_device",
+                "The computer whose Bots the deleted copy was of.",
+            ),
+            token_attr(
+                "reason",
+                BOTS_MIRROR_REMOVED_REASONS,
+                "Why the copy was deleted.",
+            ),
+        ],
+        doc: "The last row of a copy of another computer's Bots was deleted \
+              from this computer, after that computer stopped being one of \
+              this person's linked computers. Once per copy. The actor is the \
+              AI worker.",
     },
     // ------------------------------------------- the Store's catalog facts
     //

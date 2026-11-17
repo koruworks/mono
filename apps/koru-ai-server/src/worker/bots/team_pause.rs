@@ -171,9 +171,13 @@ impl WorkerState {
                 )
                 .map_err(bot_failure)?;
             let team = change.view(owner);
-            if change.changed().is_some() {
+            if let Some(row) = change.changed() {
                 // The row is committed: the AI side refuses from here. The
                 // delegate is told next, whatever its last answer was.
+                // Published for a row that was written and for nothing
+                // else: a repeat answered from the row says nothing.
+                self.bot_events
+                    .team_pause(row.owner.device, row.revision, row.paused, row.stage);
                 self.bot_boot.team.owed = true;
                 self.bot_boot.team.retry_at = None;
                 self.bot_boot.team.round = 0;
@@ -260,7 +264,25 @@ impl WorkerState {
             Ok(BotReply::TeamBarrier { barrier: echo }) if echo == sent => {
                 // The repository compares the echo with the row again, in its
                 // transaction: an echo of an older value acknowledges nothing.
+                let pending = self.bot_events.enabled()
+                    && matches!(
+                        self.repository.team_pause(owner),
+                        Ok(Some(row)) if row.stage == TeamPauseStage::Pending
+                    );
                 let acknowledged = self.repository.acknowledge_team_pause(owner, &echo, now_ms);
+                // Published when this echo moved the row out of `pending`:
+                // a second echo of the same epoch finds it acknowledged.
+                if pending
+                    && let Ok(Some(row)) = &acknowledged
+                    && row.stage == TeamPauseStage::Acknowledged
+                {
+                    self.bot_events.team_pause(
+                        row.owner.device,
+                        row.revision,
+                        row.paused,
+                        row.stage,
+                    );
+                }
                 let latest = self.repository.team_pause_barrier(owner);
                 match (acknowledged, latest) {
                     (Ok(_), Ok(latest)) => {
@@ -296,13 +318,26 @@ impl WorkerState {
                 // row that moved on meanwhile is simply sent next.
                 let still_current = matches!(self.repository.team_pause_barrier(owner), Ok(latest) if latest == sent);
                 if let Some(held) = held.filter(|_| still_current) {
-                    let _ = self.repository.advance_team_pause_past(
+                    let written = self.repository.advance_team_pause_past(
                         owner,
                         held,
                         BotRequestId::mint(),
                         &rewrite_fingerprint(held),
                         now_ms,
                     );
+                    // The row moved to a new epoch here as it does for a
+                    // command. A row already past what the delegate holds is
+                    // answered unchanged and says nothing.
+                    if let Ok(row) = written
+                        && row.revision > sent.epoch
+                    {
+                        self.bot_events.team_pause(
+                            row.owner.device,
+                            row.revision,
+                            row.paused,
+                            row.stage,
+                        );
+                    }
                 }
                 self.bot_boot.team.failed(now, &failure.code);
             }

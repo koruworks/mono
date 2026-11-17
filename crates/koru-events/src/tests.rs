@@ -1553,3 +1553,6 @@ fn evernote_is_a_registered_import_source_token() {
         .unwrap();
     assert!(source.vocabulary.contains(&"evernote"));
 }
+
+// The six `bots.*` rows of M8: cohort `m8_events_content_free`.
+mod bots;

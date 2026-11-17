@@ -68,6 +68,7 @@ use uuid::Uuid;
 use super::{Gone, Read, Served, blocking};
 use crate::worker::bots::bot_failure;
 use crate::worker::bots::client::feed::{command_home_copied, public_tool_activity};
+use crate::worker::bots::events::SessionClose;
 use crate::worker::{WorkerState, failure, not_found};
 
 /// The code of everything outside the allow-list.
@@ -596,6 +597,8 @@ async fn command(served: &Served, message: Command) -> Result<Receipt, Gone> {
         return Ok(refused(request_id, executing_computer_only()));
     };
     let boot_id = served.identity.boot_id.clone();
+    // For the second look a stranded request gets before it is closed.
+    let again = fingerprint.clone();
     let begin = shared
         .link
         .on_writer(move |state| {
@@ -618,17 +621,44 @@ async fn command(served: &Served, message: Command) -> Result<Receipt, Gone> {
         Ok(ClientReceiptBegin::Done(stored)) => Ok(replayed(request_id, stored)),
         Ok(ClientReceiptBegin::InFlight) => Ok(refused(request_id, busy())),
         Ok(ClientReceiptBegin::Stranded { kind }) => {
+            let boot_id = served.identity.boot_id.clone();
             let closed = shared
                 .link
                 .on_writer(move |state| {
+                    // Two streams may carry the same stranded request. Only
+                    // the call that finds the row still open closes it, and
+                    // only that one publishes: the other is answered the
+                    // closed row.
+                    let open = state.bot_events.enabled()
+                        && matches!(
+                            state.repository.client_receipt_begin(
+                                device,
+                                request_id,
+                                &again,
+                                &kind,
+                                &boot_id,
+                                Timestamp::now().millis(),
+                            ),
+                            Ok(ClientReceiptBegin::Stranded { .. })
+                        );
                     let (outcome, code) = settle(state, &kind, request_id);
-                    state.repository.client_receipt_finish(
+                    let closed = state.repository.client_receipt_finish(
                         device,
                         request_id,
                         outcome,
                         code,
                         Timestamp::now().millis(),
-                    )
+                    );
+                    if open && let Ok(stored) = &closed {
+                        state.bot_events.command(
+                            device,
+                            request_id,
+                            &kind,
+                            stored.outcome,
+                            stored.failure_code.as_deref(),
+                        );
+                    }
+                    closed
                 })
                 .await?;
             tracing::debug!(kind = "stranded", "a Bot client command was settled");
@@ -658,13 +688,27 @@ async fn command(served: &Served, message: Command) -> Result<Receipt, Gone> {
             let closed = shared
                 .link
                 .on_writer(move |state| {
-                    state.repository.client_receipt_finish(
+                    let closed = state.repository.client_receipt_finish(
                         device,
                         request_id,
                         outcome,
                         code.as_deref(),
                         Timestamp::now().millis(),
-                    )
+                    );
+                    // This call wrote the row as `applying` and is the only
+                    // one that closes it: once per request id. A row that
+                    // could not be closed stays open and is published when
+                    // it is settled.
+                    if let Ok(stored) = &closed {
+                        state.bot_events.command(
+                            device,
+                            request_id,
+                            kind,
+                            stored.outcome,
+                            stored.failure_code.as_deref(),
+                        );
+                    }
+                    closed
                 })
                 .await?;
             tracing::debug!(
@@ -800,7 +844,10 @@ pub(super) async fn serve(mut served: Served) {
         let read = match tokio::time::timeout(idle, served.stream.read()).await {
             Ok(read) => read,
             // An idle command stream is closed.
-            Err(_) => break None,
+            Err(_) => {
+                served.stream.log.closing(SessionClose::Idle);
+                break None;
+            }
         };
         let message = match read {
             Read::Message(message) => message,

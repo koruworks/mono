@@ -814,3 +814,191 @@ async fn m8_linked_switch_is_closed_and_nothing_serves_or_dials() {
     worker.shutdown();
     let _ = worker.join();
 }
+
+// ----------------------------------------------------------------------
+// m8_events_content_free, at the adapter
+// ----------------------------------------------------------------------
+
+/// Wait for the adapter to have published `count` rows, and answer them.
+async fn published(
+    recorder: &koru_ai_server::fixtures::BotEventRecorder,
+    count: usize,
+) -> Vec<koru_ai_server::fixtures::RecordedBotEvent> {
+    for _ in 0..500 {
+        if recorder.count() >= count {
+            // No row follows the ones that were waited for.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            let events = recorder.events();
+            assert_eq!(events.len(), count, "{events:?}");
+            return events;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the adapter published {} of {count} rows", recorder.count());
+}
+
+#[tokio::test]
+async fn m8_events_content_free_a_stream_the_adapter_turns_away_is_published_once() {
+    use koru_ai_server::fixtures::{BotEventRecorder, assert_holds_none_of};
+
+    let own = DeviceId::new();
+    let stranger = DeviceId::new();
+    let named = AuthorizedPeer {
+        display_name: Some("Sams-Laptop".to_owned()),
+        ..authorized(own, true)
+    };
+    let recorder = BotEventRecorder::new();
+    // Nothing serves Bots behind this adapter, and a hello has 200 ms.
+    let bots = BotIngress::with_hello_timeout(port(vec![named]), Duration::from_millis(200));
+    bots.set_events(koru_ai_server::BotEvents::new(recorder.clone()));
+
+    // 1. A device the port does not name.
+    let (mut client_half, gateway_half) = stream(stranger, bots_token());
+    send(
+        &client_half,
+        WireMessage::ClientHello(hello(stranger, Role::Command)),
+    )
+    .await;
+    bots.admit(gateway_half);
+    assert_eq!(
+        refusal_of(&mut client_half).await.reason,
+        refusal::NOT_OWN_DEVICE
+    );
+    // 2. An own device, with nothing here to serve it. Its hello carries a
+    //    build string, which is text of the other computer.
+    let (mut client_half, gateway_half) = stream(own, bots_token());
+    let mut said = hello(own, Role::Feed);
+    said.client_build = "Budget-Bot-Build".to_owned();
+    send(&client_half, WireMessage::ClientHello(said)).await;
+    bots.admit(gateway_half);
+    assert_eq!(
+        refusal_of(&mut client_half).await.reason,
+        refusal::BOTS_UNAVAILABLE
+    );
+    // 3. A first frame that is not a hello.
+    let (mut client_half, gateway_half) = stream(own, bots_token());
+    send(&client_half, WireMessage::Ack(Ack { cursor: 3 })).await;
+    bots.admit(gateway_half);
+    assert_eq!(
+        refusal_of(&mut client_half).await.reason,
+        refusal::PROTOCOL_ERROR
+    );
+    published(&recorder, 3).await;
+
+    // 4. A stream that says nothing in the time a hello may take.
+    let (mut client_half, gateway_half) = stream(own, bots_token());
+    bots.admit(gateway_half);
+    assert!(answers(&mut client_half).await.is_empty());
+    published(&recorder, 4).await;
+
+    // 5. A stream whose other end goes away before it says anything.
+    let (client_half, gateway_half) = stream(own, bots_token());
+    drop(client_half);
+    bots.admit(gateway_half);
+    let events = published(&recorder, 5).await;
+
+    let row = |index: usize| {
+        let event = &events[index];
+        assert_eq!(event.name, "bots.client.session");
+        assert_eq!(event.actor, "gateway");
+        (
+            event.attr("peer_device").map(str::to_owned),
+            event.attr("stage").map(str::to_owned),
+            event.attr("role").map(str::to_owned),
+            event.attr("reason").map(str::to_owned),
+        )
+    };
+    let text = |value: &str| Some(value.to_owned());
+    assert_eq!(
+        row(0),
+        (
+            text(&stranger.to_string()),
+            text("refused"),
+            text("command"),
+            text("not_own_device")
+        )
+    );
+    assert_eq!(
+        row(1),
+        (
+            text(&own.to_string()),
+            text("refused"),
+            text("feed"),
+            text("bots_unavailable")
+        )
+    );
+    assert_eq!(
+        row(2),
+        (
+            text(&own.to_string()),
+            text("refused"),
+            None,
+            text("protocol_error")
+        )
+    );
+    assert_eq!(
+        row(3),
+        (
+            text(&own.to_string()),
+            text("refused"),
+            None,
+            text("timeout")
+        )
+    );
+    assert_eq!(
+        row(4),
+        (text(&own.to_string()), text("closed"), None, text("closed"))
+    );
+    for event in &events {
+        // Only the listed attributes, and no version: none was agreed here.
+        for key in event.keys() {
+            assert!(
+                ["peer_device", "stage", "role", "reason"].contains(&key),
+                "{key}"
+            );
+        }
+    }
+    assert_holds_none_of(
+        &events,
+        &["Sams-Laptop", "Budget-Bot-Build", "linked-device"],
+    );
+}
+
+#[tokio::test]
+async fn m8_events_content_free_a_stream_handed_to_the_owner_server_is_not_published_here() {
+    let client = DeviceId::new();
+    let recorder = koru_ai_server::fixtures::BotEventRecorder::new();
+    let bots = BotIngress::new(port(vec![authorized(client, true)]));
+    bots.set_events(koru_ai_server::BotEvents::new(recorder.clone()));
+    let owner = Arc::new(RecordingOwner::default());
+    bots.set_owner_server(owner.clone());
+
+    let (mut client_half, gateway_half) = stream(client, bots_token());
+    send(
+        &client_half,
+        WireMessage::ClientHello(hello(client, Role::Feed)),
+    )
+    .await;
+    bots.admit(gateway_half);
+    owner.next().await;
+    owner_hello_of(&mut client_half).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    // The owner server publishes the stream it serves; the adapter says
+    // nothing of it, so a stream is never published twice.
+    assert_eq!(recorder.count(), 0);
+
+    // And an adapter that was given no sink publishes nothing and refuses
+    // as before.
+    let silent = BotIngress::new(BotPeers::new());
+    let (mut client_half, gateway_half) = stream(client, bots_token());
+    send(
+        &client_half,
+        WireMessage::ClientHello(hello(client, Role::Feed)),
+    )
+    .await;
+    silent.admit(gateway_half);
+    assert_eq!(
+        refusal_of(&mut client_half).await.reason,
+        refusal::NOT_OWN_DEVICE
+    );
+}

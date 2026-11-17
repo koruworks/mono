@@ -32,6 +32,12 @@ pub mod telemetry;
 mod validate;
 pub mod wire;
 
+pub use catalog::bots::{
+    BotsClientCommand, BotsClientReset, BotsClientRole, BotsClientSession, BotsCommandFailure,
+    BotsCommandKind, BotsCommandOutcome, BotsMirrorReason, BotsMirrorRemoved,
+    BotsMirrorRemovedReason, BotsMirrorState, BotsMirrorStateChanged, BotsResetReason,
+    BotsSessionReason, BotsSessionStage, BotsTeamPauseChanged, BotsTeamPauseStage,
+};
 pub use catalog::{
     AccountClient, AccountFailure, AccountOperationCompleted, AccountOutcome, AccountPlatform,
     AccountProvider, AccountStage, AppEnvironment, AppInstalled, AppSessionEnded,

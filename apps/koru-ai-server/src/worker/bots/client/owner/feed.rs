@@ -232,11 +232,14 @@ async fn subscribe(
     match decision {
         Subscription::Continue { cursor } => feed.cursor = Some(cursor),
         Subscription::Reset(gap) => {
+            let reason = gap.reason;
             served
                 .stream
                 .send(WireMessage::Gap(gap))
                 .await
                 .map_err(|_| End::Closed)?;
+            // The client was told: its copy is rebuilt from here.
+            served.shared().events.reset(served.stream.device, reason);
             feed.cursor = Some(0);
             feed.reset = true;
         }

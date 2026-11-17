@@ -46,6 +46,10 @@ koru-mcp-server = { path = "../../crates/koru-mcp-server" }
 # ingress hands it to the owner server (`src/worker/bots/client/owner.rs`).
 koru-network-edge = { path = "../../crates/koru-network-edge" }
 koru-env = { path = "../../crates/koru-env" }
+# The six `bots.*` rows this worker publishes (M8): their typed payloads and
+# the draft a sink is handed (`src/worker/bots/events.rs`). A leaf crate; the
+# worker links nothing that stores or sends an event.
+koru-events = { path = "../../crates/koru-events" }
 koru-ipc = { path = "../../crates/koru-ipc" }
 koru-session-protocol = { path = "../../crates/koru-session-protocol" }
 koru-import-markdown = { path = "../../crates/koru-import-markdown" }

@@ -4,6 +4,12 @@
 #[cfg(feature = "fixtures")]
 pub use koru_ai_sqlite::Repository;
 
+/// A sink that keeps the Bot events a worker, or the gateway's Bot ingress,
+/// published (M8), and the check that none of them holds content.
+pub use crate::worker::bots::events::recorder::{
+    BotEventRecorder, RecordedBotEvent, assert_holds_none_of,
+};
+
 /// The private-connection world of M5: scripted vendor, credential store and
 /// delegate over the real ai.db writer on an in-memory database.
 pub mod connections;

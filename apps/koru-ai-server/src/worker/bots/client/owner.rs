@@ -52,6 +52,7 @@ use koru_bot_client_wire::{
 use koru_network_edge::TransportSession;
 
 use super::feed::{FeedRefusal, HomeCopies, OwnerFeed, PageOutcome, Reconciled};
+use crate::worker::bots::events::{BotEvents, SessionClose, SessionLog};
 use crate::worker::{Envelope, WorkerState};
 
 pub(crate) mod command;
@@ -134,6 +135,9 @@ pub(crate) struct Parts {
     pub(crate) admission: Arc<dyn ClientAdmission>,
     pub(in crate::worker) head: tokio::sync::watch::Receiver<u64>,
     pub(in crate::worker) feed_streams: Arc<AtomicUsize>,
+    /// Where a stream's admission, refusal and end, and a reset, are
+    /// published (`bots.client.session`, `bots.client.reset`).
+    pub(in crate::worker) events: BotEvents,
 }
 
 /// The owner server. Cheap to clone; every clone is the same server.
@@ -177,6 +181,7 @@ impl BotOwnerServer {
                 reconciling: tokio::sync::Mutex::new(None),
                 head: parts.head,
                 feed_streams: parts.feed_streams,
+                events: parts.events,
                 timing,
             }),
         }
@@ -278,6 +283,7 @@ struct Shared {
     reconciling: tokio::sync::Mutex<Option<Instant>>,
     head: tokio::sync::watch::Receiver<u64>,
     feed_streams: Arc<AtomicUsize>,
+    events: BotEvents,
     timing: Timing,
 }
 
@@ -413,11 +419,14 @@ impl Shared {
             session,
             decoder,
         } = stream;
-        let stream = Stream {
+        let mut stream = Stream {
             shared: Arc::clone(&self),
             device,
             session,
             decoder,
+            // From here every way this stream ends is published once, when
+            // the stream is dropped.
+            log: SessionLog::new(self.events.clone(), device, hello.role),
         };
         // The port is read again here: what it said when the hello was read
         // is a moment older, and a device it no longer names is refused.
@@ -432,6 +441,7 @@ impl Shared {
             Ok(negotiated) => negotiated,
             Err(refusal) => return stream.refuse(refusal).await,
         };
+        stream.log.negotiated(negotiated.version);
         let Some(slot) = self.admit_stream(device, stream.session.connection_id) else {
             return stream.refuse(Refused::new(refusal::BUSY)).await;
         };
@@ -456,6 +466,7 @@ impl Shared {
         if stream.send(WireMessage::OwnerHello(answer)).await.is_err() {
             return;
         }
+        stream.log.admitted();
         tracing::debug!(
             role = hello.role.as_str(),
             "a Bot client stream was admitted"
@@ -599,6 +610,8 @@ struct Stream {
     device: DeviceId,
     session: TransportSession,
     decoder: FrameDecoder,
+    /// What is published of this stream: its admission, and how it ended.
+    log: SessionLog,
 }
 
 impl Stream {
@@ -636,14 +649,16 @@ impl Stream {
     /// Write one `refused` and end the stream. Dropping the session finishes
     /// the send side after the frame, so the client reads the refusal and
     /// then the end of the stream.
-    async fn refuse(self, refusal: Refused) {
+    async fn refuse(mut self, refusal: Refused) {
         tracing::debug!(reason = %refusal.reason, "a Bot client stream was refused");
+        self.log.refused(&refusal.reason);
         let _ = self.send(WireMessage::Refused(refusal)).await;
     }
 
     /// End the stream without a frame, as a client that broke a timeout is
     /// disconnected.
-    fn disconnect(self) {
+    fn disconnect(mut self) {
+        self.log.closing(SessionClose::Timeout);
         self.session.reset(1);
     }
 }

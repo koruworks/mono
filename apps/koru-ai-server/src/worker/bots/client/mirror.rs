@@ -65,6 +65,7 @@ use koru_bot_client_wire::{FrameDecoder, Negotiated, WireMessage, encode, limits
 use koru_network_edge::{NetworkEgress, TransportSession};
 
 use super::owner::{Gone, WriterCall};
+use crate::worker::bots::events::{Copies, CopyChange};
 use crate::worker::{Envelope, WorkerState};
 
 pub(crate) mod copy;
@@ -436,7 +437,11 @@ impl Shared {
         let started = self
             .link
             .stored(move |state| {
-                state.repository.mirror_recover(now)?;
+                // No subscription is open yet: every copy that was current
+                // is stale, and a reset that was being received is dropped.
+                state.mirror_change(Copies::All, CopyChange::WorkerStarted, false, |state| {
+                    state.repository.mirror_recover(now)
+                })?;
                 state.repository.mirror_commands_sweep(now)?;
                 Ok((
                     state.repository.mirror_withdrawing()?,
@@ -509,7 +514,11 @@ impl Shared {
         let asked = named.clone();
         let Ok(withdrawing) = self
             .link
-            .on_writer(move |state| state.repository.mirror_withdraw(&asked, now))
+            .on_writer(move |state| {
+                state.mirror_change(Copies::All, CopyChange::Unlinked, false, |state| {
+                    state.repository.mirror_withdraw(&asked, now)
+                })
+            })
             .await?
         else {
             return Ok(());
@@ -534,7 +543,13 @@ impl Shared {
             }
             let Ok(row) = self
                 .link
-                .on_writer(move |state| state.repository.mirror_ensure_owner(device, now))
+                .on_writer(move |state| {
+                    // A row that exists is answered as it is, and says
+                    // nothing.
+                    state.mirror_change(Copies::One(device), CopyChange::Linked, false, |state| {
+                        state.repository.mirror_ensure_owner(device, now)
+                    })
+                })
                 .await?
             else {
                 continue;
@@ -562,7 +577,13 @@ impl Shared {
             loop {
                 let step = shared
                     .link
-                    .stored(move |state| state.repository.mirror_delete_batch(owner, batch))
+                    .stored(move |state| {
+                        state.mirror_deletion(
+                            owner,
+                            |state| state.repository.mirror_delete_batch(owner, batch),
+                            |step| matches!(step, Ok(koru_ai_sqlite::MirrorDeleted::Done)),
+                        )
+                    })
                     .await;
                 match step {
                     Some(koru_ai_sqlite::MirrorDeleted::More) => {
