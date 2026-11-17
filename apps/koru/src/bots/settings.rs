@@ -86,6 +86,9 @@ pub(crate) enum Notice {
 pub(crate) struct AccessDraft {
     pub access: BotAccess,
     pub pages: Vec<BotPage>,
+    /// *May ask other bots* (M6, contract 7.6). Sent only when it differs
+    /// from what the owner holds.
+    pub may_ask: bool,
 }
 
 /// **The person's unsaved agent-and-model choice** (S7): the Bot's model —
@@ -516,6 +519,7 @@ impl Settings {
         let mut draft = self.access_draft.clone().unwrap_or_else(|| AccessDraft {
             access: bot.access,
             pages: bot.selected_pages.clone(),
+            may_ask: bot.may_ask,
         });
         edit(&mut draft);
         self.access_draft = (!same_access(&draft, bot)).then_some(draft);
@@ -545,6 +549,26 @@ impl Settings {
         true
     }
 
+    /// *May ask other bots* as the switch shows it: the person's edit, or
+    /// the owner's. On, as a new Bot is, until the Bot is known.
+    pub(crate) fn may_ask_shown(&self) -> bool {
+        match (&self.access_draft, &self.bot) {
+            (Some(draft), _) => draft.may_ask,
+            (None, Some(bot)) => bot.may_ask,
+            (None, None) => true,
+        }
+    }
+
+    /// **The switch pressed**: an edit of the access draft, saved with the
+    /// card's *Save*. Nothing while an access save is on its way.
+    pub(crate) fn toggle_may_ask(&mut self) {
+        if self.is_pending(Change::Access) {
+            return;
+        }
+        let next = !self.may_ask_shown();
+        self.draft_access(|draft| draft.may_ask = next);
+    }
+
     pub(crate) fn remove_page(&mut self, page: &BotPage) -> bool {
         if self.is_pending(Change::Access) || !self.pages_shown().contains(page) {
             return false;
@@ -568,9 +592,13 @@ impl Settings {
         let bot = self.bot.as_ref()?;
         let draft = self.access_draft.clone()?;
         let (bot_id, revision, policy) = (bot.id, bot.revision, bot.policy_revision);
+        // **Sent only when the switch changed**, as connections are left out
+        // when this card does not change them: an access save that leaves
+        // the switch alone carries no `may_ask` and keeps today's command.
+        let may_ask = (draft.may_ask != bot.may_ask).then_some(draft.may_ask);
         Some(
             self.send(Change::Access, |request| BotCommand::UpdateAccess {
-                may_ask: None,
+                may_ask,
                 request_id: request,
                 bot_id,
                 expected_revision: revision,
@@ -862,11 +890,14 @@ fn read_as_made(command: &BotCommand, bot: &Bot) -> bool {
         BotCommand::UpdateAccess {
             access,
             selected_pages,
+            may_ask,
             ..
         } => same_access(
             &AccessDraft {
                 access: *access,
                 pages: selected_pages.clone(),
+                // Not sent: whatever the owner holds is what was asked.
+                may_ask: may_ask.unwrap_or(bot.may_ask),
             },
             bot,
         ),
@@ -883,7 +914,7 @@ fn same_access(draft: &AccessDraft, bot: &Bot) -> bool {
     let mut theirs = bot.selected_pages.clone();
     theirs.sort();
     theirs.dedup();
-    draft.access == bot.access && mine == theirs
+    draft.access == bot.access && mine == theirs && draft.may_ask == bot.may_ask
 }
 
 /// The owner's refusal of any change to an archived Bot (P1.7):

@@ -183,6 +183,9 @@ impl CreateForm {
                 access: AccessDraft {
                     access: BotAccess::Default,
                     pages: Vec::new(),
+                    // A new Bot may ask, as the owner makes it (M6); the
+                    // create form has no switch.
+                    may_ask: true,
                 },
                 folder: None,
                 avatar: None,

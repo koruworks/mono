@@ -15722,6 +15722,7 @@ impl View for MainView {
             | self.open_pending_bot_role()
             | self.drain_bot_lifecycle_asks()
             | self.drain_bot_create_asks()
+            | self.drain_bot_child_open()
             | self.drain_bot_memory_asks()
             | self.drain_bot_routine_open()
             | self.maintain_bot_trash();

@@ -1940,3 +1940,112 @@ fn an_archived_rows_unarchive_is_published_and_no_empty_group_is_drawn() {
     assert_eq!(unarchive.role, accesskit::Role::Button);
     assert!(unarchive.actions.contains(&accesskit::Action::Click));
 }
+
+/// Cohort `m6_ui_roster_waiting` (contract 7.4): **a conversation waiting on
+/// other Bots says whom it waits for**, by name when the roster lists that
+/// Bot, by count for several, and in its paused forms; a Bot the roster does
+/// not list reads as *another bot*, never as an id.
+#[test]
+fn m6_ui_roster_waiting_says_whom_it_waits_for() {
+    use koru_ai_core::bots::BotActivityWaiting;
+    let scout = BotId::mint();
+    let name_of = |id: BotId| (id == scout).then(|| "Scout".to_owned());
+    let waiting = |on: Vec<BotId>, paused| BotActivityWaiting { on, paused };
+    let lang = Lang::En;
+    assert_eq!(
+        waiting_words(lang, Some(&waiting(vec![scout], false)), name_of),
+        "Waiting for Scout"
+    );
+    assert_eq!(
+        waiting_words(lang, Some(&waiting(vec![scout], true)), name_of),
+        "Paused, waiting for Scout"
+    );
+    assert_eq!(
+        waiting_words(
+            lang,
+            Some(&waiting(vec![scout, BotId::mint(), BotId::mint()], false)),
+            name_of
+        ),
+        "Waiting for 3 bots"
+    );
+    assert_eq!(
+        waiting_words(
+            lang,
+            Some(&waiting(vec![scout, BotId::mint()], true)),
+            name_of
+        ),
+        "Paused, waiting for 2 bots"
+    );
+    assert_eq!(
+        waiting_words(lang, Some(&waiting(vec![BotId::mint()], false)), name_of),
+        "Waiting for another bot"
+    );
+    assert_eq!(
+        waiting_words(lang, None, name_of),
+        "Waiting for another bot"
+    );
+}
+
+/// **Waiting ranks below Needs you and above Running** for a Bot's sub-rows
+/// (contract 7.4), drawn and walked by the keyboard in that order; the
+/// sub-row and the Bot's row say it in words, and a waiting Bot's face does
+/// not move — it is not working.
+#[test]
+fn m6_ui_roster_waiting_ranks_between_needs_you_and_running() {
+    use koru_ai_core::bots::BotActivityWaiting;
+    let planner = RosterBot::from(bot(BotId::mint(), WorkspaceId::new(), "Planner", false));
+    let scout = RosterBot::from(bot(BotId::mint(), WorkspaceId::new(), "Scout", false));
+    let mut roster = BotsRoster::new();
+    roster.set_lang(Lang::En);
+    roster.listed_for_test(vec![planner.clone(), scout.clone()]);
+    let entry = |state, waiting| BotActivity {
+        bot_id: planner.id,
+        chat_id: koru_ai_core::ChatId::new(),
+        state,
+        waiting,
+    };
+    let running = entry(BotActivityState::Running, None);
+    let waits = entry(
+        BotActivityState::Waiting,
+        Some(BotActivityWaiting {
+            on: vec![scout.id],
+            paused: false,
+        }),
+    );
+    let needs = entry(BotActivityState::NeedsYou, None);
+    roster.activity_read_for_test(
+        vec![running.clone(), waits.clone(), needs.clone()],
+        false,
+        std::time::Instant::now(),
+    );
+    let order: Vec<_> = roster
+        .activity_rows_of(planner.id)
+        .into_iter()
+        .map(|entry| entry.chat_id)
+        .collect();
+    assert_eq!(order, [needs.chat_id, waits.chat_id, running.chat_id]);
+    assert_eq!(
+        roster.state_words(&waits).as_deref(),
+        Some("Waiting for Scout")
+    );
+    assert!(
+        roster
+            .activity_name(&planner, &waits)
+            .ends_with(", Waiting for Scout")
+    );
+    assert_eq!(
+        roster.accessible_name(&planner),
+        "Planner, waiting for another bot"
+    );
+    assert_eq!(roster.accessible_name(&scout), "Scout");
+    assert_eq!(
+        roster.running_bots().collect::<Vec<_>>(),
+        [planner.id],
+        "only the running conversation moves the face"
+    );
+    // Drawn, the sub-rows stand in the same order the keyboard walks.
+    let frame = frame_of(&roster);
+    let y = |chat| frame.node(activity_key(chat)).expect("a sub-row").rect.y;
+    assert!(y(needs.chat_id) < y(waits.chat_id));
+    assert!(y(waits.chat_id) < y(running.chat_id));
+}

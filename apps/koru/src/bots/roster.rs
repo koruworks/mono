@@ -173,10 +173,64 @@ pub(crate) fn activity_key(chat: koru_ai_core::ChatId) -> Key {
 /// state: the Chats list's own vocabulary.
 pub(crate) fn activity_status(state: BotActivityState) -> ChatStatus {
     match state {
-        // A reply that waits on other Bots (M6) is work in progress until
-        // the roster has its own "Waiting for" line.
+        // A reply that waits on other Bots (M6) is work in progress: it
+        // wears the working mark, and its words say whom it waits for
+        // ([`waiting_words`]) — never the mark alone.
         BotActivityState::Running | BotActivityState::Waiting => ChatStatus::Working,
         BotActivityState::NeedsYou => ChatStatus::NeedsYou,
+    }
+}
+
+/// **The order a Bot's sub-rows stand in** (M6, contract 7.4): Needs you
+/// first, then a conversation waiting on other Bots, then one running — the
+/// owner's order kept within each.
+pub(crate) fn activity_rank(state: BotActivityState) -> u8 {
+    match state {
+        BotActivityState::NeedsYou => 0,
+        BotActivityState::Waiting => 1,
+        BotActivityState::Running => 2,
+    }
+}
+
+/// **What a conversation waiting on other Bots says** (contract 7.4):
+/// *Waiting for {bot}*, *Waiting for {count} bots*, and the paused forms —
+/// a paused Bot's wait has no time limit, which the words say. `name_of`
+/// names a Bot the roster lists; one it does not list reads as *another
+/// bot*.
+pub(crate) fn waiting_words(
+    lang: Lang,
+    waiting: Option<&koru_ai_core::bots::BotActivityWaiting>,
+    name_of: impl Fn(BotId) -> Option<String>,
+) -> String {
+    let paused = waiting.is_some_and(|waiting| waiting.paused);
+    let on = waiting.map_or(&[][..], |waiting| waiting.on.as_slice());
+    match on {
+        [one] => match name_of(*one) {
+            Some(name) => koru_i18n::fill(
+                t(
+                    lang,
+                    if paused {
+                        Words::BotsWaitingPaused
+                    } else {
+                        Words::BotsWaitingForBot
+                    },
+                ),
+                &[name.trim()],
+            ),
+            None => t(lang, Words::BotsWaitingForAnother).to_owned(),
+        },
+        [] => t(lang, Words::BotsWaitingForAnother).to_owned(),
+        many => koru_i18n::fill(
+            t(
+                lang,
+                if paused {
+                    Words::BotsWaitingPausedBots
+                } else {
+                    Words::BotsWaitingForBots
+                },
+            ),
+            &[&koru_i18n::number::decimal(lang, many.len() as u64)],
+        ),
     }
 }
 
@@ -987,10 +1041,37 @@ impl BotsRoster {
     /// words — the Chats list's.
     pub(crate) fn activity_name(&self, bot: &RosterBot, entry: &BotActivity) -> String {
         let which = self.conversation_words(bot, entry.chat_id);
-        match activity_status(entry.state).spoken(self.lang) {
+        match self.state_words(entry) {
             Some(state) => format!("{which}, {state}"),
             None => which.to_owned(),
         }
+    }
+
+    /// **A sub-row's state in words**: the Chats list's for running and
+    /// Needs you, and whom it waits for when it waits on other Bots (M6).
+    pub(crate) fn state_words(&self, entry: &BotActivity) -> Option<String> {
+        if entry.state == BotActivityState::Waiting {
+            return Some(waiting_words(self.lang, entry.waiting.as_ref(), |id| {
+                self.bots
+                    .iter()
+                    .find(|row| row.id == id)
+                    .map(|row| row.name.clone())
+            }));
+        }
+        activity_status(entry.state)
+            .spoken(self.lang)
+            .map(str::to_owned)
+    }
+
+    /// One Bot's sub-rows, in the order they stand ([`activity_rank`]).
+    fn activity_rows_of(&self, bot: BotId) -> Vec<&BotActivity> {
+        let mut rows: Vec<&BotActivity> = self
+            .activity
+            .iter()
+            .filter(|entry| entry.bot_id == bot)
+            .collect();
+        rows.sort_by_key(|entry| activity_rank(entry.state));
+        rows
     }
 
     /// **Which conversation an activity row is**, in the words its Bot
@@ -1349,9 +1430,8 @@ impl BotsRoster {
         for bot in &self.bots {
             stops.push(row_key(bot.id));
             stops.extend(
-                self.activity
-                    .iter()
-                    .filter(|entry| entry.bot_id == bot.id)
+                self.activity_rows_of(bot.id)
+                    .into_iter()
                     .map(|entry| activity_key(entry.chat_id)),
             );
         }
@@ -1613,8 +1693,16 @@ impl BotsRoster {
 
     /// A row's accessible name: the Bot's name, and that it is paused.
     pub(crate) fn accessible_name(&self, bot: &RosterBot) -> String {
+        let waiting = self
+            .activity
+            .iter()
+            .any(|entry| entry.bot_id == bot.id && entry.state == BotActivityState::Waiting);
         if bot.paused {
             koru_i18n::fill(t(self.lang, Words::BotsRowPaused), &[bot.name.as_str()])
+        } else if waiting {
+            // A Bot waiting on another Bot takes no other work (M6): its
+            // row says so, and its sub-row says whom it waits for.
+            koru_i18n::fill(t(self.lang, Words::BotsRowWaiting), &[bot.name.as_str()])
         } else {
             bot.name.clone()
         }
@@ -1689,7 +1777,7 @@ impl BotsRoster {
                 .hit_as(key)
                 .child(primary),
         );
-        for entry in self.activity.iter().filter(|entry| entry.bot_id == bot.id) {
+        for entry in self.activity_rows_of(bot.id) {
             block = block.child(self.activity_row(bot, entry));
         }
         block
@@ -1731,7 +1819,7 @@ impl BotsRoster {
                     .truncate(),
             )
             .child(
-                text(status.spoken(self.lang).unwrap_or_default())
+                text(self.state_words(entry).unwrap_or_default())
                     .named("Bot activity state")
                     .role(roles::META)
                     .ink(Ink::Hint),

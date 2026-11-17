@@ -460,6 +460,15 @@ pub(crate) struct BotView {
     /// O155): the card's state, its field and the room the chat gives it
     /// ([`onboard`]). Boxed for the reason the settings are.
     card: Box<onboard::Card>,
+    // ----------------------------------- one Bot asks another (M6)
+    /// **The requests the conversation shown made of other Bots, and who
+    /// asked for it** (contract 7), read on a link of their own while the
+    /// tab is shown ([`crate::bots::children`]). Boxed for the reason the
+    /// settings are.
+    children: Box<crate::bots::children::Children>,
+    /// A conversation a request card or the origin line asked to open: the
+    /// window opens it in that Bot's tab. Taken once.
+    open_request: Option<crate::bots::children::OpenRequest>,
 }
 
 impl BotView {
@@ -543,6 +552,8 @@ impl BotView {
             creation_news: None,
             face_pose: koru_draw::face::FacePose::STILL,
             card: Box::default(),
+            children: Box::default(),
+            open_request: None,
         }
     }
 
@@ -848,6 +859,7 @@ impl BotView {
     pub(crate) fn hidden(&mut self) {
         self.routines.show(self.bot, false);
         self.memory.show(false);
+        self.children.show(false);
         self.setup_hidden();
         if self.create.is_some() {
             self.create_hidden();
@@ -1064,6 +1076,9 @@ impl BotView {
         }
         // A trashed Bot lists nothing: its list would be refused.
         let listed = !self.facts.as_ref().is_some_and(|facts| facts.trashed) && self.list_pass();
+        // The conversation's requests to other Bots, and who asked for it
+        // (M6), on their own link.
+        let children = self.children_pass(root.clone());
         // The catalog only while the settings are shown (S6).
         let catalog = self.settings_open && self.catalog.pass(root);
         self.settle_agent_refreshes();
@@ -1077,11 +1092,90 @@ impl BotView {
             || answered
             || polled
             || listed
+            || children
             || lifecycle
             || catalog
             || library
             || memory
             || routines
+    }
+
+    /// **The pass of the conversation's requests to other Bots** (M6): once
+    /// the tab knows its Bot, and never for a Bot in Trash or a create tab.
+    /// `true` when what the band says changed.
+    fn children_pass(&mut self, root: Option<PathBuf>) -> bool {
+        if self.create.is_some() {
+            return false;
+        }
+        let Some(facts) = self.facts.as_ref().filter(|facts| !facts.trashed) else {
+            return false;
+        };
+        let (bot, main, name) = (facts.id, facts.main_chat, facts.name.clone());
+        self.children.start(root);
+        let before = self.children.shows();
+        let moved = self.children.set_subject(bot, self.chat, main);
+        let worded = self.children.set_words(self.lang, &name);
+        self.children.show(true);
+        let answered = self.children.pass(std::time::Instant::now());
+        // A child conversation is labelled in the list by who asked for it.
+        if let Some((chat, asker)) = self.children.take_origin_news() {
+            self.conversations.know_asked_by(chat, &asker);
+        }
+        answered || (moved && before) || (worded && self.children.shows())
+    }
+
+    /// The requests' pass on the window's maintenance: what the link
+    /// answered, and a read come due — for a tab already shown, which only
+    /// its draw makes it.
+    fn children_maintain(&mut self, now: std::time::Instant) -> bool {
+        let answered = self.children.pass(now);
+        if let Some((chat, asker)) = self.children.take_origin_news() {
+            self.conversations.know_asked_by(chat, &asker);
+        }
+        answered
+    }
+
+    /// **The conversation a request card or the origin line asked to open**
+    /// (M6, contract 7.5): the Bot, its name for the tab until it is read,
+    /// and the conversation. Taken once by the window.
+    pub(crate) fn take_open_request(&mut self) -> Option<crate::bots::children::OpenRequest> {
+        self.open_request.take()
+    }
+
+    /// **The faces the window's roster lists**, for the request cards'
+    /// leads. `true` when a card's face moved.
+    pub(crate) fn know_faces(&mut self, faces: impl IntoIterator<Item = (BotId, u8)>) -> bool {
+        self.children.set_faces(faces) && self.children.shows()
+    }
+
+    /// The conversation's requests and origin, as the tab holds them. Test
+    /// only.
+    #[cfg(test)]
+    pub(crate) fn children(&self) -> &crate::bots::children::Children {
+        &self.children
+    }
+
+    /// The requests' link, for a test that answers it.
+    #[cfg(test)]
+    pub(crate) fn children_with_link(&mut self, link: BotsLink) {
+        *self.children = crate::bots::children::Children::with_link(link);
+    }
+
+    /// **The band over the conversation** (M6): the origin line, the line
+    /// said while the conversation waits, and the request cards, each link
+    /// one of the tab's own buttons. `None` when it has nothing to say.
+    pub(super) fn child_band(&self, engine: &mut koru_draw::text::TextEngine) -> Option<El> {
+        let mut button = |name: &'static str, key: Key, label: String| {
+            self.button(
+                engine,
+                name,
+                key,
+                label,
+                koru_ui::button::ActionStyle::Ghost,
+                false,
+            )
+        };
+        self.children.band(&mut button)
     }
 
     /// The `ReadOperation`s the settings owe now. `true` when any went.
@@ -1649,6 +1743,18 @@ impl BotView {
             return tab;
         }
         let conversation = boxed("Bot conversation").id(CONVERSATION).fill();
+        // The conversation's requests to other Bots and who asked for it
+        // (M6), over the conversation and beside the column.
+        let conversation = match (!self.settings_open && !self.list_covers())
+            .then(|| self.child_band(engine))
+            .flatten()
+        {
+            Some(band) => col("Bot conversation side")
+                .fill()
+                .child(band)
+                .child(conversation),
+            None => conversation,
+        };
         if self.settings_open {
             tab.child(self.region(engine))
         } else if self.list_covers() {
@@ -2195,13 +2301,21 @@ impl View for BotView {
         let bounds = self.area();
         // **One frame for the tab**: the header's place and the
         // conversation's come from it, as input and accessibility read them.
-        let (header, header_frame, region, column, conversation_area) =
+        let (header, header_frame, region, column, band, conversation_area) =
             crate::input_engine::with(|engine| {
                 let (_, frame) = self.layout_with(engine);
                 let header_rect = frame
                     .node(HEADER)
                     .map_or(Rect::new(0.0, 0.0, 0.0, 0.0), |node| node.rect);
-                self.header_bottom.set(header_rect.y + header_rect.h);
+                // The band over the conversation (M6) is the tab's own too:
+                // the pointer over it lights its links.
+                let band_rect = frame
+                    .node(crate::bots::children::BAND)
+                    .map(|node| node.rect);
+                self.header_bottom
+                    .set(band_rect.map_or(header_rect.y + header_rect.h, |rect| {
+                        (rect.y + rect.h).max(header_rect.y + header_rect.h)
+                    }));
                 let conversation_area = self.conversation_area(&frame);
                 let column_rect = frame.node(list::CONVERSATIONS).map(|node| node.rect);
                 self.column_right
@@ -2233,10 +2347,23 @@ impl View for BotView {
                     let laid = tree.layout(engine, &mut self.cache.borrow_mut(), rect, cx);
                     (tree, laid, list_area)
                 });
+                // The band likewise, at its own rect.
+                let band = band_rect.and_then(|rect| {
+                    let tree = self.child_band(engine)?;
+                    let laid = tree.layout(engine, &mut self.cache.borrow_mut(), rect, cx);
+                    Some((tree, laid))
+                });
                 let mut work = self.work.get();
                 work.layouts += 1;
                 self.work.set(work);
-                (header, header_frame, region, column, conversation_area)
+                (
+                    header,
+                    header_frame,
+                    region,
+                    column,
+                    band,
+                    conversation_area,
+                )
             });
         self.place_conversation(conversation_area);
         // The room the chat gives the quick setup, now the chat is placed.
@@ -2269,6 +2396,9 @@ impl View for BotView {
             if let Some(area) = list_area {
                 self.paint_list(scene_out, root, *area);
             }
+        }
+        if let Some((tree, frame)) = &band {
+            crate::input_engine::with(|engine| frame.paint(tree, scene_out, root, engine));
         }
         if let Some((tree, frame)) = &region {
             crate::input_engine::with(|engine| frame.paint(tree, scene_out, root, engine));
@@ -2392,6 +2522,8 @@ impl View for BotView {
             read,
             // A Test's wait or minute ending, while its Routines are shown.
             (!self.stale).then(|| self.routines_deadline(now)).flatten(),
+            // A request read on its way, owed, or come due (M6), shown only.
+            (!self.stale).then(|| self.children.deadline(now)).flatten(),
             self.settings.deadline(now),
             self.lifecycle_deadline(now),
             creating,
@@ -2427,9 +2559,12 @@ impl View for BotView {
         let memory = self.memory_pass();
         let routines = !self.stale && self.routines_pass();
         let setup = !self.stale && self.setup_pass();
+        // The requests to other Bots (M6): an answer, or a read come due.
+        let children = !self.stale && self.children_maintain(now);
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
         let folded = folded
+            || children
             || polled
             || listed
             || lifecycle

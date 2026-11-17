@@ -59,7 +59,7 @@ use koru_ui::text_field::Typed;
 use koru_ui::text_input::TextInput;
 use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 
-use super::controls::{ButtonLeaf, ChoiceLeaf, FieldLeaf};
+use super::controls::{ButtonLeaf, ChoiceLeaf, FieldLeaf, ToggleLeaf};
 use super::{BotView, SURFACE};
 use crate::bots::settings::Change;
 
@@ -89,6 +89,12 @@ pub(crate) const ACCESS_SEGMENTS: [Key; 2] = [
 pub(crate) const ADD_PAGE: Key = Key::surface(SURFACE, "add-page");
 pub(crate) const SAVE_ACCESS: Key = Key::surface(SURFACE, "save-access");
 pub(crate) const ACCESS_PENDING: Key = Key::surface(SURFACE, "access-pending");
+/// The access card's *May ask other bots* switch (M6, contract 7.6), what
+/// it allows, and — while this build keeps the asking tools closed — that it
+/// is kept for later.
+pub(crate) const MAY_ASK: Key = Key::surface(SURFACE, "may-ask");
+pub(crate) const MAY_ASK_HELP: Key = Key::surface(SURFACE, "may-ask-help");
+pub(crate) const MAY_ASK_NOT_YET: Key = Key::surface(SURFACE, "may-ask-not-yet");
 pub(crate) const FOLDER_PATH: Key = Key::surface(SURFACE, "folder-path");
 pub(crate) const CHANGE_FOLDER: Key = Key::surface(SURFACE, "change-folder");
 pub(crate) const FOLDER_FIXED: Key = Key::surface(SURFACE, "folder-fixed");
@@ -180,6 +186,12 @@ pub(crate) enum Act {
     ChooseFolder,
     UseManagedFolder,
     OpenLeftPage,
+    /// A link in the band over the conversation (M6): a request card's
+    /// *Open conversation*, or the origin line's *Open {bot}'s
+    /// conversation*, by its key.
+    Child(Key),
+    /// The access card's *May ask other bots* (M6, contract 7.6).
+    ToggleMayAsk,
 }
 
 /// One control as the accessibility tree publishes it, in the tab's
@@ -539,6 +551,11 @@ impl BotView {
                     )),
             );
         }
+        // *May ask other bots* (M6, contract 7.6): the settings' own; a new
+        // Bot may ask by default, so the create form has no switch.
+        if save.is_some() {
+            card = self.may_ask_rows(card, pending);
+        }
         let mut actions = row("Bot access actions")
             .gap(Space::S2)
             .items_center()
@@ -569,6 +586,65 @@ impl BotView {
             )),
         };
         card.child(actions)
+    }
+
+    /// **The switch and what it means**: an edit of the access draft, sent
+    /// with the card's *Save* only when it changed (`Settings::save_access`).
+    /// Held still with the card while a save is on its way. While this build
+    /// keeps the asking tools closed, a line says the setting is kept for
+    /// later rather than promising it does anything now.
+    fn may_ask_rows(&self, mut card: El, pending: bool) -> El {
+        let on = self.settings.may_ask_shown();
+        let disabled = pending || self.settings.bot().is_none();
+        card = card
+            .child(
+                row("Bot may ask row")
+                    .gap(Space::S2)
+                    .items_center()
+                    .child(
+                        text(self.words(Words::BotsMayAsk))
+                            .named("Bot may ask label")
+                            .role(roles::UI)
+                            .ink(Ink::Secondary)
+                            .fill()
+                            .wrap(),
+                    )
+                    .child(
+                        leaf(
+                            "Bot may ask switch",
+                            ToggleLeaf {
+                                on,
+                                enabled: !disabled,
+                                pending,
+                                focused: self.focus == Some(MAY_ASK),
+                                rtl: self.lang.is_rtl(),
+                            },
+                        )
+                        .semantic()
+                        .id(MAY_ASK)
+                        .hit()
+                        .focusable()
+                        .disabled(disabled)
+                        .semantics(Role::Button)
+                        .selected(on)
+                        .name(Words::BotsMayAsk),
+                    ),
+            )
+            .child(line(
+                "Bot may ask help",
+                MAY_ASK_HELP,
+                self.words(Words::BotsMayAskHelp),
+                Ink::Secondary,
+            ));
+        if !crate::bots::children::ASKING_OPEN {
+            card = card.child(line(
+                "Bot may ask not yet",
+                MAY_ASK_NOT_YET,
+                self.words(Words::BotsMayAskNotYet),
+                Ink::Hint,
+            ));
+        }
+        card
     }
 
     fn folder_card(&self, engine: &mut TextEngine, folder: &str) -> El {
@@ -983,6 +1059,8 @@ impl BotView {
             k if k == super::actions::CANCEL_OPERATION => Act::CancelOperation,
             k if k == super::actions::UNARCHIVE => Act::Unarchive,
             k if k == super::actions::RESTORE => Act::Restore,
+            k if k == MAY_ASK => Act::ToggleMayAsk,
+            k if crate::bots::children::Children::is_link(k) => Act::Child(k),
             k if k.part == REMOVE_PART => Act::RemovePage(
                 self.pages_shown()
                     .iter()
@@ -1069,6 +1147,20 @@ impl BotView {
                 return self.begin_lifecycle(crate::bots::lifecycle::Ask::Unarchive);
             }
             Act::Restore => return self.begin_lifecycle(crate::bots::lifecycle::Ask::Restore),
+            // **A link of the band** (M6, contract 7.5): the window opens
+            // that conversation in its Bot's tab. The keyboard stays on the
+            // link, so coming back to this tab finds it there.
+            Act::Child(key) => {
+                let Some(request) = self.children.activate(key) else {
+                    return false;
+                };
+                self.open_request = Some(request);
+                return true;
+            }
+            Act::ToggleMayAsk => {
+                self.settings.toggle_may_ask();
+                return true;
+            }
             Act::SaveName => self.settings.save_name(),
             Act::SaveAccess => self.settings.save_access(),
             Act::SaveModel => self.settings.save_model(),
@@ -1552,11 +1644,16 @@ impl BotView {
                     && key != super::list::MORE_CONVERSATIONS
                     && key != super::list::TRASH_NOTICE
                     && !Self::is_lifecycle_control(key)
+                    // The band over the conversation (M6).
+                    && !crate::bots::children::is_band_key(key)
                 {
                     continue;
                 }
                 let role = if key == NAME_FIELD || super::create::FIELDS.contains(&key) {
                     ControlRole::TextInput
+                } else if key == MAY_ASK {
+                    // On or off: a switch, its state its pressed one.
+                    ControlRole::Toggle
                 } else if key == ACCESS_CHOICE || key == super::create::ROLE_CHOICE {
                     ControlRole::Group
                 } else if key == super::list::CONVERSATIONS_BUTTON {
@@ -1718,6 +1815,10 @@ impl BotView {
         if key == super::list::TRASH_NOTICE {
             return self.list_notice().map(|words| self.words(words));
         }
+        // The band over the conversation (M6): its own words.
+        if crate::bots::children::is_band_key(key) {
+            return self.children.line_words(key);
+        }
         if self.create.is_some() {
             return self.create_line_words(key);
         }
@@ -1729,6 +1830,8 @@ impl BotView {
             k if k == SETTINGS_DELIVERING => self.words(settings.delivering_line()?),
             k if k == ACCESS_SUMMARY => self.access_summary(),
             k if k == SELECTED_PAGES_TITLE => self.words(Words::BotsSelectedPages),
+            k if k == MAY_ASK_HELP => self.words(Words::BotsMayAskHelp),
+            k if k == MAY_ASK_NOT_YET => self.words(Words::BotsMayAskNotYet),
             k if k == RUNS_HERE => self.words(Words::BotsRunsOnThisComputer),
             k if k == MODEL_NOTE => self.words(Words::BotsAppliesToNewConversations),
             k if k == AGENT_READINESS => return self.agent_readiness_words(),

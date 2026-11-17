@@ -4155,13 +4155,80 @@ pub enum Key {
     BotsSetupHistoryBefore,
     /// The History label after the card replaced a Role page's text. Non-English columns machine-written, awaiting a native read.
     BotsSetupHistoryAfter,
+    // ------------------------------- one Bot asks another (M6, contract 7.7)
+    // Every string below is provisional English (decision A12); the seven
+    // other columns are machine-written, awaiting a native read.
+    /// A request card's first line; `{}` is the asked Bot's name.
+    BotsChildAsked,
+    /// A request card's status: the asked Bot has not started it yet.
+    BotsChildQueued,
+    /// A request card's status: the asked Bot is working on it.
+    BotsChildWorking,
+    /// A request card's status, with the Needs-you treatment.
+    BotsChildNeedsYou,
+    /// A request card's status: finished, and the asked Bot saved a page.
+    BotsChildSaved,
+    /// A request card's status: finished, and no page was saved.
+    BotsChildNoPage,
+    /// A request card's status: the asked Bot's run failed.
+    BotsChildFailed,
+    /// A request card's status: the asked Bot stopped to ask the person.
+    BotsChildNeededYou,
+    /// A request card's status: the person stopped the asked Bot.
+    BotsChildStoppedByYou,
+    /// A request card's status: the 15-minute limit settled it.
+    BotsChildTimedOut,
+    /// A request card's status: the asking task ended first.
+    BotsChildParentEnded,
+    /// A request card's link to the asked Bot's conversation.
+    BotsChildOpenConversation,
+    /// A request card's accessible name; `{}` is the asked Bot's name.
+    BotsChildCardName,
+    /// A request card's status while its ending is not read yet.
+    BotsChildChecking,
+    /// Over the cards when a read of them did not answer; asked again.
+    BotsChildStale,
+    /// A child conversation's origin line; `{}` is the asking Bot's name.
+    BotsChildAskedBy,
+    /// The origin line's link back; `{}` is the asking Bot's name.
+    BotsChildOpenParent,
+    /// A child conversation's closing line after the 15-minute limit.
+    BotsChildClosedTimedOut,
+    /// A child conversation's closing line after the asking task ended.
+    BotsChildClosedParentEnded,
+    /// The roster's line for a conversation waiting on one Bot.
+    BotsWaitingForBot,
+    /// The roster's line for a conversation waiting on several; `{}` is a count.
+    BotsWaitingForBots,
+    /// The roster's line when the Bot waited on is not listed here.
+    BotsWaitingForAnother,
+    /// The roster's line while the waiting Bot is paused; `{}` is a name.
+    BotsWaitingPaused,
+    /// The roster's line while the waiting Bot is paused; `{}` is a count.
+    BotsWaitingPausedBots,
+    /// A Bot row's accessible name while one of its conversations waits.
+    BotsRowWaiting,
+    /// Over the conversation while it waits; `{}` is the waiting Bot's name.
+    BotsWaitingQueued,
+    /// The settings' switch in the access card.
+    BotsMayAsk,
+    /// Under the switch: what it allows, and the private-connection limit.
+    BotsMayAskHelp,
+    /// Under the switch while this build keeps the asking tools closed.
+    BotsMayAskNotYet,
+    /// A run's marker while its Bot waits for another Bot.
+    RunNeedsOtherBot,
+    /// A run's activity step when its Bot asked another and waits.
+    RunStepWaitingForBot,
+    /// The accessible name of a conversation's request cards together.
+    BotsChildRequests,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2784] = [
+    pub const ALL: [Key; 2816] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6946,6 +7013,38 @@ impl Key {
         Key::BotsSetupHint,
         Key::BotsSetupHistoryBefore,
         Key::BotsSetupHistoryAfter,
+        Key::BotsChildAsked,
+        Key::BotsChildQueued,
+        Key::BotsChildWorking,
+        Key::BotsChildNeedsYou,
+        Key::BotsChildSaved,
+        Key::BotsChildNoPage,
+        Key::BotsChildFailed,
+        Key::BotsChildNeededYou,
+        Key::BotsChildStoppedByYou,
+        Key::BotsChildTimedOut,
+        Key::BotsChildParentEnded,
+        Key::BotsChildOpenConversation,
+        Key::BotsChildCardName,
+        Key::BotsChildChecking,
+        Key::BotsChildStale,
+        Key::BotsChildAskedBy,
+        Key::BotsChildOpenParent,
+        Key::BotsChildClosedTimedOut,
+        Key::BotsChildClosedParentEnded,
+        Key::BotsWaitingForBot,
+        Key::BotsWaitingForBots,
+        Key::BotsWaitingForAnother,
+        Key::BotsWaitingPaused,
+        Key::BotsWaitingPausedBots,
+        Key::BotsRowWaiting,
+        Key::BotsWaitingQueued,
+        Key::BotsMayAsk,
+        Key::BotsMayAskHelp,
+        Key::BotsMayAskNotYet,
+        Key::RunNeedsOtherBot,
+        Key::RunStepWaitingForBot,
+        Key::BotsChildRequests,
     ];
 }
 
@@ -21136,4 +21235,37 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsSetupHint, en: "Or skip it and just start typing. You can simply tell {} what to do.", es: "O sáltatela y empieza a escribir. Puedes decirle a {} directamente qué hacer.", pt_br: "Ou pule e comece a digitar. Você pode simplesmente dizer a {} o que fazer.", de: "Oder überspring sie und schreib einfach los. Du kannst {} auch direkt sagen, was zu tun ist.", fr: "Ou passez cette étape et commencez à écrire. Vous pouvez simplement dire à {} quoi faire.", ar: "أو تخطَّه وابدأ الكتابة مباشرة. يمكنك ببساطة أن تخبر \u{2068}{}\u{2069} بما يفعله.", zh_hans: "也可以跳过，直接开始输入。你可以直接告诉 {} 要做什么。", ja: "スキップして、そのまま入力を始めてもかまいません。{} に直接やることを伝えられます。" },
     Row { key: Key::BotsSetupHistoryBefore, en: "Before quick setup changed the role", es: "Antes de que la configuración rápida cambiara el rol", pt_br: "Antes de a configuração rápida mudar a função", de: "Bevor die Schnelleinrichtung die Rolle geändert hat", fr: "Avant que la configuration rapide ne modifie le rôle", ar: "قبل أن يغيّر الإعداد السريع الدور", zh_hans: "快速设置更改职责之前", ja: "クイック設定が役割を変更する前" },
     Row { key: Key::BotsSetupHistoryAfter, en: "Role from quick setup", es: "Rol desde la configuración rápida", pt_br: "Função da configuração rápida", de: "Rolle aus der Schnelleinrichtung", fr: "Rôle issu de la configuration rapide", ar: "الدور من الإعداد السريع", zh_hans: "来自快速设置的职责", ja: "クイック設定で設定した役割" },
+    // ------------------------------- one Bot asks another (M6, contract 7.7)
+    Row { key: Key::BotsChildAsked, en: "Asked {}", es: "Pedido a {}", pt_br: "Pedido a {}", de: "{} gefragt", fr: "Demandé à {}", ar: "طُلب من \u{2068}{}\u{2069}", zh_hans: "已请 {} 处理", ja: "{} に依頼済み" },
+    Row { key: Key::BotsChildQueued, en: "Waiting in {}'s queue", es: "En espera en la cola de {}", pt_br: "Aguardando na fila de {}", de: "Wartet in der Warteschlange von {}", fr: "En attente dans la file de {}", ar: "في انتظار دوره لدى \u{2068}{}\u{2069}", zh_hans: "正在 {} 的队列中等待", ja: "{} の順番待ち" },
+    Row { key: Key::BotsChildWorking, en: "{} is working", es: "{} está trabajando", pt_br: "{} está trabalhando", de: "{} arbeitet", fr: "{} travaille", ar: "\u{2068}{}\u{2069} يعمل", zh_hans: "{} 正在处理", ja: "{} が作業中です" },
+    Row { key: Key::BotsChildNeedsYou, en: "{} needs you", es: "{} te necesita", pt_br: "{} precisa de você", de: "{} braucht dich", fr: "{} a besoin de vous", ar: "\u{2068}{}\u{2069} يحتاج إليك", zh_hans: "{} 需要你", ja: "{} があなたを待っています" },
+    Row { key: Key::BotsChildSaved, en: "Result saved", es: "Resultado guardado", pt_br: "Resultado salvo", de: "Ergebnis gespeichert", fr: "Résultat enregistré", ar: "تم حفظ النتيجة", zh_hans: "结果已保存", ja: "結果を保存しました" },
+    Row { key: Key::BotsChildNoPage, en: "Finished, no page saved", es: "Terminado, sin página guardada", pt_br: "Concluído, nenhuma página salva", de: "Fertig, keine Seite gespeichert", fr: "Terminé, aucune page enregistrée", ar: "انتهى، ولم تُحفظ أي صفحة", zh_hans: "已完成，未保存页面", ja: "完了しました。ページは保存されていません" },
+    Row { key: Key::BotsChildFailed, en: "{} couldn't finish", es: "{} no pudo terminar", pt_br: "{} não conseguiu terminar", de: "{} konnte nicht fertig werden", fr: "{} n'a pas pu terminer", ar: "لم يتمكن \u{2068}{}\u{2069} من الإنهاء", zh_hans: "{} 未能完成", ja: "{} は完了できませんでした" },
+    Row { key: Key::BotsChildNeededYou, en: "{} stopped because it needed you", es: "{} se detuvo porque te necesitaba", pt_br: "{} parou porque precisava de você", de: "{} hat angehalten, weil es dich brauchte", fr: "{} s'est arrêté parce qu'il avait besoin de vous", ar: "توقف \u{2068}{}\u{2069} لأنه احتاج إليك", zh_hans: "{} 因需要你而停止", ja: "{} はあなたの対応が必要なため停止しました" },
+    Row { key: Key::BotsChildStoppedByYou, en: "You stopped {}", es: "Detuviste a {}", pt_br: "Você parou {}", de: "Du hast {} gestoppt", fr: "Vous avez arrêté {}", ar: "أوقفت \u{2068}{}\u{2069}", zh_hans: "你已停止 {}", ja: "{} を停止しました" },
+    Row { key: Key::BotsChildTimedOut, en: "{} didn't finish in 15 minutes", es: "{} no terminó en 15 minutos", pt_br: "{} não terminou em 15 minutos", de: "{} wurde nicht in 15 Minuten fertig", fr: "{} n'a pas terminé en 15 minutes", ar: "لم ينتهِ \u{2068}{}\u{2069} خلال 15 دقيقة", zh_hans: "{} 未在 15 分钟内完成", ja: "{} は 15 分以内に完了しませんでした" },
+    Row { key: Key::BotsChildParentEnded, en: "Canceled when this task ended", es: "Cancelado al terminar esta tarea", pt_br: "Cancelado quando esta tarefa terminou", de: "Abgebrochen, als diese Aufgabe endete", fr: "Annulé à la fin de cette tâche", ar: "أُلغي عند انتهاء هذه المهمة", zh_hans: "此任务结束时已取消", ja: "このタスクの終了時にキャンセルされました" },
+    Row { key: Key::BotsChildOpenConversation, en: "Open conversation", es: "Abrir conversación", pt_br: "Abrir conversa", de: "Unterhaltung öffnen", fr: "Ouvrir la conversation", ar: "فتح المحادثة", zh_hans: "打开对话", ja: "会話を開く" },
+    Row { key: Key::BotsChildCardName, en: "Request to {}", es: "Solicitud a {}", pt_br: "Solicitação para {}", de: "Anfrage an {}", fr: "Demande à {}", ar: "طلب إلى \u{2068}{}\u{2069}", zh_hans: "给 {} 的请求", ja: "{} への依頼" },
+    Row { key: Key::BotsChildChecking, en: "Checking on this request…", es: "Comprobando esta solicitud…", pt_br: "Verificando esta solicitação…", de: "Diese Anfrage wird geprüft…", fr: "Vérification de cette demande…", ar: "جارٍ التحقق من هذا الطلب…", zh_hans: "正在查看此请求…", ja: "この依頼を確認しています…" },
+    Row { key: Key::BotsChildStale, en: "Couldn't check these requests just now. Trying again…", es: "No se pudieron comprobar estas solicitudes ahora. Volviendo a intentarlo…", pt_br: "Não foi possível verificar estas solicitações agora. Tentando novamente…", de: "Diese Anfragen konnten gerade nicht geprüft werden. Neuer Versuch…", fr: "Impossible de vérifier ces demandes pour l’instant. Nouvel essai…", ar: "تعذّر التحقق من هذه الطلبات الآن. جارٍ إعادة المحاولة…", zh_hans: "暂时无法查看这些请求。正在重试…", ja: "今はこれらの依頼を確認できませんでした。再試行しています…" },
+    Row { key: Key::BotsChildAskedBy, en: "Asked by {}", es: "Pedido por {}", pt_br: "Pedido por {}", de: "Angefragt von {}", fr: "Demandé par {}", ar: "بطلب من \u{2068}{}\u{2069}", zh_hans: "由 {} 请求", ja: "{} からの依頼" },
+    Row { key: Key::BotsChildOpenParent, en: "Open {}'s conversation", es: "Abrir la conversación de {}", pt_br: "Abrir a conversa de {}", de: "Unterhaltung von {} öffnen", fr: "Ouvrir la conversation de {}", ar: "فتح محادثة \u{2068}{}\u{2069}", zh_hans: "打开 {} 的对话", ja: "{} の会話を開く" },
+    Row { key: Key::BotsChildClosedTimedOut, en: "{} stopped waiting after 15 minutes. This work stays here.", es: "{} dejó de esperar tras 15 minutos. Este trabajo se queda aquí.", pt_br: "{} parou de esperar após 15 minutos. Este trabalho fica aqui.", de: "{} hat nach 15 Minuten aufgehört zu warten. Diese Arbeit bleibt hier.", fr: "{} a cessé d’attendre après 15 minutes. Ce travail reste ici.", ar: "توقف \u{2068}{}\u{2069} عن الانتظار بعد 15 دقيقة. يبقى هذا العمل هنا.", zh_hans: "{} 等待 15 分钟后不再等待。此工作保留在这里。", ja: "{} は 15 分後に待つのをやめました。この作業はここに残ります。" },
+    Row { key: Key::BotsChildClosedParentEnded, en: "{}'s task ended, so this request was canceled. This work stays here.", es: "La tarea de {} terminó, así que esta solicitud se canceló. Este trabajo se queda aquí.", pt_br: "A tarefa de {} terminou, então esta solicitação foi cancelada. Este trabalho fica aqui.", de: "Die Aufgabe von {} ist beendet, daher wurde diese Anfrage abgebrochen. Diese Arbeit bleibt hier.", fr: "La tâche de {} est terminée, cette demande a donc été annulée. Ce travail reste ici.", ar: "انتهت مهمة \u{2068}{}\u{2069}، لذا أُلغي هذا الطلب. يبقى هذا العمل هنا.", zh_hans: "{} 的任务已结束，因此此请求已取消。此工作保留在这里。", ja: "{} のタスクが終了したため、この依頼はキャンセルされました。この作業はここに残ります。" },
+    Row { key: Key::BotsWaitingForBot, en: "Waiting for {}", es: "Esperando a {}", pt_br: "Aguardando {}", de: "Wartet auf {}", fr: "En attente de {}", ar: "في انتظار \u{2068}{}\u{2069}", zh_hans: "正在等待 {}", ja: "{} を待っています" },
+    Row { key: Key::BotsWaitingForBots, en: "Waiting for {} bots", es: "Esperando a {} bots", pt_br: "Aguardando {} bots", de: "Wartet auf {} Bots", fr: "En attente de {} bots", ar: "في انتظار {} بوتات", zh_hans: "正在等待 {} 个机器人", ja: "ボット {} 体を待っています" },
+    Row { key: Key::BotsWaitingForAnother, en: "Waiting for another bot", es: "Esperando a otro bot", pt_br: "Aguardando outro bot", de: "Wartet auf einen anderen Bot", fr: "En attente d’un autre bot", ar: "في انتظار بوت آخر", zh_hans: "正在等待另一个机器人", ja: "別のボットを待っています" },
+    Row { key: Key::BotsWaitingPaused, en: "Paused, waiting for {}", es: "En pausa, esperando a {}", pt_br: "Pausado, aguardando {}", de: "Pausiert, wartet auf {}", fr: "En pause, en attente de {}", ar: "متوقف مؤقتًا، في انتظار \u{2068}{}\u{2069}", zh_hans: "已暂停，正在等待 {}", ja: "一時停止中、{} を待っています" },
+    Row { key: Key::BotsWaitingPausedBots, en: "Paused, waiting for {} bots", es: "En pausa, esperando a {} bots", pt_br: "Pausado, aguardando {} bots", de: "Pausiert, wartet auf {} Bots", fr: "En pause, en attente de {} bots", ar: "متوقف مؤقتًا، في انتظار {} بوتات", zh_hans: "已暂停，正在等待 {} 个机器人", ja: "一時停止中、ボット {} 体を待っています" },
+    Row { key: Key::BotsRowWaiting, en: "{}, waiting for another bot", es: "{}, esperando a otro bot", pt_br: "{}, aguardando outro bot", de: "{}, wartet auf einen anderen Bot", fr: "{}, en attente d’un autre bot", ar: "{}، في انتظار بوت آخر", zh_hans: "{}，正在等待另一个机器人", ja: "{}、別のボットを待っています" },
+    Row { key: Key::BotsWaitingQueued, en: "{} is waiting for another bot. A message you send now waits until it's done.", es: "{} está esperando a otro bot. Un mensaje que envíes ahora esperará hasta que termine.", pt_br: "{} está aguardando outro bot. Uma mensagem enviada agora espera até que ele termine.", de: "{} wartet auf einen anderen Bot. Eine Nachricht, die du jetzt sendest, wartet, bis das erledigt ist.", fr: "{} attend un autre bot. Un message envoyé maintenant attendra que ce soit terminé.", ar: "\u{2068}{}\u{2069} ينتظر بوتًا آخر. أي رسالة ترسلها الآن تنتظر حتى ينتهي.", zh_hans: "{} 正在等待另一个机器人。你现在发送的消息会等到它完成后再处理。", ja: "{} は別のボットを待っています。今送信したメッセージは、それが終わるまで待機します。" },
+    Row { key: Key::BotsMayAsk, en: "May ask other bots", es: "Puede pedir trabajo a otros bots", pt_br: "Pode pedir trabalho a outros bots", de: "Darf andere Bots fragen", fr: "Peut solliciter d’autres bots", ar: "يمكنه أن يطلب من بوتات أخرى", zh_hans: "可以请其他机器人帮忙", ja: "他のボットに依頼できる" },
+    Row { key: Key::BotsMayAskHelp, en: "When this is on, this bot can ask your other bots in this workspace to do work for it. A bot it asks can't use a private connection this bot has no access to.", es: "Si está activado, este bot puede pedir a tus otros bots de este espacio de trabajo que hagan trabajo por él. Un bot al que se lo pida no puede usar una conexión privada a la que este bot no tenga acceso.", pt_br: "Quando ativado, este bot pode pedir aos seus outros bots deste espaço de trabalho que façam trabalho por ele. Um bot a quem ele pedir não pode usar uma conexão privada à qual este bot não tem acesso.", de: "Wenn das an ist, kann dieser Bot deine anderen Bots in diesem Arbeitsbereich bitten, Arbeit für ihn zu erledigen. Ein gefragter Bot kann keine private Verbindung nutzen, auf die dieser Bot keinen Zugriff hat.", fr: "Quand c’est activé, ce bot peut demander à vos autres bots de cet espace de travail de faire du travail pour lui. Un bot sollicité ne peut pas utiliser une connexion privée à laquelle ce bot n’a pas accès.", ar: "عند تفعيل هذا الخيار، يمكن لهذا البوت أن يطلب من بوتاتك الأخرى في مساحة العمل هذه إنجاز عمل له. ولا يمكن للبوت الذي يُطلب منه استخدام اتصال خاص لا يملك هذا البوت صلاحية الوصول إليه.", zh_hans: "开启后，此机器人可以请你在此工作区中的其他机器人替它完成工作。被请求的机器人不能使用此机器人无权访问的私有连接。", ja: "オンにすると、このボットはこのワークスペースにある他のボットに作業を依頼できます。依頼されたボットは、このボットがアクセスできないプライベート接続を使えません。" },
+    Row { key: Key::BotsMayAskNotYet, en: "Bots can't ask each other in this version yet. This setting is kept for when they can.", es: "En esta versión los bots todavía no pueden pedirse trabajo entre sí. Este ajuste se guarda para cuando puedan.", pt_br: "Nesta versão, os bots ainda não podem pedir trabalho uns aos outros. Esta configuração fica guardada para quando puderem.", de: "In dieser Version können Bots einander noch nicht fragen. Die Einstellung bleibt für später erhalten.", fr: "Dans cette version, les bots ne peuvent pas encore se solliciter entre eux. Ce réglage est conservé pour le moment où ils le pourront.", ar: "لا يمكن للبوتات بعد أن يطلب بعضها من بعض في هذا الإصدار. يُحفظ هذا الإعداد لحين يصبح ذلك ممكنًا.", zh_hans: "此版本中机器人还不能互相请求。此设置会保留，供以后使用。", ja: "このバージョンでは、ボット同士はまだ依頼し合えません。この設定は、それができるようになったときのために保存されます。" },
+    Row { key: Key::RunNeedsOtherBot, en: "It is waiting for another bot", es: "Está esperando a otro bot", pt_br: "Está aguardando outro bot", de: "Es wartet auf einen anderen Bot", fr: "Il attend un autre bot", ar: "ينتظر بوتًا آخر", zh_hans: "正在等待另一个机器人", ja: "別のボットを待っています" },
+    Row { key: Key::RunStepWaitingForBot, en: "The run asked another bot and is waiting for its result", es: "La ejecución pidió trabajo a otro bot y espera su resultado", pt_br: "A execução pediu trabalho a outro bot e aguarda o resultado", de: "Der Lauf hat einen anderen Bot gefragt und wartet auf dessen Ergebnis", fr: "Le travail a sollicité un autre bot et attend son résultat", ar: "طلب التشغيل من بوت آخر وينتظر نتيجته", zh_hans: "运行已请另一个机器人处理，正在等待结果", ja: "別のボットに依頼し、その結果を待っています" },
+    Row { key: Key::BotsChildRequests, en: "Requests to other bots", es: "Solicitudes a otros bots", pt_br: "Solicitações a outros bots", de: "Anfragen an andere Bots", fr: "Demandes à d’autres bots", ar: "طلبات إلى بوتات أخرى", zh_hans: "给其他机器人的请求", ja: "他のボットへの依頼" },
 ];

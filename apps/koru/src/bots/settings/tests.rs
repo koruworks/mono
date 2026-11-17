@@ -771,3 +771,67 @@ fn while_a_change_is_delivered_its_commands_send_nothing() {
     assert!(!settings.delivering());
     assert!(settings.save_name().is_some());
 }
+
+/// Cohort `m6_ui_may_ask` (contract 7.6): **the switch is an access edit,
+/// and `may_ask` is sent only when it changed.** Pressed, the draft holds
+/// the new value and *Save* sends it with the access the Bot holds; pressed
+/// back, there is no edit; an access save that leaves the switch alone
+/// carries no `may_ask` at all, as before M6.
+#[test]
+fn m6_ui_may_ask_is_sent_only_when_the_switch_changed() {
+    let (mut settings, bot) = known();
+    assert!(bot.may_ask, "a new Bot may ask");
+    assert!(settings.may_ask_shown());
+    settings.toggle_may_ask();
+    assert!(!settings.may_ask_shown());
+    assert!(settings.access_edited());
+    settings.toggle_may_ask();
+    assert!(!settings.access_edited(), "back to what the owner holds");
+
+    settings.toggle_may_ask();
+    let (_, sent) = write(settings.save_access().expect("a save"));
+    let BotCommand::UpdateAccess {
+        may_ask,
+        access,
+        selected_pages,
+        connections,
+        ..
+    } = sent
+    else {
+        panic!("access is UpdateAccess");
+    };
+    assert_eq!(may_ask, Some(false));
+    assert_eq!(access, bot.access);
+    assert_eq!(selected_pages, bot.selected_pages);
+    assert_eq!(connections, None, "connections are left alone");
+    assert!(settings.is_pending(Change::Access));
+    settings.toggle_may_ask();
+    assert!(
+        !settings.may_ask_shown(),
+        "held still while the save is out"
+    );
+
+    // Only the access choice changed: no `may_ask`.
+    let (mut settings, _) = known();
+    settings.choose_access(BotAccess::Workspace);
+    let (_, sent) = write(settings.save_access().expect("a save"));
+    assert!(matches!(
+        sent,
+        BotCommand::UpdateAccess { may_ask: None, .. }
+    ));
+}
+
+/// **The owner's read decides** (contract 7.6): a Bot read with `may_ask`
+/// off shows the switch off, and a draft the read now holds is no edit.
+#[test]
+fn m6_ui_may_ask_shows_what_the_owner_holds() {
+    let (mut settings, mut bot) = known();
+    settings.toggle_may_ask();
+    bot.may_ask = false;
+    settings.know(bot.clone());
+    assert!(!settings.may_ask_shown());
+    assert!(!settings.access_edited(), "the read holds it now");
+    bot.may_ask = true;
+    settings.know(bot);
+    assert!(settings.may_ask_shown());
+}

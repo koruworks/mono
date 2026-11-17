@@ -34,6 +34,7 @@
 //!   while another view is showing; being shown again asks once.
 
 pub(crate) mod catalog;
+pub(crate) mod children;
 pub(crate) mod creation;
 pub(crate) mod empty;
 pub(crate) mod faces;

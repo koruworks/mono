@@ -73,6 +73,7 @@ pub mod scrollbar;
 pub mod segmented;
 pub mod selectable_list;
 pub mod split_button;
+pub mod status_card;
 pub mod stepper;
 pub mod swatch;
 pub mod table;

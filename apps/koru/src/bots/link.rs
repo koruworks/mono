@@ -22,8 +22,9 @@ use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, sync_channel};
 use koru_ai_core::ChatId;
 use koru_ai_core::bots::{
     BOT_CHAT_PAGE_LIMIT, BOT_CREATION_PAGE_LIMIT, Bot, BotActivityPage, BotChatCursor,
-    BotChatLabel, BotChatPage, BotCommand, BotCreation, BotCreationCursor, BotId, BotLifecycle,
-    BotRequestId, BotResponse, BotTrashedChat, BotTrashedChatCursor,
+    BotChatLabel, BotChatPage, BotChildOrigin, BotChildRequestCard, BotCommand, BotCreation,
+    BotCreationCursor, BotId, BotLifecycle, BotRequestId, BotResponse, BotTrashedChat,
+    BotTrashedChatCursor,
 };
 use koru_store_core::ids::WorkspaceId;
 
@@ -129,6 +130,20 @@ pub(crate) enum Command {
         seq: u64,
         workspace: WorkspaceId,
     },
+    /// **The requests a conversation made of other Bots** (M6, contract
+    /// 7.1): `ListChildRequests`, the request cards of `chat`.
+    ChildRequests {
+        seq: u64,
+        bot: BotId,
+        chat: ChatId,
+    },
+    /// **Who asked for a conversation** (M6): `ReadChildOrigin`, the origin
+    /// line of a child conversation, `None` for any other.
+    ChildOrigin {
+        seq: u64,
+        bot: BotId,
+        chat: ChatId,
+    },
 }
 
 #[derive(Debug)]
@@ -233,6 +248,20 @@ pub(crate) enum Answer {
         seq: u64,
         workspace: WorkspaceId,
         result: Result<Listing<BotCreation>, Failure>,
+    },
+    /// What a [`Command::ChildRequests`] answered.
+    ChildRequests {
+        seq: u64,
+        bot: BotId,
+        chat: ChatId,
+        result: Result<Vec<BotChildRequestCard>, Failure>,
+    },
+    /// What a [`Command::ChildOrigin`] answered.
+    ChildOrigin {
+        seq: u64,
+        bot: BotId,
+        chat: ChatId,
+        result: Result<Option<BotChildOrigin>, Failure>,
     },
 }
 
@@ -1021,7 +1050,109 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::ChildRequests { seq, bot, chat } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => child_requests(
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ListChildRequests {
+                                bot_id: bot,
+                                chat_id: chat,
+                            })
+                            .map_err(|failure| said(failure.code, failure.retryable)),
+                    ),
+                    None => Err(Failure::Unanswered),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "A conversation's requests to other Bots could not be read"
+                    );
+                    // `bot_unavailable` is the delegate not answering the
+                    // worker: an answer, not a broken connection.
+                    if *failure == Failure::Unanswered {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::ChildRequests {
+                        seq,
+                        bot,
+                        chat,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::ChildOrigin { seq, bot, chat } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => child_origin(
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ReadChildOrigin {
+                                bot_id: bot,
+                                chat_id: chat,
+                            })
+                            .map_err(|failure| said(failure.code, failure.retryable)),
+                    ),
+                    None => Err(Failure::Unanswered),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "Who asked for a Bot conversation could not be read"
+                    );
+                    if *failure == Failure::Unanswered {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::ChildOrigin {
+                        seq,
+                        bot,
+                        chat,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
         }
+    }
+}
+
+/// A `ListChildRequests` reply: the cards, or why not — never cards made up
+/// from an answer to some other question.
+pub(crate) fn child_requests(
+    reply: Result<BotResponse, Said>,
+) -> Result<Vec<BotChildRequestCard>, Failure> {
+    match reply {
+        Ok(BotResponse::ChildRequests { requests }) => Ok(requests),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
+    }
+}
+
+/// A `ReadChildOrigin` reply: the origin, `None` for a conversation no
+/// request started, or why not.
+pub(crate) fn child_origin(
+    reply: Result<BotResponse, Said>,
+) -> Result<Option<BotChildOrigin>, Failure> {
+    match reply {
+        Ok(BotResponse::ChildOrigin { origin }) => Ok(origin),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
     }
 }
 

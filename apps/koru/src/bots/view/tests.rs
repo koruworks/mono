@@ -47,7 +47,9 @@ impl Fixture {
                 | Command::Label { .. }
                 | Command::Activity { .. }
                 | Command::Lifecycle { .. }
-                | Command::TrashedChats { .. } => {
+                | Command::TrashedChats { .. }
+                | Command::ChildRequests { .. }
+                | Command::ChildOrigin { .. } => {
                     panic!("a Bot tab only reads its Bot here")
                 }
             }
@@ -887,7 +889,13 @@ fn the_controls_publish_names_in_the_keyboards_order() {
     assert_eq!(field.value.as_deref(), Some("Scout"));
     let pressable: Vec<Key> = all
         .iter()
-        .filter(|c| matches!(c.role, ControlRole::Button | ControlRole::TextInput) && !c.disabled)
+        // The access card's *May ask other bots* is a switch (M6).
+        .filter(|c| {
+            matches!(
+                c.role,
+                ControlRole::Button | ControlRole::TextInput | ControlRole::Toggle
+            ) && !c.disabled
+        })
         .map(|c| c.key)
         .collect();
     let order: Vec<Key> = f
@@ -1668,6 +1676,7 @@ fn ink_of(drawn: &std::collections::HashMap<String, String>, name: &str) -> Stri
 
 /// The lifecycle half of the tab (S14).
 mod agent;
+mod children;
 mod create;
 mod library;
 mod lifecycle;

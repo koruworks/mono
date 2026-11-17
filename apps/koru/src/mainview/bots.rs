@@ -749,6 +749,54 @@ impl MainView {
         self.ask_abandon_creation(name, super::trash::AbandonFrom::Tab(draft))
     }
 
+    /// **A link in the band over a Bot's conversation** (M6, contract 7.5):
+    /// a request card's *Open conversation* — the asked Bot's — or a child
+    /// conversation's *Open {bot}'s conversation* — the asking Bot's. Both
+    /// Bots share the home workspace, so the roster usually lists the one
+    /// named; when it does not yet, the conversation opens in a tab that
+    /// knows its Bot by the name the band carried, as a link's does.
+    pub(super) fn drain_bot_child_open(&mut self) -> bool {
+        let TabView::Bot(view) = &mut self.tabs_mut().active_mut().view else {
+            return false;
+        };
+        let Some(request) = view.take_open_request() else {
+            return false;
+        };
+        if !crate::bots::shown() {
+            return false;
+        }
+        self.bot_labels
+            .learn_bot(request.chat, request.bot, &request.name);
+        if let Some(row) = self.roster_bot(request.bot) {
+            return self.open_bot_conversation(row, request.chat);
+        }
+        let showing = self.panes.iter_groups().find_map(|(path, group)| {
+            group
+                .tabs()
+                .iter()
+                .position(|tab| tab.view.chat_id() == Some(request.chat))
+                .map(|index| (path, index))
+        });
+        self.record_jump();
+        match showing {
+            Some((path, index)) => {
+                self.panes.set_focus(path);
+                let _ = self.select(index);
+            }
+            None => {
+                let tab = Tab::bot(BotView::labelled(
+                    request.bot,
+                    request.chat,
+                    &request.name,
+                    None,
+                ));
+                self.tabs_mut().push(tab);
+                self.mark_tab_widths_stale();
+            }
+        }
+        true
+    }
+
     pub(super) fn drain_bot_memory_asks(&mut self) -> bool {
         let TabView::Bot(view) = &mut self.tabs_mut().active_mut().view else {
             return false;
@@ -957,6 +1005,9 @@ impl MainView {
                         // The list's marks: the owner's activity, as the
                         // roster last read it (S8, S10).
                         moved |= view.set_activity(&roster.activity_of(bot));
+                        // The faces the request cards wear (M6).
+                        moved |=
+                            view.know_faces(roster.bots().iter().map(|row| (row.id, row.avatar)));
                     }
                     // A tab restored behind another has read nothing yet:
                     // it wears its Bot's name as the roster lists it.

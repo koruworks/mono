@@ -97,6 +97,11 @@ pub(crate) struct Conversations {
     /// older additional conversation still carries as its title.
     lang: koru_i18n::Lang,
     bot_name: String,
+    /// **Who asked for a conversation**, by conversation, for the ones whose
+    /// origin this tab has read (M6, contract 7.3): their rows say *Asked by
+    /// {bot}*. The owner's list carries no such mark, so a child
+    /// conversation this tab has not shown is titled as any other.
+    asked_by: HashMap<ChatId, String>,
     /// The renames the tab handed its conversation's surface (test only:
     /// `BotView::renames_sent`).
     #[cfg(test)]
@@ -162,6 +167,7 @@ impl Default for Conversations {
             unanswered: None,
             lang: koru_i18n::Lang::default(),
             bot_name: String::new(),
+            asked_by: HashMap::new(),
             #[cfg(test)]
             renamed: Vec::new(),
         }
@@ -211,18 +217,44 @@ impl Conversations {
     pub(crate) fn titles(&self) -> Vec<(ChatId, String)> {
         self.listed
             .iter()
-            .map(|listed| {
-                (
-                    listed.id,
-                    shown_title(
-                        self.lang,
-                        listed,
-                        self.main == Some(listed.id),
-                        &self.bot_name,
-                    ),
-                )
-            })
+            .map(|listed| (listed.id, self.row_title(listed)))
             .collect()
+    }
+
+    /// **A row's words**: its shown title, and — for a conversation another
+    /// Bot's request started, once this tab has read who asked — *Asked by
+    /// {bot}* after it (M6). The rename field starts from the title alone
+    /// ([`Self::title_of`]).
+    fn row_title(&self, listed: &koru_ai_core::Chat) -> String {
+        let title = shown_title(
+            self.lang,
+            listed,
+            self.main == Some(listed.id),
+            &self.bot_name,
+        );
+        match self.asked_by.get(&listed.id) {
+            Some(asker) => {
+                let asked = koru_i18n::fill(
+                    koru_i18n::t(self.lang, Words::BotsChildAskedBy),
+                    &[asker.trim()],
+                );
+                format!("{title} · {asked}")
+            }
+            None => title,
+        }
+    }
+
+    /// **Who asked for `chat`**, as its origin read said (M6): its row says
+    /// so from now on. `true` when its row changed.
+    pub(crate) fn know_asked_by(&mut self, chat: ChatId, asker: &str) -> bool {
+        if self.asked_by.get(&chat).map(String::as_str) == Some(asker) {
+            return false;
+        }
+        self.asked_by.insert(chat, asker.to_owned());
+        if self.listed.iter().any(|listed| listed.id == chat) {
+            self.feed();
+        }
+        true
     }
 
     /// Hand the shared list its rows, each titled as it is shown.
@@ -232,12 +264,7 @@ impl Conversations {
             .iter()
             .map(|listed| {
                 let mut shown = listed.clone();
-                shown.title = shown_title(
-                    self.lang,
-                    listed,
-                    self.main == Some(listed.id),
-                    &self.bot_name,
-                );
+                shown.title = self.row_title(listed);
                 shown
             })
             .collect();

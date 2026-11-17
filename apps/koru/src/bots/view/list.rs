@@ -484,6 +484,9 @@ impl BotView {
             // A Stop the owner sent for an Archive or a Trash lands here
             // first: the operation is read again on the next shown pass.
             self.lifecycle_read_now();
+            // A reply started or ended: an ask may have been made, or a
+            // request settled (M6). Its cards are read again.
+            self.children.owe_read();
         }
         moved
     }

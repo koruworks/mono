@@ -476,30 +476,41 @@ fn a_gap_is_rendered_as_a_gap_and_an_unknown_step_keeps_its_place() {
     );
 }
 
-/// Cohort `m6_sweeps_inert`: the M6 marker and step have no sentence yet.
-/// The marker says nothing and the step reads as a step this build does not
-/// know; neither borrows another marker's or step's words.
+/// Cohort `m6_ui_roster_waiting` (piece U, replacing the sweep's inert
+/// arms): a Bot Run waiting for another Bot says so in its own words — the
+/// marker one sentence, the step one line — and borrows no other marker's
+/// or step's words, in every language.
 #[test]
-fn m6_sweeps_inert_waiting_for_bot_borrows_no_other_sentence() {
+fn m6_ui_roster_waiting_a_run_waiting_for_a_bot_says_so_in_its_own_words() {
     let waiting = koru_delegate_core::transition_bot(
         &RunStatus::running(),
         &koru_delegate_core::RunEvent::WaitingForBot,
     )
     .unwrap();
-    assert!(words::attention(Lang::En, &waiting).is_empty());
+    assert_eq!(
+        words::attention(Lang::En, &waiting),
+        [t(Lang::En, Key::RunNeedsOtherBot).to_owned()]
+    );
     let both = koru_delegate_core::transition_bot(
         &waiting,
         &koru_delegate_core::RunEvent::WaitingForInput,
     )
     .unwrap();
-    assert_eq!(
-        words::attention(Lang::En, &both),
-        [t(Lang::En, Key::RunNeedsInput).to_owned()]
-    );
-    assert_eq!(
-        words::step(Lang::En, StepKind::WaitingForBot),
-        t(Lang::En, Key::RunStepUnknown)
-    );
+    let said = words::attention(Lang::En, &both);
+    assert_eq!(said.len(), 2, "one sentence per marker");
+    assert!(said.contains(&t(Lang::En, Key::RunNeedsInput).to_owned()));
+    assert!(said.contains(&t(Lang::En, Key::RunNeedsOtherBot).to_owned()));
+    for lang in Lang::ALL {
+        let step = words::step(lang, StepKind::WaitingForBot);
+        assert_eq!(step, t(lang, Key::RunStepWaitingForBot));
+        assert_ne!(step, t(lang, Key::RunStepUnknown), "never the unknown step");
+        assert_ne!(step, t(lang, Key::RunStepWaitingForInput));
+        assert_ne!(
+            t(lang, Key::RunNeedsOtherBot),
+            t(lang, Key::RunNeedsInput),
+            "never the waiting-for-you sentence"
+        );
+    }
 }
 
 // ------------------------------------------------------ UC7 provenance
