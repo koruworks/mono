@@ -153,6 +153,10 @@ pub struct WorkerConfig {
     /// The events worker the commit feed forwards into, when the host opened
     /// one (the gateway does; the standalone diagnostic host does not).
     events: Option<koru_events_server::EventsHandle>,
+    /// The Bot admission port this worker's sync control session feeds
+    /// (M8). Made with the configuration, so a host can hand it to whatever
+    /// serves Bot streams before the worker has started.
+    bot_peers: crate::bot_peers::BotPeers,
     #[cfg(test)]
     panic_after_claim: bool,
 }
@@ -203,6 +207,7 @@ impl WorkerConfig {
             gate_transport_modes: true,
             network_edge: None,
             events: None,
+            bot_peers: crate::bot_peers::BotPeers::new(),
             #[cfg(test)]
             panic_after_claim: false,
         }
@@ -224,9 +229,17 @@ impl WorkerConfig {
             gate_transport_modes: true,
             network_edge: None,
             events: None,
+            bot_peers: crate::bot_peers::BotPeers::new(),
             #[cfg(test)]
             panic_after_claim: false,
         }
+    }
+
+    /// The Bot admission port this worker will feed from the Agent's
+    /// authorization snapshots (M8). It answers "told nothing" until the
+    /// worker's sync control session receives one.
+    pub fn bot_peers(&self) -> crate::bot_peers::BotPeers {
+        self.bot_peers.clone()
     }
 
     /// Attach the events worker the commit feed will forward into.
@@ -1042,6 +1055,7 @@ async fn run(
         claim_root,
         network_edge,
         events,
+        bot_peers,
         #[cfg(test)]
         panic_after_claim,
     } = config;
@@ -1196,6 +1210,7 @@ async fn run(
             SYNC_SESSION_GRACE,
             store_client.clone(),
             crate::cloud_inspection_host::InspectionHub::new(tokio::runtime::Handle::current()),
+            bot_peers.clone(),
         )
         .map_err(|error| Error::new(Code::StorageFailed, format!("sync control: {error}")))?;
         Some(crate::sync_control::ReplicationRuntime::Iroh(replication))
@@ -1227,6 +1242,7 @@ async fn run(
             SYNC_SESSION_GRACE,
             store_client.clone(),
             Arc::clone(&inspections),
+            bot_peers.clone(),
         )
         .map_err(|error| Error::new(Code::StorageFailed, format!("sync control: {error}")))?;
         // The Cloud owner is installed before the first bridged session can

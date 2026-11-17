@@ -1,0 +1,1 @@
+{"type":"client_hello","min_version":1,"max_version":1,"capabilities":["feed.1","cmd.chat.1","cmd.pause.1","cmd.team_pause.1","cmd.decisions.1","cmd.config.1","query.run.1","live.ai_stream.1"],"role":"feed","client_device":"00000000-0000-4000-8000-0000000000c1","client_build":"0.0.3"}

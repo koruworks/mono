@@ -376,6 +376,10 @@ pub async fn start(config: GatewayConfig) -> Result<Gateway, String> {
     let composition::Composition {
         state,
         bridge_forwarders,
+        // The session forwarder holds the Bot ingress adapter for as long as
+        // it routes. Nothing installs an owner server yet (M8 piece H2), so
+        // this handle has no use here.
+        bot_ingress: _,
     } = composition::open(&config, &store_root, bridge, sessions)?;
 
     // **The Store is open from here, so a refusal below joins it rather than

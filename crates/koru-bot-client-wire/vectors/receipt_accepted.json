@@ -1,0 +1,1 @@
+{"type":"receipt","request_id":"00000000-0000-4000-8000-000000000010","outcome":"accepted","response":{"result":"team_pause","team":{"owner_device":"00000000-0000-4000-8000-000000000004","paused":true,"revision":3,"stage":"pending","pending_since_ms":1763337600000}},"replayed":false,"feed_cursor":44}

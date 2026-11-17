@@ -131,10 +131,37 @@ pub const SETTINGS_READ_SCOPE: &str = "settings.read";
 pub const SETTINGS_WRITE_SCOPE: &str = "settings.write";
 const SEARCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// What a linked device may change of a Bot on the computer that runs it:
+/// its name, model, reasoning, mode and Fast (M8). **Held only by a
+/// linked-device principal** ([`GatewayPrincipal::linked_device`]). It is in
+/// neither scope list of a bearer, so no HTTP caller can ask for it, vouched
+/// or not. It is narrower than `bots.manage`, which stays vouched-only.
+pub const BOTS_CONFIGURE_SCOPE: &str = "bots.configure";
+
+/// Exactly what a linked device holds here, and nothing else.
+pub const LINKED_DEVICE_SCOPES: [&str; 3] = ["bots.read", "bots.run", BOTS_CONFIGURE_SCOPE];
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GatewayPrincipal {
     pub label: String,
     pub scopes: Vec<String>,
+}
+
+impl GatewayPrincipal {
+    /// The principal of one of the person's own linked devices, as the Bot
+    /// ingress adapter builds it for a stream the carrier authenticated and
+    /// the admission port named (M8). It holds exactly
+    /// [`LINKED_DEVICE_SCOPES`].
+    ///
+    /// **It is never a bearer.** Nothing stores it in the session table and
+    /// no HTTP request can resolve to it: it exists for the lifetime of the
+    /// stream it was built for.
+    pub fn linked_device(label: impl Into<String>) -> Self {
+        Self {
+            label: label.into(),
+            scopes: effective_scopes(&[], Admission::LinkedDevice),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -148,22 +175,35 @@ pub struct SessionAuthority {
     sessions: Mutex<HashMap<[u8; 32], Session>>,
 }
 
-/// What the gateway knows about a caller when it mints a bearer.
+/// What the gateway knows about a caller when it decides its scopes.
 ///
-/// **Two states, and the second one is the whole of R9's first-party split.**
-/// `Ordinary` is every local caller: admitted by channel and API version, its
-/// `product` a free-form string it chose. `Vouched` means the Agent — the
-/// process that launches Koru's own windows — confirmed at admission that it
-/// launched this one, by minting a grant the caller presented and the gateway
-/// spent against it.
+/// **Three states. The first two are callers on this computer, and the
+/// second one is the whole of R9's first-party split.** `Ordinary` is every
+/// local caller: admitted by channel and API version, its `product` a
+/// free-form string it chose. `Vouched` means the Agent — the process that
+/// launches Koru's own windows — confirmed at admission that it launched this
+/// one, by minting a grant the caller presented and the gateway spent against
+/// it.
 ///
-/// It is not a scope and it is not a role. It decides one thing:
-/// whether [`WORKSPACE_DESTROY_SCOPE`] can be granted at all.
+/// `LinkedDevice` is not on this computer at all (M8): one of the person's
+/// own devices, authenticated by the device network and named by the Bot
+/// admission port. **It is never minted as an HTTP bearer.** The Bot ingress
+/// adapter builds its principal for one stream
+/// ([`GatewayPrincipal::linked_device`]), with exactly
+/// [`LINKED_DEVICE_SCOPES`]; asking [`SessionAuthority::mint_admitted`] for
+/// it mints an ordinary caller.
+///
+/// It is not a scope and it is not a role. It decides which narrow scopes
+/// can be granted at all: `Vouched` is what makes
+/// [`WORKSPACE_DESTROY_SCOPE`], [`WORKSPACE_MIGRATE_SCOPE`] and
+/// `bots.manage` reachable, and `LinkedDevice` is what makes
+/// [`BOTS_CONFIGURE_SCOPE`] reachable.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Admission {
     #[default]
     Ordinary,
     Vouched,
+    LinkedDevice,
 }
 
 impl SessionAuthority {
@@ -190,6 +230,12 @@ impl SessionAuthority {
             uuid::Uuid::new_v4().simple()
         );
         let expires_at_millis = now_millis.saturating_add(SESSION_TTL_MILLIS);
+        // A linked device is never a bearer: whoever asks for one is minted
+        // as the ordinary local caller it is.
+        let admission = match admission {
+            Admission::LinkedDevice => Admission::Ordinary,
+            admission => admission,
+        };
         let scopes = effective_scopes(requested_scopes, admission);
         self.sessions.lock().expect("gateway sessions").insert(
             token_hash(&bearer),
@@ -265,10 +311,20 @@ fn effective_scopes(requested: &[String], admission: Admission) -> Vec<String> {
         koru_delegate_api::DelegateScope::Read.as_str(),
         koru_delegate_api::DelegateScope::Write.as_str(),
     ];
-    // **`workspace.destroy` and `workspace.migrate` are in neither list,
-    // and that is the split.** Every other narrow scope is reachable by naming
-    // it; these two are reachable only by naming one *and* having been vouched
-    // for. A caller that asks without a grant is admitted without the scope.
+    // A linked device holds a fixed set, whatever was asked: it is not a
+    // caller that names scopes. `bots.configure` is in neither list above,
+    // so this is the only way to hold it.
+    if matches!(admission, Admission::LinkedDevice) {
+        return LINKED_DEVICE_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect();
+    }
+    // **`workspace.destroy`, `workspace.migrate` and `bots.manage` are in
+    // neither list, and that is the split.** Every other narrow scope is
+    // reachable by naming it; these three are reachable only by naming one
+    // *and* having been vouched for. A caller that asks without a grant is
+    // admitted without the scope.
     let vouched = matches!(admission, Admission::Vouched);
     if requested.is_empty() {
         // An empty request is a caller that named nothing, and a destructive

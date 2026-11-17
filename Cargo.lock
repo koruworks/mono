@@ -5410,15 +5410,20 @@ dependencies = [
  "koru-artifact-api",
  "koru-artifact-sqlite",
  "koru-autostart",
+ "koru-bot-client-wire",
  "koru-channel",
  "koru-delegate-api",
+ "koru-device",
  "koru-env",
  "koru-events-server",
  "koru-ipc",
  "koru-network-bridge",
+ "koru-network-edge",
+ "koru-network-iroh",
  "koru-session-protocol",
  "koru-settings",
  "koru-store-server",
+ "koru-sync-control",
  "koru-time-zone",
  "serde_json",
  "tempfile",
@@ -5624,6 +5629,17 @@ dependencies = [
  "peniko",
  "pulldown-cmark",
  "syntect",
+]
+
+[[package]]
+name = "koru-bot-client-wire"
+version = "0.0.3"
+dependencies = [
+ "koru-ai-core",
+ "koru-ai-wire",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

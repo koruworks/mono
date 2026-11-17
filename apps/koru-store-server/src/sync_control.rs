@@ -121,6 +121,7 @@ pub fn start(
     grace: std::time::Duration,
     store: crate::StoreWorkerClient,
     inspections: Arc<InspectionHub>,
+    bot_peers: crate::bot_peers::BotPeers,
 ) -> Result<(), String> {
     let replication = replication.into();
     let endpoint = koru_ipc::Endpoint::for_service_root(CONTROL_SERVICE, channel, root)
@@ -128,7 +129,17 @@ pub fn start(
     let listener = koru_ipc::Listener::bind(endpoint).map_err(|error| error.to_string())?;
     std::thread::Builder::new()
         .name("koru-store-server sync control".into())
-        .spawn(move || serve(listener, host, replication, grace, store, inspections))
+        .spawn(move || {
+            serve(
+                listener,
+                host,
+                replication,
+                grace,
+                store,
+                inspections,
+                bot_peers,
+            )
+        })
         .map_err(|error| error.to_string())?;
     Ok(())
 }
@@ -140,6 +151,7 @@ fn serve(
     grace: std::time::Duration,
     store: crate::StoreWorkerClient,
     inspections: Arc<InspectionHub>,
+    bot_peers: crate::bot_peers::BotPeers,
 ) {
     loop {
         let Ok(mut stream) = listener.accept() else {
@@ -232,7 +244,8 @@ fn serve(
                 // The control-state lock is already released. Live callbacks
                 // may re-enter it while checking the inspection's authority.
                 inspections.revalidate();
-                response = runtime_action.apply(&replication, &store, &inspections, response);
+                response =
+                    runtime_action.apply(&replication, &store, &inspections, &bot_peers, response);
                 // **Nothing is promoted here any more** (D258). B8 raised this
                 // device's seeded `local_only` rows from the account, pairing
                 // and selection evidence these very requests carry; on
@@ -594,6 +607,7 @@ impl RuntimeAction {
         runtime: &ReplicationRuntime,
         store: &crate::StoreWorkerClient,
         inspections: &Arc<InspectionHub>,
+        bot_peers: &crate::bot_peers::BotPeers,
         response: koru_sync_control::ControlResponse,
     ) -> koru_sync_control::ControlResponse {
         match self {
@@ -654,7 +668,14 @@ impl RuntimeAction {
                     runtime.provision_endpoint(secret);
                 }
             }
-            Self::Authorize(snapshot) => runtime.replace_authorization(snapshot),
+            Self::Authorize(snapshot) => {
+                // The Bot admission port reads the same snapshot replication
+                // is about to take (M8). It is fed first, so by the time a
+                // connection admitted under the new grant can deliver a Bot
+                // stream the port already answers for that grant.
+                bot_peers.replace_authorization(&snapshot);
+                runtime.replace_authorization(snapshot);
+            }
             Self::Connect(peer) => {
                 if let ReplicationRuntime::Iroh(runtime) = runtime {
                     runtime.connect_peer(peer);
@@ -1209,6 +1230,89 @@ mod tests {
         }
     }
 
+    /// **M8, `m8_bot_peers_port`: the port follows `ReplaceAuthorization`.**
+    /// The request the Agent sends is turned into the runtime action and
+    /// applied exactly as the control session applies it, and the Bot
+    /// admission port answers for that snapshot. No other request moves it.
+    /// The runtime here has no endpoint: nothing is bound and no socket is
+    /// opened.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn m8_bot_peers_port_is_fed_by_the_replace_authorization_request() {
+        use koru_sync_control::{AuthorizationSnapshot, AuthorizedPeer};
+
+        let runtime = ReplicationRuntime::Iroh(koru_network_iroh::RuntimeHandle::spawn(
+            koru_network_iroh::IrohNetworkConfig::isolated(),
+        ));
+        let store = test_store_client();
+        let inspections = InspectionHub::new(tokio::runtime::Handle::current());
+        let bot_peers = crate::bot_peers::BotPeers::new();
+        let mut wake = bot_peers.changed();
+        let session_id = ControlSessionId::new();
+        let own = koru_device::DeviceId::new();
+        let other = koru_device::DeviceId::new();
+        let peer = |device_id, own_device| AuthorizedPeer {
+            relationship_id: koru_device::RelationshipId::new(),
+            device_id,
+            endpoint_id: koru_device::ReplicationEndpointId::from_bytes([9; 32]),
+            all_data: true,
+            authorized_profiles: Vec::new(),
+            workspaces: Vec::new(),
+            via: None,
+            display_name: None,
+            build: None,
+            own_device,
+        };
+        let request = |sequence, peers| ControlRequest::ReplaceAuthorization {
+            snapshot: AuthorizationSnapshot {
+                session_id,
+                sequence,
+                local_device: koru_device::DeviceId::new(),
+                peers,
+                local_build: None,
+            },
+        };
+        let apply = |request: &ControlRequest| {
+            RuntimeAction::from_request(request).apply(
+                &runtime,
+                &store,
+                &inspections,
+                &bot_peers,
+                ControlResponse::Ok,
+            )
+        };
+
+        // A request that is not an authorization leaves the port untold.
+        assert_eq!(
+            apply(&ControlRequest::ConnectPeer { peer: other }),
+            ControlResponse::Ok
+        );
+        assert_eq!(bot_peers.current().sequence, 0);
+        assert!(!wake.has_changed().unwrap());
+
+        assert_eq!(
+            apply(&request(1, vec![peer(own, true), peer(other, false)])),
+            ControlResponse::Ok
+        );
+        let answer = bot_peers.current();
+        assert_eq!(answer.sequence, 1);
+        assert_eq!(answer.peers.keys().copied().collect::<Vec<_>>(), [own]);
+        assert!(answer.client_scopes(&own).is_some());
+        assert!(answer.client_scopes(&other).is_none());
+        assert!(wake.has_changed().unwrap());
+        wake.borrow_and_update();
+
+        // The next snapshot unlinks it.
+        assert_eq!(
+            apply(&request(2, vec![peer(other, false)])),
+            ControlResponse::Ok
+        );
+        assert_eq!(bot_peers.current().sequence, 2);
+        assert!(bot_peers.current().peers.is_empty());
+        assert!(wake.has_changed().unwrap());
+
+        runtime.clear();
+    }
+
     /// How long these tests wait for an iroh endpoint to bind or clear.
     ///
     /// A liveness deadline, not a budget: nothing here asserts how fast a bind
@@ -1236,6 +1340,7 @@ mod tests {
             std::time::Duration::from_millis(200),
             test_store_client(),
             InspectionHub::new(tokio::runtime::Handle::current()),
+            crate::bot_peers::BotPeers::new(),
         )
         .unwrap();
         let endpoint =
@@ -1359,6 +1464,7 @@ mod tests {
             grace,
             test_store_client(),
             InspectionHub::new(tokio::runtime::Handle::current()),
+            crate::bot_peers::BotPeers::new(),
         )
         .unwrap();
         let endpoint =
@@ -1401,6 +1507,7 @@ mod tests {
             std::time::Duration::from_millis(300),
             test_store_client(),
             InspectionHub::new(tokio::runtime::Handle::current()),
+            crate::bot_peers::BotPeers::new(),
         )
         .unwrap();
         let endpoint =

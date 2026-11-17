@@ -203,6 +203,7 @@ impl Fixture {
                             via: None,
                             display_name: name.map(str::to_owned),
                             build: None,
+                            own_device: false,
                         })
                         .collect(),
                     local_build: None,

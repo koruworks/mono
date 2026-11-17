@@ -42,6 +42,14 @@ pub const REPLICATION_ALPN_V1: &[u8] = b"koru/replication/1";
 pub(crate) mod blob_path;
 pub mod cloud;
 pub const PAIRING_ALPN_V1: &[u8] = b"koru/pairing/1";
+/// The Bot client protocol's carrier (M8): a linked device reading and
+/// controlling the Bots that run on this one. **Its own ALPN, because a
+/// product stream on the replication connection has no header**: every
+/// inbound stream there is read as replication, so a build without M8 would
+/// read a Bot stream as a replication frame. A separate ALPN is refused at
+/// the handshake instead, and the replication connection to that build is
+/// untouched. The number changes only when the framing changes.
+pub const BOTS_ALPN_V1: &[u8] = b"koru/bots/1";
 pub const ENROLLMENT_ALPN_V1: &[u8] = b"koru/enrollment/1";
 pub const MAX_ENROLLMENT_FRAME_BYTES: usize = 128 * 1024;
 pub const MAX_ENROLLMENT_FRAMES_PER_DIRECTION: usize = 8;
@@ -294,6 +302,26 @@ pub fn replication_protocol() -> koru_network_edge::ProtocolToken {
     .expect("the static replication ALPN is a valid protocol token")
 }
 
+/// The token of a Bot client stream: [`BOTS_ALPN_V1`]. This runtime labels
+/// an accepted Bot stream with it and never reads a byte of one.
+pub fn bots_protocol() -> koru_network_edge::ProtocolToken {
+    koru_network_edge::ProtocolToken::parse(
+        std::str::from_utf8(BOTS_ALPN_V1).expect("the static Bots ALPN is ASCII"),
+    )
+    .expect("the static Bots ALPN is a valid protocol token")
+}
+
+/// Every ALPN an endpoint of this build accepts: replication, pairing,
+/// enrollment and Bots. [`IrohNetworkConfig::alpns`] starts as this.
+pub fn default_alpns() -> Vec<Vec<u8>> {
+    vec![
+        REPLICATION_ALPN_V1.to_vec(),
+        PAIRING_ALPN_V1.to_vec(),
+        ENROLLMENT_ALPN_V1.to_vec(),
+        BOTS_ALPN_V1.to_vec(),
+    ]
+}
+
 /// The exact Cloud content token, `koru-cloud-content-v1` (HOST-CONTROL §2).
 ///
 /// It is a **local dispatch identifier only**. It does not change the frozen
@@ -372,6 +400,11 @@ pub struct IrohNetworkConfig {
     pub relay_provider: RelayProviderConfig,
     pub address_lookup: AddressLookupConfig,
     pub direct_paths: DirectPathPolicy,
+    /// The ALPNs the endpoint accepts, [`default_alpns`] in every shipped
+    /// configuration. A value rather than a constant so a test can bind an
+    /// endpoint that lacks one, which is what a build from before that ALPN
+    /// existed looks like to its peers.
+    pub alpns: Vec<Vec<u8>>,
 }
 
 impl Default for IrohNetworkConfig {
@@ -386,6 +419,7 @@ impl Default for IrohNetworkConfig {
             relay_provider: RelayProviderConfig::DefaultNetwork,
             address_lookup: AddressLookupConfig::DefaultNetwork,
             direct_paths: DirectPathPolicy::Prefer,
+            alpns: default_alpns(),
         }
     }
 }
@@ -397,7 +431,15 @@ impl IrohNetworkConfig {
             relay_provider: RelayProviderConfig::Disabled,
             address_lookup: AddressLookupConfig::Disabled,
             direct_paths: DirectPathPolicy::Prefer,
+            alpns: default_alpns(),
         }
+    }
+
+    /// This configuration with `alpn` left out of the endpoint's list: a
+    /// peer that dials it is refused at the handshake.
+    pub fn without_alpn(mut self, alpn: &[u8]) -> Self {
+        self.alpns.retain(|listed| listed != alpn);
+        self
     }
 }
 
@@ -517,6 +559,7 @@ pub fn resolve_network_config(
             relay_provider: RelayProviderConfig::Disabled, // replaced below
             address_lookup: AddressLookupConfig::DefaultNetwork,
             direct_paths: DirectPathPolicy::Prefer,
+            alpns: default_alpns(),
         }
     };
     config.relay_provider = resolve_relay_provider(
@@ -2335,6 +2378,22 @@ enum Command {
         peer: AuthorizedPeer,
         connection: iroh::endpoint::Connection,
     },
+    /// An own device connected on [`BOTS_ALPN_V1`].
+    InboundBotConnection {
+        peer: AuthorizedPeer,
+        connection: iroh::endpoint::Connection,
+    },
+    /// This runtime's dial of an own device on [`BOTS_ALPN_V1`] ended.
+    BotDialFinished {
+        peer: AuthorizedPeer,
+        connection: Option<iroh::endpoint::Connection>,
+    },
+    /// A Bot connection closed, from either end.
+    BotConnectionClosed {
+        device_id: DeviceId,
+        connection_id: usize,
+        direction: ConnectionDirection,
+    },
     PeerClosed {
         device_id: DeviceId,
         connection_id: usize,
@@ -2606,6 +2665,26 @@ struct RuntimeState {
     blob_hydration_slots: Arc<Semaphore>,
     blob_directory: SharedBlobDirectory,
     opaque_ingress: Option<Arc<dyn NetworkIngress>>,
+    /// The Bot connections own devices opened to this one: this device's
+    /// Bots are what they carry. One per peer device; a second from the
+    /// same device supersedes the first. Separate from `connections` in
+    /// every way: no sync, no status, no connection event.
+    bot_inbound: BTreeMap<DeviceId, iroh::endpoint::Connection>,
+    /// The Bot connections this device opened to own devices, to read
+    /// their Bots. Reused by every Bot stream opened to that device.
+    bot_outbound: BTreeMap<DeviceId, iroh::endpoint::Connection>,
+    /// Bot streams waiting for the dial of their device to end.
+    bot_dials: BTreeMap<DeviceId, Vec<BotStreamWaiter>>,
+    /// The last exact address a host gave for a device. A Bot dial names it
+    /// when there is one, since it does not ride the replication connection
+    /// and so cannot borrow its route.
+    peer_addrs: BTreeMap<DeviceId, EndpointAddr>,
+}
+
+/// A Bot stream asked for while its connection is still being dialed.
+struct BotStreamWaiter {
+    protocol: koru_network_edge::ProtocolToken,
+    answer: oneshot::Sender<Result<TransportSession, koru_network_edge::EdgeError>>,
 }
 
 #[derive(Default)]
@@ -2713,6 +2792,10 @@ async fn run(
         blob_hydration_slots: Arc::new(Semaphore::new(hydration::MAX_CONCURRENT_BLOB_HYDRATIONS)),
         blob_directory,
         opaque_ingress,
+        bot_inbound: BTreeMap::new(),
+        bot_outbound: BTreeMap::new(),
+        bot_dials: BTreeMap::new(),
+        peer_addrs: BTreeMap::new(),
     };
     while let Some(command) = commands.recv().await {
         match command {
@@ -2761,6 +2844,17 @@ async fn run(
             Command::InboundConnection { peer, connection } => {
                 state.inbound_connection(peer, connection);
             }
+            Command::InboundBotConnection { peer, connection } => {
+                state.inbound_bot_connection(peer, connection);
+            }
+            Command::BotDialFinished { peer, connection } => {
+                state.bot_dial_finished(peer, connection);
+            }
+            Command::BotConnectionClosed {
+                device_id,
+                connection_id,
+                direction,
+            } => state.bot_connection_closed(device_id, connection_id, direction),
             Command::PeerClosed {
                 device_id,
                 connection_id,
@@ -3096,6 +3190,16 @@ impl RuntimeState {
         for connection in relay_only {
             connection.close(0u32.into(), b"relays disabled");
         }
+        // The same for Bot connections: relays off means no connection of
+        // this runtime rides one, whatever it carries.
+        for connection in self
+            .bot_inbound
+            .values()
+            .chain(self.bot_outbound.values())
+            .filter(|connection| path_kind(connection) == PathKind::Relay)
+        {
+            connection.close(0u32.into(), b"relays disabled");
+        }
     }
 
     /// Relays on, onto an endpoint that was bound with relay transport and
@@ -3193,11 +3297,7 @@ impl RuntimeState {
                 builder = builder.relay_mode(iroh::RelayMode::Custom(relays));
             }
         }
-        builder = builder.secret_key(key).alpns(vec![
-            REPLICATION_ALPN_V1.to_vec(),
-            PAIRING_ALPN_V1.to_vec(),
-            ENROLLMENT_ALPN_V1.to_vec(),
-        ]);
+        builder = builder.secret_key(key).alpns(self.config.alpns.clone());
         match builder.bind().await {
             Ok(endpoint) => {
                 // Recorded from the provider actually bound with, at the one
@@ -3422,6 +3522,9 @@ impl RuntimeState {
     }
 
     fn request_connection(&mut self, device_id: DeviceId, exact_addr: Option<EndpointAddr>) {
+        if let Some(addr) = &exact_addr {
+            self.peer_addrs.insert(device_id, addr.clone());
+        }
         self.next_generation = self.next_generation.wrapping_add(1);
         self.desired.insert(
             device_id,
@@ -3771,7 +3874,7 @@ impl RuntimeState {
     }
 
     fn open_product_session(
-        &self,
+        &mut self,
         target: koru_network_edge::NetworkTarget,
         requested_protocol: koru_network_edge::ProtocolToken,
         answer: oneshot::Sender<Result<TransportSession, koru_network_edge::EdgeError>>,
@@ -3790,6 +3893,10 @@ impl RuntimeState {
                 return;
             }
         };
+        if requested_protocol == bots_protocol() {
+            self.open_bot_session(device_id, requested_protocol, answer);
+            return;
+        }
         // A device target never carries the Cloud token, and a permit never
         // authorizes the peer token.
         if requested_protocol != replication_protocol() {
@@ -3849,6 +3956,251 @@ impl RuntimeState {
             };
             let _ = answer.send(result);
         });
+    }
+
+    /// Open one Bot stream to an own device: on the live Bot connection to
+    /// it, or on one dialed now. **It needs no replication connection**: a
+    /// Bot connection is its own, on its own ALPN.
+    ///
+    /// Every failure answers [`koru_network_edge::EdgeError::Closed`]: a
+    /// device that is not an own device, a peer whose build has no
+    /// `koru/bots/1`, and a peer that cannot be reached are the same to the
+    /// caller, and a refused ALPN cannot be told from an unreachable peer.
+    fn open_bot_session(
+        &mut self,
+        device_id: DeviceId,
+        protocol: koru_network_edge::ProtocolToken,
+        answer: oneshot::Sender<Result<TransportSession, koru_network_edge::EdgeError>>,
+    ) {
+        let Some(peer) = own_device(&self.authorization, device_id) else {
+            let _ = answer.send(Err(koru_network_edge::EdgeError::Closed));
+            return;
+        };
+        if let Some(connection) = self.bot_outbound.get(&device_id) {
+            if connection.close_reason().is_none() {
+                self.open_bot_stream(&peer, connection.clone(), protocol, answer);
+                return;
+            }
+            self.bot_outbound.remove(&device_id);
+        }
+        let waiter = BotStreamWaiter { protocol, answer };
+        if let Some(waiting) = self.bot_dials.get_mut(&device_id) {
+            // One dial per device; this stream rides its outcome.
+            waiting.push(waiter);
+            return;
+        }
+        let Some(endpoint) = self.endpoint.clone() else {
+            let _ = waiter
+                .answer
+                .send(Err(koru_network_edge::EdgeError::Closed));
+            return;
+        };
+        let Ok(endpoint_id) = EndpointId::from_bytes(peer.endpoint_id.as_bytes()) else {
+            let _ = waiter
+                .answer
+                .send(Err(koru_network_edge::EdgeError::Closed));
+            return;
+        };
+        let target = self
+            .desired
+            .get(&device_id)
+            .and_then(|intent| intent.exact_addr.clone())
+            .or_else(|| self.peer_addrs.get(&device_id).cloned())
+            .filter(|addr| addr.id == endpoint_id)
+            .unwrap_or_else(|| EndpointAddr::new(endpoint_id));
+        // With relays off no dial of ours names a relay route, exactly as
+        // the peer dial in `start_connect`.
+        let target = if matches!(self.config.relay_provider, RelayProviderConfig::Disabled) {
+            EndpointAddr::from_parts(
+                target.id,
+                target.addrs.iter().filter(|addr| !addr.is_relay()).cloned(),
+            )
+        } else {
+            target
+        };
+        self.bot_dials.insert(device_id, vec![waiter]);
+        let commands = self.commands.clone();
+        tokio::spawn(async move {
+            let connection = match endpoint.connect(target, BOTS_ALPN_V1).await {
+                Ok(connection) if connection.remote_id() == endpoint_id => Some(connection),
+                Ok(connection) => {
+                    connection.close(1u32.into(), b"endpoint identity mismatch");
+                    None
+                }
+                Err(_) => None,
+            };
+            let _ = commands.send(Command::BotDialFinished { peer, connection });
+        });
+    }
+
+    fn bot_dial_finished(
+        &mut self,
+        peer: AuthorizedPeer,
+        connection: Option<iroh::endpoint::Connection>,
+    ) {
+        let device_id = peer.device_id;
+        let waiting = self.bot_dials.remove(&device_id).unwrap_or_default();
+        // The grant may have changed while the dial was in flight: the
+        // connection is kept only for the device the current snapshot still
+        // names an own device at this endpoint.
+        let current = own_device(&self.authorization, device_id)
+            .filter(|current| current.endpoint_id == peer.endpoint_id);
+        let connection = match (connection, current) {
+            (Some(connection), Some(_)) if !self.refuse_relay_only_connection(&connection) => {
+                Some(connection)
+            }
+            (Some(connection), _) => {
+                connection.close(1u32.into(), b"authorization changed during dial");
+                None
+            }
+            (None, _) => None,
+        };
+        let Some(connection) = connection else {
+            for waiter in waiting {
+                let _ = waiter
+                    .answer
+                    .send(Err(koru_network_edge::EdgeError::Closed));
+            }
+            return;
+        };
+        if waiting.is_empty() {
+            // `close_connections` already answered every waiter.
+            connection.close(0u32.into(), b"bot connection not wanted");
+            return;
+        }
+        if let Some(replaced) = self.bot_outbound.insert(device_id, connection.clone()) {
+            replaced.close(0u32.into(), b"superseded bot connection");
+        }
+        self.watch_bot_connection(device_id, &connection, ConnectionDirection::Outbound);
+        for waiter in waiting {
+            self.open_bot_stream(&peer, connection.clone(), waiter.protocol, waiter.answer);
+        }
+    }
+
+    fn open_bot_stream(
+        &self,
+        peer: &AuthorizedPeer,
+        connection: iroh::endpoint::Connection,
+        protocol: koru_network_edge::ProtocolToken,
+        answer: oneshot::Sender<Result<TransportSession, koru_network_edge::EdgeError>>,
+    ) {
+        let principal = device_principal(peer, self.authorization_sequence());
+        let path = path_kind(&connection);
+        tokio::spawn(async move {
+            let result = match connection.open_bi().await {
+                Ok((send, recv)) => Ok(opaque_session(
+                    principal,
+                    protocol,
+                    koru_network_edge::PathMetadata {
+                        kind: path,
+                        selected_is_ip: blob_path::selected_path_is_ip(&connection),
+                        outbound: true,
+                    },
+                    connection.stable_id() as u64,
+                    send,
+                    recv,
+                )),
+                Err(_) => Err(koru_network_edge::EdgeError::Closed),
+            };
+            let _ = answer.send(result);
+        });
+    }
+
+    fn authorization_sequence(&self) -> u64 {
+        self.authorization
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .map_or(0, |snapshot| snapshot.sequence)
+    }
+
+    /// An own device connected on the Bots ALPN. Each stream it opens goes
+    /// to the ingress as an opaque session labelled [`bots_protocol`]. **No
+    /// connection event is sent**: `connected` and `disconnected` carry no
+    /// protocol and feed the Store's view of replication.
+    fn inbound_bot_connection(
+        &mut self,
+        peer: AuthorizedPeer,
+        connection: iroh::endpoint::Connection,
+    ) {
+        let device_id = peer.device_id;
+        let still_own = own_device_endpoint(&self.authorization, connection.remote_id())
+            .is_some_and(|current| current.device_id == device_id);
+        if !still_own {
+            connection.close(1u32.into(), NOT_AN_OWN_DEVICE);
+            return;
+        }
+        if self.refuse_relay_only_connection(&connection) {
+            return;
+        }
+        let Some(ingress) = self.opaque_ingress.clone() else {
+            // No engine behind this runtime (a phone, an embedded Store):
+            // nothing here can answer a Bot stream.
+            connection.close(1u32.into(), b"bots unavailable");
+            return;
+        };
+        if let Some(replaced) = self.bot_inbound.insert(device_id, connection.clone()) {
+            replaced.close(0u32.into(), b"superseded bot connection");
+        }
+        self.watch_bot_connection(device_id, &connection, ConnectionDirection::Inbound);
+        let principal = device_principal(&peer, self.authorization_sequence());
+        let path = path_kind(&connection);
+        tokio::spawn(async move {
+            while let Ok((send, recv)) = connection.accept_bi().await {
+                let session = opaque_session(
+                    principal.clone(),
+                    bots_protocol(),
+                    koru_network_edge::PathMetadata {
+                        kind: path,
+                        selected_is_ip: blob_path::selected_path_is_ip(&connection),
+                        outbound: false,
+                    },
+                    connection.stable_id() as u64,
+                    send,
+                    recv,
+                );
+                if ingress.admit(session).is_err() {
+                    connection.close(2u32.into(), b"gateway bridge unavailable");
+                    return;
+                }
+            }
+        });
+    }
+
+    fn watch_bot_connection(
+        &self,
+        device_id: DeviceId,
+        connection: &iroh::endpoint::Connection,
+        direction: ConnectionDirection,
+    ) {
+        let commands = self.commands.clone();
+        let connection = connection.clone();
+        tokio::spawn(async move {
+            let _ = connection.closed().await;
+            let _ = commands.send(Command::BotConnectionClosed {
+                device_id,
+                connection_id: connection.stable_id(),
+                direction,
+            });
+        });
+    }
+
+    fn bot_connection_closed(
+        &mut self,
+        device_id: DeviceId,
+        connection_id: usize,
+        direction: ConnectionDirection,
+    ) {
+        let connections = match direction {
+            ConnectionDirection::Inbound => &mut self.bot_inbound,
+            ConnectionDirection::Outbound => &mut self.bot_outbound,
+        };
+        if connections
+            .get(&device_id)
+            .is_some_and(|current| current.stable_id() == connection_id)
+        {
+            connections.remove(&device_id);
+        }
     }
 
     fn connection_attempt_finished(
@@ -4655,6 +5007,7 @@ impl RuntimeState {
             task.abort();
         }
         self.desired.clear();
+        self.peer_addrs.clear();
         self.active_connection_attempts.clear();
         self.lifecycle_logs.clear();
         self.incompatible_reports = IncompatibleReports::default();
@@ -4719,6 +5072,23 @@ impl RuntimeState {
             std::mem::take(&mut *self.connections.write().unwrap_or_else(|e| e.into_inner()));
         for (_, connection) in connections {
             connection.connection.close(0u32.into(), reason);
+        }
+        // Bot connections were admitted under the same grant and end with
+        // it: this is the revocation fence of the Bot client protocol. A
+        // dial still in flight is answered now and its connection, if it
+        // arrives, is dropped by `bot_dial_finished`.
+        for (_, connection) in std::mem::take(&mut self.bot_inbound) {
+            connection.close(0u32.into(), reason);
+        }
+        for (_, connection) in std::mem::take(&mut self.bot_outbound) {
+            connection.close(0u32.into(), reason);
+        }
+        for waiting in self.bot_dials.values_mut() {
+            for waiter in waiting.drain(..) {
+                let _ = waiter
+                    .answer
+                    .send(Err(koru_network_edge::EdgeError::Closed));
+            }
         }
     }
 
@@ -4829,6 +5199,25 @@ fn spawn_accept_loop(
                 }
                 if connection.alpn() == ENROLLMENT_ALPN_V1 {
                     serve_enrollment_connection(connection, enrollment).await;
+                    return;
+                }
+                if connection.alpn() == BOTS_ALPN_V1 {
+                    // Authenticated as replication is, by the endpoint the
+                    // current snapshot names, and admitted only for an own
+                    // device. Anyone else is closed with a reason: no stream
+                    // is accepted and no frame is written.
+                    match own_device_endpoint(&authorization, connection.remote_id()) {
+                        Some(peer) => {
+                            if let Err(error) =
+                                commands.send(Command::InboundBotConnection { peer, connection })
+                            {
+                                if let Command::InboundBotConnection { connection, .. } = error.0 {
+                                    connection.close(0u32.into(), b"network runtime stopped");
+                                }
+                            }
+                        }
+                        None => connection.close(1u32.into(), NOT_AN_OWN_DEVICE),
+                    }
                     return;
                 }
                 if connection.alpn() != REPLICATION_ALPN_V1 {
@@ -7665,6 +8054,43 @@ fn authorized_endpoint(
                     || !peer.authorized_profiles.is_empty()
                     || !peer.workspaces.is_empty())
         })
+        .cloned()
+}
+
+/// The reason a Bot connection from anything but an own device is closed
+/// with.
+const NOT_AN_OWN_DEVICE: &[u8] = b"not an own device";
+
+/// The peer the current snapshot names an own device at `endpoint`: on the
+/// all-data graph and directly paired. `all_data` is deliberately not
+/// consulted: it is cleared when a Profile was deleted on this device, and
+/// that narrows what replicates without making the peer someone else's.
+fn own_device_endpoint(
+    authorization: &RwLock<Option<AuthorizationSnapshot>>,
+    endpoint: EndpointId,
+) -> Option<AuthorizedPeer> {
+    authorization
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()?
+        .peers
+        .iter()
+        .find(|peer| peer.own_device && peer.endpoint_id.as_bytes() == endpoint.as_bytes())
+        .cloned()
+}
+
+/// The peer the current snapshot names an own device with this id.
+fn own_device(
+    authorization: &RwLock<Option<AuthorizationSnapshot>>,
+    device_id: DeviceId,
+) -> Option<AuthorizedPeer> {
+    authorization
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .as_ref()?
+        .peers
+        .iter()
+        .find(|peer| peer.own_device && peer.device_id == device_id)
         .cloned()
 }
 

@@ -36,7 +36,12 @@ koru-api-gateway-core = { path = "../koru-api-gateway-core" }
 koru-autostart = { path = "../koru-autostart" }
 koru-api-wire = { path = "../koru-api-wire" }
 koru-channel = { path = "../koru-channel" }
+# Bot client protocol 1 (M8): the frame and the hello the Bot ingress adapter
+# reads, and the refusals it writes.
+koru-bot-client-wire = { path = "../koru-bot-client-wire" }
 koru-network-bridge = { path = "../koru-network-bridge" }
+# `TransportSession`: what the bridge hands over, routed here by its token.
+koru-network-edge = { path = "../koru-network-edge" }
 koru-ipc = { path = "../koru-ipc" }
 koru-store-server = { path = "../../apps/koru-store-server" }
 # This computer's time zone, for a Bot Routine it owns (P4.3, D5): the same
@@ -64,4 +69,11 @@ koru-api-gateway-core = { path = "../koru-api-gateway-core", features = ["fixtur
 # worker, and that worker constructs the configured telemetry sink without being
 # asked to; `cfg(test)` in this crate cannot reach a dependency's build.
 koru-events-server = { path = "../../apps/koru-events-server", features = ["no-sink"] }
+# The Bot ingress tests build a device principal and feed the admission port
+# the authorization snapshot the Agent would send.
+koru-device = { path = "../koru-device" }
+koru-sync-control = { path = "../koru-sync-control" }
+# The token the device network labels a Bot stream with, held equal to the
+# protocol's own.
+koru-network-iroh = { path = "../koru-network-iroh" }
 tempfile.workspace = true

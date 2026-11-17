@@ -31,6 +31,7 @@ fn snapshot(
             via: None,
             display_name: None,
             build: None,
+            own_device: false,
         }],
         local_build: None,
     }
@@ -1361,4 +1362,107 @@ fn an_inventory_answer_omits_the_repaired_count_when_nothing_was_repaired() {
         serde_json::from_str::<ControlResponse>(&rendered).unwrap(),
         some
     );
+}
+
+// ----------------------------------------------------------------------
+// M8, cohort `m8_own_device_bit`: the half of it this crate owns. The rule
+// itself, that `same_grant` sees a change of the bit, and that the field
+// costs no protocol version. The Agent's half (the bit as the trust records
+// give it, and that a deleted Profile leaves it true) is in
+// `apps/koru-agent/src/service/tests.rs`.
+// ----------------------------------------------------------------------
+
+#[test]
+fn m8_own_device_bit_is_true_only_for_all_data_and_no_via() {
+    let introducer = DeviceId::new();
+    assert!(AuthorizedPeer::own_device_rule(true, None));
+    // Reached only through another device.
+    assert!(!AuthorizedPeer::own_device_rule(true, Some(introducer)));
+    // Profile grants only, paired directly or not.
+    assert!(!AuthorizedPeer::own_device_rule(false, None));
+    assert!(!AuthorizedPeer::own_device_rule(false, Some(introducer)));
+}
+
+#[test]
+fn m8_own_device_bit_a_change_of_it_is_a_change_of_the_grant() {
+    let hello = hello();
+    let first = snapshot(
+        &hello,
+        1,
+        DeviceId::new(),
+        ReplicationEndpointId::from_bytes([7; 32]),
+        WorkspaceId::new(),
+    );
+    assert!(!first.peers[0].own_device);
+
+    let mut gained = first.clone();
+    gained.sequence = 2;
+    gained.peers[0].own_device = true;
+    assert!(!first.same_grant(&gained));
+    assert!(!gained.same_grant(&first));
+
+    // Nothing else of the peer moved, and the bit alone is what differs:
+    // with it restored the two are the same grant again.
+    let mut restored = gained.clone();
+    restored.sequence = 3;
+    restored.peers[0].own_device = false;
+    assert!(first.same_grant(&restored));
+
+    // Resending the same value is not a change, so a fresh control session
+    // does not fence and reconnect an unchanged mesh.
+    let mut resent = gained.clone();
+    resent.session_id = ControlSessionId::new();
+    resent.sequence = 9;
+    assert!(gained.same_grant(&resent));
+}
+
+#[test]
+fn m8_own_device_bit_travels_on_control_protocol_9_with_no_bump() {
+    assert_eq!(CONTROL_PROTOCOL_VERSION, 9);
+    let hello = hello();
+    let mut sent = snapshot(
+        &hello,
+        1,
+        DeviceId::new(),
+        ReplicationEndpointId::from_bytes([7; 32]),
+        WorkspaceId::new(),
+    );
+    sent.peers[0].own_device = true;
+    let request = ControlRequest::ReplaceAuthorization {
+        snapshot: sent.clone(),
+    };
+    let rendered = serde_json::to_value(&request).unwrap();
+
+    // The field is on the wire, and reads back.
+    let peer = &rendered["snapshot"]["peers"][0];
+    assert_eq!(peer["own_device"], serde_json::json!(true));
+    let read = serde_json::from_value::<ControlRequest>(rendered.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&read).unwrap(), rendered);
+
+    // A snapshot written by an Agent from before M8 has no such field. It
+    // still decodes, and names no own device: nothing is admitted to Bots.
+    let mut older = rendered.clone();
+    older["snapshot"]["peers"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("own_device");
+    let ControlRequest::ReplaceAuthorization { snapshot: read } =
+        serde_json::from_value::<ControlRequest>(older).unwrap()
+    else {
+        panic!("a replace_authorization");
+    };
+    assert!(!read.peers[0].own_device);
+    assert_eq!(read.peers[0].device_id, sent.peers[0].device_id);
+
+    // A reader from before M8 ignores a field it does not know: the peer
+    // record refuses no unknown member. A member no build knows stands in
+    // for `own_device` as that reader sees it.
+    let mut newer = rendered;
+    newer["snapshot"]["peers"][0]["a_member_no_build_knows"] = serde_json::json!(true);
+    let ControlRequest::ReplaceAuthorization { snapshot: read } =
+        serde_json::from_value::<ControlRequest>(newer).unwrap()
+    else {
+        panic!("a replace_authorization");
+    };
+    assert_eq!(read, sent);
 }

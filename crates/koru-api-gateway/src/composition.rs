@@ -30,7 +30,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use koru_api_gateway_core::GatewayState;
+use koru_network_edge::TransportSession;
 
+use crate::bot_ingress::BotIngress;
 use crate::lifecycle::GatewayConfig;
 
 /// The composed runtime, and the two tasks that pump the Agent's network edge.
@@ -40,6 +42,33 @@ pub(crate) struct Composition {
     /// connection events into the Store worker. Aborted with the router.
     pub(crate) bridge_forwarders:
         Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>,
+    /// Where a linked device's Bot streams arrive (M8), when there is a
+    /// device network at all. The engine that serves them (piece H2) is
+    /// installed here with [`BotIngress::set_owner_server`]; until it is,
+    /// the adapter refuses every stream.
+    #[allow(dead_code)]
+    pub(crate) bot_ingress: Option<BotIngress>,
+}
+
+/// Where one session the Agent's bridge accepted goes, by its token.
+///
+/// `koru/bots/1` goes to the Bot ingress adapter. **Everything else goes to
+/// the Store worker, exactly as before M8.** The order matters: the Store
+/// worker resets any session that is not replication, so a Bot session must
+/// be taken out before it gets there.
+///
+/// Answers `false` when the Store worker is gone and the forwarder should
+/// stop.
+pub(crate) async fn route_accepted_session(
+    session: TransportSession,
+    store: &tokio::sync::mpsc::Sender<TransportSession>,
+    bots: &BotIngress,
+) -> bool {
+    if session.protocol.as_str() == koru_bot_client_wire::PROTOCOL_TOKEN {
+        bots.admit(session);
+        return true;
+    }
+    store.send(session).await.is_ok()
 }
 
 /// Open every worker and hand the settings authority down.
@@ -64,14 +93,30 @@ pub(crate) fn open(
     let artifacts_root = koru_channel::artifacts_root_beside(store_root);
     let legacy_events_root = store_root.join("events");
 
-    let (worker_config, bridge_forwarders) = match bridge {
+    let (worker_config, bridge_forwarders, bot_ingress) = match bridge {
         Some(bridge) => {
             let (sessions_tx, sessions_rx) = tokio::sync::mpsc::channel(32);
             let (connections_tx, connections_rx) = tokio::sync::mpsc::channel(32);
+            // The bridge link is the Store worker's egress and, for the Bot
+            // client, the same link is its egress too.
+            let worker_config = koru_store_server::WorkerConfig::embedded_with_network_edge(
+                store_root.to_path_buf(),
+                segment,
+                Arc::new(bridge.clone()),
+                sessions_rx,
+                connections_rx,
+            );
+            // The Bot admission port is the Store worker's: it is fed from
+            // the authorization snapshots the worker's sync control session
+            // receives. The adapter is made before the first session can be
+            // forwarded, so a Bot stream never meets a gateway that would
+            // hand it to the Store worker.
+            let bot_ingress = BotIngress::new(worker_config.bot_peers());
             let session_link = bridge.clone();
+            let session_bots = bot_ingress.clone();
             let session_forwarder = tokio::spawn(async move {
                 while let Some(session) = session_link.accepted().await {
-                    if sessions_tx.send(session).await.is_err() {
+                    if !route_accepted_session(session, &sessions_tx, &session_bots).await {
                         break;
                     }
                 }
@@ -85,18 +130,14 @@ pub(crate) fn open(
                 }
             });
             (
-                koru_store_server::WorkerConfig::embedded_with_network_edge(
-                    store_root.to_path_buf(),
-                    segment,
-                    Arc::new(bridge),
-                    sessions_rx,
-                    connections_rx,
-                ),
+                worker_config,
                 Some((session_forwarder, connection_forwarder)),
+                Some(bot_ingress),
             )
         }
         None => (
             koru_store_server::WorkerConfig::embedded(store_root.to_path_buf(), segment),
+            None,
             None,
         ),
     };
@@ -301,6 +342,7 @@ pub(crate) fn open(
     Ok(Composition {
         state,
         bridge_forwarders,
+        bot_ingress,
     })
 }
 

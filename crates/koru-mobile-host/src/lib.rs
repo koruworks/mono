@@ -2654,6 +2654,9 @@ impl MobileHost {
                     via: peer.via,
                     display_name: view.display_name_of(peer.device_id),
                     build: view.build_of(peer.device_id),
+                    // A phone has no Bot route in M8: it serves no Bots and
+                    // reads none, so it admits no peer to the Bot protocol.
+                    own_device: false,
                 }
             })
             .collect::<Vec<_>>();
@@ -5969,6 +5972,7 @@ mod tests {
                     peer_protocol: Some(koru_sync_control::PEER_PROTOCOL_VERSION),
                     ..Default::default()
                 }),
+                own_device: false,
             }],
             local_build: None,
         });
@@ -5989,6 +5993,7 @@ mod tests {
                     peer_protocol: Some(koru_sync_control::PEER_PROTOCOL_VERSION),
                     ..Default::default()
                 }),
+                own_device: false,
             }],
             local_build: None,
         });

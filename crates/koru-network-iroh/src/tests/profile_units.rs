@@ -27,6 +27,7 @@ fn peer_for(workspace: WorkspaceId) -> protocol::AuthenticatedPeer {
         via: None,
         display_name: None,
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     })
 }
 

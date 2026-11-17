@@ -161,6 +161,7 @@ fn a_waiting_document_is_named_from_the_hosts_own_authorization() {
             via: None,
             display_name: Some("Pixel 8".into()),
             build: None,
+            own_device: false,
         }],
         local_build: None,
     });
@@ -239,6 +240,7 @@ fn a_device_that_advertised_a_copy_is_named_beside_the_origin() {
         via: None,
         display_name: Some(name.into()),
         build: None,
+        own_device: false,
     };
     host.install_authorization(koru_sync_control::AuthorizationSnapshot {
         session_id: koru_sync_control::ControlSessionId::new(),

@@ -28,6 +28,7 @@ fn all_data_peer() -> protocol::AuthenticatedPeer {
         via: None,
         display_name: None,
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     })
 }
 
@@ -42,6 +43,7 @@ fn scoped_peer(workspace: WorkspaceId) -> protocol::AuthenticatedPeer {
         via: None,
         display_name: None,
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     })
 }
 

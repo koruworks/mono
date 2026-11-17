@@ -13,6 +13,7 @@ use koru_sync_control::{AuthorizationSnapshot, AuthorizedPeer, ControlSessionId}
 use super::*;
 use crate::hydration::{BLOB_CHUNK_BYTES, MAX_BLOB_HYDRATION_BYTES};
 
+mod bots;
 mod profile_units;
 mod redial;
 mod root_catalog;
@@ -1425,6 +1426,7 @@ async fn a_durable_change_hint_discovers_a_document_created_after_connect() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -1442,6 +1444,7 @@ async fn a_durable_change_hint_discovers_a_document_created_after_connect() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -1558,6 +1561,7 @@ async fn profile_scope_discovers_workspace_content_without_an_exact_workspace_gr
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -1979,6 +1983,7 @@ async fn simultaneous_crossed_dials_settle_on_one_connection() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -2013,6 +2018,7 @@ async fn stale_edge_disconnect_does_not_hide_a_replacement_connection() {
         via: None,
         display_name: None,
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let store = Arc::new(InventoryStore::new(workspace, DocumentId::new()));
     let edge = RuntimeHandle::spawn(IrohNetworkConfig::isolated());
@@ -2085,6 +2091,7 @@ async fn a_hung_catalog_request_times_out_instead_of_wedging_the_pass() {
         via: None,
         display_name: Some("Hung catalog".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let peer = authenticated_test_peer(&authorized);
     let store: Arc<dyn protocol::ReplicationStore> =
@@ -2123,6 +2130,7 @@ async fn scoped_initiator_rejects_profile_metadata_before_digest_or_inventory() 
         via: None,
         display_name: Some("Malicious catalog".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let store: Arc<dyn protocol::ReplicationStore> =
         Arc::new(InventoryStore::new(workspace, DocumentId::new()));
@@ -2158,6 +2166,7 @@ async fn a_hung_inventory_request_times_out() {
         via: None,
         display_name: Some("Hung inventory".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let peer = authenticated_test_peer(&authorized);
     let store: Arc<dyn protocol::ReplicationStore> =
@@ -2203,6 +2212,7 @@ async fn a_profile_the_peer_removed_is_skipped_rather_than_retried_for_ever() {
         via: None,
         display_name: Some("Profile deleted there".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let peer = authenticated_test_peer(&authorized);
     let store: Arc<dyn protocol::ReplicationStore> =
@@ -2251,6 +2261,7 @@ async fn a_hung_blob_chunk_times_out_and_stays_retryable() {
         via: None,
         display_name: Some("Hung blob".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let peer = authenticated_test_peer(&authorized);
     let store = InventoryStore::new(workspace, DocumentId::new());
@@ -2278,6 +2289,7 @@ async fn a_sync_request_arriving_before_its_connected_event_still_starts_a_pass(
         via: None,
         display_name: Some("Early session".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let principal = device_principal(&authorized, 1);
     let store = Arc::new(InventoryStore::new(workspace, DocumentId::new()));
@@ -2324,6 +2336,7 @@ async fn a_hung_sync_announcement_records_failure() {
         via: None,
         display_name: Some("Hung announcement".into()),
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     let peer_id = authorized.device_id;
     let store = Arc::new(InventoryStore::new(workspace, DocumentId::new()));
@@ -2408,6 +2421,7 @@ async fn opaque_iroh_edges_leave_replication_parsing_with_session_runtimes() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -2425,6 +2439,7 @@ async fn opaque_iroh_edges_leave_replication_parsing_with_session_runtimes() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -2499,6 +2514,7 @@ async fn durable_change_hints_wait_for_half_a_second_of_quiet() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -2516,6 +2532,7 @@ async fn durable_change_hints_wait_for_half_a_second_of_quiet() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -2658,6 +2675,7 @@ async fn a_parked_hydration_answers_the_asker_and_still_finishes_later() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
     });
     b.replace_authorization(AuthorizationSnapshot {
@@ -2675,6 +2693,7 @@ async fn a_parked_hydration_answers_the_asker_and_still_finishes_later() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
     });
     let error = tokio::time::timeout(
@@ -2818,6 +2837,7 @@ async fn offline_blob_hydration_wakes_once_and_deduplicates_a_multi_chunk_transf
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -2835,6 +2855,7 @@ async fn offline_blob_hydration_wakes_once_and_deduplicates_a_multi_chunk_transf
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -2905,6 +2926,7 @@ async fn blob_hydration_falls_back_when_the_first_authorized_peer_is_missing_the
         via: None,
         display_name: None,
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     missing.replace_authorization(AuthorizationSnapshot {
         session_id: ControlSessionId::new(),
@@ -2935,6 +2957,7 @@ async fn blob_hydration_falls_back_when_the_first_authorized_peer_is_missing_the
                 via: None,
                 display_name: None,
                 build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+                own_device: false,
             },
             AuthorizedPeer {
                 relationship_id: RelationshipId::new(),
@@ -2946,6 +2969,7 @@ async fn blob_hydration_falls_back_when_the_first_authorized_peer_is_missing_the
                 via: None,
                 display_name: None,
                 build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+                own_device: false,
             },
         ],
         local_build: None,
@@ -3030,6 +3054,7 @@ async fn blob_hydration_asks_a_known_holder_first() {
                     via: None,
                     display_name: None,
                     build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+                    own_device: false,
                 })
                 .collect(),
             local_build: None,
@@ -3105,6 +3130,7 @@ async fn a_parked_hydration_names_the_offline_holder() {
             via: None,
             display_name: Some("Target".into()),
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3122,6 +3148,7 @@ async fn a_parked_hydration_names_the_offline_holder() {
             via: None,
             display_name: Some("Studio".into()),
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3196,6 +3223,7 @@ async fn a_parked_hydration_names_the_durable_origin_after_the_session_forgets()
             via: None,
             display_name: Some("Target".into()),
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3213,6 +3241,7 @@ async fn a_parked_hydration_names_the_durable_origin_after_the_session_forgets()
             via: None,
             display_name: Some("Studio".into()),
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3291,6 +3320,7 @@ async fn blob_hydration_rejects_bytes_that_do_not_match_the_announced_hash() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3308,6 +3338,7 @@ async fn blob_hydration_rejects_bytes_that_do_not_match_the_announced_hash() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3365,6 +3396,7 @@ async fn connected_pair(
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3382,6 +3414,7 @@ async fn connected_pair(
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3443,6 +3476,7 @@ async fn peers_on_different_protocol_numbers_stay_connected_but_do_not_sync() {
                     via: None,
                     display_name: None,
                     build: Some(build_on_protocol(peer_protocol)),
+                    own_device: false,
                 }],
                 local_build: Some(build_on_protocol(local_protocol)),
             }
@@ -3618,6 +3652,7 @@ async fn a_durable_change_hint_transfers_new_manifest_crdt_bytes() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3635,6 +3670,7 @@ async fn a_durable_change_hint_transfers_new_manifest_crdt_bytes() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3704,6 +3740,7 @@ async fn an_unchanged_large_inventory_does_not_delay_a_later_manifest() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -3721,6 +3758,7 @@ async fn an_unchanged_large_inventory_does_not_delay_a_later_manifest() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -4073,6 +4111,7 @@ async fn trust_gossip_batches_arrive_without_interrupting_the_connection() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -4090,6 +4129,7 @@ async fn trust_gossip_batches_arrive_without_interrupting_the_connection() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -4239,6 +4279,7 @@ async fn a_connection_that_dies_on_first_use_accumulates_backoff() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -4278,6 +4319,7 @@ async fn a_connection_that_proves_itself_resets_its_backoff() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -4338,6 +4380,7 @@ async fn urgent_lifecycle_and_revocation_records_cross_before_authorization_chan
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -4355,6 +4398,7 @@ async fn urgent_lifecycle_and_revocation_records_cross_before_authorization_chan
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -4614,6 +4658,7 @@ async fn storeless_pair() -> (
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -4795,6 +4840,7 @@ async fn an_inbound_connection_survives_the_outbound_retry_loop() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     };
@@ -4876,6 +4922,7 @@ fn snapshot(peer: DeviceId, endpoint_id: ReplicationEndpointId) -> Authorization
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     }
@@ -4959,6 +5006,7 @@ async fn a_relay_only_peer_connects_with_path_kind_relay() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url.to_string()]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_until(|| runtime.endpoint_addr().is_some()).await;
@@ -4976,6 +5024,7 @@ async fn a_relay_only_peer_connects_with_path_kind_relay() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -5025,6 +5074,7 @@ async fn a_dead_relay_surfaces_the_stable_relay_unreachable_code() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_until(|| runtime.status().endpoint_id.is_some()).await;
@@ -5227,6 +5277,7 @@ async fn the_relay_status_reads_connected_with_the_relays_host() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url.to_string()]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_within(Duration::from_secs(10), || {
@@ -5258,6 +5309,7 @@ async fn a_relay_that_dies_mid_session_reads_disconnected() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url.to_string()]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_within(Duration::from_secs(10), || {
@@ -5285,6 +5337,7 @@ async fn disabled_relays_read_off() {
         relay_provider: RelayProviderConfig::Disabled,
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     assert_eq!(runtime.status().relay, RelayConnectionStatus::Off);
     runtime.provision_endpoint(secret.secret_bytes());
@@ -5318,6 +5371,7 @@ async fn switching_relays_on_live_moves_the_status_from_off_to_connected() {
         relay_provider: RelayProviderConfig::Disabled,
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_until(|| runtime.status().endpoint_id.is_some()).await;
@@ -5374,6 +5428,7 @@ async fn an_unauthorized_peer_surfaces_authorization_denial_not_relay_failure() 
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_until(|| runtime.status().endpoint_id.is_some()).await;
@@ -5432,6 +5487,7 @@ async fn switching_relays_off_leaves_a_direct_connection_untouched() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url.clone()]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     };
     let desktop = RuntimeHandle::spawn(config());
     let phone = RuntimeHandle::spawn(config());
@@ -5454,6 +5510,7 @@ async fn switching_relays_off_leaves_a_direct_connection_untouched() {
                 via: None,
                 display_name: None,
                 build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+                own_device: false,
             }],
             local_build: None,
         };
@@ -5881,6 +5938,7 @@ async fn switching_relays_off_and_on_keeps_identity_and_restores_the_peer() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url.to_string()]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_until(|| runtime.endpoint_addr().is_some()).await;
@@ -5894,6 +5952,7 @@ async fn switching_relays_off_and_on_keeps_identity_and_restores_the_peer() {
         via: None,
         display_name: None,
         build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+        own_device: false,
     };
     runtime.replace_authorization(AuthorizationSnapshot {
         session_id: ControlSessionId::new(),
@@ -6050,6 +6109,7 @@ async fn switching_relays_off_keeps_a_direct_peer_connected() {
         relay_provider: RelayProviderConfig::CustomUrls(vec![relay_url.to_string()]),
         address_lookup: AddressLookupConfig::Disabled,
         direct_paths: DirectPathPolicy::Prefer,
+        alpns: default_alpns(),
     });
     runtime.provision_endpoint(secret.secret_bytes());
     wait_until(|| runtime.endpoint_addr().is_some()).await;
@@ -6067,6 +6127,7 @@ async fn switching_relays_off_keeps_a_direct_peer_connected() {
             via: None,
             display_name: None,
             build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
+            own_device: false,
         }],
         local_build: None,
     });
@@ -6418,6 +6479,7 @@ fn fenced_peer(workspace: WorkspaceId) -> protocol::AuthenticatedPeer {
         via: None,
         display_name: None,
         build: None,
+        own_device: false,
     })
 }
 

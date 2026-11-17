@@ -347,3 +347,228 @@ fn a_platform_without_voice_supervises_nothing() {
         "a platform refusal must not name the switch: {refused}"
     );
 }
+
+// ----------------------------------------------------------------------
+// M8, cohort `m8_own_device_bit`: the bit as the trust records give it.
+//
+// The snapshot's peers are built by the same function the running Agent
+// calls, from an **in-memory trust repository** filled with signed records.
+// No Store, no control channel and no file is opened.
+// ----------------------------------------------------------------------
+
+mod own_device {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use koru_device::{
+        AllDataGrantV1, DeviceDescriptorV1, DeviceId, DeviceSigningKey, ProfileGrantV1,
+        ProfileLifecycleStateV1, ProfileLifecycleV1, RecordId, RelationshipId,
+        ReplicationEndpointSecret, TrustRecord, TrustRelationshipV1, TrustRepository,
+        transcript_hash, verify_gossip_record,
+    };
+    use koru_store_core::{ProfileId, WorkspaceId};
+    use koru_sync_control::AuthorizedPeer;
+
+    use crate::identity::SqliteTrustRepository;
+    use crate::service::authorized_peers;
+
+    struct Party {
+        key: DeviceSigningKey,
+        descriptor: DeviceDescriptorV1,
+    }
+
+    fn party(name: &str) -> Party {
+        let key = DeviceSigningKey::generate();
+        let descriptor = DeviceDescriptorV1::new(
+            DeviceId::new(),
+            name.to_owned(),
+            &key,
+            ReplicationEndpointSecret::generate().endpoint_id(),
+            1,
+        );
+        Party { key, descriptor }
+    }
+
+    fn relationship(a: &Party, b: &Party) -> TrustRelationshipV1 {
+        let id = RelationshipId::new();
+        TrustRelationshipV1::sign(
+            id,
+            a.descriptor.clone(),
+            b.descriptor.clone(),
+            transcript_hash(id.to_storage().as_bytes()),
+            3,
+            &a.key,
+            &b.key,
+        )
+    }
+
+    /// Both directional all-data grants of a QR pairing.
+    fn all_data(relationship: &TrustRelationshipV1, a: &Party, b: &Party) -> Vec<TrustRecord> {
+        let grant = |from: &Party, to: &Party| {
+            TrustRecord::AllDataGrant(AllDataGrantV1::sign(
+                relationship.relationship_id,
+                to.descriptor.device_id,
+                from.descriptor.device_id,
+                RecordId::new(),
+                4,
+                &from.key,
+            ))
+        };
+        vec![grant(a, b), grant(b, a)]
+    }
+
+    /// Both directional grants of one Profile: what account enrollment
+    /// gives.
+    fn profile(
+        relationship: &TrustRelationshipV1,
+        profile: ProfileId,
+        a: &Party,
+        b: &Party,
+    ) -> Vec<TrustRecord> {
+        let grant = |from: &Party, to: &Party| {
+            TrustRecord::ProfileGrant(ProfileGrantV1::sign(
+                relationship.relationship_id,
+                RecordId::new(),
+                profile,
+                to.descriptor.device_id,
+                from.descriptor.device_id,
+                4,
+                &from.key,
+            ))
+        };
+        vec![grant(a, b), grant(b, a)]
+    }
+
+    fn repository(local: &Party) -> SqliteTrustRepository {
+        let mut repository = SqliteTrustRepository::in_memory().unwrap();
+        repository.initialize(&local.descriptor).unwrap();
+        repository
+    }
+
+    fn apply(repository: &mut SqliteTrustRepository, records: Vec<TrustRecord>) {
+        for record in records {
+            let view = repository.trust_view().unwrap();
+            let verified = verify_gossip_record(&view, record).expect("the record verifies");
+            repository.apply(verified).unwrap();
+        }
+    }
+
+    fn peers(
+        repository: &SqliteTrustRepository,
+        local_profiles: &BTreeSet<ProfileId>,
+    ) -> BTreeMap<DeviceId, AuthorizedPeer> {
+        let view = repository.trust_view().unwrap();
+        let exportable: BTreeMap<WorkspaceId, ProfileId> = local_profiles
+            .iter()
+            .map(|profile| (WorkspaceId::new(), *profile))
+            .collect();
+        authorized_peers(&view, &exportable, local_profiles)
+            .into_iter()
+            .map(|peer| (peer.device_id, peer))
+            .collect()
+    }
+
+    #[test]
+    fn m8_own_device_bit_is_true_only_for_a_directly_paired_all_data_device() {
+        let local = party("This computer");
+        let paired = party("Paired by QR");
+        let introduced = party("Paired only with the paired one");
+        let enrolled = party("Enrolled, one Profile");
+        let shared_profile = ProfileId::new();
+        let mut repository = repository(&local);
+
+        // This computer and `paired`: a QR pairing with all data.
+        let direct = relationship(&local, &paired);
+        apply(
+            &mut repository,
+            vec![TrustRecord::Relationship(direct.clone())],
+        );
+        apply(&mut repository, all_data(&direct, &local, &paired));
+        // `paired` and `introduced`: their own QR pairing. This computer
+        // has no pairing with `introduced`.
+        let onward = relationship(&paired, &introduced);
+        apply(
+            &mut repository,
+            vec![TrustRecord::Relationship(onward.clone())],
+        );
+        apply(&mut repository, all_data(&onward, &paired, &introduced));
+        // This computer and `enrolled`: Profile grants only.
+        let enrollment = relationship(&local, &enrolled);
+        apply(
+            &mut repository,
+            vec![TrustRecord::Relationship(enrollment.clone())],
+        );
+        apply(
+            &mut repository,
+            profile(&enrollment, shared_profile, &local, &enrolled),
+        );
+
+        let peers = peers(&repository, &BTreeSet::from([shared_profile]));
+        assert_eq!(peers.len(), 3);
+
+        let paired = &peers[&paired.descriptor.device_id];
+        assert!(paired.all_data);
+        assert_eq!(paired.via, None);
+        assert!(paired.own_device, "paired directly, with all data");
+
+        // On the all-data graph, and reached only through another device.
+        let introduced = &peers[&introduced.descriptor.device_id];
+        assert!(introduced.all_data);
+        assert_eq!(introduced.via, Some(paired.device_id));
+        assert!(!introduced.own_device, "not paired with this computer");
+
+        // Paired directly, with a Profile and not all data.
+        let enrolled = &peers[&enrolled.descriptor.device_id];
+        assert!(!enrolled.all_data);
+        assert_eq!(enrolled.via, None);
+        assert!(!enrolled.authorized_profiles.is_empty());
+        assert!(!enrolled.own_device, "Profile grants only");
+    }
+
+    #[test]
+    fn m8_own_device_bit_stays_true_when_a_profile_was_deleted() {
+        let local = party("This computer");
+        let paired = party("Paired by QR");
+        let kept = ProfileId::new();
+        let deleted = ProfileId::new();
+        let mut repository = repository(&local);
+        let direct = relationship(&local, &paired);
+        apply(
+            &mut repository,
+            vec![TrustRecord::Relationship(direct.clone())],
+        );
+        apply(&mut repository, all_data(&direct, &local, &paired));
+        let profiles = BTreeSet::from([kept, deleted]);
+
+        let before = peers(&repository, &profiles);
+        let before = &before[&paired.descriptor.device_id];
+        assert!(before.all_data);
+        assert!(before.own_device);
+
+        // A Profile is deleted on this computer.
+        let lifecycle = ProfileLifecycleV1::sign(
+            RecordId::new(),
+            local.descriptor.device_id,
+            deleted,
+            ProfileLifecycleStateV1::Deleted,
+            1,
+            uuid::Uuid::new_v4(),
+            50,
+            &local.key,
+        );
+        let verified = lifecycle.verify(local.key.public_key()).unwrap();
+        repository.apply(verified).unwrap();
+
+        let after = peers(&repository, &profiles);
+        let after = &after[&paired.descriptor.device_id];
+        // The replication scope narrows to the Profiles that remain...
+        assert!(!after.all_data, "all_data is cleared by the deletion");
+        assert_eq!(after.authorized_profiles, vec![kept]);
+        // ...and the device is still the person's own.
+        assert!(after.own_device, "own_device follows the pairing");
+        assert_eq!(after.via, None);
+
+        // So the grant changed, and the bit is not what changed.
+        assert_ne!(before, after);
+        assert_eq!(before.own_device, after.own_device);
+    }
+}

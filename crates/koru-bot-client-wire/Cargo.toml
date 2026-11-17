@@ -1,0 +1,26 @@
+[package]
+rust-version.workspace = true
+name = "koru-bot-client-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Bot client protocol 1: the frame, the hello, the feed, command and live messages, and replica payload format 1 a linked device reads another computer's Bots with."
+
+# **Carrier-neutral, deliberately.** This crate names no iroh type, no network
+# bridge, no trust record and no database. The same messages ride the P2P
+# carrier (`koru/bots/1`) in M8 and a server carrier later, so nothing here
+# may know which one it is on. `src/tests/surface.rs` holds this manifest to
+# that.
+
+[dependencies]
+# The embedded public shapes that are not already in `koru-ai-wire`: `Bot`,
+# `Chat`, `Message`, the ids, `TeamPauseView`.
+koru-ai-core = { path = "../koru-ai-core" }
+# The public request and event shapes a command and a live event carry.
+koru-ai-wire = { path = "../koru-ai-wire" }
+serde.workspace = true
+# With no feature of its own, on purpose: turning one on here would turn it
+# on for every crate in the build. `src/json.rs` says what that rules out.
+serde_json.workspace = true
+uuid.workspace = true

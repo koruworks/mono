@@ -91,6 +91,7 @@ fn snapshot_with_peer_on(
             via: None,
             display_name: Some("Older".into()),
             build: Some(build_on_protocol(peer_protocol)),
+            own_device: false,
         }],
         local_build: Some(build_on_protocol(PEER_PROTOCOL_VERSION)),
     }

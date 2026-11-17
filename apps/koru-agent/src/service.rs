@@ -507,83 +507,12 @@ fn run_sync_control(
             let repository = crate::identity::SqliteTrustRepository::open(&paths.identity_db())
                 .map_err(|error| error.to_string())?;
             let view = repository.trust_view().map_err(|error| error.to_string())?;
-            let authorization = koru_device::Authorization::build(&view, &exportable);
-            let devices = koru_device::Authorization::devices(&view);
-            let deleted_profiles = view.deleted_profiles();
-            let vias: BTreeMap<koru_device::DeviceId, Option<koru_device::DeviceId>> = devices
+            let peers = authorized_peers(&view, &exportable, &local_profiles);
+            peer_names = peers
                 .iter()
-                .map(|peer| (peer.device_id, peer.via))
+                .filter_map(|peer| peer.display_name.clone().map(|name| (peer.device_id, name)))
                 .collect();
-            let scopes: BTreeMap<koru_device::DeviceId, (bool, Vec<koru_store_core::ProfileId>)> =
-                devices
-                    .iter()
-                    .map(|peer| {
-                        let mut profiles = peer.authorized_profiles.clone();
-                        let all_data = peer.all_data && deleted_profiles.is_empty();
-                        if peer.all_data && !deleted_profiles.is_empty() {
-                            profiles.extend(local_profiles.iter().copied());
-                            profiles.retain(|profile| !deleted_profiles.contains(profile));
-                        }
-                        (peer.device_id, (all_data, profiles.into_iter().collect()))
-                    })
-                    .collect();
-            let names: BTreeMap<koru_device::DeviceId, Option<String>> = devices
-                .iter()
-                .map(|peer| (peer.device_id, view.display_name_of(peer.device_id)))
-                .collect();
-            peer_names = names
-                .iter()
-                .filter_map(|(id, name)| name.clone().map(|name| (*id, name)))
-                .collect();
-            let builds: BTreeMap<koru_device::DeviceId, Option<koru_device::BuildPayload>> =
-                devices
-                    .iter()
-                    .map(|peer| (peer.device_id, view.build_of(peer.device_id)))
-                    .collect();
             let local_build = view.build_of(view.local_device.device_id);
-            let mut grouped: BTreeMap<
-                (
-                    koru_device::RelationshipId,
-                    koru_device::DeviceId,
-                    koru_device::ReplicationEndpointId,
-                ),
-                Vec<koru_store_core::WorkspaceId>,
-            > = BTreeMap::new();
-            for peer in &devices {
-                grouped
-                    .entry((peer.relationship_id, peer.device_id, peer.endpoint_id))
-                    .or_default();
-            }
-            for entry in &authorization.snapshot().entries {
-                grouped
-                    .entry((entry.relationship_id, entry.device_id, entry.endpoint_id))
-                    .or_default()
-                    .push(entry.workspace_id);
-            }
-            let peers: Vec<_> = grouped
-                .into_iter()
-                .map(
-                    |((relationship_id, device_id, endpoint_id), mut workspaces)| {
-                        workspaces.sort();
-                        workspaces.dedup();
-                        let (all_data, authorized_profiles) = scopes
-                            .get(&device_id)
-                            .cloned()
-                            .unwrap_or((false, Vec::new()));
-                        AuthorizedPeer {
-                            relationship_id,
-                            device_id,
-                            endpoint_id,
-                            all_data,
-                            authorized_profiles,
-                            workspaces,
-                            via: vias.get(&device_id).copied().flatten(),
-                            display_name: names.get(&device_id).cloned().flatten(),
-                            build: builds.get(&device_id).cloned().flatten(),
-                        }
-                    },
-                )
-                .collect();
 
             if previous.as_ref() != Some(&peers) {
                 sequence += 1;
@@ -762,6 +691,109 @@ fn run_sync_control(
 /// every debounce reset, several lines per keystroke. The switch is
 /// `KORU_SYNC_DEBUG`, shared with the shell's half of the same conversation so
 /// that one variable produces both ends of it.
+/// The peers of one authorization snapshot, from the trust records as they
+/// are now, the workspaces this device may export and the Profiles it holds.
+///
+/// A pure function of its three inputs, so the snapshot can be checked
+/// against an in-memory trust repository without a Store or a control
+/// channel.
+///
+/// **`own_device` and `all_data` are two facts.** Both start from the
+/// all-data graph. `all_data` is the replication scope and is cleared when a
+/// Profile was deleted on this device, because the remaining Profiles are
+/// then named one by one. `own_device` says whose device the peer is: on the
+/// all-data graph and directly paired. A deleted Profile does not change
+/// that, so it stays true (M8).
+pub(crate) fn authorized_peers(
+    view: &koru_device::TrustView,
+    exportable: &std::collections::BTreeMap<
+        koru_store_core::WorkspaceId,
+        koru_store_core::ProfileId,
+    >,
+    local_profiles: &std::collections::BTreeSet<koru_store_core::ProfileId>,
+) -> Vec<koru_sync_control::AuthorizedPeer> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use koru_sync_control::AuthorizedPeer;
+
+    let authorization = koru_device::Authorization::build(view, exportable);
+    let devices = koru_device::Authorization::devices(view);
+    let deleted_profiles = view.deleted_profiles();
+    let vias: BTreeMap<koru_device::DeviceId, Option<koru_device::DeviceId>> = devices
+        .iter()
+        .map(|peer| (peer.device_id, peer.via))
+        .collect();
+    let own_devices: BTreeSet<koru_device::DeviceId> = devices
+        .iter()
+        .filter(|peer| AuthorizedPeer::own_device_rule(peer.all_data, peer.via))
+        .map(|peer| peer.device_id)
+        .collect();
+    let scopes: BTreeMap<koru_device::DeviceId, (bool, Vec<koru_store_core::ProfileId>)> = devices
+        .iter()
+        .map(|peer| {
+            let mut profiles = peer.authorized_profiles.clone();
+            let all_data = peer.all_data && deleted_profiles.is_empty();
+            if peer.all_data && !deleted_profiles.is_empty() {
+                profiles.extend(local_profiles.iter().copied());
+                profiles.retain(|profile| !deleted_profiles.contains(profile));
+            }
+            (peer.device_id, (all_data, profiles.into_iter().collect()))
+        })
+        .collect();
+    let names: BTreeMap<koru_device::DeviceId, Option<String>> = devices
+        .iter()
+        .map(|peer| (peer.device_id, view.display_name_of(peer.device_id)))
+        .collect();
+    let builds: BTreeMap<koru_device::DeviceId, Option<koru_device::BuildPayload>> = devices
+        .iter()
+        .map(|peer| (peer.device_id, view.build_of(peer.device_id)))
+        .collect();
+    let mut grouped: BTreeMap<
+        (
+            koru_device::RelationshipId,
+            koru_device::DeviceId,
+            koru_device::ReplicationEndpointId,
+        ),
+        Vec<koru_store_core::WorkspaceId>,
+    > = BTreeMap::new();
+    for peer in &devices {
+        grouped
+            .entry((peer.relationship_id, peer.device_id, peer.endpoint_id))
+            .or_default();
+    }
+    for entry in &authorization.snapshot().entries {
+        grouped
+            .entry((entry.relationship_id, entry.device_id, entry.endpoint_id))
+            .or_default()
+            .push(entry.workspace_id);
+    }
+    grouped
+        .into_iter()
+        .map(
+            |((relationship_id, device_id, endpoint_id), mut workspaces)| {
+                workspaces.sort();
+                workspaces.dedup();
+                let (all_data, authorized_profiles) = scopes
+                    .get(&device_id)
+                    .cloned()
+                    .unwrap_or((false, Vec::new()));
+                AuthorizedPeer {
+                    relationship_id,
+                    device_id,
+                    endpoint_id,
+                    all_data,
+                    authorized_profiles,
+                    workspaces,
+                    via: vias.get(&device_id).copied().flatten(),
+                    display_name: names.get(&device_id).cloned().flatten(),
+                    build: builds.get(&device_id).cloned().flatten(),
+                    own_device: own_devices.contains(&device_id),
+                }
+            },
+        )
+        .collect()
+}
+
 fn sync_log(args: std::fmt::Arguments<'_>) {
     koru_store_client::debug::write(args);
 }

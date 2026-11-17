@@ -232,6 +232,31 @@ pub struct AuthorizedPeer {
     /// line. Carries no authority either.
     #[serde(default)]
     pub build: Option<koru_device::BuildPayload>,
+    /// **The person's own device, paired directly** (M8): on the all-data
+    /// graph of the local device and with no `via`. It is what admits a peer
+    /// to the Bot client protocol, as a client of this device's Bots and as
+    /// an owner whose Bots this device may read.
+    ///
+    /// It is not `all_data`. The Agent clears `all_data` when a Profile was
+    /// deleted on this device, which narrows what replicates and does not
+    /// make the peer someone else's device; `own_device` stays true then.
+    ///
+    /// Absent in a snapshot written by a build before M8, which reads as
+    /// `false`: nothing is admitted to Bots. A reader from before M8 ignores
+    /// the field, so the control protocol version does not move.
+    #[serde(default)]
+    pub own_device: bool,
+}
+
+impl AuthorizedPeer {
+    /// The own-device rule, from the two facts of the trust walk: the device
+    /// is on the all-data graph (`all_data_graph`, before any Profile
+    /// deletion clears the replication scope) and is directly paired (`via`
+    /// is `None`). A device with Profile grants only, and a device reached
+    /// only through another device, are not own devices.
+    pub fn own_device_rule(all_data_graph: bool, via: Option<DeviceId>) -> bool {
+        all_data_graph && via.is_none()
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1894,7 +1919,9 @@ impl ControlHost {
 impl AuthorizationSnapshot {
     /// True when the two snapshots grant the same thing, ignoring session
     /// bookkeeping (`session_id`, `sequence`) and cosmetics (`display_name`,
-    /// `via`). `build` and `local_build` ARE significant: the build-drift
+    /// `via`). `own_device` IS significant: it is what admits a peer's Bot
+    /// connections, so a change of it must fence and close them like any
+    /// other change of the grant. `build` and `local_build` ARE significant: the build-drift
     /// sync-refusal gate is frozen into each peer session when it spawns and
     /// is only re-evaluated by a reconnect, so treating build as cosmetic
     /// would leave a stale gate on a live connection.
@@ -1913,6 +1940,7 @@ impl AuthorizationSnapshot {
                 Vec<ProfileId>,
                 Vec<WorkspaceId>,
                 Option<koru_device::BuildPayload>,
+                bool,
             ),
         > {
             let mut snapshot = snapshot.clone();
@@ -1930,6 +1958,7 @@ impl AuthorizationSnapshot {
                             peer.authorized_profiles,
                             peer.workspaces,
                             peer.build,
+                            peer.own_device,
                         ),
                     )
                 })

@@ -177,3 +177,61 @@ fn m8_gateway_team_paused_team_commands_ride_only_the_vouched_management_route()
         ]
     );
 }
+
+/// M8: what a linked device holds, and that no bearer can hold it.
+#[test]
+fn m8_linked_device_holds_exactly_three_scopes_and_is_never_a_bearer() {
+    let principal = GatewayPrincipal::linked_device("linked-device");
+    assert_eq!(
+        principal.scopes,
+        vec!["bots.read", "bots.run", "bots.configure"]
+    );
+    assert_eq!(BOTS_CONFIGURE_SCOPE, "bots.configure");
+    // The set is fixed: nothing a caller names widens or narrows it.
+    for requested in [
+        vec![],
+        vec!["bots.manage".to_owned()],
+        vec![
+            "store.edit_documents".to_owned(),
+            "workspace.destroy".to_owned(),
+        ],
+    ] {
+        assert_eq!(
+            effective_scopes(&requested, Admission::LinkedDevice),
+            principal.scopes
+        );
+    }
+    // `bots.manage` stays vouched-only.
+    assert!(!principal.scopes.contains(&"bots.manage".into()));
+
+    // `bots.configure` is in neither list of a bearer: no local caller can
+    // hold it, named or not, vouched or not.
+    for admission in [Admission::Ordinary, Admission::Vouched] {
+        assert!(!effective_scopes(&[], admission).contains(&BOTS_CONFIGURE_SCOPE.into()));
+        assert!(
+            !effective_scopes(&[BOTS_CONFIGURE_SCOPE.into()], admission)
+                .contains(&BOTS_CONFIGURE_SCOPE.into())
+        );
+    }
+
+    // And the admission is never minted as an HTTP bearer: asked for, it
+    // mints an ordinary caller.
+    let authority = SessionAuthority::default();
+    let (bearer, _) = authority.mint_admitted(
+        "claims-to-be-linked",
+        &[
+            "bots.read".into(),
+            BOTS_CONFIGURE_SCOPE.into(),
+            "bots.manage".into(),
+        ],
+        Admission::LinkedDevice,
+        0,
+    );
+    let minted = authority.resolve(&bearer, 1).unwrap();
+    assert_eq!(minted.scopes, vec!["bots.read"]);
+    let (bearer, _) = authority.mint_admitted("names-nothing", &[], Admission::LinkedDevice, 0);
+    assert_eq!(
+        authority.resolve(&bearer, 1).unwrap().scopes,
+        effective_scopes(&[], Admission::Ordinary)
+    );
+}

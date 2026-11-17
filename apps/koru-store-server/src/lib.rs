@@ -7,6 +7,7 @@
 //! future separate deployment. Embedders use [`StoreWorker`] directly.
 
 mod attributes;
+pub mod bot_peers;
 mod cli;
 pub mod cloud_inspection;
 pub mod cloud_inspection_host;
@@ -27,6 +28,7 @@ mod tagnames;
 mod tasks;
 mod tray;
 
+pub use bot_peers::{BotPeer, BotPeers, BotPeersSnapshot};
 pub use daemon::blob_sync;
 pub use daemon::cloud_driver;
 pub use daemon::cloud_sync;

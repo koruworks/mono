@@ -1,0 +1,1 @@
+{"type":"command","request_id":"00000000-0000-4000-8000-000000000010","owner_device":"00000000-0000-4000-8000-000000000004","command":{"kind":"answer_decision","tool_id":"00000000-0000-4000-8000-00000000000a","approve":true,"decision":{"choice":"allow_once"}}}
