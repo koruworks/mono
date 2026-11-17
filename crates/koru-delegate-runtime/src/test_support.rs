@@ -218,6 +218,14 @@ pub fn replay_boot_pair(
     replay_boot_pair_untold(orchestrator, barrier, policy);
 }
 
+/// Make `orchestrator` behave as the build before Koru's own stop of an
+/// asking session was told apart from that session's process ending
+/// (commit 17ed0bd9). Only to lay down the state that build left in a
+/// ledger; a test then starts a current process over the same ports.
+pub fn as_before_the_origin_stop_was_recognized(orchestrator: &mut Orchestrator) {
+    orchestrator.origin_stop_unrecognized = true;
+}
+
 /// Tell this run of the delegate that `owner`'s team was never paused, as
 /// the AI worker does after each `Hello` for a team with no row. Nothing is
 /// sent when this run already holds a value for `owner`: a test that paused

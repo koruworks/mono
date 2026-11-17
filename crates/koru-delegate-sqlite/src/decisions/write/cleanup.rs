@@ -148,7 +148,20 @@ pub(crate) fn validate_cleanup_on(
             && *target == observed.cleanup_target
             && observed.current_attempt.retired
             && observed.current_attempt.phase.is_terminal()
-            && observed.current_attempt.host_instance == Some(creation_retirement.host)
+            // The host that ran the attempt, or no evidence from another
+            // incarnation of it (the restart table's row for every Run,
+            // `classify_at_restart`): the old incarnation is gone and
+            // nothing of it survived.
+            && observed
+                .current_attempt
+                .host_instance
+                .is_some_and(|asked| {
+                    asked == creation_retirement.host
+                        || matches!(
+                            creation_retirement.result,
+                            ObservedRetirementResult::NoEvidence {}
+                        )
+                })
             && attempt_retirement.retired_at_ms == observed.current_attempt.updated_at_ms
             && creation_retirement.observed_at_ms <= now
             && native_drain.observed_at_ms <= now,

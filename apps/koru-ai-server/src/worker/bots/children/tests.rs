@@ -34,6 +34,8 @@ struct ChildOwner {
     asks: Mutex<Vec<ChildRequest>>,
     /// Requests the owner holds, by its key; replay answers the same.
     held: Mutex<Option<(ChildRequested, Vec<ChildRequestReceipt>)>>,
+    /// How many boot `Hello`s this owner was sent.
+    hellos: Mutex<usize>,
 }
 impl ChildOwner {
     fn new() -> Arc<Self> {
@@ -42,6 +44,7 @@ impl ChildOwner {
             answer: Mutex::new(Answer::Create),
             asks: Mutex::default(),
             held: Mutex::default(),
+            hellos: Mutex::default(),
         })
     }
     fn answer(&self, answer: Answer) {
@@ -97,13 +100,16 @@ impl ChildOwner {
 impl BotDelegatePort for ChildOwner {
     fn execute(&self, command: D) -> Result<BotReply, koru_delegate_api::Failure> {
         match command {
-            D::Hello { .. } => Ok(BotReply::Hello {
-                hello: d::BotHello {
-                    boot: self.boot,
-                    entries: vec![],
-                    next: None,
-                },
-            }),
+            D::Hello { .. } => {
+                *self.hellos.lock().unwrap() += 1;
+                Ok(BotReply::Hello {
+                    hello: d::BotHello {
+                        boot: self.boot,
+                        entries: vec![],
+                        next: None,
+                    },
+                })
+            }
             D::RequestChild { request, boot } => {
                 assert_eq!(boot, self.boot, "the ask carries the owner's boot");
                 use koru_delegate_core::decisions::DecisionValidate;

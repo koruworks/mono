@@ -155,6 +155,16 @@ impl DecisionControlAction {
         if before.is_terminal() {
             return require(effects.event.is_none() && effects.steps.as_slice().is_empty());
         }
+        // A Run that is interrupted already cannot be interrupted again: the
+        // status has no such transition. That is the state a wait's final
+        // cleanup finds when the Source that reported the process end has
+        // interrupted the Run first. Its Interrupt then records the cleanup
+        // and nothing else, exactly as on a terminal status. Only this
+        // action on this status: every other pair keeps its one mapping.
+        if matches!(self, Self::Interrupt { .. }) && matches!(before, RunStatus::Interrupted { .. })
+        {
+            return require(effects.event.is_none() && effects.steps.as_slice().is_empty());
+        }
         let (event, step) = self.mapping();
         require(
             effects.event == event

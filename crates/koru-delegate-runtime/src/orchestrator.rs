@@ -388,6 +388,11 @@ pub struct Orchestrator {
     children: children::ChildState,
     /// The team pause as this run was told it (M8). Memory only.
     team: team::TeamState,
+    /// Tests only: behave as the build before the origin stop was told
+    /// apart from a process end, so a test can lay down the state that build
+    /// left in a person's ledger and then start a current process over it.
+    #[cfg(any(test, feature = "test-support"))]
+    pub(crate) origin_stop_unrecognized: bool,
 }
 
 impl Orchestrator {
@@ -407,6 +412,8 @@ impl Orchestrator {
             decision_authority_seeded: false,
             private_settled: std::collections::BTreeSet::new(),
             children: children::ChildState::default(),
+            #[cfg(any(test, feature = "test-support"))]
+            origin_stop_unrecognized: false,
             team: team::TeamState::default(),
         }
     }

@@ -142,6 +142,14 @@ pub(super) fn build_target(
                 });
                 steps.push(step);
             }
+            // The Run is interrupted already: the Source that reported its
+            // process end said so before this cleanup was confirmed. A
+            // second interrupt is not a transition the status has, and
+            // refusing it here would keep the wait `cleanup_pending`, the
+            // admission executing and the Bot busy for ever. The final
+            // Control then records the cleanup and changes nothing else.
+            DecisionControlAction::Interrupt { .. }
+                if matches!(context.predecessor.status, RunStatus::Interrupted { .. }) => {}
             DecisionControlAction::Interrupt { prior_attempt } => {
                 event = Some(RunEvent::Interrupt { prior_attempt });
                 let step = TimelineEntry::new(

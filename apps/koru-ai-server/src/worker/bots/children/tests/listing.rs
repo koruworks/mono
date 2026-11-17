@@ -417,3 +417,47 @@ fn m6_ask_listing_an_ask_in_the_order_a_real_run_takes_is_admitted() {
         "the delegate was sent {sent} ask(s)"
     );
 }
+
+/// Cohort `m6_ask_wake`, the AI worker's half. A Bot with no unsettled work
+/// holds no boot acknowledgment on the delegate, and without one its queued
+/// Run is never dispatched. An admitted ask gives the asked Bot such work
+/// through `RequestChild`, not through a `Submit`, so nothing asked the
+/// delegate to synchronize it: the asked Bot's Run stayed queued until some
+/// unrelated change of a Bot, or its fifteen-minute budget. The worker now
+/// requests the boot pass when the ask is accepted, as after every Submit.
+#[test]
+fn m6_ask_wake_an_admitted_ask_asks_the_delegate_to_synchronize_the_asked_bot() {
+    let w = world();
+    let hellos = |w: &World| *w.owner.hellos.lock().unwrap();
+    // The worker's own start probes and walks first: wait until it is quiet.
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let mut seen = hellos(&w);
+    let mut quiet_since = Instant::now();
+    while quiet_since.elapsed() < Duration::from_millis(2500) {
+        assert!(Instant::now() < deadline, "the boot pass never went quiet");
+        std::thread::sleep(Duration::from_millis(50));
+        if hellos(&w) != seen {
+            seen = hellos(&w);
+            quiet_since = Instant::now();
+        }
+    }
+    w.client
+        .ask_bots_for_run(ask(
+            &w.subject,
+            Uuid::new_v4(),
+            vec![item(&w.recipients[0], "Check this")],
+        ))
+        .unwrap();
+    // The ask's own job probes the delegate's boot once (it sends the ask
+    // under it). The boot pass the worker now requests is at least one more.
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while hellos(&w) < seen + 2 {
+        assert!(
+            Instant::now() < deadline,
+            "no boot pass followed the admitted ask: {} Hello(s) since it",
+            hellos(&w) - seen
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    w.stop();
+}

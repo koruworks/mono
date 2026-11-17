@@ -77,6 +77,9 @@ pub struct SessionScript {
     /// Sessions this host terminated. With the decision stream on, each
     /// reports its process end on the Session stream, as a real host does.
     ended: BTreeSet<SessionId>,
+    /// A host started after the sessions the ledger names: an unscripted
+    /// key answers no evidence instead of refusing.
+    new_incarnation: bool,
     calls: Vec<SessionCall>,
 }
 
@@ -112,6 +115,7 @@ impl SessionScript {
             completed: HashMap::new(),
             decision_stream: false,
             ended: BTreeSet::new(),
+            new_incarnation: false,
             calls: Vec::new(),
         }
     }
@@ -162,6 +166,21 @@ impl SessionScript {
     /// stream, so no test ever saw a stopped session report its own end.
     pub fn report_session_ends(&mut self) {
         self.decision_stream = true;
+    }
+
+    /// The whole app was closed and started again: this is a **new session
+    /// host incarnation**. It has a new instance id, holds no session of the
+    /// old one, and answers every retirement and lookup it was not scripted
+    /// for with no evidence, as a real host does for a key it never saw.
+    pub fn restart_as_new_incarnation(&mut self) {
+        self.host = HostInstanceId::from_uuid(uuid::Uuid::new_v4());
+        self.live.clear();
+        self.attached.clear();
+        self.ended.clear();
+        self.completed.clear();
+        self.retirements.clear();
+        self.lookups.clear();
+        self.new_incarnation = true;
     }
 
     /// The process of `session` ended by itself (it crashed or exited): no
@@ -369,6 +388,7 @@ impl Sessions for ScriptedSessions {
         let answer = script.lookups.get(&key).cloned();
         match answer {
             Some(answer) => Ok((script.host, answer)),
+            None if script.new_incarnation => Ok((script.host, CreationLookup::NoEvidence)),
             None => Err(script.unscripted("lookup")),
         }
     }
@@ -379,6 +399,7 @@ impl Sessions for ScriptedSessions {
         let answer = script.retirements.get(&key).cloned();
         match answer {
             Some(answer) => Ok((script.host, answer)),
+            None if script.new_incarnation => Ok((script.host, CreationLookup::NoEvidence)),
             None => Err(script.unscripted("retire")),
         }
     }

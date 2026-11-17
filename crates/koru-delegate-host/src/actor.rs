@@ -265,6 +265,12 @@ pub struct Actor {
     /// Whether the last child turn found an open child wait (or none has run
     /// yet, or a Bot command may have opened one).
     child_resume_pending: bool,
+    /// An ask was just admitted (`RequestChild`): the loop takes its next
+    /// maintenance turn now instead of at the next tick, so the wait's
+    /// driver begins (the enrollment, then Koru's stop of the asking
+    /// session) without up to five seconds of delay. It only brings the
+    /// turn forward; the driver takes the same steps under the same checks.
+    child_wait_opened: bool,
     /// When the child clocks are next sampled. `None` while no child wait is
     /// open and no child Stop is owed.
     child_clock_at: Option<Instant>,
@@ -313,6 +319,7 @@ impl Actor {
             // A restart may find child waits a previous process left open,
             // and their clocks are adopted on the first tick.
             child_resume_pending: true,
+            child_wait_opened: false,
             child_clock_at: Some(Instant::now()),
             #[cfg(test)]
             child_log: Vec::new(),
@@ -650,6 +657,11 @@ impl Actor {
                     if publication_at.is_none() && self.publications_pending() {
                         publication_at = Some(Instant::now());
                     }
+                    if self.take_child_wait_opened() {
+                        // An ask was admitted: its driver's first step is
+                        // due now, not at a tick already scheduled.
+                        publication_at = Some(Instant::now());
+                    }
                     if settle_at.is_none() && self.orchestrator.has_unsettled() {
                         settle_at = Some(Instant::now() + SETTLE_POLL);
                     }
@@ -669,6 +681,11 @@ impl Actor {
         self.shutdown_publication();
         // What was sent is acknowledged before this process is gone.
         self.orchestrator.settle_all();
+    }
+
+    /// Whether an ask was admitted since the last look; reading it clears it.
+    fn take_child_wait_opened(&mut self) -> bool {
+        std::mem::take(&mut self.child_wait_opened)
     }
 
     /// One maintenance tick: the retained acknowledgment, one publication

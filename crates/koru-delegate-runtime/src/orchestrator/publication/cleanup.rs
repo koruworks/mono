@@ -294,7 +294,7 @@ impl Orchestrator {
                 let row = &execution.current_attempt;
                 if row.attempt != attempt
                     || row.generation != generation
-                    || row.host_instance != Some(observed.host)
+                    || !host_proves_end(row.host_instance, &observed)
                 {
                     return Ok(false);
                 }
@@ -639,5 +639,24 @@ impl Orchestrator {
             return Ok(None);
         }
         Ok(Some(observed))
+    }
+}
+
+/// Whether `observed` proves the end of an attempt that asked the host
+/// `asked`: the answer of that same host incarnation, or no evidence from
+/// **another** incarnation. The second is the restart table's row for every
+/// Run (`classify_at_restart`, ADR-341): a session host that is a new
+/// incarnation holds nothing of the old one, whose process trees ended with
+/// it. Without it a wait left `cleanup_pending` when the app was closed could
+/// never be confirmed by the next start, and its Bot stayed busy. An attempt
+/// that never asked a host is not proven here.
+pub(crate) fn host_proves_end(
+    asked: Option<koru_delegate_core::HostInstanceId>,
+    observed: &ObservedCreationRetirement,
+) -> bool {
+    match asked {
+        Some(asked) if asked == observed.host => true,
+        Some(_) => matches!(observed.result, ObservedRetirementResult::NoEvidence {}),
+        None => false,
     }
 }

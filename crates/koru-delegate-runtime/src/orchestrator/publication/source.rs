@@ -423,6 +423,10 @@ impl Orchestrator {
         fence: &DecisionFence,
     ) -> Result<bool, RunError> {
         use koru_delegate_core::children::BotChildWaitEnrollmentReply;
+        #[cfg(any(test, feature = "test-support"))]
+        if self.origin_stop_unrecognized {
+            return Ok(false);
+        }
         let stops = |phase: BotWaitPhase| {
             matches!(phase, BotWaitPhase::HoldRequested | BotWaitPhase::Retired)
         };

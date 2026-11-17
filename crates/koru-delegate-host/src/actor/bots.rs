@@ -701,6 +701,14 @@ impl Actor {
                     }
                 };
                 self.notify(request.parent.run);
+                // The wait's driver and the dispatcher run now, not at the
+                // next maintenance tick (up to five seconds later): the
+                // enrollment and the stop of the asking session begin at
+                // once, and the asked Bot's queued Run is offered a slot.
+                // Nothing is bypassed: both take their ordinary steps.
+                self.child_resume_pending = true;
+                self.child_wait_opened = true;
+                self.wake_bots();
                 BotReply::ChildRequested {
                     outcome,
                     wait: requested.wait,

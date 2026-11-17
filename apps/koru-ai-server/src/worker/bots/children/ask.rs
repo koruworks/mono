@@ -811,6 +811,12 @@ impl WorkerState {
                     now,
                 ) {
                     Ok((_, rows)) => {
+                        // The asked Bots now have work the delegate holds.
+                        // A Bot with no unsettled work holds no boot
+                        // acknowledgment there, and without one its queued
+                        // Run is never dispatched: synchronize, as after
+                        // every durable Submit (`complete_bot_coordination`).
+                        self.request_bot_boot_refresh();
                         for row in &rows {
                             // Fail closed: a child whose index was not read
                             // never starts without the Memory it captured.

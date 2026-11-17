@@ -229,12 +229,17 @@ fn scripted_composition_drives_a_prepared_edit_decision_to_one_acknowledged_succ
 /// answer is accepted, and the Run is resumed by a successor. The actor
 /// loop's budget deadline, where a retained cleanup is requested, runs too.
 ///
-/// **This test does not tell the fix from its absence.** In this harness the
-/// decision producer is not connected at the moment the session is
-/// terminated, so the end frame is never read and the chain completes either
-/// way. The child wait's twin (`child_composition.rs`) does read it and
-/// fails without the fix. The rule that recognizes the stop is one function
-/// for both kinds of wait (`origin_stop_owns_end`).
+/// **This test does not tell the fix from its absence.** The producer's
+/// pump is stopped when the origin stop is recorded, and it is not offered
+/// again afterwards because this builder's decision keeps a projection owed
+/// for the whole hold (`source_producer` answers nothing while
+/// `next_decision_projection` is some). So the end frame is never read
+/// here and the chain completes either way. Telling them apart needs a
+/// decision builder whose owed projections are applied during the hold, as
+/// the child builder's are. The child wait's twin (`child_composition.rs`)
+/// does read the frame and fails without the fix. The rule that recognizes
+/// the stop is one function for both kinds of wait
+/// (`origin_stop_owns_end`).
 #[test]
 fn m6_origin_stop_the_stopped_sessions_own_end_does_not_close_the_question() {
     let DecisionChain {

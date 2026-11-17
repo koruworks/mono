@@ -517,6 +517,20 @@ impl Orchestrator {
             self.trace(run, "verified_native_unregistered", format_args!("{error}"));
         }
         let state = self.runs.get_mut(&run).ok_or_else(publication_pending)?;
+        if state.attempt.is_none() {
+            // A Run this process only restored to finish its wait (the app
+            // was closed while the wait was open) has no working attempt, so
+            // once the wait is settled nothing offers it to the Bot budget
+            // deadline again: its admission stayed executing and its Bot
+            // busy. If the Run has ended (interrupted or terminal), arm its
+            // ordinary terminal cleanup, which settles the admission. A Run
+            // that is still running is not armed and is unchanged.
+            if let Err(error) = self.arm_bot_cleanup(run) {
+                self.trace(run, "terminal_cleanup_unarmed", format_args!("{error}"));
+            }
+            return Ok(None);
+        }
+        let state = self.runs.get_mut(&run).ok_or_else(publication_pending)?;
         let Some(attempt) = state.attempt.as_ref().filter(|_| !ended) else {
             return Ok(None);
         };
