@@ -402,7 +402,7 @@ impl Leaf for TitleLeaf {
             engine,
             cell,
             &self.title,
-            theme::role::row(),
+            theme::role::content_row(),
             ink,
         );
         if self.completed {

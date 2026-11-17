@@ -58,13 +58,13 @@ fn the_offer_says_its_sentence_for_where_it_sits() {
     let below = view(Lang::En, Some(&waiting), Some(&offered()), true).unwrap();
     assert_eq!(
         below.sentence,
-        "412 pictures and scanned PDFs can be found by the words in them. One-time download, 24 MB."
+        "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer, not in the cloud. One-time download, 24 MB."
     );
     assert_eq!(below.actions, [LineAction::TurnOn, LineAction::NotNow]);
     let empty = view(Lang::En, Some(&waiting), Some(&offered()), false).unwrap();
     assert_eq!(
         empty.sentence,
-        "412 pictures and scanned PDFs have not been read, so they cannot be found by their contents yet. One-time download, 24 MB."
+        "412 pictures and scanned PDFs have not been read, so they cannot be found by their contents yet. Koru reads them on this computer, not in the cloud. One-time download, 24 MB."
     );
     assert_eq!(empty.actions, [LineAction::TurnOn, LineAction::NotNow]);
 }
@@ -447,16 +447,16 @@ fn the_progress_page_writes_its_numbers_in_every_language() {
 
 // ======================================== not on this computer (OCR Plan 3.3)
 
-/// **Files whose contents are on another device are named as such**, never
-/// counted as unread (EXPERIENCE "On a second device"): below *No results*
-/// once nothing here is left to read, and not under every list of results.
+/// **Files whose contents are on another device are never counted as
+/// unread, and are not announced either**: no line, under results or under
+/// *No results*.
 #[test]
-fn files_on_another_device_are_named_below_no_results() {
+fn files_on_another_device_are_neither_unread_nor_announced() {
     let mut elsewhere = counts(0, 38, 100, false);
     elsewhere.not_here = 38;
-    let line = view(Lang::En, Some(&elsewhere), None, false).unwrap();
-    assert_eq!(line.sentence, "38 files are not on this computer.");
-    assert!(line.actions.is_empty());
+    assert_eq!(view(Lang::En, Some(&elsewhere), None, false), None);
+    assert_eq!(not_here(Lang::En, 38), "38 files are not on this computer.");
+    assert_eq!(not_here(Lang::En, 1), "One file is not on this computer.");
     assert_eq!(
         empty_progress(Lang::En, Some(&elsewhere), None),
         None,
@@ -466,15 +466,6 @@ fn files_on_another_device_are_named_below_no_results() {
         view(Lang::En, Some(&elsewhere), None, true),
         None,
         "quiet below results"
-    );
-
-    elsewhere.unread = 1;
-    elsewhere.not_here = 1;
-    assert_eq!(
-        view(Lang::En, Some(&elsewhere), None, false)
-            .unwrap()
-            .sentence,
-        "One file is not on this computer."
     );
 
     // Still reading here: the progress page comes first.
@@ -489,12 +480,12 @@ fn not_on_this_computer_writes_its_number_in_every_language() {
     let mut elsewhere = counts(0, 1_240, 2_000, false);
     elsewhere.not_here = 1_240;
     for lang in Lang::ALL {
-        let line = view(lang, Some(&elsewhere), None, false).unwrap();
+        let sentence = not_here(lang, elsewhere.not_here);
         assert!(
-            line.sentence.contains(&number::decimal(lang, 1_240)) && !line.sentence.contains("{}"),
+            sentence.contains(&number::decimal(lang, 1_240)) && !sentence.contains("{}"),
             "{}: {}",
             lang.tag(),
-            line.sentence
+            sentence
         );
         assert!(!not_here(lang, 1).trim().is_empty());
     }
@@ -509,13 +500,13 @@ fn the_summary_says_the_designs_sentence() {
     let line = import_summary(Lang::En, 412, &offered()).unwrap();
     assert_eq!(
         line.sentence,
-        "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer. One-time download, 24 MB."
+        "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer, not in the cloud. One-time download, 24 MB."
     );
     assert_eq!(line.actions, [LineAction::TurnOn, LineAction::NotNow]);
     let one = import_summary(Lang::En, 1, &offered()).unwrap();
     assert_eq!(
         one.sentence,
-        "One picture or scanned PDF can be found by the words in it. Koru reads it on this computer. One-time download, 24 MB."
+        "One picture or scanned PDF can be found by the words in it. Koru reads it on this computer, not in the cloud. One-time download, 24 MB."
     );
 }
 
@@ -599,7 +590,7 @@ fn offline_the_summary_says_so_and_offers_nothing_to_press() {
     assert!(line.actions.is_empty());
     assert_eq!(
         line.sentence,
-        "7 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer. Needs a one-time download; Koru will offer it when you are online."
+        "7 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer, not in the cloud. Needs a one-time download; Koru will offer it when you are online."
     );
 }
 
@@ -853,15 +844,18 @@ mod on_the_surface {
         ));
     }
 
-    /// **Below *No results***, the line sits directly under its text and the
-    /// page's own links move down past it rather than under it.
+    /// **The line does not move with the page.** With no results it is where
+    /// it is with results — directly above the footer — and the page's own
+    /// links stay where they are, above it.
     #[test]
-    fn with_no_results_the_line_sits_under_the_text_and_the_links_move_down() {
+    fn with_no_results_the_line_is_still_directly_above_the_footer() {
         let (surface, _background) = offering(0);
         let band = surface.offer_band().expect("a band");
-        assert!((band.y - (surface.results_top() + crate::OFFER_EMPTY_Y)).abs() < 0.5);
+        assert!((band.y + band.h - (surface.viewport.1 - crate::FOOTER_H)).abs() < 0.5);
+        let (with_results, _background) = offering(4);
+        assert_eq!(with_results.offer_band().map(|b| b.y), Some(band.y));
         let deleted = surface.deleted_pages_rect();
-        assert!(deleted.y >= band.y + band.h, "{deleted:?} {band:?}");
+        assert!(deleted.y + deleted.h <= band.y, "{deleted:?} {band:?}");
     }
 
     /// The F12 tree: the line is one component under the modal, its buttons
@@ -1006,4 +1000,19 @@ fn a_reader_turned_off_quiets_the_line_and_the_summary() {
     // What is still being read is still reported: a text-layer PDF.
     let reading = counts(3, 5, 10, false);
     assert!(view(Lang::En, Some(&reading), Some(&off), true).is_some());
+}
+
+// ------------------------------------------------------------ host places
+
+/// A place is offered while every word typed begins a word of its name.
+#[test]
+fn a_place_is_named_by_the_start_of_its_words() {
+    use crate::place_spans;
+    let span = |start, end| koru_store_wire::search::MatchSpan { start, end };
+    assert_eq!(place_spans("Today", "tod"), Some(vec![span(0, 3)]));
+    assert_eq!(place_spans("Today", "TODAY"), Some(vec![span(0, 5)]));
+    assert_eq!(place_spans("Up Next", "ne"), Some(vec![span(3, 5)]));
+    assert_eq!(place_spans("Today", "day"), None, "not from the middle");
+    assert_eq!(place_spans("Today", "today plan"), None, "every word");
+    assert_eq!(place_spans("Today", "  "), None, "nothing typed");
 }

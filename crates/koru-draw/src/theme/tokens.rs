@@ -353,7 +353,19 @@ pub mod roles {
     /// document's subtitle: `role::subtitle`, 18/26.
     pub const SUBTITLE: TextRole = TextRole::new("subtitle", role::subtitle);
 
-    pub const ALL: [TextRole; 7] = [ROW, HINT, META, UI, POPOVER_HEADING, SUBTITLE, PANE_TITLE];
+    /// A page's own name, at a document title's size: `role::page_title`.
+    pub const PAGE_TITLE: TextRole = TextRole::new("page_title", role::page_title);
+
+    pub const ALL: [TextRole; 8] = [
+        ROW,
+        HINT,
+        META,
+        UI,
+        POPOVER_HEADING,
+        SUBTITLE,
+        PANE_TITLE,
+        PAGE_TITLE,
+    ];
 }
 
 macro_rules! colour_roles {

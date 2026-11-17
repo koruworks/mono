@@ -593,6 +593,9 @@ impl MainView {
         // Above the update banner, below the modals: a toast is transient and a
         // dialog is not, so a dialog must never end up behind one.
         self.draw_toast(scene, root, now);
+        if let Some(switch) = self.quick_switch.as_mut() {
+            switch.draw(scene, root, &mut self.engine, self.viewport);
+        }
         self.draw_confirm(scene, root);
         if let Some(offer) = &self.file_paste {
             offer

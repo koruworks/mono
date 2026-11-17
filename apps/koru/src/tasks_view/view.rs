@@ -532,8 +532,10 @@ impl TasksView {
     pub fn new(target: RailTarget) -> Self {
         let today = chrono::Local::now().date_naive();
         let mut engine = TextEngine::new();
-        let idle_input =
-            koru_editor::components::text_input::TextInput::new(&mut engine, theme::role::row());
+        let idle_input = koru_editor::components::text_input::TextInput::new(
+            &mut engine,
+            theme::role::content_row(),
+        );
         Self {
             viewport: (900.0, 600.0),
             engine,
@@ -1864,7 +1866,7 @@ impl TasksView {
         self.select_row(i);
         let mut input = koru_editor::components::text_input::TextInput::new(
             &mut self.engine,
-            theme::role::row(),
+            theme::role::content_row(),
         );
         input.set_text(&mut self.engine, &title);
         input.move_to_end(&mut self.engine);

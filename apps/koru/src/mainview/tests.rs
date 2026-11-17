@@ -2267,18 +2267,59 @@ fn ctrl_digits_select_rail_workspaces_and_leave_tab_selection_alone() {
 
 /// Ctrl+Tab reaches the container as a direction, because the shell is the only
 /// place that can tell it apart from Ctrl+I. See `keys::tests`.
+///
+/// It stands the quick switch up, and the list stays until something is
+/// chosen: letting go of Control does nothing, Enter goes to the highlighted
+/// tab, Escape leaves everything where it was.
 #[test]
-fn cycle_tab_wraps_in_both_directions() {
-    let (mut v, _w) = on_document();
+fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
+    let (mut v, w) = on_document();
+    let mut w = w;
+    let named = |key| Key::Named(key);
     assert_eq!(v.tabs().len(), 2);
     v.select(0);
-    assert_eq!(v.tabs().active(), 0);
+    v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
+    v.set_mods(ModifiersState::empty());
+    assert_eq!(
+        v.tabs().active(),
+        0,
+        "letting go of Control chooses nothing"
+    );
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(v.tabs().active(), 1, "Enter goes to the highlighted tab");
+
+    // Tab walks on, and wraps back to the tab in front.
+    assert!(v.cycle_tab(1));
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Tab),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
     assert_eq!(v.tabs().active(), 1);
+
+    // Escape puts it away and goes nowhere.
     assert!(v.cycle_tab(1));
-    assert_eq!(v.tabs().active(), 0, "wraps forward");
-    assert!(v.cycle_tab(-1));
-    assert_eq!(v.tabs().active(), 1, "and backward");
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(v.tabs().active(), 1);
+    assert!(v.cycle_tab(1), "and it opens again afterwards");
 }
 
 // (A lone tab having nowhere to cycle to is `tabset::tests`' — reaching into
@@ -8833,12 +8874,12 @@ fn dragging_a_list_on_the_rail_writes_the_move() {
             .collect(),
     );
     assert!(v.apply_tasks_rail(TasksRailRequest::MoveList {
-        id: ids[0],
+        ids: vec![ids[0]],
         parent: None,
         before: None
     }));
     assert!(v.apply_tasks_rail(TasksRailRequest::MoveList {
-        id: ids[2],
+        ids: vec![ids[2]],
         parent: Some(ids[1]),
         before: None
     }));

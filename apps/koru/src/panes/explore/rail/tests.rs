@@ -182,7 +182,7 @@ fn pressing_a_bucket_opens_it_and_selects_it() {
         .unwrap();
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenBucket {
             bucket: Bucket::Upcoming,
             new_tab: false
@@ -205,7 +205,7 @@ fn pressing_reminders_opens_the_page_and_moves_the_card() {
         .expect("Reminders");
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenReminders { new_tab: false })
     );
     assert_eq!(rail.selected(), Some(RailTarget::Reminders));
@@ -223,7 +223,7 @@ fn ctrl_clicking_reminders_asks_for_a_new_tab_and_leaves_the_card() {
         .find(|(row, _)| *row == RailRow::Bucket(Bucket::Today))
         .expect("Today");
     let (x, y) = today.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     assert_eq!(rail.selected(), Some(RailTarget::Bucket(Bucket::Today)));
 
     let (_, r) = rail
@@ -233,7 +233,7 @@ fn ctrl_clicking_reminders_asks_for_a_new_tab_and_leaves_the_card() {
         .expect("Reminders");
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, true),
+        rail.mouse_down(a, t, x, y, true, false),
         Some(TasksRailRequest::OpenReminders { new_tab: true })
     );
     assert_eq!(
@@ -270,7 +270,7 @@ fn pressing_a_list_names_its_id() {
         .unwrap();
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenList {
             id: id,
             new_tab: false
@@ -295,13 +295,13 @@ fn the_heading_plus_asks_for_the_field_and_it_opens_under_the_heading() {
     let plus = rail.row_parts(RailRow::ListsHeading, *heading).trailing;
     let (px, py) = plus.centre();
     assert_eq!(
-        rail.mouse_down(a, t, px, py, false),
+        rail.mouse_down(a, t, px, py, false, false),
         Some(TasksRailRequest::BeginNewList { parent: None })
     );
     let label = rail.row_parts(RailRow::ListsHeading, *heading).label;
     let (lx, ly) = label.centre();
     assert_eq!(
-        rail.mouse_down(a, t, lx, ly, false),
+        rail.mouse_down(a, t, lx, ly, false, false),
         None,
         "the word is furniture"
     );
@@ -441,7 +441,10 @@ fn nothing_is_hit_in_a_collapsed_column() {
     let shut = Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0);
     assert!(rail.rows(shut, top()).is_empty());
     assert_eq!(rail.at(shut, top(), 0.0, top() + 4.0), None);
-    assert_eq!(rail.mouse_down(shut, top(), 0.0, top() + 4.0, false), None);
+    assert_eq!(
+        rail.mouse_down(shut, top(), 0.0, top() + 4.0, false, false),
+        None
+    );
     assert_eq!(rail.new_list_rect(shut, top()), None);
 }
 
@@ -565,7 +568,7 @@ fn ctrl_clicking_a_row_asks_for_a_new_tab_and_leaves_the_card() {
         .find(|(row, _)| *row == RailRow::Bucket(Bucket::Today))
         .expect("Today");
     let (x, y) = today.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     assert_eq!(rail.selected(), Some(RailTarget::Bucket(Bucket::Today)));
 
     let (_, later) = rail
@@ -575,7 +578,7 @@ fn ctrl_clicking_a_row_asks_for_a_new_tab_and_leaves_the_card() {
         .expect("Later");
     let (x, y) = later.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, true),
+        rail.mouse_down(a, t, x, y, true, false),
         Some(TasksRailRequest::OpenBucket {
             bucket: Bucket::Later,
             new_tab: true
@@ -668,7 +671,7 @@ fn dragging_a_list_row_reorders_the_section_and_asks_for_the_write() {
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
     assert!(matches!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenList { .. })
     ));
     assert!(rail.dragging(), "and a drag is armed behind it");
@@ -682,7 +685,7 @@ fn dragging_a_list_row_reorders_the_section_and_asks_for_the_write() {
     // ...and one that travels to the last row's bottom edge carries it there.
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
     rail.mouse_move(a, t, x, after_edge(third));
     assert!(rail.drag_armed());
@@ -694,7 +697,7 @@ fn dragging_a_list_row_reorders_the_section_and_asks_for_the_write() {
     assert_eq!(
         rail.mouse_up(),
         Some(TasksRailRequest::MoveList {
-            id: was[0],
+            ids: vec![was[0]],
             parent: None,
             before: None
         })
@@ -721,7 +724,7 @@ fn dropping_on_a_rows_top_edge_puts_the_list_before_it() {
     let was = order(&rail);
     let r = list_rect(&rail, 2);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let second = list_rect(&rail, 1);
     rail.mouse_move(a, t, x, before_edge(second));
     assert!(rail.drag_armed());
@@ -729,7 +732,7 @@ fn dropping_on_a_rows_top_edge_puts_the_list_before_it() {
     assert_eq!(
         rail.mouse_up(),
         Some(TasksRailRequest::MoveList {
-            id: was[2],
+            ids: vec![was[2]],
             parent: None,
             before: Some(was[1])
         })
@@ -746,7 +749,7 @@ fn the_table_is_refused_while_a_row_is_carried_and_taken_again_after() {
     let was = order(&rail);
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
     rail.mouse_move(a, t, x, after_edge(third));
     assert!(rail.drag_armed());
@@ -775,7 +778,7 @@ fn cancelling_a_carry_writes_nothing() {
     let was = order(&rail);
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
     rail.mouse_move(a, t, x, after_edge(third));
     assert_eq!(order(&rail), vec![was[1], was[2], was[0]], "carried");
@@ -803,14 +806,14 @@ fn dropping_on_the_middle_of_a_row_nests_the_list_inside_it() {
     let was = order(&rail);
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
     rail.mouse_move(a, t, x, third.y + third.h * 0.5);
     assert!(rail.drag_armed());
     assert_eq!(
         rail.mouse_up(),
         Some(TasksRailRequest::MoveList {
-            id: was[0],
+            ids: vec![was[0]],
             parent: Some(was[2]),
             before: None
         })

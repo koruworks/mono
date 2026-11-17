@@ -93,7 +93,6 @@ fn the_color_row_sits_under_page_and_is_dead_off_it() {
                 "Headings",
                 "Code",
                 "Language",
-                "Focus mode",
             ],
             "the same rows in the same places, in {mode:?}"
         );
@@ -132,19 +131,15 @@ fn every_width_carries_a_chord_that_round_trips() {
     assert_eq!(mode_for_key('z'), None);
 }
 
-/// Focus mode is present, dead, and says so. It is the one row that advertises
-/// something not built, which is only honest while it cannot be pressed.
+/// The menu ends on a row that can be pressed: there is no *Focus mode*
+/// row, which was a disabled toggle for something not built.
 #[test]
-fn focus_mode_is_offered_but_disabled() {
+fn the_menu_offers_nothing_that_cannot_be_pressed_at_its_foot() {
     for mode in [ViewMode::Page, ViewMode::Narrow, ViewMode::Full] {
         let rows = rows(mode, 0);
-        let (row, choice) = rows.last().expect("focus mode is always last");
-        assert!(matches!(
-            row,
-            Row::Item { label, .. } if label.as_ref() == "Focus mode"
-        ));
-        assert!(!row.selectable(), "focus mode cannot be chosen yet");
-        assert_eq!(*choice, None);
+        let (row, choice) = rows.last().expect("the menu has rows");
+        assert!(row.selectable());
+        assert_eq!(*choice, Some(Choice::CycleProseLanguage));
     }
 }
 

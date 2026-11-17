@@ -1126,8 +1126,15 @@ pub struct Settings {
     /// for the window rather than one per workspace: it is about how you are
     /// looking at the list, not about anything in it.
     pub show_archived: bool,
-    /// How wide the explore pane is, per workspace. Absent means the default.
+    /// How wide the explore pane was, per workspace. **No longer written**:
+    /// the width is one for the window now ([`sidebar_width`](Self::sidebar_width)).
+    /// Still read, so a width set before that carries over the first time.
     pub sidebar_w: Vec<(WorkspaceId, f32)>,
+    /// **How wide the explore pane is, in every workspace.** It was kept per
+    /// workspace, so the pane changed width as you switched (owner,
+    /// 2026-11-16): the width is how you have arranged the window, not part
+    /// of a workspace. Absent means nobody has dragged it since.
+    pub sidebar_width: Option<f32>,
     /// When this machine last opened each workspace, unix milliseconds.
     pub opened: Vec<(WorkspaceId, i64)>,
     /// The global default document view mode and page background, in Roaming.
@@ -1490,6 +1497,7 @@ impl Default for Settings {
             collapsed_lists: Vec::new(),
             show_archived: false,
             sidebar_w: Vec::new(),
+            sidebar_width: None,
             opened: Vec::new(),
             // Narrow, the registry's default (`ViewModeChoice`), not the
             // draw enum's Full, which is the outline's only mode.
@@ -2175,6 +2183,14 @@ impl Settings {
 
     /// Record the pane's width in `workspace`, leaving every other alone — the
     /// same rule `set_collapsed_in` exists for.
+    /// The explore pane's width: the shared one, or — until somebody has
+    /// dragged it under this build — the width `workspace` had before widths
+    /// were shared.
+    pub fn sidebar_width_for(&self, workspace: Option<WorkspaceId>) -> Option<f32> {
+        self.sidebar_width
+            .or_else(|| workspace.and_then(|id| self.sidebar_w_in(id)))
+    }
+
     pub fn set_sidebar_w_in(&mut self, workspace: WorkspaceId, w: f32) {
         match self.sidebar_w.iter_mut().find(|(id, _)| *id == workspace) {
             Some(slot) => slot.1 = w,
@@ -2428,6 +2444,12 @@ impl Settings {
                     {
                         s.opened.push((id, t));
                     }
+                }
+                "sidebar_width" => {
+                    s.sidebar_width = value
+                        .parse::<f32>()
+                        .ok()
+                        .filter(|w| SIDEBAR_W_RANGE.contains(w));
                 }
                 k if k.starts_with(SIDEBAR_W_PREFIX) => {
                     if let Some(id) = WorkspaceId::parse(&k[SIDEBAR_W_PREFIX.len()..])
@@ -2713,7 +2735,15 @@ impl Settings {
                 workspace.to_storage()
             ));
         }
-        // The pane's width, one line per workspace that has moved it.
+        if let Some(w) = self.sidebar_width {
+            out.push_str(&format!(
+                "sidebar_width={}
+",
+                w.round()
+            ));
+        }
+        // The per-workspace widths of an earlier build, kept as they were so
+        // an older build opening this profile still finds its own.
         for (workspace, w) in &self.sidebar_w {
             out.push_str(&format!(
                 "{SIDEBAR_W_PREFIX}{}={}

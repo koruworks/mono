@@ -7200,3 +7200,141 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
         }
     });
 }
+
+// ------------------------------------------------------------ quick filter
+
+fn typed(view: &mut ExploreView, text: &str) -> bool {
+    use winit::keyboard::{Key, ModifiersState};
+    let mut engine = TextEngine::new();
+    text.chars().all(|ch| {
+        let s = ch.to_string();
+        view.quick_filter_key(
+            &mut engine,
+            &Key::Character(s.as_str().into()),
+            Some(&s),
+            ModifiersState::empty(),
+        )
+    })
+}
+
+fn pressed(
+    view: &mut ExploreView,
+    key: winit::keyboard::NamedKey,
+    mods: winit::keyboard::ModifiersState,
+) -> bool {
+    let mut engine = TextEngine::new();
+    view.quick_filter_key(&mut engine, &winit::keyboard::Key::Named(key), None, mods)
+}
+
+/// Typing in the sidebar narrows the tree to the names that hold it, keeps
+/// the rows a match is inside (even shut ones), and clearing shows the tree
+/// as it was.
+#[test]
+fn typing_in_the_sidebar_filters_the_tree_and_escape_restores_it() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let rows = entries(&[
+        ("Notes", None),
+        ("Design system", Some(0)),
+        ("Old", Some(1)),
+        ("Roadmap", None),
+        ("Sidebar redesign", None),
+    ]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    // Shut *Notes*: the match inside it must still be found.
+    let notes = view.rows[0].node;
+    view.collapsed.insert(notes);
+    view.rebuild_from_entries(&rows);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+
+    // Not armed: the letters are somebody else's.
+    view.focus = Some(notes);
+    assert!(!typed(&mut view, "d"));
+    assert_eq!(view.quick_filter(), None);
+
+    view.arm_quick_filter(true);
+    assert!(view.quick_filter_armed());
+    assert!(typed(&mut view, "DESIGN"));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(
+        labels(&view),
+        ["Notes", "Design system", "Sidebar redesign"]
+    );
+    assert_eq!(view.quick_match_count(), 2);
+    assert!(
+        view.quick_dim.contains(&notes),
+        "kept for what is inside it"
+    );
+    assert_eq!(
+        view.focus,
+        Some(view.rows[1].node),
+        "the keyboard is on the first match"
+    );
+    // The rows start below the field.
+    assert!(
+        view.rows_top(area()) > {
+            let mut plain = ExploreView::new();
+            plain.rebuild_from_entries(&rows);
+            plain.rows_top(area())
+        }
+    );
+
+    // Nothing matches: no rows, and a count of none.
+    assert!(typed(&mut view, "zz"));
+    assert!(labels(&view).is_empty());
+    assert_eq!(view.quick_match_count(), 0);
+    let none = ModifiersState::empty();
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The field edits as any field does: Ctrl+Backspace takes a word.
+    assert!(typed(&mut view, " sys"));
+    assert_eq!(view.quick_filter(), Some("DESIGN sys"));
+    assert!(pressed(
+        &mut view,
+        NamedKey::Backspace,
+        ModifiersState::CONTROL
+    ));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The answers are a ring: Down from the last is the first.
+    let last = view.rows.last().unwrap().node;
+    view.focus = Some(last);
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowDown));
+    assert_eq!(view.focus, Some(view.rows[0].node));
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowUp));
+    assert_eq!(view.focus, Some(last));
+
+    // Escape puts it away, and the fold is where it was.
+    assert!(pressed(&mut view, NamedKey::Escape, none));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+    assert!(view.collapsed.contains(&notes));
+    // And Escape again is not the filter's.
+    assert!(!pressed(&mut view, NamedKey::Escape, none));
+}
+
+/// A chord is never filter text, and another view starts unfiltered.
+#[test]
+fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {
+    use winit::keyboard::{Key, ModifiersState};
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(!view.quick_filter_key(
+        &mut TextEngine::new(),
+        &Key::Character("d".into()),
+        Some("d"),
+        ModifiersState::CONTROL
+    ));
+    assert!(typed(&mut view, "road"));
+    assert_eq!(labels(&view), ["Roadmap"]);
+    view.show_files();
+    assert_eq!(view.quick_filter(), None);
+    view.show_documents();
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
+}

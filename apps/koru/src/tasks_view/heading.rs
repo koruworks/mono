@@ -8,7 +8,7 @@
 //! Tasks heading
 //!   List swatch          a list page only
 //!   Heading text
-//!     Heading title      18/26, `roles::SUBTITLE`
+//!     Heading title      24/31, `roles::PAGE_TITLE`
 //!     Heading date       Today only, the title's size in the secondary ink
 //!     Heading count      once the store has answered, `roles::META`
 //! ```
@@ -96,7 +96,7 @@ pub(super) fn baseline(engine: &mut TextEngine, content: &str, role: TextRole) -
 /// The heading as elements, with each note pushed down until its baseline is
 /// the title's.
 pub(super) fn tree(heading: &Heading, engine: &mut TextEngine) -> El {
-    let title_baseline = baseline(engine, &heading.title, roles::SUBTITLE);
+    let title_baseline = baseline(engine, &heading.title, roles::PAGE_TITLE);
     let mut note = |content: &str, name: &'static str| {
         let drop = (title_baseline - baseline(engine, content, roles::META)).max(0.0);
         text(content.to_owned())
@@ -112,7 +112,7 @@ pub(super) fn tree(heading: &Heading, engine: &mut TextEngine) -> El {
     let date = heading.date.as_deref().map(|date| {
         text(format!("{DATE_DOT}{date}"))
             .named(DATE)
-            .role(roles::SUBTITLE)
+            .role(roles::PAGE_TITLE)
             .ink(Ink::Secondary)
     });
     let count = heading.count.as_deref().map(|count| note(count, COUNT));
@@ -130,7 +130,7 @@ pub(super) fn tree(heading: &Heading, engine: &mut TextEngine) -> El {
             .child(
                 text(heading.title.clone())
                     .named(TITLE)
-                    .role(roles::SUBTITLE)
+                    .role(roles::PAGE_TITLE)
                     .ink(Ink::Primary),
             )
             .children(date)
@@ -156,7 +156,7 @@ impl TasksView {
             super::view::PAD,
             self.title_top(),
             (self.header_dots().x - super::view::PAD).max(0.0),
-            roles::SUBTITLE.style().metrics.line_height,
+            roles::PAGE_TITLE.style().metrics.line_height,
         )
     }
 

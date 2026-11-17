@@ -8976,6 +8976,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 crate::TasksTarget::List(list),
                 crate::NavigationTarget::Workspace { profile, workspace },
             ),
+            crate::NavigationTarget::TaskQueue {
+                profile,
+                workspace,
+                bucket,
+            } => (
+                profile,
+                workspace,
+                crate::TasksTarget::Queue(bucket),
+                crate::NavigationTarget::Workspace { profile, workspace },
+            ),
             crate::NavigationTarget::Task { document, node } => {
                 let fallback = crate::NavigationTarget::Document {
                     document,
@@ -9004,7 +9014,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
         if self.runtime.profile.id() != Some(profile) {
             tasks_debug_log(format_args!(
                 "search landing handed on: another profile, list={}",
-                matches!(tasks, crate::TasksTarget::List(_))
+                !matches!(tasks, crate::TasksTarget::Task { .. })
             ));
             return Some(fallback);
         }
@@ -9059,7 +9069,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 None => return,
             };
         match &target {
-            crate::NavigationTarget::TaskList { .. } | crate::NavigationTarget::Task { .. } => {}
+            crate::NavigationTarget::TaskList { .. }
+            | crate::NavigationTarget::TaskQueue { .. }
+            | crate::NavigationTarget::Task { .. } => {}
             crate::NavigationTarget::Workspace { profile, workspace } => tracing::info!(
                 target: "koru::navigation",
                 profile = %profile.to_storage(),
@@ -9076,7 +9088,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let resolved = match target {
             // Both were turned into one of the two below by
             // `navigate_to_tasks`.
-            crate::NavigationTarget::TaskList { .. } | crate::NavigationTarget::Task { .. } => {
+            crate::NavigationTarget::TaskList { .. }
+            | crate::NavigationTarget::TaskQueue { .. }
+            | crate::NavigationTarget::Task { .. } => {
                 return;
             }
             crate::NavigationTarget::Workspace { profile, workspace } => {
@@ -18347,6 +18361,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         for pane in self.panes.values_mut() {
                             pane.view.set_mods(mods);
                         }
+                        // A view may act on a modifier let go (the quick
+                        // switch goes to its tab when Control comes up).
+                        self.wake(id);
                     }
                     for pane in self.panes.values_mut() {
                         pane.quarantine.released(event.physical_key);

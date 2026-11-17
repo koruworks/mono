@@ -243,6 +243,9 @@ pub enum MenuAction {
     ClearRecents,
     /// Select the existing Welcome tab, or reopen it.
     OpenWelcome,
+    /// *View open tabs*: the quick switch, from the New menu, with its
+    /// chord beside it so the menu teaches it.
+    ViewOpenTabs,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
@@ -1152,6 +1155,7 @@ impl MenuAction {
             MenuAction::Divider => "",
             MenuAction::Documents => "Documents",
             MenuAction::OpenWelcome => "Welcome",
+            MenuAction::ViewOpenTabs => "View open tabs",
             MenuAction::Socials => {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
@@ -1517,6 +1521,9 @@ impl MenuAction {
             // **Windows' own window-management chords**, which exist only there:
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
+            // Literal Control on every platform: the chord is resolved from
+            // the physical key by the shell and is not in the registry.
+            MenuAction::ViewOpenTabs => Some("Ctrl+Tab".to_string()),
             MenuAction::WindowSnapLeft => cfg!(windows).then(|| "Win+Left".to_string()),
             MenuAction::WindowSnapRight => cfg!(windows).then(|| "Win+Right".to_string()),
             _ => self.shortcut_id().map(koru_keys::label_of),
@@ -1588,6 +1595,7 @@ impl MenuAction {
             MenuAction::OpenInChat => Some(koru_draw::icons::SPARKLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
+            MenuAction::ViewOpenTabs => Some(koru_draw::icons::TABS),
             MenuAction::NewTaskIn(crate::panes::explore::rail::RailTarget::Bucket(bucket)) => {
                 Some(crate::panes::explore::rail::bucket_glyph(bucket))
             }
@@ -2110,6 +2118,7 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::Socials,
         MenuAction::Divider,
         MenuAction::ImportAs,
+        MenuAction::ViewOpenTabs,
     ]
 }
 

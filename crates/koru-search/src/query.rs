@@ -332,8 +332,10 @@ pub(crate) fn search(
     // side immediately before its commit and releases it after, so evidence and
     // fragment rows are one coherent generation even across two WAL
     // connections.
+    let started = std::time::Instant::now();
     let vocabulary = index.vocabulary.read();
     prepare_evidence(connection, &vocabulary, &terms, query.include_lists)?;
+    let evidence_ms = started.elapsed().as_secs_f64() * 1e3;
 
     let mut values = vec![
         Value::Integer(lifecycle_code(query.lifecycle)),
@@ -546,6 +548,7 @@ pub(crate) fn search(
          LIMIT ?{limit} OFFSET ?{offset}"
     );
 
+    let statement_started = std::time::Instant::now();
     let mut statement = connection.prepare(&sql)?;
     let raw = statement
         .query_map(params_from_iter(values), |r| {
@@ -565,6 +568,8 @@ pub(crate) fn search(
         })?
         .collect::<Result<Vec<_>, _>>()?;
     drop(statement);
+    let statement_ms = statement_started.elapsed().as_secs_f64() * 1e3;
+    let hits_started = std::time::Instant::now();
 
     let workspaces: Vec<String> = {
         let mut all: Vec<String> = raw.iter().map(|r| r.workspace.clone()).collect();
@@ -586,7 +591,7 @@ pub(crate) fn search(
     let mut corrected = terms.clone();
     let mut has_correction = false;
     for row in raw {
-        let evidence = evidence_for(connection, &row)?;
+        let evidence = evidence_for(connection, &row, terms.len())?;
         if hits.is_empty() {
             for term in evidence.direct.iter().chain(evidence.scope.iter()) {
                 if term.fuzzy
@@ -696,6 +701,55 @@ pub(crate) fn search(
             task,
         });
     }
+    // **Where a query's time went**, in three parts: matching the words
+    // (the evidence table), choosing and ordering the page (the statement),
+    // and dressing each hit. Counts and milliseconds only — never a word of
+    // the query. Said out loud when a query is slow enough to be felt while
+    // typing; otherwise at debug.
+    let hits_ms = hits_started.elapsed().as_secs_f64() * 1e3;
+    let total_ms = started.elapsed().as_secs_f64() * 1e3;
+    let shortest_term = terms.iter().map(|t| t.chars().count()).min().unwrap_or(0);
+    let evidence_rows: i64 = if total_ms >= SLOW_QUERY_MS {
+        connection
+            .query_row("SELECT COUNT(*) FROM search_query_evidence", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(-1)
+    } else {
+        -1
+    };
+    if total_ms >= SLOW_QUERY_MS {
+        tracing::warn!(
+            target: "koru_search",
+            terms = terms.len(),
+            shortest_term,
+            evidence_rows,
+            hits = hits.len(),
+            evidence_ms,
+            statement_ms,
+            hits_ms,
+            total_ms,
+            "a search query was slow"
+        );
+    } else {
+        tracing::debug!(
+            target: "koru_search",
+            terms = terms.len(),
+            shortest_term,
+            hits = hits.len(),
+            evidence_ms,
+            statement_ms,
+            hits_ms,
+            total_ms,
+            "search query answered"
+        );
+    }
+    index.last_timing.set(Some(crate::storage::QueryTiming {
+        evidence_ms,
+        statement_ms,
+        hits_ms,
+        evidence_rows,
+    }));
     let has_more = hits.len() > page_size;
     hits.truncate(page_size);
     Ok(SearchPage {
@@ -707,6 +761,10 @@ pub(crate) fn search(
         request_seq: query.request_seq,
     })
 }
+
+/// A query slower than this is felt between keystrokes, and is logged with
+/// where its time went.
+const SLOW_QUERY_MS: f64 = 100.0;
 
 /// `SearchHit::kind` for a task list.
 pub const KIND_TASK_LIST: &str = "task_list";
@@ -1056,7 +1114,35 @@ fn prepare_evidence(
            term_ordinal, fragment_id, matched_term, distance
          ) SELECT ?1, rowid, ?2, ?3 FROM fragment_fts WHERE fragment_fts MATCH ?4",
     )?;
+    // **Before there is enough typed to rank, match names only.** One or two
+    // letters begin a word in nearly every paragraph there is: on a
+    // 47,000-fragment index `b` matched 9,544 fragments, and scoring and
+    // ordering them all to show fifty took a tenth of a second a keystroke —
+    // for a page nobody could have meant. So while every word of the query
+    // is that short, it is looked for in what things are *called* (titles,
+    // headings, names, tasks, lists, the workspace) and not in body text or
+    // in words read from files. From three letters on, everything is searched
+    // and ranked as before.
+    //
+    // Only for scripts that spell words out: two characters are a whole word
+    // in Chinese or Japanese, and are searched everywhere.
+    let names_only = !terms.is_empty() && terms.iter().all(|term| is_short_prefix(term));
+    let mut insert_names = connection.prepare_cached(
+        "INSERT OR IGNORE INTO search_query_evidence(
+           term_ordinal, fragment_id, matched_term, distance
+         ) SELECT ?1, f.id, ?2, ?3
+           FROM fragment_fts
+           CROSS JOIN fragments f ON f.id=fragment_fts.rowid
+          WHERE fragment_fts MATCH ?4
+            AND (f.field IN ('workspace','title','task-list','task','name',
+                             'list-name','contact','level-name')
+                 OR f.field LIKE 'heading-%')",
+    )?;
     for (ordinal, term) in terms.iter().enumerate() {
+        if names_only {
+            insert_names.execute(params![ordinal as i64, term, 0_i64, fts_term(term, true)])?;
+            continue;
+        }
         insert.execute(params![ordinal as i64, term, 0_i64, fts_term(term, true)])?;
         for candidate in vocabulary.candidates(term, include_lists) {
             insert.execute(params![
@@ -1068,6 +1154,16 @@ fn prepare_evidence(
         }
     }
     Ok(())
+}
+
+/// How many letters a word needs before body text is searched for it.
+const RANKED_FROM_CHARS: usize = 3;
+
+/// A word too short to rank on: one or two characters of a script that
+/// spells its words out. Ideographs, kana and hangul are whole words at that
+/// length and never count as short.
+fn is_short_prefix(term: &str) -> bool {
+    term.chars().count() < RANKED_FROM_CHARS && term.chars().all(|ch| (ch as u32) < 0x2E80)
 }
 
 fn fts_term(term: &str, prefix: bool) -> String {
@@ -1092,38 +1188,97 @@ struct SelectedTerm {
     fuzzy: bool,
 }
 
-fn evidence_for(connection: &Connection, hit: &RawHit) -> SearchResult<HitEvidence> {
-    let mut evidence = HitEvidence::default();
-    let mut direct = connection.prepare(
-        "SELECT e.term_ordinal, e.matched_term, e.distance
-         FROM search_query_evidence e
-         JOIN fragments f ON f.id=e.fragment_id
-         WHERE f.workspace_id=?1
-           AND ((?2 IS NULL AND f.document_id IS NULL) OR f.document_id=?2)
-           AND ((?3 IS NULL AND f.node_id IS NULL) OR f.node_id=?3)
-           AND f.field=?4
-           -- One file's pages are one node's fragments under one field; the
-           -- page tells them apart, so a hit's highlights are its own page's.
-           AND f.page IS ?5
-         ORDER BY e.term_ordinal, e.distance, e.matched_term",
-    )?;
-    evidence.direct = select_best_terms(direct.query_map(
-        params![hit.workspace, hit.document, hit.node, hit.field, hit.page],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )?)?;
-
-    let mut scope = connection.prepare(
-        "SELECT e.term_ordinal, e.matched_term, e.distance
-         FROM search_query_evidence e
-         JOIN fragments f ON f.id=e.fragment_id
-         WHERE f.workspace_id=?1
-           AND (f.field='workspace' OR (f.document_id=?2 AND f.field='title'))
-         ORDER BY e.term_ordinal, e.distance, e.matched_term",
-    )?;
-    evidence.scope =
-        select_best_terms(scope.query_map(params![hit.workspace, hit.document], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?)?;
+/// **A hit's highlights**: the words that matched its own fragment, and the
+/// ones its workspace's name or its document's title explain.
+///
+/// **Each lookup finds the hit's fragment first and then seeks its matches
+/// by the evidence table's own key** (`term_ordinal`, `fragment_id`), one
+/// term at a time. It used to join the other way round, and for every one of
+/// a page's fifty hits walked every match the query had: 23 ms a hit and over
+/// a second a page for a one-letter prefix on a 47,000-fragment index, which
+/// is what made the first keystrokes of any search slow. The index each
+/// lookup uses is named, because left to choose the planner took
+/// `fragments_workspace` and read every paragraph of the workspace instead.
+///
+/// The rows and their order are what they were: by term, then distance, then
+/// spelling.
+fn evidence_for(connection: &Connection, hit: &RawHit, terms: usize) -> SearchResult<HitEvidence> {
+    const MATCHES: &str = "SELECT e.term_ordinal, e.matched_term, e.distance";
+    const SEEK: &str = "CROSS JOIN search_query_evidence e
+                          ON e.term_ordinal=?1 AND e.fragment_id=f.id";
+    // One file's pages are one node's fragments under one field; the page
+    // tells them apart, so a hit's highlights are its own page's.
+    let direct_sql = match (&hit.document, &hit.node) {
+        (Some(_), Some(_)) => format!(
+            "{MATCHES} FROM fragments f INDEXED BY fragments_node {SEEK}
+             WHERE f.document_id=?3 AND f.node_id=?4 AND f.workspace_id=?2
+               AND f.field=?5 AND f.page IS ?6
+             ORDER BY e.distance, e.matched_term"
+        ),
+        (Some(_), None) => format!(
+            "{MATCHES} FROM fragments f INDEXED BY fragments_document {SEEK}
+             WHERE f.document_id=?3 AND f.node_id IS ?4 AND f.workspace_id=?2
+               AND f.field=?5 AND f.page IS ?6
+             ORDER BY e.distance, e.matched_term"
+        ),
+        // No document: the workspace's own name, or a task list.
+        (None, _) => format!(
+            "{MATCHES} FROM fragments f INDEXED BY fragments_workspace {SEEK}
+             WHERE f.workspace_id=?2 AND f.field=?5 AND f.document_id IS ?3
+               AND f.node_id IS ?4 AND f.page IS ?6
+             ORDER BY e.distance, e.matched_term"
+        ),
+    };
+    let workspace_sql = format!(
+        "{MATCHES} FROM fragments f INDEXED BY fragments_workspace {SEEK}
+         WHERE f.workspace_id=?2 AND f.field='workspace'
+         ORDER BY e.distance, e.matched_term"
+    );
+    let title_sql = format!(
+        "{MATCHES} FROM fragments f INDEXED BY fragments_document {SEEK}
+         WHERE f.document_id=?3 AND f.field='title' AND f.workspace_id=?2
+         ORDER BY e.distance, e.matched_term"
+    );
+    let mut direct_rows: Vec<(i64, String, i64)> = Vec::new();
+    let mut scope_rows: Vec<(i64, String, i64)> = Vec::new();
+    let row = |r: &rusqlite::Row<'_>| Ok((r.get(0)?, r.get(1)?, r.get(2)?));
+    {
+        let mut direct = connection.prepare_cached(&direct_sql)?;
+        let mut workspace = connection.prepare_cached(&workspace_sql)?;
+        let mut title = connection.prepare_cached(&title_sql)?;
+        for ordinal in 0..terms as i64 {
+            for found in direct.query_map(
+                params![
+                    ordinal,
+                    hit.workspace,
+                    hit.document,
+                    hit.node,
+                    hit.field,
+                    hit.page
+                ],
+                row,
+            )? {
+                direct_rows.push(found?);
+            }
+            // The scope's two sources for one term, in one order, as the
+            // single statement had them.
+            let mut scoped: Vec<(i64, String, i64)> = Vec::new();
+            for found in workspace.query_map(params![ordinal, hit.workspace], row)? {
+                scoped.push(found?);
+            }
+            if hit.document.is_some() {
+                for found in title.query_map(params![ordinal, hit.workspace, hit.document], row)? {
+                    scoped.push(found?);
+                }
+            }
+            scoped.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.1.cmp(&b.1)));
+            scope_rows.extend(scoped);
+        }
+    }
+    let mut evidence = HitEvidence {
+        direct: select_best_terms(direct_rows.into_iter().map(Ok))?,
+        scope: select_best_terms(scope_rows.into_iter().map(Ok))?,
+    };
     // A term explained directly is not also explained by the path.
     evidence
         .scope
