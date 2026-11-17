@@ -114,6 +114,16 @@ pub(crate) enum Command {
         seq: u64,
         workspace: WorkspaceId,
     },
+    /// **Whether every Bot is paused** (M8): `ReadTeamPause`, for the
+    /// roster's control. Answered by `seq`.
+    TeamPause {
+        seq: u64,
+    },
+    /// **Pause or resume every Bot** (M8): `PauseTeam` or `ResumeTeam` at
+    /// the revision the roster read. Answered by its request.
+    SetTeamPause {
+        change: super::team_pause::Change,
+    },
     /// **The workspace's Bots in one lifecycle** (S14): `ListLifecycle`,
     /// the roster's Archived filter and the Trash's Bot rows. `Active` is
     /// never asked: the owner answers it `invalid_request`.
@@ -228,6 +238,13 @@ pub(crate) enum Answer {
         seq: u64,
         workspace: WorkspaceId,
         result: Result<BotActivityPage, Failure>,
+    },
+    /// What a [`Command::TeamPause`] answered (`change` is `None`, by
+    /// `seq`) or a [`Command::SetTeamPause`] (by its request).
+    TeamPause {
+        seq: u64,
+        change: Option<BotRequestId>,
+        result: Result<koru_ai_core::bots::TeamPauseView, Failure>,
     },
     /// What a [`Command::Lifecycle`] answered.
     Lifecycle {
@@ -973,6 +990,79 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     return;
                 }
             }
+            Command::TeamPause { seq } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => team_pause(
+                        connected
+                            .ai()
+                            .bots(&BotCommand::ReadTeamPause {})
+                            .map_err(|failure| said(failure.code, failure.retryable)),
+                    ),
+                    None => Err(Failure::Unanswered),
+                };
+                if matches!(&result, Err(Failure::Unanswered)) {
+                    client = None;
+                }
+                if answers
+                    .send(Answer::TeamPause {
+                        seq,
+                        change: None,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::SetTeamPause { change } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let command = if change.paused {
+                    BotCommand::PauseTeam {
+                        request_id: change.request,
+                        expected_team_revision: change.expected,
+                    }
+                } else {
+                    BotCommand::ResumeTeam {
+                        request_id: change.request,
+                        expected_team_revision: change.expected,
+                    }
+                };
+                let result = match &client {
+                    Some(connected) => team_pause(
+                        connected
+                            .ai()
+                            .bots(&command)
+                            .map_err(|failure| said(failure.code, failure.retryable)),
+                    ),
+                    None => Err(Failure::Unanswered),
+                };
+                if let Err(failure) = &result {
+                    // The code only: a team change names no Bot and no page.
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "Pausing or resuming all Bots was not answered as done"
+                    );
+                    if matches!(failure, Failure::Unanswered) {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::TeamPause {
+                        seq: 0,
+                        change: Some(change.request),
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
             Command::Lifecycle {
                 seq,
                 workspace,
@@ -1241,6 +1331,18 @@ pub(crate) fn trashed_chats(
 pub(crate) fn activity(reply: Result<BotResponse, Said>) -> Result<BotActivityPage, Failure> {
     match reply {
         Ok(BotResponse::Activity { activity }) => Ok(activity),
+        Ok(_) => Err(Failure::Unanswered),
+        Err(said) => Err(Failure::of(said)),
+    }
+}
+
+/// A `ReadTeamPause`, `PauseTeam` or `ResumeTeam` reply: the team's state,
+/// or why not. Never a state made up from another answer.
+pub(crate) fn team_pause(
+    reply: Result<BotResponse, Said>,
+) -> Result<koru_ai_core::bots::TeamPauseView, Failure> {
+    match reply {
+        Ok(BotResponse::TeamPause { team }) => Ok(team),
         Ok(_) => Err(Failure::Unanswered),
         Err(said) => Err(Failure::of(said)),
     }

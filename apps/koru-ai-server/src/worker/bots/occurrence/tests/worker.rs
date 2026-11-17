@@ -271,6 +271,8 @@ impl BotDelegatePort for Delegate {
                     },
                 })
             }
+            // The team value (M8): the fixture owner takes it as a delegate does.
+            DelegateCommand::TeamBarrier { barrier } => Ok(BotReply::TeamBarrier { barrier }),
             _ => panic!("unexpected delegated execution: {command:?}"),
         }
     }

@@ -478,3 +478,58 @@ fn ordinary_admin_completion_wakes_admission_recovery_without_a_timer() {
     ));
     pool.stop();
 }
+
+/// `m8_team_races` (M8 piece W): a submission was prepared and not yet
+/// admitted when the team pause committed. The delegate refuses it once it
+/// holds the pause (`bot_team_paused`); the worker ends it through the
+/// refusal fence as rejected, exactly as any refused Submit, and never
+/// offers it again. With the row committed and the delegate not answering
+/// for it, the AI side decides the same without asking: it is refused, not
+/// submitted.
+#[test]
+fn m8_team_races_a_submission_prepared_before_the_pause_is_refused_and_never_resubmitted() {
+    let (mut repo, bot, _, intent) = fixture();
+    let receipt = prepared(&mut repo, &intent);
+    let request = intent.submission.provenance.submission;
+    // Prepared, then the pause commits. No Bot's revision moves for it.
+    let revision = repo.bot(bot.id).unwrap().unwrap().revision;
+    repo.change_team_pause(
+        owner(&bot),
+        BotRequestId::mint(),
+        &"5a".repeat(32),
+        0,
+        true,
+        2,
+    )
+    .unwrap();
+    assert_eq!(repo.bot(bot.id).unwrap().unwrap().revision, revision);
+    assert!(!repo.bot_admitting(bot.id).unwrap());
+    // The delegate does not hold it: under the pause it is not offered.
+    let BotAdmissionReceipt::Submission(submission) = &receipt else {
+        panic!("a submission")
+    };
+    assert_eq!(
+        missing_submission(&repo, bot.id, submission),
+        Missing::Refuse
+    );
+    // It was offered just before, and the delegate, told of the pause,
+    // refuses it.
+    let refusal = koru_delegate_api::bots::team_failure("bot_team_paused").unwrap();
+    assert!(!refusal.retryable);
+    let (next, action) = apply_result(
+        &mut repo,
+        result(&bot, request, Action::Submit, Err(refusal)),
+        &receipt,
+        3,
+    )
+    .unwrap()
+    .unwrap();
+    assert!(action.is_none(), "it is fenced, never submitted again");
+    assert!(matches!(
+        &next,
+        BotAdmissionReceipt::Submission(BotSubmissionReceipt {
+            outcome: Some(BotExecutionOutcome::RefusalFence { .. }),
+            ..
+        })
+    ));
+}

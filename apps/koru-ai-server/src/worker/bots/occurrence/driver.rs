@@ -112,6 +112,7 @@ impl WorkerState {
         // This is the first repository access: no current model, Store or
         // captured content is read before exact immutable slot replay.
         if let Request::Preclaim(request) = &operation.request {
+            self.refuse_occurrence_under_team_pause(operation)?;
             return preclaim::snapshot(&self.repository, request)
                 .map(|snapshot| Phase::PreclaimRead(Box::new(snapshot)));
         }
@@ -122,6 +123,7 @@ impl WorkerState {
         if row.is_some() {
             return self.observation_phase(operation, row.as_ref());
         }
+        self.refuse_occurrence_under_team_pause(operation)?;
         if !self
             .repository
             .routine_preparation_capacity(&request.slot)

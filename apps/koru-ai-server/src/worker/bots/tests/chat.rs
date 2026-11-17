@@ -14,6 +14,7 @@ mod memory;
 mod questions;
 mod refusal;
 pub(in crate::worker::bots) mod routines;
+mod team_pause;
 
 #[derive(Default)]
 struct Native {
@@ -402,6 +403,8 @@ impl BotDelegatePort for Native {
                     details: Default::default(),
                 })
             }
+            // The team value (M8): the fixture owner takes it as a delegate does.
+            D::TeamBarrier { barrier } => Ok(BotReply::TeamBarrier { barrier }),
             other => panic!(
                 "unexpected owner command: {}",
                 serde_json::to_string(&other)

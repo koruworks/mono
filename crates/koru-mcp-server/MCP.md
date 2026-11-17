@@ -1545,6 +1545,17 @@ return the original receipt where the shared lifecycle permits; archived
 mutations refuse, archived history remains readable, and Trash hides it. A
 trashed main conversation is a refusal, never a replacement conversation.
 
+**When the person has paused all Bots, `start_bot_task` is refused** with the
+code `team_paused`, `details.reason: "team_paused"` and the message "The
+person has paused all Bots." It is not retryable: nothing was accepted, no
+conversation message was written, and sending the same request again is
+refused the same way until the person resumes. Tell the person rather than
+retrying. `list_bots`, `read_bot_task` and `stop_bot_task` keep working under
+the pause, and work that was already running continues. Pausing and resuming
+all Bots are the person's controls in Koru: no tool here does either, and
+`bots.read` and `bots.run` do not reach the route that does. A single Bot the
+person paused on its own still refuses with `wrong_owner`, as before.
+
 Configured Knowledge is captured by the shared task path alongside Role and the
 explicit task pages. Its separate sixteen-page bound does not reduce the task's
 sixteen-page selection bound; the distinct union is at most 33 pages. Knowledge

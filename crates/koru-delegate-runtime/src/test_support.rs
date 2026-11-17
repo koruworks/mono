@@ -41,8 +41,8 @@ use koru_delegate_core::decisions::{
 use koru_delegate_core::{
     ActorRef, AgentTurnId, AttemptGeneration, BotAccess, BotAdmissionBarrier, BotBootScan,
     BotBootState, BotExecutionFence, BotId, BotOwner, BotPolicyBarrier, BotPolicyBarrierKey,
-    BotProvenance, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey, BotWorkingFolder,
-    CapturedBotPolicy, DelegateBootId, DelegationRequest, DeviceId, DocumentId,
+    BotProvenance, BotRequestId, BotRunKey, BotSubmission, BotSubmissionKey, BotTeamBarrier,
+    BotWorkingFolder, CapturedBotPolicy, DelegateBootId, DelegationRequest, DeviceId, DocumentId,
     FreshBotPolicyProof, HostInstanceId, IdempotencyKey, Objective, PendingInput, ProfileId,
     RoutinePolicyBarrier, RunAttemptId, RunId, SessionId, SessionProfileKey, WorkspaceId,
     WorkspaceScope,
@@ -200,12 +200,40 @@ pub fn admission_barrier(submission: &BotSubmission) -> BotAdmissionBarrier {
 }
 
 /// Acknowledge `barrier` and `policy` for this process's boot through the
-/// public boot handshake (`bot_hello` probe, then `synchronize_boot_bot`).
+/// public boot handshake (`bot_hello` probe, then `synchronize_boot_bot`),
+/// after telling this run the owner's team value the way the AI worker does
+/// after each `Hello` (M8): "never paused", unless the test already told
+/// this run a value for that owner.
 ///
 /// Ledger after: the barrier and the policy barrier are installed and the
 /// pair is the Bot's current boot acknowledgment. Memory after: the Bot is
-/// Ready for this boot. Panics if the handshake refuses or is not Ready.
+/// Ready for this boot, and the owner's team value is held. Panics if the
+/// handshake refuses or is not Ready.
 pub fn replay_boot_pair(
+    orchestrator: &mut Orchestrator,
+    barrier: BotAdmissionBarrier,
+    policy: BotPolicyBarrier,
+) {
+    tell_team_never_paused(orchestrator, barrier.owner);
+    replay_boot_pair_untold(orchestrator, barrier, policy);
+}
+
+/// Tell this run of the delegate that `owner`'s team was never paused, as
+/// the AI worker does after each `Hello` for a team with no row. Nothing is
+/// sent when this run already holds a value for `owner`: a test that paused
+/// the team keeps its pause. Memory only; the ledger is not written.
+pub fn tell_team_never_paused(orchestrator: &mut Orchestrator, owner: BotOwner) {
+    if orchestrator.bot_team_value(owner).is_none() {
+        orchestrator
+            .bot_team_barrier(&BotTeamBarrier::never_paused(owner), owner.device)
+            .expect("the never-paused team value");
+    }
+}
+
+/// The boot handshake alone, with nothing said about the team: what a
+/// delegate run looks like between its Bots' boot pairs and the worker's
+/// team value. Tests of the closed state ("not told") use it.
+pub fn replay_boot_pair_untold(
     orchestrator: &mut Orchestrator,
     barrier: BotAdmissionBarrier,
     policy: BotPolicyBarrier,

@@ -25,6 +25,7 @@ use std::sync::atomic::{AtomicI64, AtomicUsize};
 
 mod access;
 mod lifecycle;
+mod team_pause;
 
 const MINUTE: i64 = 60_000;
 /// The fixed wall clock of these tests: five seconds into a minute.

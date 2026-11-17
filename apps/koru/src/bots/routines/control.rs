@@ -881,6 +881,9 @@ pub(crate) fn refusal_words(code: &str) -> Words {
             Words::BotsRoutineErrUnavailable
         }
         "routine_not_ready" => Words::BotsRoutineErrNotReady,
+        // Every Bot is paused (M8): turning a Routine on and Test are new
+        // work.
+        crate::bots::team_pause::TEAM_PAUSED => Words::BotsTeamPausedShort,
         "routine_must_be_paused" => Words::BotsRoutineErrPauseToTest,
         // Shown as a wait on the button; said only where there is no button.
         "routine_test_minute_ending" | "routine_test_too_soon" | "routine_test_busy" => {

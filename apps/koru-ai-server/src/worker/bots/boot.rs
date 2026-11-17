@@ -26,6 +26,10 @@ pub(in crate::worker) struct BootRecovery {
     probe_not_before: Instant,
     probe_requested: bool,
     round: u32,
+    /// What this worker owes the delegate about the team pause (M8). It is
+    /// kept here because the boot `Hello` is what shows a new delegate run;
+    /// its sends use this lane's job and none of the walk's state.
+    pub(super) team: team_pause::TeamCoordination,
 }
 impl Default for BootRecovery {
     fn default() -> Self {
@@ -44,6 +48,7 @@ impl Default for BootRecovery {
             probe_not_before: now,
             probe_requested: false,
             round: 0,
+            team: Default::default(),
         }
     }
 }
@@ -95,6 +100,12 @@ enum Work {
         admission: koru_delegate_core::BotAdmissionBarrier,
         policy: BotPolicyBarrier,
         routine: ApiResult<Option<policy::dispatch::RoutineDispatch>>,
+    },
+    /// The team value (M8): what the delegate is told, and the delegate run
+    /// it is meant for. Its answer goes to `team_pause.rs`, never to the walk.
+    Team {
+        boot: DelegateBootId,
+        barrier: koru_delegate_core::BotTeamBarrier,
     },
 }
 pub(in crate::worker) struct BotBootJob {
@@ -190,6 +201,26 @@ impl BotBootJob {
                             boot: *boot,
                             barrier: admission.clone(),
                             policy: policy.clone(),
+                        },
+                    )
+                }
+                Work::Team { barrier, .. } => {
+                    // The value names the owner the `Hello` showed. It is sent
+                    // only while that is still this worker's owner.
+                    let owner = self.authority.owner().map_err(|_| unavailable())?;
+                    if owner.user_scope != barrier.owner.user_scope
+                        || owner.device != barrier.owner.device
+                    {
+                        return Err(koru_delegate_api::Failure::new(
+                            "bot_boot_owner_changed",
+                            "Bot owner changed.",
+                            true,
+                        ));
+                    }
+                    (
+                        barrier.owner,
+                        D::TeamBarrier {
+                            barrier: barrier.clone(),
                         },
                     )
                 }
@@ -291,7 +322,37 @@ impl WorkerState {
         Ok(policy)
     }
 
+    /// Queue one send of the team value on this lane. `Some(true)` when it
+    /// was queued, `Some(false)` when the lane is full, `None` when this
+    /// composition has no delegate to tell.
+    pub(super) fn submit_team_barrier(
+        &mut self,
+        serial: u64,
+        boot: DelegateBootId,
+        barrier: koru_delegate_core::BotTeamBarrier,
+    ) -> Option<bool> {
+        let (Some(authority), Some(delegate), Some(pool)) = (
+            &self.bot_authority,
+            &self.bot_delegate,
+            &self.provider_admin,
+        ) else {
+            return None;
+        };
+        Some(
+            pool.try_submit(ProviderAdminJob::BotBoot(BotBootJob {
+                serial,
+                work: Work::Team { boot, barrier },
+                authority: authority.clone(),
+                delegate: delegate.clone(),
+            }))
+            .is_ok(),
+        )
+    }
+
     pub(in crate::worker) fn schedule_bot_boot(&mut self) {
+        // The team value is owed to a new delegate run before any of its
+        // Bots is synchronized (M8), and again whenever the row moved.
+        self.schedule_team_barrier();
         let now = Instant::now();
         if self.bot_boot.busy.is_some() || now < self.bot_boot.due {
             return;
@@ -313,6 +374,15 @@ impl WorkerState {
                     return;
                 }
                 self.bot_boot.begin();
+            }
+            // The per-Bot pass of a delegate run starts only after the first
+            // send of the team value to that run came back (M8). A send that
+            // failed is repeated beside the pass: until it is echoed the
+            // delegate holds every Bot of this owner anyway.
+            if self.bot_boot.page.front().is_some()
+                && !self.bot_boot.team.sent_to(self.bot_boot.observed)
+            {
+                return;
             }
             if let Some(entry) = self.bot_boot.page.front() {
                 let owner = BotOwner {
@@ -390,6 +460,11 @@ impl WorkerState {
     }
 
     pub(in crate::worker) fn complete_bot_boot(&mut self, result: BotBootResult) {
+        // A team value's answer has its own serial and never touches the walk.
+        if let Work::Team { boot, barrier } = result.work {
+            let answer = result.result.map(|(_, reply)| reply);
+            return self.complete_team_barrier(result.serial, boot, barrier, answer);
+        }
         if self.bot_boot.busy != Some(result.serial) {
             return;
         }
@@ -447,6 +522,9 @@ impl WorkerState {
                 }
                 self.bot_boot.observed = Some(observed);
                 if changed {
+                    // A delegate run this worker has not told holds every Bot
+                    // of this owner until it is sent the team value (M8).
+                    self.bot_boot.team.observe(owner, hello.boot);
                     // An adopted owner (or a new delegate boot) is owed this
                     // process's dispatcher announce (M5): the delegate then
                     // closes what a previous process left open.

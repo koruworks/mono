@@ -660,6 +660,8 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
             // origin; an archived Bot's history reads.
             | BotCommand::ListChildRequests { .. }
             | BotCommand::ReadChildOrigin { .. }
+            // M8: the team pause's read names no Bot and changes nothing.
+            | BotCommand::ReadTeamPause {}
     )
 }
 

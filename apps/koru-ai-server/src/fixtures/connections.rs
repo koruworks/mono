@@ -726,6 +726,8 @@ impl BotDelegatePort for PrivateDelegate {
                 }
                 Ok(BotReply::PrivateEffect { effect })
             }
+            // The team value (M8): the fixture owner takes it as a delegate does.
+            BotCommand::TeamBarrier { barrier } => Ok(BotReply::TeamBarrier { barrier }),
             _ => panic!("unexpected delegate command"),
         }
     }

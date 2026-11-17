@@ -296,3 +296,106 @@ fn an_api_task_run_binds_only_through_this_bots_admitted_receipt_in_that_convers
     worker.shutdown();
     assert_eq!(worker.join(), WorkerExit::Clean);
 }
+
+/// `m8_admission_inventory`, rows 3 and 5 (M8 piece W): with the team
+/// paused, the Bots API `start` and `continue` answer `team_paused`. No
+/// receipt is written, so nothing is left for recovery to submit, and the
+/// execution owner is never asked to admit anything. After the team
+/// resumes the same `start` is accepted.
+#[test]
+fn m8_admission_inventory_rows_3_and_5_the_bots_api_start_is_refused_and_leaves_nothing() {
+    let (mut repo, authority, command) = fixture();
+    let bot = created(&mut repo, authority.clone(), command);
+    let owner = RunOwner::on(bot.owner_device);
+    owner.admits.store(true, Ordering::SeqCst);
+    let (worker, client) = worker_with(repo, Arc::new(Capturing(authority.clone())), owner.clone());
+    let team = |paused: bool, expected: u64| {
+        let request_id = BotRequestId::mint();
+        let command = if paused {
+            BotCommand::PauseTeam {
+                request_id,
+                expected_team_revision: expected,
+            }
+        } else {
+            BotCommand::ResumeTeam {
+                request_id,
+                expected_team_revision: expected,
+            }
+        };
+        assert!(matches!(
+            client.bots(context(true), command),
+            Ok(BotResponse::TeamPause { team }) if team.paused == paused
+        ));
+    };
+    let request = BotRequestId::mint();
+    let start = || BotCommand::Start {
+        request_id: request,
+        bot_id: bot.id,
+        chat_id: bot.main_chat,
+        expected_revision: bot.revision,
+        destination: bot.home_workspace,
+        task: BotTask {
+            text: "API-TASK".into(),
+            documents: vec![],
+        },
+    };
+    team(true, 0);
+    for _ in 0..2 {
+        let refused = client.bots(context(true), start()).unwrap_err();
+        assert_eq!(
+            (refused.code.as_str(), refused.retryable),
+            (koru_ai_wire::bot_team_codes::TEAM_PAUSED, false)
+        );
+    }
+    let refused = client
+        .bots(
+            context(true),
+            BotCommand::Continue {
+                request_id: BotRequestId::mint(),
+                bot_id: bot.id,
+                chat_id: bot.main_chat,
+                expected_revision: bot.revision,
+                destination: bot.home_workspace,
+                task: BotTask {
+                    text: "API-CONTINUE".into(),
+                    documents: vec![],
+                },
+                previous_run: d::RunId::mint(),
+            },
+        )
+        .unwrap_err();
+    // A continuation of a Run that does not exist is `not_found` before the
+    // team is read; what matters is that it is refused and writes nothing.
+    assert!(
+        refused.code == koru_ai_wire::bot_team_codes::TEAM_PAUSED || refused.code == "not_found",
+        "{}",
+        refused.code
+    );
+    // No receipt: the operation does not exist, so recovery has nothing to
+    // submit while the team is held (row 5).
+    assert_eq!(
+        client
+            .bots(
+                context(true),
+                BotCommand::ReadOperation {
+                    request_id: request,
+                    bot_id: bot.id,
+                },
+            )
+            .unwrap_err()
+            .code,
+        "not_found"
+    );
+    assert!(
+        owner.admitted.lock().unwrap().is_empty(),
+        "nothing was offered to the execution owner"
+    );
+    // The team resumes: the same request is accepted.
+    team(false, 1);
+    assert!(matches!(
+        client.bots(context(true), start()),
+        Ok(BotResponse::Operation { .. })
+    ));
+    worker.shutdown();
+    assert_eq!(worker.join(), WorkerExit::Clean);
+}

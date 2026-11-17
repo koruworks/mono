@@ -66,6 +66,25 @@ fn missing() -> Failure {
     }
 }
 
+/// What an external client is told when the person has paused every Bot
+/// (M8). The engine's refusal keeps its code, `team_paused`; the text and
+/// `details.reason` say why in the caller's terms. Pausing and resuming the
+/// team are the person's controls: this facade forwards neither, and its
+/// scopes (`bots.read`, `bots.run`) do not reach the Bots route that does.
+const TEAM_PAUSED_MESSAGE: &str = "The person has paused all Bots.";
+
+fn team_paused(mut failure: Failure) -> Failure {
+    if failure.code == koru_ai_wire::bot_team_codes::TEAM_PAUSED {
+        failure.message = TEAM_PAUSED_MESSAGE.into();
+        failure.retryable = false;
+        failure.details.insert(
+            "reason".into(),
+            koru_ai_wire::bot_team_codes::TEAM_PAUSED.into(),
+        );
+    }
+    failure
+}
+
 /// Authentication is the local OS user, not this caller-chosen audit label.
 /// Never return this context or accept an arbitrary BotCommand alongside it.
 fn owner_context(mut context: RequestContext) -> RequestContext {
@@ -222,28 +241,30 @@ fn start(
     task.validate(request.workspace).map_err(|_| invalid())?;
     let bot = owned_bot(client, &context, request.workspace, request.bot_id)?;
     let operation_id = operation_id(&bot, request.request_id)?;
-    let stream = client.send_turn(
-        context,
-        SendTurnRequest {
-            destination_workspace: Some(request.workspace),
-            operation_id,
-            chat_id: bot.main_chat,
-            surface: AiSurface::Standalone,
-            markdown: request.text,
-            explicit_refs: request
-                .document_ids
-                .into_iter()
-                .map(|document_id| ContextRef::Document { document_id })
-                .collect(),
-            reasoning_override: None,
-            web_search: false,
-            system_prompt_override: None,
-            replace_pinned_documents: false,
-            attachment_ids: Vec::new(),
-            answers: None,
-            skills: Vec::new(),
-        },
-    )?;
+    let stream = client
+        .send_turn(
+            context,
+            SendTurnRequest {
+                destination_workspace: Some(request.workspace),
+                operation_id,
+                chat_id: bot.main_chat,
+                surface: AiSurface::Standalone,
+                markdown: request.text,
+                explicit_refs: request
+                    .document_ids
+                    .into_iter()
+                    .map(|document_id| ContextRef::Document { document_id })
+                    .collect(),
+                reasoning_override: None,
+                web_search: false,
+                system_prompt_override: None,
+                replace_pinned_documents: false,
+                attachment_ids: Vec::new(),
+                answers: None,
+                skills: Vec::new(),
+            },
+        )
+        .map_err(team_paused)?;
     // accepted is durable. Dropping the subscriber only detaches transport;
     // the AI writer and Run owner continue the shared conversation.
     Ok(stream.accepted)

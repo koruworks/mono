@@ -7,14 +7,16 @@
 //! owner, set only by the `TeamBarrier` command and lost when the delegate
 //! stops. Nothing here is written to the ledger and no Bot's revision moves.
 //!
-//! **Not told.** The contract's rule is that a delegate which has not been
-//! told the team's state is closed: it dispatches and starts nothing until
-//! the AI owner speaks. That rule is only safe once the AI owner sends
-//! `TeamBarrier` after every `Hello` (piece W). Until then no worker sends
-//! it at all, and a closed delegate would never dispatch a Bot task again.
-//! [`TEAM_VALUE_REQUIRED`] is that one switch: while it is `false`, an owner
-//! this run was not told about counts as "told, not paused", exactly as
-//! before M8; a value that *was* sent is enforced either way.
+//! **Not told.** A delegate run which has not been told an owner's team
+//! value is closed for that owner: it dispatches and starts nothing of a
+//! Bot until the AI owner speaks (contract 3.2). That is safe because the
+//! AI worker sends `TeamBarrier` each time its boot `Hello` shows a delegate
+//! run it has not told, before that run's per-Bot boot pass, and sends
+//! "never paused" for a team with no row
+//! (`apps/koru-ai-server/src/worker/bots/team_pause.rs`). The per-Bot boot
+//! proof a dispatch already needed is renewed by the same `Hello`, so a run
+//! waits for the worker no longer than it did before M8.
+//! [`TEAM_VALUE_REQUIRED`] is the switch for that rule.
 
 use super::bots::{owner_device, refused};
 use super::{Orchestrator, RunError};
@@ -24,10 +26,10 @@ use std::collections::HashMap;
 /// Whether a delegate run that was not told an owner's team value holds that
 /// owner's Bots (contract 3.2, "closed until told").
 ///
-/// `false` until the AI worker sends `TeamBarrier` after each `Hello`: the
-/// change that makes the worker send it (piece W) sets this to `true` in the
-/// same commit, and not before. See the module comment.
-pub const TEAM_VALUE_REQUIRED: bool = false;
+/// `true` since the AI worker sends `TeamBarrier` after each `Hello` (M8
+/// piece W). It must not be `true` in a tree whose worker does not send the
+/// value: no Bot task would be dispatched again. See the module comment.
+pub const TEAM_VALUE_REQUIRED: bool = true;
 
 /// The most owners one delegate run keeps a team value for. A delegate
 /// serves one device and, in practice, one person; the bound only keeps a
@@ -109,9 +111,16 @@ impl Orchestrator {
 
     /// Set whether an owner this run was not told about is held. The host
     /// composition does not call this: the constant is the product's switch.
-    /// It exists so the closed behavior is tested before it is switched on.
     pub fn require_team_value(&mut self, required: bool) {
         self.team.required = required;
+    }
+
+    /// Drop every team value this run holds: what a restart of the delegate
+    /// does to this memory. A test of the closed state uses it on a fixture
+    /// whose builder already told the run "never paused".
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn forget_team_values(&mut self) {
+        self.team.values.clear();
     }
 
     pub(super) fn team_half(&self, owner: BotOwner) -> TeamHalf {

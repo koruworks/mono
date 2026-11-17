@@ -109,6 +109,11 @@ impl Fixture {
                 created_at_ms: 0,
             })
             .unwrap();
+        // The AI worker tells each delegate run the team value first (M8).
+        koru_delegate_runtime::test_support::tell_team_never_paused(
+            &mut actor.orchestrator,
+            slot.owner,
+        );
         actor
             .orchestrator
             .bot_barrier(&admission, actor.device)

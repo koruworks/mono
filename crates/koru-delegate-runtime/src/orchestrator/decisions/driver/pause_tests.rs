@@ -344,7 +344,7 @@ fn m8_decision_expires_under_pause_after_the_delegate_is_rebuilt_over_the_same_l
 fn m8_decision_expires_under_pause_while_the_delegate_run_was_not_told() {
     let mut chain = held(decision_chain());
     chain.prepared.allow_once(&mut chain.orchestrator).unwrap();
-    chain.orchestrator.require_team_value(true);
+    chain.orchestrator.forget_team_values();
     let before = decision(&mut chain);
     for _ in 0..3 {
         assert_eq!(advance(&mut chain), Step::Waiting("bot_boot_pending"));

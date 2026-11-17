@@ -42,6 +42,23 @@ fn reserved(h: &mut Harness, s: &BotSubmission) {
     ));
 }
 
+/// [`reserved`] in a delegate run that was told nothing about the team.
+fn reserved_untold(h: &mut Harness, s: &BotSubmission) {
+    h.orchestrator
+        .bot_submit(s.clone(), s.provenance.owner.device)
+        .unwrap();
+    boot::replay_untold(&mut h.orchestrator, s);
+    assert!(matches!(
+        h.schedule_store
+            .inner
+            .lock()
+            .unwrap()
+            .reserve_bot(s.request.run, None)
+            .unwrap(),
+        BotReservation::Acquired
+    ));
+}
+
 fn state(h: &Harness, s: &BotSubmission) -> BotAdmissionState {
     h.schedule_store
         .bot_execution(s.request.run)
@@ -65,6 +82,8 @@ fn m8_gate_is_the_only_reader_and_a_bot_barrier_alone_answers_as_before() {
     let mut h = bot_harness();
     let s = submission(70);
     let owner = s.provenance.owner;
+    // The team half is told and open, as after the worker's `Hello`.
+    crate::test_support::tell_team_never_paused(&mut h.orchestrator, owner);
     assert_eq!(
         h.orchestrator.bot_held(owner, s.provenance.bot).unwrap(),
         Held::No

@@ -191,6 +191,15 @@ impl RoutineCreationJob {
 }
 
 impl WorkerState {
+    /// Row 13 of the team pause's admission inventory (M8): Enable and Test
+    /// answer `team_paused` here, before anything is sent to the delegate.
+    fn refuse_routine_start_under_team_pause(&self, owner: BotOwner) -> ApiResult<()> {
+        if self.team_paused(owner).map_err(bot_failure)? {
+            return Err(bot_failure(BotError::TeamPaused));
+        }
+        Ok(())
+    }
+
     pub(in crate::worker) fn schedule_routine_creation(&mut self) {
         if self.bot_delegate.is_none() {
             return;

@@ -227,6 +227,8 @@ impl BotDelegatePort for Ledger {
                     intent: intent.clone(),
                 })
             }
+            // The team value (M8): the fixture owner takes it as a delegate does.
+            BotCommand::TeamBarrier { barrier } => Ok(BotReply::TeamBarrier { barrier }),
             _ => panic!("the trigger sends only the boot probe, the consume and the receipt"),
         }
     }

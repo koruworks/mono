@@ -862,6 +862,18 @@ impl MainView {
         true
     }
 
+    /// **Ask before every Bot is paused** (Bots M8, contract 6.1): what the
+    /// pause holds and that running work keeps going. A reversible change
+    /// that stops nothing, so it is not a destructive answer; Cancel is
+    /// still where the keyboard starts.
+    pub(super) fn ask_pause_all_bots(&mut self) -> bool {
+        self.confirm = Some((
+            crate::bots::team_pause::question(crate::format::lang()),
+            super::trash::ConfirmSubject::PauseAllBots,
+        ));
+        true
+    }
+
     /// The person answered the Abandon question: a yes is sent by whoever
     /// asked; a no sends nothing; the keyboard goes back to the control
     /// that asked.

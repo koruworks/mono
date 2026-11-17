@@ -59,6 +59,16 @@ pub(super) fn replay(orchestrator: &mut Orchestrator, s: &BotSubmission) {
     crate::test_support::replay_boot(orchestrator, s);
 }
 
+/// The Bot's boot pair with nothing said about the team (M8): the delegate
+/// run stays "not told".
+pub(super) fn replay_untold(orchestrator: &mut Orchestrator, s: &BotSubmission) {
+    crate::test_support::replay_boot_pair_untold(
+        orchestrator,
+        barrier(s),
+        policy(s, s.provenance.config_revision),
+    );
+}
+
 pub(super) fn replay_pair(
     orchestrator: &mut Orchestrator,
     barrier: BotAdmissionBarrier,

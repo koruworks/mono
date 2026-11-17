@@ -40,9 +40,10 @@ use crate::bots::BotsRoster;
 use crate::bots::roster::{
     ABANDONED_LINES, ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART,
     ARCHIVED_TOGGLE, CREATE, CREATION_ABANDON_PART, CREATION_PART, CREATION_RETRY_PART, EMPTY,
-    LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, UNARCHIVE_PART, UNFINISHED_HEADING, UNFINISHED_MORE,
-    UNFINISHED_NOTICE, activity_key, archived_key, creation_abandon_key, creation_key,
-    creation_retry_key, creation_state_key, row_key, unarchive_key,
+    LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, TEAM_CONTROL, TEAM_LINE, UNARCHIVE_PART,
+    UNFINISHED_HEADING, UNFINISHED_MORE, UNFINISHED_NOTICE, activity_key, archived_key,
+    creation_abandon_key, creation_key, creation_retry_key, creation_state_key, row_key,
+    unarchive_key,
 };
 use crate::panes::Outcome;
 
@@ -51,6 +52,9 @@ const BOTS: &str = "explore-bots";
 const NOTICE_PART: ControlPart = ControlPart::new("notice");
 const EMPTY_PART: ControlPart = ControlPart::new("empty");
 const MORE_WORK_PART: ControlPart = ControlPart::new("more-work");
+/// *Pause all Bots* / *Resume all Bots* and the line under it (M8).
+const TEAM_PART: ControlPart = ControlPart::new("team-pause");
+const TEAM_LINE_PART: ControlPart = ControlPart::new("team-pause-line");
 const ACTIVITY: ControlPart = ControlPart::new(ACTIVITY_PART);
 /// The Archived filter (S14).
 const ARCHIVED_TOGGLE_PART: ControlPart = ControlPart::new("archived-toggle");
@@ -113,6 +117,32 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
             out.push(
                 SemanticNode::new(
                     Occurrence::surface(cx.window, cx.view, BOTS, NOTICE_PART),
+                    Role::Label,
+                )
+                .with_label(t(cx.lang, words))
+                .with_bounds(rect),
+            );
+        }
+        // **Pause all Bots** (M8): a button named by what a press does, with
+        // no action and marked busy while a change waits to be confirmed;
+        // and the line under it.
+        if let (Some(rect), Some(control)) = (rect_of(TEAM_CONTROL), roster.team().control()) {
+            let node = SemanticNode::new(
+                Occurrence::surface(cx.window, cx.view, BOTS, TEAM_PART),
+                Role::Button,
+            )
+            .with_label(t(cx.lang, control.words))
+            .with_bounds(rect);
+            out.push(if control.enabled {
+                node.with_actions([Action::Click])
+            } else {
+                node.with_busy()
+            });
+        }
+        if let (Some(rect), Some(words)) = (rect_of(TEAM_LINE), roster.team().line()) {
+            out.push(
+                SemanticNode::new(
+                    Occurrence::surface(cx.window, cx.view, BOTS, TEAM_LINE_PART),
                     Role::Label,
                 )
                 .with_label(t(cx.lang, words))
@@ -451,6 +481,7 @@ pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occu
             BOTS,
             ARCHIVED_TOGGLE_PART,
         )),
+        _ if key == TEAM_CONTROL => Some(Occurrence::surface(cx.window, cx.view, BOTS, TEAM_PART)),
         crate::bots::roster::ROW_PART => model(ControlPart::ROOT),
         ACTIVITY_PART => model(ACTIVITY),
         CREATION_RETRY_PART => model(CREATION_RETRY),
@@ -478,6 +509,13 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     for bot in roster.bots() {
         rev.uuid(bot.id.as_uuid()).str(&bot.name).bool(bot.paused);
     }
+    // The team pause (M8): the control's words, its line, the rows' state.
+    rev.str(&format!(
+        "{:?}{:?}{}",
+        roster.team().state(),
+        roster.team().line(),
+        roster.team().holds_bots()
+    ));
     rev.bool(roster.archived_open())
         .byte(roster.archived_load() as u8)
         .u64(roster.archived().len() as u64);
@@ -551,6 +589,14 @@ pub(super) fn action(
         } else {
             creation_abandon_key(request)
         });
+        return Some(Outcome::Consumed);
+    }
+    // *Pause all Bots* / *Resume all Bots* (M8): a press, as the pointer's.
+    if target.part == TEAM_PART && matches!(target.object, ObjectKey::Surface(_)) {
+        if action != Action::Click {
+            return None;
+        }
+        roster.press_team();
         return Some(Outcome::Consumed);
     }
     // The Archived filter's toggle (S14).

@@ -995,6 +995,8 @@ fn known_refusal(code: &str) -> Option<Words> {
         BOT_PENDING => Words::BotsErrPending,
         BOT_OPERATION_PENDING => Words::BotsErrOperationPending,
         ROUTINE_RETRY_UNSUPPORTED => Words::BotsErrRoutineRetryUnsupported,
+        // Every Bot is paused (M8): new work is refused.
+        super::team_pause::TEAM_PAUSED => Words::BotsTeamPausedSend,
         FOLDER_RESERVED => Words::BotsErrFolderReserved,
         "not_found" => Words::BotsErrNotFound,
         "wrong_owner" => Words::BotsErrWrongOwner,

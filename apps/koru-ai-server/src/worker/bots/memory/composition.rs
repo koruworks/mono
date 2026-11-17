@@ -85,6 +85,8 @@ impl BotDelegatePort for Delegate {
                     authority: d::RunToolAuthority::Bot { provenance, policy },
                 });
             }
+            // The team value (M8): the fixture owner takes it as a delegate does.
+            D::TeamBarrier { barrier } => return Ok(BotReply::TeamBarrier { barrier }),
             other => panic!(
                 "unexpected composition delegate command: {}",
                 serde_json::to_string(&other).unwrap()

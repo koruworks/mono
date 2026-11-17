@@ -129,6 +129,10 @@ pub(super) enum ConfirmSubject {
     /// no sends nothing. The keyboard goes back to the tab's *Abandon*.
     AbandonBotCreation(AbandonFrom),
     AbandonBotMemory(crate::bots::view::memory::Ask),
+    /// **Pause all Bots?** (Bots M8). A yes is sent by the roster, which
+    /// asked; a no sends nothing. Nothing is deleted and nothing running is
+    /// stopped.
+    PauseAllBots,
 }
 
 /// Who asked to abandon a creation, and so who sends it on a yes.
@@ -789,6 +793,12 @@ impl MainView {
             self.settle_bot_memory_ask(ask, confirmed);
             return true;
         }
+        if subject == ConfirmSubject::PauseAllBots {
+            if confirmed {
+                self.explore.bots_mut().pause_team_confirmed();
+            }
+            return true;
+        }
         if let ConfirmSubject::BotLifecycle { bot, tab, .. }
         | ConfirmSubject::TrashBotConversation { bot, tab, .. } = &subject
         {
@@ -899,6 +909,7 @@ impl MainView {
             ConfirmSubject::BotLifecycle { .. }
             | ConfirmSubject::TrashBotConversation { .. }
             | ConfirmSubject::AbandonBotMemory(_)
+            | ConfirmSubject::PauseAllBots
             | ConfirmSubject::AbandonBotCreation(_) => {}
         }
         true

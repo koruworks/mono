@@ -87,6 +87,10 @@ pub(crate) const NOTICE: Key = Key::surface(SURFACE, "notice");
 pub(crate) const EMPTY: Key = Key::surface(SURFACE, "empty");
 /// The sentence saying the activity read stopped before the end.
 pub(crate) const MORE_WORK: Key = Key::surface(SURFACE, "more-work");
+/// *Pause all Bots* / *Resume all Bots* (M8): the roster's first control.
+pub(crate) const TEAM_CONTROL: Key = Key::surface(SURFACE, "team-pause");
+/// The line under it: what it waits for, or that every Bot is paused.
+pub(crate) const TEAM_LINE: Key = Key::surface(SURFACE, "team-pause-line");
 /// An activity sub-row's part. The sub-row is the conversation's model key
 /// with this part.
 pub(crate) const ACTIVITY_PART: &str = "bot-activity";
@@ -489,6 +493,13 @@ pub(crate) struct BotsRoster {
     /// posed from. The roster owns no clock and asks for no frame.
     face_clock: koru_draw::face::FaceClock,
     face_working: Vec<BotId>,
+    // ------------------------------------------- pause all Bots (M8)
+    /// **Whether every Bot is paused**, as the service last answered, and
+    /// the change this roster sent (`team_pause`). Read when shown and,
+    /// while a change is not confirmed, on its bounded clock.
+    team: super::team_pause::TeamPause,
+    /// *Pause all Bots* was pressed: the window asks first. Taken once.
+    wants_team_pause: bool,
 }
 
 impl BotsRoster {
@@ -663,6 +674,7 @@ impl BotsRoster {
             self.list_next = None;
             // Shown again, an unvouched window has the whole while again.
             self.vouching.reset();
+            self.team.hidden();
         }
         true
     }
@@ -693,7 +705,111 @@ impl BotsRoster {
         let archived = self.archived_open && !self.archived_fresh && self.ask_archived();
         let answered = self.poll();
         let activity = self.ask_activity();
-        asked || answered || activity || archived
+        let team = self.ask_team();
+        asked || answered || activity || archived || team
+    }
+
+    // --------------------------------------------- pause all Bots (M8)
+
+    /// The control's model: what it says and whether it can be pressed.
+    pub(crate) fn team(&self) -> &super::team_pause::TeamPause {
+        &self.team
+    }
+
+    /// Read whether every Bot is paused, when a read is owed: shown again,
+    /// or a change that is not confirmed yet came due on its clock.
+    fn ask_team(&mut self) -> bool {
+        if self.workspace.is_none() || !self.team.read_due(std::time::Instant::now()) {
+            return false;
+        }
+        let Some(link) = &self.link else {
+            return false;
+        };
+        let seq = self.team.reading();
+        // A full queue leaves the read owed: the next pass asks again.
+        if !link.send(Command::TeamPause { seq }) {
+            self.team.read(seq, Err(Failure::Unanswered));
+        }
+        true
+    }
+
+    /// **The control was pressed.** Pausing asks first: the window puts the
+    /// question and answers with [`Self::pause_team_confirmed`]. Resuming is
+    /// sent at once. `false` while the control is disabled or not drawn.
+    pub(crate) fn press_team(&mut self) -> bool {
+        if self.team.press_asks() {
+            self.wants_team_pause = true;
+            return true;
+        }
+        self.send_team_change(false)
+    }
+
+    /// *Pause all Bots* was pressed, for the window to ask about. Taken once.
+    pub(crate) fn take_team_pause_ask(&mut self) -> bool {
+        std::mem::take(&mut self.wants_team_pause)
+    }
+
+    /// The person said yes to *Pause all Bots?*.
+    pub(crate) fn pause_team_confirmed(&mut self) -> bool {
+        self.send_team_change(true)
+    }
+
+    fn send_team_change(&mut self, paused: bool) -> bool {
+        let Some(change) = self.team.begin(paused) else {
+            return false;
+        };
+        match &self.link {
+            Some(link)
+                if link.send(Command::SetTeamPause {
+                    change: change.clone(),
+                }) =>
+            {
+                self.team.sent(change)
+            }
+            _ => self.team.not_sent(),
+        }
+        true
+    }
+
+    /// The control and its line, when there is something to say: while Bots
+    /// are listed, and whenever every Bot is paused or a change is on its
+    /// way, so a paused team can always be resumed from here.
+    fn team_section(&self) -> Option<El> {
+        use super::team_pause::TeamState;
+        let control = self.team.control()?;
+        if self.bots.is_empty() && self.team.state() == TeamState::NotPaused {
+            return None;
+        }
+        let label = t(self.lang, control.words).to_owned();
+        let button = if control.enabled {
+            self.text_button("Bots team pause", TEAM_CONTROL, control.words, label)
+                .focusable()
+                .action(Action::Focus)
+        } else {
+            // Waiting to be confirmed: named and announced as a button that
+            // cannot be pressed, and not a keyboard stop.
+            row("Bots team pause")
+                .id(TEAM_CONTROL)
+                .pad_x(Space::S2)
+                .min_h(metrics::NAV_ROW_MIN)
+                .items_center()
+                .semantics(Role::Button)
+                .name_text(label)
+                .disabled(true)
+                .child(
+                    text(t(self.lang, control.words))
+                        .named("Bots action label")
+                        .role(roles::META)
+                        .ink(Ink::Hint),
+                )
+        };
+        Some(
+            col("Bots team").child(button).children(
+                self.team
+                    .line()
+                    .map(|line| Self::sentence("Bots team line", TEAM_LINE, t(self.lang, line))),
+            ),
+        )
     }
 
     // ------------------------------------------- the Archived filter (S14)
@@ -1174,6 +1290,16 @@ impl BotsRoster {
                     workspace,
                     result,
                 } => changed |= self.take_activity(seq, workspace, result),
+                Answer::TeamPause {
+                    seq,
+                    change,
+                    result,
+                } => {
+                    changed |= match change {
+                        Some(request) => self.team.changed(request, result),
+                        None => self.team.read(seq, result),
+                    };
+                }
                 Answer::Lifecycle {
                     seq,
                     workspace,
@@ -1367,7 +1493,8 @@ impl BotsRoster {
                 || self.creations_next.is_some()
                 || self.list_next.is_some()
                 || !self.unarchiving.is_empty()
-                || !self.creations_acting.is_empty())
+                || !self.creations_acting.is_empty()
+                || self.team.awaiting())
     }
 
     /// The Bot a row, a key or an accessibility action asked for, taken
@@ -1427,6 +1554,10 @@ impl BotsRoster {
         // as `bot_row` draws them: the pointer and an assistive technology
         // press those too.
         let mut stops: Vec<Key> = Vec::new();
+        // *Pause all Bots* is drawn first (M8); a disabled one is no stop.
+        if self.team_section().is_some() && self.team.control().is_some_and(|c| c.enabled) {
+            stops.push(TEAM_CONTROL);
+        }
         for bot in &self.bots {
             stops.push(row_key(bot.id));
             stops.extend(
@@ -1471,7 +1602,16 @@ impl BotsRoster {
             .selected
             .filter(|id| self.has(*id))
             .map(row_key)
-            .or_else(|| self.keyboard_stops().first().copied());
+            .or_else(|| {
+                // The first Bot or list control, as before M8; the team
+                // control only when it is all there is. It is one Up away.
+                let stops = self.keyboard_stops();
+                stops
+                    .iter()
+                    .find(|stop| **stop != TEAM_CONTROL)
+                    .or(stops.first())
+                    .copied()
+            });
         self.focus = landing;
         self.reveal_owed = landing.is_some();
         landing.is_some()
@@ -1528,6 +1668,9 @@ impl BotsRoster {
     /// **Enter on a control**: a Bot row opens its tab; the Unfinished and
     /// Archived controls go to their own press functions.
     fn press_key(&mut self, key: Key) -> bool {
+        if key == TEAM_CONTROL {
+            return self.press_team();
+        }
         if key.part == ROW_PART
             && let koru_draw::el::Object::Model(id) = key.object
             && let Some(bot) = self
@@ -1566,6 +1709,10 @@ impl BotsRoster {
     /// A press in the roster's band. Always the roster's: a press on its
     /// background must not fall through to the view beside the column.
     pub(crate) fn mouse_down(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
+        if self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y)) == Some(TEAM_CONTROL) {
+            self.press_team();
+            return true;
+        }
         if let Some(key) = self.unfinished_at(area, top, x, y) {
             self.press_unfinished(key);
             return true;
@@ -1699,6 +1846,13 @@ impl BotsRoster {
             .any(|entry| entry.bot_id == bot.id && entry.state == BotActivityState::Waiting);
         if bot.paused {
             koru_i18n::fill(t(self.lang, Words::BotsRowPaused), &[bot.name.as_str()])
+        } else if self.team.holds_bots() {
+            // Held by the team pause alone (M8): its own pause is named
+            // first, above.
+            koru_i18n::fill(
+                t(self.lang, Words::BotsRowPausedWithTeam),
+                &[bot.name.as_str()],
+            )
         } else if waiting {
             // A Bot waiting on another Bot takes no other work (M6): its
             // row says so, and its sub-row says whom it waits for.
@@ -1758,6 +1912,13 @@ impl BotsRoster {
             primary = primary.child(
                 text(t(self.lang, Words::BotsPaused))
                     .named("Bot paused")
+                    .role(roles::META)
+                    .ink(Ink::Hint),
+            );
+        } else if self.team.holds_bots() {
+            primary = primary.child(
+                text(t(self.lang, Words::BotsPausedWithTeam))
+                    .named("Bot paused with the team")
                     .role(roles::META)
                     .ink(Ink::Hint),
             );
@@ -1854,6 +2015,7 @@ impl BotsRoster {
         if let Some(notice) = self.notice() {
             root = root.child(Self::sentence("Bots notice", NOTICE, t(self.lang, notice)));
         }
+        root = root.children(self.team_section());
         if self.load == Load::Ready && self.bots.is_empty() {
             // No active Bot: one short line (O155: the pitch and *New bot*
             // are the main area's, and the heading keeps its `+`), what has

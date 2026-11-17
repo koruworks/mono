@@ -679,3 +679,90 @@ fn preclaim_worker_shutdown_joins_running_sync_and_resolves_waiters() {
     assert!(gates.acquire(false).is_ok());
     drop(spare);
 }
+
+// M8 piece W: row 10 of the team pause's admission inventory, and the
+// Routine half of `m8_no_backlog`.
+
+fn team(h: &Harness, paused: bool, expected: u64) {
+    let request_id = BotRequestId::mint();
+    let command = if paused {
+        BotCommand::PauseTeam {
+            request_id,
+            expected_team_revision: expected,
+        }
+    } else {
+        BotCommand::ResumeTeam {
+            request_id,
+            expected_team_revision: expected,
+        }
+    };
+    let answer = h.client().bots(owner_context(), command).unwrap();
+    assert!(matches!(answer, BotResponse::TeamPause { team } if team.paused == paused));
+}
+fn prepare_reply(h: &Harness) -> PrepareOccurrenceReply {
+    wait(
+        h.client()
+            .prepare_routine_occurrence(context(), h.request.clone())
+            .unwrap(),
+    )
+    .unwrap()
+}
+
+/// Row 10, preparation: under a team pause no new occurrence is prepared.
+/// The answer is the bridge's existing refusal, nothing is captured and
+/// nothing is stored. Row 10, preclaim: an occurrence prepared before the
+/// pause is not preclaimed, and nothing is sent to the delegate for it.
+#[test]
+fn m8_admission_inventory_row_10_no_occurrence_is_prepared_or_preclaimed_under_a_team_pause() {
+    let h = Harness::new();
+    team(&h, true, 0);
+    assert_eq!(
+        prepare_reply(&h),
+        PrepareOccurrenceReply::Refused {
+            code: RoutineBridgeRefusal::Unavailable
+        }
+    );
+    assert_eq!(h.authority.captures.load(Ordering::Acquire), 0);
+    assert!(matches!(
+        wait(
+            h.client()
+                .read_routine_preparation(context(), h.read_request())
+                .unwrap()
+        )
+        .unwrap(),
+        ReadPreparationReply::Missing { .. }
+    ));
+    drop(h);
+
+    let (h, request) = prepared();
+    team(&h, true, 0);
+    refused(synchronize(&h, &request), RoutineBridgeRefusal::Unavailable);
+    assert!(calls(&h).is_empty(), "nothing reached the delegate");
+    // The team resumes: the same preclaim is admitted again.
+    team(&h, false, 1);
+    assert!(synchronize(&h, &request).matches_request(&request));
+}
+
+/// `m8_no_backlog`, Routines: an occurrence the pause refused is not kept
+/// anywhere. Each of the scheduler's retries is refused and writes nothing;
+/// after the team resumes the next retry prepares the occurrence, once, and
+/// a repeat answers that same preparation. Whether the retry still comes is
+/// the scheduler's due window, which this piece does not change.
+#[test]
+fn m8_no_backlog_a_refused_occurrence_is_not_kept_and_is_prepared_once_after_resume() {
+    let h = Harness::new();
+    team(&h, true, 0);
+    for _ in 0..3 {
+        assert_eq!(
+            prepare_reply(&h),
+            PrepareOccurrenceReply::Refused {
+                code: RoutineBridgeRefusal::Unavailable
+            }
+        );
+    }
+    assert_eq!(h.authority.captures.load(Ordering::Acquire), 0);
+    team(&h, false, 1);
+    let first = h.prepare();
+    assert_eq!(h.prepare(), first);
+    assert_eq!(h.authority.captures.load(Ordering::Acquire), 1);
+}

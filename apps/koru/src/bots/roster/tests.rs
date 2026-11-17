@@ -51,7 +51,8 @@ impl Fixture {
                     assert_eq!(workspace, self.home, "about the window's workspace");
                     return seq;
                 }
-                Command::Activity { .. } => continue,
+                // Its read of the team pause (M8) rides beside the list.
+                Command::Activity { .. } | Command::TeamPause { .. } => continue,
                 _ => panic!("a roster only lists"),
             }
         }
@@ -65,14 +66,22 @@ impl Fixture {
                     assert_eq!(workspace, self.home, "about the window's workspace");
                     return seq;
                 }
-                Command::List { .. } => continue,
+                Command::List { .. } | Command::TeamPause { .. } => continue,
                 _ => panic!("a roster only lists and reads activity"),
             }
         }
     }
 
+    /// Nothing is in the queue but the roster's own read of the team pause
+    /// (M8), which rides beside each first pass after it is shown;
+    /// `m8_ui_team_pause_a_hidden_roster_reads_nothing` holds that one.
     fn nothing_asked(&self) {
-        assert!(self.commands.try_recv().is_err(), "no request was sent");
+        while let Ok(command) = self.commands.try_recv() {
+            assert!(
+                matches!(command, Command::TeamPause { .. }),
+                "no request was sent"
+            );
+        }
     }
 
     /// Answer a listing as the link's thread does: the Bots, then — the
@@ -350,6 +359,29 @@ fn a_stale_answer_is_ignored() {
             seq: activity,
             workspace: f.home,
             result: Ok(activity_page(Vec::new(), false)),
+        })
+        .unwrap();
+    f.roster.maintain();
+    // And by its read of the team pause (M8), which rides beside them.
+    f.answers
+        .send(Answer::TeamPause {
+            seq: 1,
+            change: None,
+            result: Err(Failure::Unanswered),
+        })
+        .unwrap();
+    f.roster.maintain();
+    assert!(
+        f.roster.awaiting(),
+        "an unanswered team read is asked again"
+    );
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    f.roster.maintain();
+    f.answers
+        .send(Answer::TeamPause {
+            seq: 2,
+            change: None,
+            result: Ok(team_view(0, false, true)),
         })
         .unwrap();
     f.roster.maintain();
@@ -2048,4 +2080,212 @@ fn m6_ui_roster_waiting_ranks_between_needs_you_and_running() {
     let y = |chat| frame.node(activity_key(chat)).expect("a sub-row").rect.y;
     assert!(y(needs.chat_id) < y(waits.chat_id));
     assert!(y(waits.chat_id) < y(running.chat_id));
+}
+
+// ------------------------------------------------ pause all Bots (M8)
+
+impl Fixture {
+    /// The read of the team pause the roster just sent: its sequence.
+    fn team_asked(&self) -> u64 {
+        loop {
+            match self.commands.try_recv().expect("a team read was sent") {
+                Command::TeamPause { seq } => return seq,
+                Command::List { .. } | Command::Activity { .. } => continue,
+                _ => panic!("a roster only lists, reads activity and the team pause"),
+            }
+        }
+    }
+
+    fn team_read(&mut self, seq: u64, revision: u64, paused: bool, acknowledged: bool) {
+        self.answers
+            .send(Answer::TeamPause {
+                seq,
+                change: None,
+                result: Ok(team_view(revision, paused, acknowledged)),
+            })
+            .expect("the roster's end is open");
+        assert!(self.roster.maintain());
+        let _ = frame_of(&self.roster);
+    }
+
+    /// The change the roster just sent.
+    fn team_change(&self) -> crate::bots::team_pause::Change {
+        loop {
+            match self.commands.try_recv().expect("a team change was sent") {
+                Command::SetTeamPause { change } => return change,
+                Command::List { .. } | Command::Activity { .. } | Command::TeamPause { .. } => {
+                    continue;
+                }
+                _ => panic!("not a team change"),
+            }
+        }
+    }
+}
+
+fn team_view(revision: u64, paused: bool, acknowledged: bool) -> koru_ai_core::bots::TeamPauseView {
+    use koru_ai_core::bots::TeamPauseStage;
+    koru_ai_core::bots::TeamPauseView {
+        owner_device: koru_ai_core::bots::DeviceId::new(),
+        paused,
+        revision,
+        stage: if acknowledged {
+            TeamPauseStage::Acknowledged
+        } else {
+            TeamPauseStage::Pending
+        },
+        pending_since_ms: (!acknowledged).then_some(1),
+    }
+}
+
+fn published(roster: &BotsRoster) -> Vec<String> {
+    crate::panes::explore::accessibility::roster_tree(roster)
+        .iter()
+        .filter_map(|node| node.label.clone())
+        .collect()
+}
+
+/// Cohort `m8_ui_team_pause`: the roster reads the team pause when shown
+/// and draws the control first. *Pause all Bots* asks before anything is
+/// sent; the yes sends one change at the revision read; the control then
+/// says *Pausing…*, is not a keyboard stop, and stays so until the pause is
+/// confirmed. Paused, each row says so, a Bot paused on its own keeping its
+/// own word; *Resume all Bots* sends at once.
+#[test]
+fn m8_ui_team_pause_the_roster_draws_the_control_and_never_an_unconfirmed_state() {
+    use crate::bots::team_pause::TeamState;
+    let mut f = fixture();
+    f.roster.set_lang(Lang::En);
+    let scout = f.bot("Scout");
+    let own = bot(BotId::mint(), f.home, "Planner", true);
+    f.shown_with(vec![scout.clone(), own.clone()]);
+    // Nothing known yet: no control, and the first stop is the first Bot.
+    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_none());
+    assert_eq!(f.roster.keyboard_stops().first(), Some(&row_key(scout.id)));
+
+    let seq = f.team_asked();
+    f.team_read(seq, 0, false, true);
+    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_some());
+    assert!(frame_of(&f.roster).node(TEAM_LINE).is_none());
+    assert!(published(&f.roster).contains(&"Pause all Bots".to_owned()));
+    assert_eq!(f.roster.keyboard_stops().first(), Some(&TEAM_CONTROL));
+    // The keyboard still enters on a Bot; the control is one Up away.
+    assert!(f.roster.focus_first());
+    assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
+    assert!(f.roster.key(Press::Up));
+    assert_eq!(f.roster.focus(), Some(TEAM_CONTROL));
+
+    // Enter on it asks first, and sends nothing.
+    while f.commands.try_recv().is_ok() {}
+    assert!(f.roster.key(Press::Open));
+    assert!(f.roster.take_team_pause_ask());
+    assert!(!f.roster.take_team_pause_ask(), "taken once");
+    f.nothing_asked();
+    assert_eq!(f.roster.team().state(), TeamState::NotPaused);
+
+    // The yes.
+    assert!(f.roster.pause_team_confirmed());
+    let change = f.team_change();
+    assert_eq!((change.paused, change.expected), (true, 0));
+    assert_eq!(f.roster.team().state(), TeamState::Pausing);
+    let labels = published(&f.roster);
+    assert!(labels.contains(&"Pausing…".to_owned()));
+    assert!(labels.contains(&"Waiting for Koru on this computer to confirm.".to_owned()));
+    assert!(!labels.contains(&"Pause all Bots".to_owned()));
+    assert!(!labels.contains(&"Resume all Bots".to_owned()));
+    assert!(
+        !f.roster.keyboard_stops().contains(&TEAM_CONTROL),
+        "a disabled control is no keyboard stop"
+    );
+    assert!(!f.roster.press_team(), "and a press of it does nothing");
+    assert!(
+        f.roster.awaiting(),
+        "the window keeps waking while it waits"
+    );
+    // The rows do not say paused before it is confirmed.
+    assert_eq!(
+        f.roster.accessible_name(&RosterBot::from(scout.clone())),
+        "Scout"
+    );
+
+    // The owner committed it; the computer's Koru has not confirmed.
+    f.answers
+        .send(Answer::TeamPause {
+            seq: 0,
+            change: Some(change.request),
+            result: Ok(team_view(1, true, false)),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert_eq!(f.roster.team().state(), TeamState::Pausing);
+    // It is read again on its clock (250 ms doubling), and then confirmed.
+    std::thread::sleep(std::time::Duration::from_millis(650));
+    assert!(f.roster.maintain());
+    let seq = f.team_asked();
+    f.team_read(seq, 1, true, true);
+    assert_eq!(f.roster.team().state(), TeamState::Paused);
+    let labels = published(&f.roster);
+    assert!(labels.contains(&"Resume all Bots".to_owned()));
+    assert!(labels.contains(&"All Bots are paused. Nothing new will start.".to_owned()));
+    assert_eq!(
+        f.roster.accessible_name(&RosterBot::from(scout.clone())),
+        "Scout, paused with the team"
+    );
+    assert_eq!(
+        f.roster.accessible_name(&RosterBot::from(own.clone())),
+        "Planner, paused",
+        "a Bot paused on its own keeps its own word"
+    );
+
+    // Resume sends at once, at the revision read, and asks nothing.
+    assert!(f.roster.press_team());
+    assert!(!f.roster.take_team_pause_ask());
+    let change = f.team_change();
+    assert_eq!((change.paused, change.expected), (false, 1));
+    assert!(published(&f.roster).contains(&"Resuming…".to_owned()));
+    f.answers
+        .send(Answer::TeamPause {
+            seq: 0,
+            change: Some(change.request),
+            result: Ok(team_view(2, false, true)),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    assert_eq!(f.roster.team().state(), TeamState::NotPaused);
+    assert_eq!(f.roster.accessible_name(&RosterBot::from(scout)), "Scout");
+}
+
+/// Cohort `m8_ui_team_pause`: a hidden roster reads nothing and keeps no
+/// clock for the team pause; shown again, it reads once. With no Bot listed
+/// the control is absent unless every Bot is paused, so a paused team can
+/// always be resumed from here.
+#[test]
+fn m8_ui_team_pause_a_hidden_roster_reads_nothing() {
+    let mut f = fixture();
+    f.roster.set_lang(Lang::En);
+    assert!(!f.roster.maintain());
+    assert!(f.commands.try_recv().is_err(), "hidden: nothing is asked");
+    f.shown_with(Vec::new());
+    let seq = f.team_asked();
+    f.team_read(seq, 0, false, true);
+    assert!(
+        frame_of(&f.roster).node(TEAM_CONTROL).is_none(),
+        "no Bot and nothing paused: nothing to pause"
+    );
+    assert!(!f.roster.keyboard_stops().contains(&TEAM_CONTROL));
+    while f.commands.try_recv().is_ok() {}
+    f.roster.set_shown(false);
+    assert!(!f.roster.maintain());
+    assert!(
+        f.commands.try_recv().is_err(),
+        "hidden again: nothing is asked"
+    );
+    assert!(!f.roster.awaiting());
+    // Shown again it reads once; every Bot is paused, so the control shows.
+    f.roster.set_shown(true);
+    assert!(f.roster.maintain());
+    let seq = f.team_asked();
+    f.team_read(seq, 1, true, true);
+    assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_some());
+    assert!(published(&f.roster).contains(&"Resume all Bots".to_owned()));
+    assert_eq!(f.roster.keyboard_stops().first(), Some(&TEAM_CONTROL));
 }

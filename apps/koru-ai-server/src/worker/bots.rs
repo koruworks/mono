@@ -68,6 +68,7 @@ mod preparation;
 mod reads;
 pub(crate) mod routine;
 mod stop;
+mod team_pause;
 pub(super) use admission::{
     AdmissionRetry, BotCoordinationJob, BotCoordinationResult, DeliveryAnswers,
 };
@@ -182,6 +183,9 @@ impl WorkerState {
             return result;
         }
         if let Some(result) = self.bot_admission_command(&context, &request) {
+            return result;
+        }
+        if let Some(result) = self.bot_team_command(&context, &request) {
             return result;
         }
         let proof = context
@@ -390,15 +394,13 @@ fn execute_bot_command(
         // (`read_child_cards`) before this executor; nothing here answers them.
         | BotCommand::ListChildRequests { .. }
         | BotCommand::ReadChildOrigin { .. }
-        | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
-        // The team pause (M8, P8.1). Nothing here answers these: the worker's
-        // team coordination (piece W) routes them before this executor, and
-        // until it exists they are refused and nothing is written. Writing
-        // the row here would refuse new work while the delegate, which is
-        // never told, kept dispatching what it had queued.
-        BotCommand::PauseTeam { .. }
+        // The team pause (M8) is routed to the worker's team coordination
+        // (`team_pause.rs`) before this executor, which writes the row and
+        // tells the delegate; nothing here answers it.
+        | BotCommand::PauseTeam { .. }
         | BotCommand::ResumeTeam { .. }
-        | BotCommand::ReadTeamPause {} => return Err(bot_failure(BotError::Unavailable)),
+        | BotCommand::ReadTeamPause {}
+        | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

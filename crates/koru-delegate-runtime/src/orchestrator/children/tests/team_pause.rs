@@ -74,7 +74,8 @@ fn m8_gate_team_a_child_request_is_refused_while_the_team_is_paused() {
 #[test]
 fn m8_gate_team_a_child_request_is_admitted_and_queued_while_not_told() {
     let mut chain = child_chain();
-    chain.orchestrator.require_team_value(true);
+    // The chain's builder told the run "never paused"; a restart forgets it.
+    chain.orchestrator.forget_team_values();
     let (_, requested) = asked(&mut chain, &[1]);
     let receipt = requested.receipts[0].clone();
     assert_eq!(receipt.child, BotAdmissionState::Queued);
@@ -135,7 +136,7 @@ fn m8_gate_team_a_parents_resume_is_held_while_the_team_is_paused() {
 fn m8_gate_team_a_parents_resume_is_held_while_not_told() {
     let (mut chain, requested, mut bridge) = held(&[1]);
     stop_child(&mut chain, &requested.receipts[0]);
-    chain.orchestrator.require_team_value(true);
+    chain.orchestrator.forget_team_values();
     for _ in 0..3 {
         assert_eq!(
             advance(&mut chain, &mut bridge),

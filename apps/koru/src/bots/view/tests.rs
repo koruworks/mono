@@ -46,6 +46,8 @@ impl Fixture {
                 | Command::Write { .. }
                 | Command::Label { .. }
                 | Command::Activity { .. }
+                | Command::TeamPause { .. }
+                | Command::SetTeamPause { .. }
                 | Command::Lifecycle { .. }
                 | Command::TrashedChats { .. }
                 | Command::ChildRequests { .. }
@@ -224,7 +226,9 @@ fn the_bots_refusal_words_are_handed_to_the_chat_and_match_the_settings() {
             "bot_operation_pending",
             // Added to `BOT_REFUSALS` with the Routine retry refusal
             // (4443d0a0); this list was not, and the test was red since.
-            "routine_retry_unsupported"
+            "routine_retry_unsupported",
+            // Every Bot is paused (M8): a message to an idle Bot.
+            "team_paused"
         ]
     );
     for (code, words) in BOT_REFUSALS {

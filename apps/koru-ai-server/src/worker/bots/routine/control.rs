@@ -899,6 +899,11 @@ impl WorkerState {
                 if !reasons.is_empty() {
                     return Err(not_ready(&reasons));
                 }
+                // Row 13 of the team pause's admission inventory (M8):
+                // turning a Routine on and Test are new work. Nothing is
+                // sent to the coordinator. The Bot's own reasons are named
+                // first; pausing and editing a Routine are not held.
+                self.refuse_routine_start_under_team_pause(owner)?;
             } else if !bound {
                 return Err(refusal(codes::NOT_BOUND, false));
             }

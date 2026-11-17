@@ -172,6 +172,9 @@ pub(crate) const BOT_REFUSALS: koru_ai_ui::OwnedRefusals = &[
         super::settings::ROUTINE_RETRY_UNSUPPORTED,
         Words::BotsErrRoutineRetryUnsupported,
     ),
+    // Every Bot is paused (M8): a message to a Bot that is not working is
+    // refused, and says what to do about it.
+    (super::team_pause::TEAM_PAUSED, Words::BotsTeamPausedSend),
 ];
 
 /// The bounded clock a Bot read left owed is asked again on: the lifecycle

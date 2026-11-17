@@ -1105,3 +1105,45 @@ fn a_steer_sent_while_branch_files_copy_refuses_the_commit_and_the_branch_follow
     worker.shutdown();
     let _ = worker.join();
 }
+
+/// `m8_admission_inventory`, row 16 (M8 piece W): steering a Run that is
+/// already running is allowed under a team pause. It reaches the live
+/// session and starts no attempt. A steer whose turn has ended is refused
+/// and starts nothing either.
+#[test]
+fn m8_admission_inventory_row_16_a_steer_reaches_a_running_run_under_a_team_pause() {
+    let native = Arc::new(Interactive::new());
+    let (worker, client, _authority, _context, _) = start(native.clone());
+    let attempt = native_attempt(&native);
+    super::team_pause::team(&client, true, 0);
+    let begun = native.native.state.lock().unwrap().begin;
+    let request = steer_request();
+    let accepted = client
+        .steer_attempt(super::super::context(true), attempt, request.clone())
+        .unwrap();
+    assert!(!accepted.replayed);
+    assert_eq!(native.steer_inputs.lock().unwrap().len(), 1);
+    assert_eq!(
+        native.native.state.lock().unwrap().begin,
+        begun,
+        "a steer starts no attempt"
+    );
+    // The Run ends. A steer of that turn is refused and starts nothing.
+    client
+        .cancel_attempt(super::super::context(true), attempt)
+        .unwrap();
+    let ended = Instant::now() + Duration::from_secs(10);
+    let refused = loop {
+        match client.steer_attempt(super::super::context(true), attempt, steer_request()) {
+            Err(refused) => break refused,
+            Ok(_) => {
+                assert!(Instant::now() < ended, "the stopped Run kept taking steers");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    };
+    assert!(!refused.retryable, "{}", refused.code);
+    assert_eq!(native.native.state.lock().unwrap().begin, begun);
+    worker.shutdown();
+    let _ = worker.join();
+}

@@ -6151,6 +6151,9 @@ impl MainView {
             }
             None => false,
         };
+        // *Pause all Bots* (M8) asks first.
+        let asked =
+            asked || (self.explore.bots_mut().take_team_pause_ask() && self.ask_pause_all_bots());
         let page = match self.explore.bots_mut().take_open_page() {
             Some(page) => self.open_document_target(
                 koru_editor::trigger::DocumentTarget {

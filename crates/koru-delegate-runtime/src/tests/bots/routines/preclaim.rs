@@ -5,6 +5,8 @@ use super::*;
 fn ready() -> (Harness, RoutinePrepared, FreshBotPolicyProof) {
     let (mut h, _, p, fresh) = fixture();
     let device = p.slot.owner.device;
+    // The AI worker tells each delegate run the team value first (M8).
+    crate::test_support::tell_team_never_paused(&mut h.orchestrator, p.slot.owner);
     h.orchestrator
         .synchronize_native_policy(fresh.global.clone(), device)
         .unwrap();
@@ -219,8 +221,8 @@ fn m8_gate_team_and_m8_team_value_close_the_routine_preclaim() {
         Err(other) => panic!("not a coded refusal: {other:?}"),
     };
     assert_eq!(code(&mut h), "admitted");
-    // Not told, once that closes.
-    h.orchestrator.require_team_value(true);
+    // Not told: what a restart of the delegate leaves.
+    h.orchestrator.forget_team_values();
     assert_eq!(code(&mut h), "bot_boot_pending");
     // Never paused opens.
     h.orchestrator

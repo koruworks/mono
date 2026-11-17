@@ -7214,7 +7214,10 @@ fn the_bots_roster_asks_only_while_its_view_is_showing() {
     assert!(v.showing_bots());
     assert!(v.bots.maintain());
     assert!(matches!(commands.try_recv(), Ok(Command::List { .. })));
+    // Its read of the team pause (M8) rides beside the listing, once.
+    assert!(matches!(commands.try_recv(), Ok(Command::TeamPause { .. })));
     assert!(!v.bots.maintain(), "once");
+    assert!(commands.try_recv().is_err(), "and nothing more");
 
     v.show_documents();
     assert!(!v.bots.maintain());

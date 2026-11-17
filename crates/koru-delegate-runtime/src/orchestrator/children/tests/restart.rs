@@ -23,6 +23,9 @@ fn rebuild(chain: &mut ChildChain) {
         },
     );
     orchestrator.restart().expect("the restart completes");
+    // A new delegate run holds no team value until the AI worker's `Hello`
+    // shows it the run; the worker then sends it (M8).
+    crate::test_support::tell_team_never_paused(&mut orchestrator, chain.parent.owner);
     chain.orchestrator = orchestrator;
     chain.parent.boot = chain.orchestrator.delegate_boot();
 }

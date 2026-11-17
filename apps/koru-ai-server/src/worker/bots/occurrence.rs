@@ -208,6 +208,27 @@ fn refusal(error: BotError) -> RoutineBridgeRefusal {
     }
 }
 
+impl WorkerState {
+    /// Row 10 of the team pause's admission inventory (M8): while the team
+    /// is paused no new occurrence is prepared and none is preclaimed. The
+    /// answer is the bridge's existing refusal, so the scheduler retries the
+    /// occurrence until its due window closes and then records it expired.
+    /// An occurrence already prepared is still read, and one already claimed
+    /// is finished: that is work that was admitted before the pause.
+    fn refuse_occurrence_under_team_pause(
+        &self,
+        operation: &Operation,
+    ) -> Result<(), RoutineBridgeRefusal> {
+        if self
+            .team_paused(ai_owner(operation.key.slot))
+            .map_err(refusal)?
+        {
+            return Err(refusal(BotError::TeamPaused));
+        }
+        Ok(())
+    }
+}
+
 /// Existing Run reads, Routine observations and decision wait reads share the
 /// same bounded thread.
 pub(in crate::worker) enum RunReadWork {

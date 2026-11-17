@@ -185,6 +185,8 @@ fn linked() -> (Harness, RoutinePrepared, FreshBotPolicyProof) {
     (h, p, fresh)
 }
 fn global(h: &mut Harness, p: &RoutinePrepared, fresh: &FreshBotPolicyProof) {
+    // The AI worker tells each delegate run the team value first (M8).
+    crate::test_support::tell_team_never_paused(&mut h.orchestrator, p.slot.owner);
     let boot = h
         .orchestrator
         .bot_hello(p.slot.owner, BotBootScan::Probe {}, p.slot.owner.device)

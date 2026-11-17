@@ -112,3 +112,68 @@ fn routine_owner_controls_use_only_the_existing_vouched_management_route() {
         assert!(serde_json::from_value::<koru_ai_wire::BotCommand>(owned).is_err());
     }
 }
+
+/// `m8_gateway_team_paused` (M8 piece D): pausing and resuming the team are
+/// the person's controls. The three commands are commands of the public Bot
+/// contract and ride the one vouched management route; the scopes an
+/// external client can hold (`bots.read`, `bots.run`) do not reach it, and
+/// none of the four external task routes carries a Bot command.
+#[test]
+fn m8_gateway_team_paused_team_commands_ride_only_the_vouched_management_route() {
+    use koru_ai_core::bots::BotRequestId;
+    let commands = [
+        serde_json::to_value(koru_ai_wire::BotCommand::PauseTeam {
+            request_id: BotRequestId::mint(),
+            expected_team_revision: 0,
+        })
+        .unwrap(),
+        serde_json::to_value(koru_ai_wire::BotCommand::ResumeTeam {
+            request_id: BotRequestId::mint(),
+            expected_team_revision: 1,
+        })
+        .unwrap(),
+        serde_json::to_value(koru_ai_wire::BotCommand::ReadTeamPause {}).unwrap(),
+    ];
+    let public = public_openapi().to_string();
+    for command in &commands {
+        let name = command["command"].as_str().expect("a tagged command");
+        assert!(public.contains(name), "{name} is in the public contract");
+    }
+    let management = ai::ROUTES
+        .iter()
+        .find(|route| route.path == "/v1/ai/bots")
+        .unwrap();
+    assert_eq!(management.scope, koru_ai_api::AiScope::ManageBots);
+    // What an external MCP client asks for never yields the management scope.
+    for admission in [Admission::Ordinary, Admission::Vouched] {
+        let held = effective_scopes(
+            &[
+                "bots.read".into(),
+                "bots.run".into(),
+                "store.read_documents".into(),
+            ],
+            admission,
+        );
+        assert!(!held.contains(&"bots.manage".into()));
+    }
+    // The external task routes are exactly four, and none is the Bots route.
+    let external: Vec<_> = ai::ROUTES
+        .iter()
+        .filter(|route| {
+            matches!(
+                route.scope,
+                koru_ai_api::AiScope::ReadBots | koru_ai_api::AiScope::RunBots
+            )
+        })
+        .map(|route| route.operation_id)
+        .collect();
+    assert_eq!(
+        external,
+        [
+            "ai_list_bots",
+            "ai_start_bot_task",
+            "ai_read_bot_task",
+            "ai_stop_bot_task"
+        ]
+    );
+}

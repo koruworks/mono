@@ -490,3 +490,74 @@ fn bot_tool_pages_are_scoped_and_bounded() {
     assert_eq!(last.results[1].document_id, last_id);
     assert_eq!(last.next_cursor, None);
 }
+
+/// A port whose engine has the team paused: a message to an idle Bot is
+/// refused there, with the engine's own failure.
+struct TeamPaused(Port);
+impl TaskPort for TeamPaused {
+    fn bots(&self, context: RequestContext, command: BotCommand) -> Result<BotResponse, Failure> {
+        assert!(
+            !matches!(
+                command,
+                BotCommand::PauseTeam { .. } | BotCommand::ResumeTeam { .. }
+            ),
+            "the external facade never changes the team pause"
+        );
+        self.0.bots(context, command)
+    }
+    fn send_turn(
+        &self,
+        _: RequestContext,
+        request: SendTurnRequest,
+    ) -> Result<koru_ai_api::AiResponseStream, Failure> {
+        self.0.sent.lock().unwrap().push(request);
+        Err(Failure {
+            code: BotError::TeamPaused.code().into(),
+            message: "The Bot operation could not be completed.".into(),
+            retryable: false,
+            details: Default::default(),
+        })
+    }
+    fn cancel_attempt(
+        &self,
+        context: RequestContext,
+        attempt: InferenceAttemptId,
+    ) -> Result<CancelAttemptResponse, Failure> {
+        self.0.cancel_attempt(context, attempt)
+    }
+}
+
+/// `m8_mcp_team_paused` (M8 piece D, row 2 of the admission inventory): the
+/// external start answers the reason `team_paused` with the sentence an
+/// assistant can relay, and it is not retryable. Listing and reading still
+/// work under the pause, and nothing the facade does pauses or resumes.
+#[test]
+fn m8_mcp_team_paused_start_answers_the_reason_and_reads_still_work() {
+    let port = TeamPaused(Port::new());
+    let request = port.0.start(Uuid::new_v4());
+    let refused = start(&port, context(), request.clone()).unwrap_err();
+    assert_eq!(refused.code, koru_ai_wire::bot_team_codes::TEAM_PAUSED);
+    assert_eq!(refused.message, "The person has paused all Bots.");
+    assert_eq!(refused.details["reason"], "team_paused");
+    assert!(!refused.retryable);
+    // The same request again is refused the same way: nothing was accepted.
+    assert_eq!(
+        start(&port, context(), request).unwrap_err().code,
+        koru_ai_wire::bot_team_codes::TEAM_PAUSED
+    );
+    // Reading is not refused under a team pause.
+    let listed = list(
+        &port,
+        context(),
+        ListBotsRequest {
+            workspace: port.0.bot.home_workspace,
+            limit: 1,
+            cursor: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(listed.bots.len(), 1);
+    // Another refusal keeps its own code, text and details.
+    let other = team_paused(missing());
+    assert_eq!(other, missing());
+}

@@ -14,11 +14,11 @@ fn team(owner: BotOwner, epoch: u64, paused: bool) -> BotTeamBarrier {
     }
 }
 
-/// A harness whose delegate run is closed until it is told the team value:
-/// the contract's rule (3.2), which the product switches on with piece W.
+/// A harness whose delegate run was told nothing about the team: it is
+/// closed until it is told (contract 3.2), as every delegate run starts.
 fn closed_harness() -> Harness {
-    let mut h = bot_harness();
-    h.orchestrator.require_team_value(true);
+    let h = bot_harness();
+    assert!(h.orchestrator.team_value_required());
     h
 }
 
@@ -41,41 +41,66 @@ fn start_refusal(h: &mut Harness, s: &BotSubmission) -> String {
     )
 }
 
-/// The switch itself. Until the AI worker sends `TeamBarrier` after each
-/// `Hello` (piece W), no worker sends it at all: a delegate run that was not
-/// told must then behave exactly as before M8, or no Bot task would ever be
-/// dispatched again. This case fails on purpose when the constant is
-/// switched on, so the change that flips it also proves the worker sends.
+/// The switch itself. It is on since the AI worker sends `TeamBarrier`
+/// each time its boot `Hello` shows a delegate run it has not told (piece
+/// W; proved there by the `m8_team_coordination` cases in
+/// `apps/koru-ai-server/src/worker/bots/team_pause/tests.rs`). A delegate
+/// run that was told nothing holds every Bot of that owner, and the
+/// worker's "never paused" opens it. This case fails if the constant is
+/// switched off again, which would let a delegate that restarted under a
+/// team pause dispatch what it had queued.
 #[test]
-fn m8_team_value_is_not_required_until_the_worker_sends_it() {
+fn m8_team_value_is_required_and_the_workers_never_paused_opens_the_run() {
     assert!(
-        !crate::TEAM_VALUE_REQUIRED,
-        "switch this on only in the change that makes the AI worker send TeamBarrier after Hello"
+        crate::TEAM_VALUE_REQUIRED,
+        "a delegate run that was not told the team value must hold its Bots"
     );
     let mut h = bot_harness();
-    assert!(!h.orchestrator.team_value_required());
+    assert!(h.orchestrator.team_value_required());
     let s = submission(80);
     let owner = s.provenance.owner;
     assert!(h.orchestrator.bot_team_value(owner).is_none());
     assert_eq!(
         h.orchestrator.bot_held(owner, s.provenance.bot).unwrap(),
+        Held::NotTold
+    );
+    // A worker that said nothing about the team: submit and the boot pair.
+    h.orchestrator.bot_submit(s.clone(), owner.device).unwrap();
+    boot::replay_untold(&mut h.orchestrator, &s);
+    assert!(
+        h.orchestrator
+            .bot_dispatch(&key(&s), owner.device)
+            .unwrap()
+            .is_none(),
+        "nothing of a Bot is dispatched before the worker speaks"
+    );
+    // The worker of this tree: "never paused" for a team with no row.
+    tell(&mut h, &BotTeamBarrier::never_paused(owner));
+    assert_eq!(
+        h.orchestrator.bot_held(owner, s.provenance.bot).unwrap(),
         Held::No
     );
-    // The worker of today: submit, boot pair, and nothing about the team.
-    h.orchestrator.bot_submit(s.clone(), owner.device).unwrap();
-    boot::replay(&mut h.orchestrator, &s);
     assert!(
         h.orchestrator
             .bot_dispatch(&key(&s), owner.device)
             .unwrap()
             .is_some(),
-        "a Bot task still dispatches with a worker that never sends the team value"
+        "the queued task dispatches once the run is told"
     );
-    // A value that is sent is enforced whatever the switch says.
+    // A later pause is enforced.
     tell(&mut h, &team(owner, 1, true));
     assert_eq!(
         h.orchestrator.bot_held(owner, s.provenance.bot).unwrap(),
         Held::Team
+    );
+    // The builder every dispatching test uses tells the run the same way.
+    let mut h = bot_harness();
+    let s = submission(79);
+    h.orchestrator.bot_submit(s.clone(), owner.device).unwrap();
+    boot::replay(&mut h.orchestrator, &s);
+    assert_eq!(
+        h.orchestrator.bot_team_value(owner),
+        Some(&BotTeamBarrier::never_paused(owner))
     );
 }
 
@@ -93,7 +118,7 @@ fn m8_team_value_not_told_holds_dispatch_and_start_while_admit_queues() {
     // Row 6: admitted and queued, as today.
     h.orchestrator.bot_submit(s.clone(), owner.device).unwrap();
     assert_eq!(state(&h, &s), BotAdmissionState::Queued);
-    boot::replay(&mut h.orchestrator, &s);
+    boot::replay_untold(&mut h.orchestrator, &s);
     // Row 7: not dispatched; the task stays queued.
     for _ in 0..3 {
         assert!(
@@ -109,7 +134,7 @@ fn m8_team_value_not_told_holds_dispatch_and_start_while_admit_queues() {
     // Rows 8 and 9: a reservation is kept and its start refuses.
     let mut h = closed_harness();
     let kept = submission(82);
-    reserved(&mut h, &kept);
+    reserved_untold(&mut h, &kept);
     assert!(
         h.orchestrator
             .bot_dispatch(&key(&kept), owner.device)
@@ -407,14 +432,13 @@ fn m8_delegate_restart_closed_until_the_team_value_arrives() {
 
         // The delegate restarts: a new run, the same ledger, no memory.
         let mut h = crate::tests::restarted(h, (host(1), CreationLookup::NoEvidence));
-        h.orchestrator.require_team_value(true);
         assert!(h.orchestrator.bot_team_value(owner).is_none());
         assert_eq!(
             h.orchestrator.bot_held(owner, s.provenance.bot).unwrap(),
             Held::NotTold
         );
         // Even with the Bot's own boot pair replayed, nothing dispatches.
-        boot::replay(&mut h.orchestrator, &s);
+        boot::replay_untold(&mut h.orchestrator, &s);
         for _ in 0..3 {
             assert!(
                 h.orchestrator
@@ -516,4 +540,72 @@ fn m8_native_approval_under_pause_reaches_the_prompt_and_starts_nothing() {
         assert_eq!(creations(&h), before);
         assert_eq!(state(&h, &s), BotAdmissionState::Executing);
     }
+}
+
+/// `m8_no_backlog`, queued tasks: tasks queued under a team pause are the
+/// tasks the person sent, nothing more. None is dispatched while the team
+/// is paused. After the resume they dispatch as they are offered, one per
+/// Bot: the first of a Bot's two tasks starts and the second waits for it,
+/// as after a Bot's own pause. (The order tasks are offered in is the
+/// delegate's queue walk, which this piece does not change.)
+#[test]
+fn m8_no_backlog_queued_tasks_dispatch_in_order_after_the_team_resumes() {
+    let mut h = closed_harness();
+    let first = submission(92);
+    let owner = first.provenance.owner;
+    tell(&mut h, &BotTeamBarrier::never_paused(owner));
+    let second = submission(93);
+    assert_eq!(first.provenance.bot, second.provenance.bot);
+    let mut other = submission(94);
+    other.provenance.bot = BotId::from_uuid(v4(0x5b));
+    for s in [&first, &second, &other] {
+        h.orchestrator.bot_submit(s.clone(), owner.device).unwrap();
+    }
+    boot::replay(&mut h.orchestrator, &first);
+    boot::replay(&mut h.orchestrator, &other);
+    tell(&mut h, &team(owner, 1, true));
+    for _ in 0..3 {
+        for s in [&first, &second, &other] {
+            assert!(
+                h.orchestrator
+                    .bot_dispatch(&key(s), owner.device)
+                    .unwrap()
+                    .is_none()
+            );
+            assert_eq!(state(&h, s), BotAdmissionState::Queued);
+        }
+    }
+    assert!(no_session_was_created(&h));
+
+    tell(&mut h, &team(owner, 2, false));
+    // Offered in queue order, as the delegate's queue walk offers them.
+    assert!(
+        h.orchestrator
+            .bot_dispatch(&key(&first), owner.device)
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        h.orchestrator
+            .bot_dispatch(&key(&second), owner.device)
+            .unwrap()
+            .is_none(),
+        "one task per Bot: the second waits for the first"
+    );
+    assert!(
+        h.orchestrator
+            .bot_dispatch(&key(&other), owner.device)
+            .unwrap()
+            .is_some(),
+        "another Bot's task dispatches too"
+    );
+    assert_eq!(state(&h, &second), BotAdmissionState::Queued);
+    // Exactly the two sessions of the two tasks that started.
+    assert_eq!(
+        h.calls()
+            .iter()
+            .filter(|call| matches!(call, Call::Create { .. }))
+            .count(),
+        2
+    );
 }

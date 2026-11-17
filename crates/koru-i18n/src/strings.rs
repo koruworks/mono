@@ -4222,13 +4222,42 @@ pub enum Key {
     RunStepWaitingForBot,
     /// The accessible name of a conversation's request cards together.
     BotsChildRequests,
+    // ------------------------------------ the team pause (M8, contract 6.1)
+    /// The roster's control that pauses every Bot (M8), its dialog's answer and its accessible name.
+    BotsTeamPauseAll,
+    /// The same control once every Bot is paused, and its accessible name.
+    BotsTeamResumeAll,
+    /// The control, disabled, while the pause is not confirmed yet.
+    BotsTeamPausing,
+    /// The control, disabled, while the resume is not confirmed yet.
+    BotsTeamResuming,
+    /// The line under the roster's header while a team change is not confirmed.
+    BotsTeamWaitingConfirm,
+    /// The line under the roster's header while every Bot is paused.
+    BotsTeamPausedLine,
+    /// The title of the question asked before every Bot is paused.
+    BotsTeamPauseTitle,
+    /// That question's first sentence: what the pause holds.
+    BotsTeamPauseBodyNoNew,
+    /// That question's second sentence: running work is not stopped.
+    BotsTeamPauseBodyRunning,
+    /// A Bot row's state while every Bot is paused and this one is not paused on its own.
+    BotsPausedWithTeam,
+    /// That row's accessible name; `{}` is the Bot's name.
+    BotsRowPausedWithTeam,
+    /// A message to a Bot that is not working, refused while every Bot is paused.
+    BotsTeamPausedSend,
+    /// Turning a Routine on, or testing it, refused while every Bot is paused.
+    BotsTeamPausedShort,
+    /// Under the roster's header when pausing or resuming every Bot could not be sent.
+    BotsTeamChangeFailed,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2816] = [
+    pub const ALL: [Key; 2830] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7045,6 +7074,20 @@ impl Key {
         Key::RunNeedsOtherBot,
         Key::RunStepWaitingForBot,
         Key::BotsChildRequests,
+        Key::BotsTeamPauseAll,
+        Key::BotsTeamResumeAll,
+        Key::BotsTeamPausing,
+        Key::BotsTeamResuming,
+        Key::BotsTeamWaitingConfirm,
+        Key::BotsTeamPausedLine,
+        Key::BotsTeamPauseTitle,
+        Key::BotsTeamPauseBodyNoNew,
+        Key::BotsTeamPauseBodyRunning,
+        Key::BotsPausedWithTeam,
+        Key::BotsRowPausedWithTeam,
+        Key::BotsTeamPausedSend,
+        Key::BotsTeamPausedShort,
+        Key::BotsTeamChangeFailed,
     ];
 }
 
@@ -21268,4 +21311,19 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::RunNeedsOtherBot, en: "It is waiting for another bot", es: "Está esperando a otro bot", pt_br: "Está aguardando outro bot", de: "Es wartet auf einen anderen Bot", fr: "Il attend un autre bot", ar: "ينتظر بوتًا آخر", zh_hans: "正在等待另一个机器人", ja: "別のボットを待っています" },
     Row { key: Key::RunStepWaitingForBot, en: "The run asked another bot and is waiting for its result", es: "La ejecución pidió trabajo a otro bot y espera su resultado", pt_br: "A execução pediu trabalho a outro bot e aguarda o resultado", de: "Der Lauf hat einen anderen Bot gefragt und wartet auf dessen Ergebnis", fr: "Le travail a sollicité un autre bot et attend son résultat", ar: "طلب التشغيل من بوت آخر وينتظر نتيجته", zh_hans: "运行已请另一个机器人处理，正在等待结果", ja: "別のボットに依頼し、その結果を待っています" },
     Row { key: Key::BotsChildRequests, en: "Requests to other bots", es: "Solicitudes a otros bots", pt_br: "Solicitações a outros bots", de: "Anfragen an andere Bots", fr: "Demandes à d’autres bots", ar: "طلبات إلى بوتات أخرى", zh_hans: "给其他机器人的请求", ja: "他のボットへの依頼" },
+    // ------------------------------------ the team pause (M8, contract 6.1)
+    Row { key: Key::BotsTeamPauseAll, en: "Pause all Bots", es: "Pausar todos los bots", pt_br: "Pausar todos os bots", de: "Alle Bots pausieren", fr: "Mettre tous les bots en pause", ar: "إيقاف كل البوتات مؤقتًا", zh_hans: "暂停所有机器人", ja: "すべてのボットを一時停止" },
+    Row { key: Key::BotsTeamResumeAll, en: "Resume all Bots", es: "Reanudar todos los bots", pt_br: "Retomar todos os bots", de: "Alle Bots fortsetzen", fr: "Reprendre tous les bots", ar: "استئناف كل البوتات", zh_hans: "恢复所有机器人", ja: "すべてのボットを再開" },
+    Row { key: Key::BotsTeamPausing, en: "Pausing…", es: "Pausando…", pt_br: "Pausando…", de: "Wird pausiert…", fr: "Mise en pause…", ar: "جارٍ الإيقاف المؤقت…", zh_hans: "正在暂停…", ja: "一時停止しています…" },
+    Row { key: Key::BotsTeamResuming, en: "Resuming…", es: "Reanudando…", pt_br: "Retomando…", de: "Wird fortgesetzt…", fr: "Reprise…", ar: "جارٍ الاستئناف…", zh_hans: "正在恢复…", ja: "再開しています…" },
+    Row { key: Key::BotsTeamWaitingConfirm, en: "Waiting for Koru on this computer to confirm.", es: "Esperando a que Koru lo confirme en este equipo.", pt_br: "Aguardando o Koru confirmar neste computador.", de: "Warten auf die Bestätigung von Koru auf diesem Computer.", fr: "En attente de la confirmation de Koru sur cet ordinateur.", ar: "في انتظار تأكيد Koru على هذا الكمبيوتر.", zh_hans: "正在等待此电脑上的 Koru 确认。", ja: "このコンピューターの Koru による確認を待っています。" },
+    Row { key: Key::BotsTeamPausedLine, en: "All Bots are paused. Nothing new will start.", es: "Todos los bots están en pausa. No empezará nada nuevo.", pt_br: "Todos os bots estão pausados. Nada novo será iniciado.", de: "Alle Bots sind pausiert. Es wird nichts Neues gestartet.", fr: "Tous les bots sont en pause. Rien de nouveau ne démarrera.", ar: "كل البوتات متوقفة مؤقتًا. لن يبدأ أي عمل جديد.", zh_hans: "所有机器人已暂停。不会开始任何新工作。", ja: "すべてのボットが一時停止中です。新しい作業は始まりません。" },
+    Row { key: Key::BotsTeamPauseTitle, en: "Pause all Bots?", es: "¿Pausar todos los bots?", pt_br: "Pausar todos os bots?", de: "Alle Bots pausieren?", fr: "Mettre tous les bots en pause ?", ar: "إيقاف كل البوتات مؤقتًا؟", zh_hans: "暂停所有机器人？", ja: "すべてのボットを一時停止しますか？" },
+    Row { key: Key::BotsTeamPauseBodyNoNew, en: "No Bot will start new work until you resume: no replies, no Routines, no requests between Bots.", es: "Ningún bot empezará trabajo nuevo hasta que los reanudes: ni respuestas, ni rutinas, ni solicitudes entre bots.", pt_br: "Nenhum bot começará trabalho novo até você retomar: nem respostas, nem rotinas, nem solicitações entre bots.", de: "Kein Bot beginnt neue Arbeit, bis du fortsetzt: keine Antworten, keine Routinen, keine Anfragen zwischen Bots.", fr: "Aucun bot ne commencera de nouveau travail tant que vous n’aurez pas repris : ni réponses, ni routines, ni demandes entre bots.", ar: "لن يبدأ أي بوت عملًا جديدًا حتى تستأنف: لا ردود، ولا روتينات، ولا طلبات بين البوتات.", zh_hans: "在你恢复之前，任何机器人都不会开始新工作：不回复、不运行例程，机器人之间也不互相请求。", ja: "再開するまで、どのボットも新しい作業を始めません。返信も、ルーティンも、ボット間の依頼も行われません。" },
+    Row { key: Key::BotsTeamPauseBodyRunning, en: "Work that is running now keeps going.", es: "El trabajo que ya está en marcha continúa.", pt_br: "O trabalho que já está em andamento continua.", de: "Arbeit, die gerade läuft, geht weiter.", fr: "Le travail déjà en cours continue.", ar: "العمل الجاري الآن يستمر.", zh_hans: "正在进行的工作会继续。", ja: "現在実行中の作業は続行されます。" },
+    Row { key: Key::BotsPausedWithTeam, en: "Paused with the team", es: "En pausa con el equipo", pt_br: "Pausado com a equipe", de: "Mit dem Team pausiert", fr: "En pause avec l’équipe", ar: "متوقف مؤقتًا مع الفريق", zh_hans: "已随团队暂停", ja: "チームと一緒に一時停止中" },
+    Row { key: Key::BotsRowPausedWithTeam, en: "{}, paused with the team", es: "{}, en pausa con el equipo", pt_br: "{}, pausado com a equipe", de: "{}, mit dem Team pausiert", fr: "{}, en pause avec l’équipe", ar: "{}، متوقف مؤقتًا مع الفريق", zh_hans: "{}，已随团队暂停", ja: "{}、チームと一緒に一時停止中" },
+    Row { key: Key::BotsTeamPausedSend, en: "All Bots are paused. Resume them to send this.", es: "Todos los bots están en pausa. Reanúdalos para enviar esto.", pt_br: "Todos os bots estão pausados. Retome-os para enviar isto.", de: "Alle Bots sind pausiert. Setze sie fort, um das zu senden.", fr: "Tous les bots sont en pause. Reprenez-les pour envoyer ceci.", ar: "كل البوتات متوقفة مؤقتًا. استأنفها لإرسال هذا.", zh_hans: "所有机器人已暂停。恢复后才能发送。", ja: "すべてのボットが一時停止中です。送信するには再開してください。" },
+    Row { key: Key::BotsTeamPausedShort, en: "All Bots are paused.", es: "Todos los bots están en pausa.", pt_br: "Todos os bots estão pausados.", de: "Alle Bots sind pausiert.", fr: "Tous les bots sont en pause.", ar: "كل البوتات متوقفة مؤقتًا.", zh_hans: "所有机器人已暂停。", ja: "すべてのボットが一時停止中です。" },
+    Row { key: Key::BotsTeamChangeFailed, en: "Couldn't change this just now. Try again.", es: "No se pudo cambiar esto ahora. Inténtalo de nuevo.", pt_br: "Não foi possível alterar isto agora. Tente novamente.", de: "Das ließ sich gerade nicht ändern. Versuch es noch einmal.", fr: "Impossible de modifier cela pour l’instant. Réessayez.", ar: "تعذّر تغيير هذا الآن. حاول مجددًا.", zh_hans: "暂时无法更改。请重试。", ja: "今は変更できませんでした。もう一度お試しください。" },
 ];
