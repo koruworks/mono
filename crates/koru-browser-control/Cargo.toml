@@ -1,0 +1,39 @@
+[package]
+rust-version.workspace = true
+name = "koru-browser-control"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The lower half of the visible local browser route: a site and a starting address, finding the installed browser, launching it in a process tree, the pipe framing, the closed message list, and the fixture site the qualification runs against."
+
+[features]
+default = []
+# With this on, `launch::launch` answers `Unavailable` and the code that
+# starts a process is not compiled at all. Every crate above this one turns it
+# on in `[dev-dependencies]`, because a dependency is never compiled with
+# `cfg(test)` (AGENTS.md, Testing). This crate's own tests are covered by
+# `cfg(test)` as well, so they cannot start a process with or without it.
+no-browser-process = []
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+url.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# The two features beyond the workspace list are named here, where they are
+# used, instead of relying on another crate turning them on: `Win32_Security`
+# for the pipe's security attributes and `Win32_System_Registry` for the
+# registered location of the executable. A feature is not a version: neither
+# changes `Cargo.lock`.
+windows-sys = { workspace = true, features = [
+    "Win32_Security",
+    "Win32_System_Registry",
+] }
+
+[dev-dependencies]
+# For `examples/qualify.rs` only, and there only for step A2b: attaching over
+# a loopback port if the pipe fails. No file under `src/` names it, and no
+# test opens a socket.
+tungstenite.workspace = true

@@ -5627,6 +5627,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-browser-control"
+version = "0.0.3"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tungstenite 0.30.0",
+ "url",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "koru-canvas-flow"
 version = "0.0.3"
 dependencies = [
