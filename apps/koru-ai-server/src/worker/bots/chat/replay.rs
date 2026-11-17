@@ -3,6 +3,7 @@
 use super::*;
 use koru_ai_core::{AgentActivityEvent as A, AgentActivityLive, AgentToolKind};
 use koru_delegate_api::bots::BotObservation;
+pub(super) mod child;
 pub(super) mod decision;
 #[cfg(test)]
 mod tests;
@@ -85,7 +86,13 @@ impl WorkerState {
             return Ok(false);
         };
         // A terminal of an enrolled origin is interpreted only with the
-        // delegate's matching cleanup proof; until then it stays staged.
+        // delegate's matching cleanup proof; until then it stays staged. A
+        // Run has one open wait (A5): a child wait's enrollment is looked
+        // up first, and a terminal it does not claim goes on to the
+        // decision interceptor unchanged.
+        let Some(staged) = self.intercept_child_origin_terminal(id, chat, staged)? else {
+            return Ok(false);
+        };
         let Some(staged) = self.intercept_origin_terminal(id, chat, staged)? else {
             return Ok(false);
         };

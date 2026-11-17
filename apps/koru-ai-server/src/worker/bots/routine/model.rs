@@ -26,6 +26,15 @@ fn decision_in_progress() -> Failure {
         false,
     )
 }
+/// M6 (contract 4.6): a Run waiting on another Bot accepts no new Routine
+/// change either. Typed and not retryable.
+fn child_wait_in_progress() -> Failure {
+    failure(
+        "child_wait_in_progress",
+        "The Run is waiting for another Bot; no new Routine change is accepted.",
+        false,
+    )
+}
 fn invalid() -> Failure {
     failure(
         "invalid_request",

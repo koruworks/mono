@@ -21,11 +21,14 @@ use koru_ai_core::Cancellation;
 use koru_ai_server::{AiWorkerClient, RoutineCall, RoutineCallContext};
 // One copy of the bridge contract: routes, envelope, codec and reply
 // correlation are the delegate API's, which the host's client also speaks.
+pub use koru_delegate_api::decision_bridge::{
+    CHILD_ENROLL_ROUTE, CHILD_READ_ROUTE, DECISION_ENROLL_ROUTE, DECISION_READ_ROUTE,
+};
 use koru_delegate_api::decision_bridge::{
     DECISION_BRIDGE_BODY_LIMIT, DECISION_BRIDGE_DEADLINE, DecisionBridgeAuthority,
     DecisionBridgeCodecError, DecisionBridgeEnvelope, DecisionBridgePayload, DecisionBridgeReply,
 };
-pub use koru_delegate_api::decision_bridge::{DECISION_ENROLL_ROUTE, DECISION_READ_ROUTE};
+use koru_delegate_core::children::BotChildWaitEnrollmentReply;
 use koru_delegate_core::decisions::{BotWaitEnrollmentReply, BotWaitRefusal};
 use serde::de::DeserializeOwned;
 use tokio::sync::Semaphore;
@@ -76,13 +79,21 @@ impl HttpState {
 }
 
 pub(crate) fn is_endpoint(path: &str) -> bool {
-    matches!(path, DECISION_ENROLL_ROUTE | DECISION_READ_ROUTE)
+    matches!(
+        path,
+        DECISION_ENROLL_ROUTE | DECISION_READ_ROUTE | CHILD_ENROLL_ROUTE | CHILD_READ_ROUTE
+    )
 }
 
+/// The decision routes and, beside them on the same envelope, credential and
+/// deadline, the two child wait routes (M6). The payload type follows from
+/// the route, so neither domain can decode the other's request.
 fn routes() -> Router<Arc<HttpState>> {
     Router::new()
         .route(DECISION_ENROLL_ROUTE, any(handle))
         .route(DECISION_READ_ROUTE, any(handle))
+        .route(CHILD_ENROLL_ROUTE, any(handle))
+        .route(CHILD_READ_ROUTE, any(handle))
 }
 
 pub(crate) fn router(state: Arc<HttpState>) -> Router<Arc<crate::GatewayState>> {
@@ -176,6 +187,24 @@ async fn handle_until(
             )
             .await
         }
+        CHILD_ENROLL_ROUTE => {
+            dispatch_child(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::enroll_bot_child_wait_cleanup,
+            )
+            .await
+        }
+        CHILD_READ_ROUTE => {
+            dispatch_child(
+                state.worker.as_ref(),
+                bytes,
+                deadline,
+                AiWorkerClient::read_bot_child_wait_cleanup,
+            )
+            .await
+        }
         _ => Err(StatusCode::NOT_FOUND),
     }?;
     remaining(deadline)?;
@@ -231,6 +260,60 @@ where
     remaining(deadline)?;
     // Never send a reply that does not answer this exact request: Enroll
     // cannot turn absence into Missing, and no other key can be answered.
+    let reply = DecisionBridgeEnvelope::reply_to(&request, payload)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .encode()
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    remaining(deadline)?;
+    Ok(reply)
+}
+
+type ChildStarter<Q> =
+    fn(
+        &AiWorkerClient,
+        RoutineCallContext,
+        Q,
+    ) -> Result<RoutineCall<BotChildWaitEnrollmentReply, BotWaitRefusal>, BotWaitRefusal>;
+
+/// The child wait routes: the same envelope and correlation as a decision's,
+/// with the child enrollment reply. Enroll answers `Enrolled` for the exact
+/// key or `Refused`; it never answers `Missing`.
+async fn dispatch_child<Q: DecisionBridgePayload + DeserializeOwned + Clone>(
+    worker: Option<&AiWorkerClient>,
+    bytes: Vec<u8>,
+    deadline: Instant,
+    start: ChildStarter<Q>,
+) -> Result<Vec<u8>, StatusCode>
+where
+    BotChildWaitEnrollmentReply: DecisionBridgeReply<Q>,
+{
+    remaining(deadline)?;
+    let request = DecisionBridgeEnvelope::<Q>::decode(&bytes).map_err(|error| match error {
+        DecisionBridgeCodecError::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
+        DecisionBridgeCodecError::Invalid | DecisionBridgeCodecError::Mismatch => {
+            StatusCode::BAD_REQUEST
+        }
+    })?;
+    drop(bytes);
+    remaining(deadline)?;
+    let payload = match worker {
+        Some(worker) => {
+            let context =
+                RoutineCallContext::new(request.request_id, deadline, Cancellation::default());
+            match start(worker, context, request.payload.clone()) {
+                Ok(call) => tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), call)
+                    .await
+                    .map_err(|_| StatusCode::GATEWAY_TIMEOUT)?
+                    .unwrap_or_else(|code| BotChildWaitEnrollmentReply::Refused { code }),
+                Err(code) => BotChildWaitEnrollmentReply::Refused { code },
+            }
+        }
+        None => BotChildWaitEnrollmentReply::Refused {
+            code: BotWaitRefusal::Unavailable,
+        },
+    };
+    remaining(deadline)?;
+    // Never a reply that does not answer this exact request.
     let reply = DecisionBridgeEnvelope::reply_to(&request, payload)
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .encode()

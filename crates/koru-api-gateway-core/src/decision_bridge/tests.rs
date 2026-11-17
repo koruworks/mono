@@ -291,3 +291,72 @@ async fn decision_routes_accept_only_the_derived_decision_authority() {
     .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
+
+// ---- M6: the two child wait routes (cohort m6_child_enroll_before_reply) ---
+
+fn child_intent() -> koru_delegate_core::children::BotChildWaitCleanupIntentV1 {
+    let origin = DecisionFence {
+        owner: d::BotOwner {
+            user_scope: koru_ai_core::bots::UserScopeId::new(),
+            device: d::DeviceId::new(),
+        },
+        bot: d::BotId::mint(),
+        run: d::RunId::mint(),
+        attempt: d::RunAttemptId::mint(),
+        generation: d::AttemptGeneration::from_raw(1).unwrap(),
+        session: d::SessionId::mint(),
+        turn: d::AgentTurnId::mint(),
+    };
+    koru_delegate_core::children::BotChildWaitCleanupIntentV1::frozen(BotWaitId::mint(), &origin)
+        .unwrap()
+}
+
+#[tokio::test]
+async fn m6_child_enroll_before_reply_child_routes_are_mounted_behind_the_decision_credential() {
+    use koru_delegate_core::children::{EnrollBotChildWaitCleanup, ReadBotChildWaitCleanup};
+    let cleanup_intent = child_intent();
+    let key = cleanup_intent.key().unwrap();
+    let enroll = envelope(
+        serde_json::to_value(EnrollBotChildWaitCleanup {
+            key: key.clone(),
+            cleanup_intent,
+        })
+        .unwrap(),
+    );
+    let read = envelope(serde_json::to_value(ReadBotChildWaitCleanup { key }).unwrap());
+    for (path, body) in [(CHILD_ENROLL_ROUTE, enroll), (CHILD_READ_ROUTE, read)] {
+        assert!(is_endpoint(path));
+        assert!(!crate::routine_bridge::is_endpoint(path));
+        // The Routine credential never reaches a handler.
+        let polls = Arc::new(AtomicUsize::new(0));
+        let routine = routine_header();
+        let response = send(
+            installed(),
+            request(path, Some(routine.as_str()), unpolled(polls.clone())),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{path}");
+        assert_eq!(polls.load(Ordering::SeqCst), 0, "{path}");
+        // Without an AI owner: a typed refusal, never Missing.
+        let response = send(
+            installed(),
+            request(path, Some(DECISION_HEADER), Body::from(body.clone())),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let value = json(response).await;
+        assert_eq!(value["payload"]["result"], "refused", "{path}");
+        assert_eq!(value["payload"]["code"], "unavailable", "{path}");
+    }
+    // A decision payload on a child route is not decoded as a child's.
+    let response = send(
+        installed(),
+        request(
+            CHILD_READ_ROUTE,
+            Some(DECISION_HEADER),
+            Body::from(read_body_bytes()),
+        ),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}

@@ -57,6 +57,7 @@ mod boot;
 pub(super) use boot::{BootRecovery, BotBootJob, BotBootResult};
 mod branch;
 pub(in crate::worker) mod chat;
+pub(crate) mod children;
 pub(crate) mod decision_wait;
 mod library;
 mod lifecycle;
@@ -385,8 +386,8 @@ fn execute_bot_command(
         | BotCommand::ListMemory { .. }
         | BotCommand::ReadMemoryFact { .. }
         | BotCommand::ListTaskBots { .. }
-        // The two child reads (M6) are served by the worker's own readers
-        // once they exist; nothing here answers them.
+        // The two child reads (M6) are routed to their own reader
+        // (`read_child_cards`) before this executor; nothing here answers them.
         | BotCommand::ListChildRequests { .. }
         | BotCommand::ReadChildOrigin { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),

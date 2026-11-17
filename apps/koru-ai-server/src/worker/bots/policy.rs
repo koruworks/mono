@@ -269,6 +269,7 @@ impl WorkerState {
                 access,
                 selected_pages,
                 connections,
+                may_ask,
                 ..
             } = normalized
             else {
@@ -291,6 +292,11 @@ impl WorkerState {
             // (M5). The repository refuses a new grant that is not usable.
             if let Some(connections) = connections {
                 desired.connections = connections;
+            }
+            // "May ask other bots" (M6). Absent changes nothing; it is a Bot
+            // setting, not part of the captured policy.
+            if let Some(may_ask) = may_ask {
+                desired.may_ask = may_ask;
             }
             desired.updated_at_ms = Timestamp::now().millis();
             let snapshot = barrier(&desired)?;

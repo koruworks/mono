@@ -330,6 +330,14 @@ impl WorkerState {
         {
             return false;
         }
+        // M6 (A2): a child request's `start` receipt is never sent as its
+        // own `Submit`; the ledger would refuse it. Its whole ask is resent
+        // as `RequestChild` instead.
+        if let BotAdmissionReceipt::Submission(r) = &receipt
+            && r.intent.submission.provenance.parent.is_some()
+        {
+            return self.queue_child_resend(bot, r);
+        }
         let (Some(authority), Some(delegate), Some(pool)) = (
             &self.bot_authority,
             &self.bot_delegate,
@@ -464,7 +472,12 @@ impl WorkerState {
     /// left by a reversed operation, a refusal waiting for its fence, or a
     /// receipt a restart found is offered again once the owner can answer.
     /// A settled one lets the backoff start over.
-    fn note_bot_coordination(&mut self, owner: BotOwner, bot: BotId, request: BotRequestId) {
+    pub(super) fn note_bot_coordination(
+        &mut self,
+        owner: BotOwner,
+        bot: BotId,
+        request: BotRequestId,
+    ) {
         if self.bot_coordination.contains(&(bot, request)) {
             return;
         }
@@ -923,6 +936,32 @@ pub(super) fn make_library_intent(
     sources: &super::library::LibrarySources,
     profile: ProfileId,
 ) -> ApiResult<BotSubmissionIntent> {
+    sources.validate(bot, task, pins)?;
+    bare_intent(
+        bot,
+        request,
+        chat,
+        destination,
+        &task.text,
+        previous,
+        pins,
+        profile,
+    )
+}
+/// The submission of one task of `bot`, captured at its current revision,
+/// without the library check: the caller proved its context pins. A child
+/// request (M6) uses it with no pins.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn bare_intent(
+    bot: &Bot,
+    request: BotRequestId,
+    chat: ChatId,
+    destination: WorkspaceId,
+    text: &str,
+    previous: Option<RunId>,
+    pins: &[koru_delegate_core::RunContextItem],
+    profile: ProfileId,
+) -> ApiResult<BotSubmissionIntent> {
     use koru_delegate_core as d;
     use koru_session_protocol as s;
     let agent = koru_ai_provider_agent::agent_kind_of(&bot.config.model.provider)
@@ -948,7 +987,6 @@ pub(super) fn make_library_intent(
             ReasoningLevel::Max => s::LaunchReasoning::Max,
         }),
     };
-    sources.validate(bot, task, pins)?;
     let intent = BotSubmissionIntent {
         version: 1,
         submission: d::BotSubmission {
@@ -984,8 +1022,7 @@ pub(super) fn make_library_intent(
             request: d::DelegationRequest {
                 run: RunId::mint(),
                 requested_by: d::ActorRef::Person { profile },
-                objective: d::Objective::new(&task.text)
-                    .map_err(|_| bot_failure(BotError::Invalid))?,
+                objective: d::Objective::new(text).map_err(|_| bot_failure(BotError::Invalid))?,
                 agent: agent.profile,
                 requested_model: Some(requested_model),
                 scope: d::WorkspaceScope::BotFolder {
@@ -1000,7 +1037,7 @@ pub(super) fn make_library_intent(
             workspace: destination,
             input: s::PendingInput {
                 idempotency_key: s::IdempotencyKey::mint(),
-                text: task.text.clone(),
+                text: text.to_owned(),
                 attachment_ids: vec![],
                 references: vec![],
                 mode: bot

@@ -1313,6 +1313,10 @@ enum Envelope {
     },
     DecisionWaitCompleted(Box<bots::decision_wait::DecisionWaitResult>),
     DecisionApplied(Box<bots::decision_wait::apply::ApplyResult>),
+    /// A test's own step on the writer, after the worker started (its
+    /// startup recovery has run), with the writer's state.
+    #[cfg(test)]
+    WithStateForFixture(Box<dyn FnOnce(&mut WorkerState) + Send>),
     /// Read-only observation of production recovery for spawned-worker tests.
     #[cfg(test)]
     ReadRoutineCreationForFixture {
@@ -1353,6 +1357,10 @@ enum Envelope {
         reply: SyncSender<ApiResult<bots::routine::model::RunRoutineResult>>,
     },
     RunRoutineCompleted(Box<bots::routine::model::RunRoutineCompletion>),
+    /// One Bot asking others (M6): the ask, the askable list and the
+    /// child wait enrollment bridge.
+    Children(bots::children::Incoming),
+    ChildrenCompleted(Box<bots::children::Completion>),
     RunMemoryRead {
         request: bots::memory::RunMemoryReadRequest,
         reply: SyncSender<ApiResult<bots::memory::RunMemoryReadResult>>,
@@ -2229,6 +2237,8 @@ fn run_worker(
             }
             Ok(Envelope::Context(resolution)) => state.handle_context_resolution(resolution),
             #[cfg(test)]
+            Ok(Envelope::WithStateForFixture(work)) => work(&mut state),
+            #[cfg(test)]
             Ok(Envelope::ReadRoutineCreationForFixture {
                 owner,
                 bot,
@@ -2270,6 +2280,8 @@ fn run_worker(
             }
             Ok(Envelope::RunRoutine { request, reply }) => state.start_run_routine(request, reply),
             Ok(Envelope::RunRoutineCompleted(result)) => state.complete_run_routine(result),
+            Ok(Envelope::Children(incoming)) => state.children(incoming),
+            Ok(Envelope::ChildrenCompleted(completion)) => state.children_completed(*completion),
             Ok(Envelope::MemoryReadCompleted(result)) => state.complete_memory_read(result),
             Ok(Envelope::RunMemoryWrite {
                 request,
@@ -2536,6 +2548,13 @@ impl WorkerState {
                 request: request @ koru_ai_wire::BotCommand::ReadRun { .. },
                 reply,
             } => self.read_bot_run(context, request, reply),
+            WorkerCommand::Bots {
+                context,
+                request:
+                    request @ (koru_ai_wire::BotCommand::ListChildRequests { .. }
+                    | koru_ai_wire::BotCommand::ReadChildOrigin { .. }),
+                reply,
+            } => self.read_child_cards(context, request, reply),
             WorkerCommand::Bots {
                 context,
                 request: request @ koru_ai_wire::BotCommand::StopTask { .. },
@@ -6153,6 +6172,15 @@ enum ProviderAdminJob {
     /// administration, never a lane that answers a person.
     BotRoutineAccessRecovery(Box<bots::routine::control::ControlJob>),
     BotRoutineModel(Box<bots::routine::model::RunRoutineJob>),
+    /// One phase of a Run tool's ask (M6): its page checks or its
+    /// `RequestChild`. A caller waits on it, so it runs on preparation's lane.
+    BotChildAsk(Box<bots::children::AskJob>),
+    /// The restart scan's resend of a prepared ask: background.
+    BotChildResend(Box<bots::children::AskJob>),
+    /// The held child wait's `ReadBotChildWait`: background.
+    BotChildWaitRead(bots::chat::ChildWaitReadJob),
+    /// A conversation's request cards or origin line; answers its caller.
+    BotChildCards(bots::children::CardsJob),
     BotMemoryWrite(bots::memory::write::MemoryWriteJob),
     BotBoot(bots::BotBootJob),
     BotChatRecovery(bots::chat::StepJob),
@@ -6256,6 +6284,8 @@ impl ProviderAdminJob {
             | Self::BotRoutineListing(_)
             | Self::BotRoutineDetail(_)
             | Self::BotRoutineModel(_)
+            | Self::BotChildAsk(_)
+            | Self::BotChildCards(_)
             | Self::BotMemoryRead(_)
             | Self::BotMemoryWrite(_)
             | Self::BotCreationPrepare(_)
@@ -6359,6 +6389,8 @@ impl ProviderAdminPool {
                         | ProviderAdminJob::BotRoutineListing(_)
                         | ProviderAdminJob::BotRoutineDetail(_)
                         | ProviderAdminJob::BotRoutineModel(_)
+                        | ProviderAdminJob::BotChildAsk(_)
+                        | ProviderAdminJob::BotChildCards(_)
                         | ProviderAdminJob::BotMemoryRead(_)
                         | ProviderAdminJob::BotMemoryWrite(_)
                         | ProviderAdminJob::BotCreationPrepare(_)
@@ -6366,6 +6398,20 @@ impl ProviderAdminPool {
                         | ProviderAdminJob::BotInteractionRead(_)
                         | ProviderAdminJob::BotSteerRead(_) => {
                             unreachable!("preparation lane dispatch")
+                        }
+                        ProviderAdminJob::BotChildResend(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::ChildrenCompleted(Box::new(job.run())),
+                                &thread_shutdown,
+                            );
+                        }
+                        ProviderAdminJob::BotChildWaitRead(job) => {
+                            send_admin_envelope(
+                                &output,
+                                Envelope::ChildrenCompleted(Box::new(job.run())),
+                                &thread_shutdown,
+                            );
                         }
                         ProviderAdminJob::BotCoordinate(job) => {
                             let result = job.run();
@@ -6983,6 +7029,11 @@ fn run_preparation(
         ProviderAdminJob::BotRoutineListing(job) => Envelope::RoutineListingCompleted(job.run()),
         ProviderAdminJob::BotRoutineDetail(job) => Envelope::RoutineDetailCompleted(job.run()),
         ProviderAdminJob::BotRoutineModel(job) => Envelope::RunRoutineCompleted(job.run()),
+        ProviderAdminJob::BotChildAsk(job) => Envelope::ChildrenCompleted(Box::new(job.run())),
+        ProviderAdminJob::BotChildCards(job) => {
+            job.run();
+            return;
+        }
         ProviderAdminJob::BotMemoryRead(job) => Envelope::MemoryReadCompleted(job.run()),
         ProviderAdminJob::BotMemoryWrite(job) => Envelope::MemoryWriteCompleted(job.run()),
         ProviderAdminJob::BotPrepare(job) => {

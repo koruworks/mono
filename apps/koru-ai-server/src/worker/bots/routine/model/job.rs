@@ -77,6 +77,14 @@ impl RunRoutineJob {
         {
             return Err(decision_in_progress());
         }
+        // M6 (contract 4.6): a Run waiting on another Bot is fenced the same
+        // way, with its own code.
+        if matches!(authority, RunToolAuthority::BotChildWait { .. })
+            && self.request.operation.mutation()
+            && !self.committed
+        {
+            return Err(child_wait_in_progress());
+        }
         Ok(())
     }
     fn human(&self, pages: &[BotPage]) -> ApiResult<()> {

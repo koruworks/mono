@@ -406,6 +406,187 @@ impl WorkerState {
         })
     }
 
+    /// `list_child_requests` and `read_child_origin` (M6, contract 7.1).
+    /// Checked as a named conversation read is (the owner, the
+    /// conversation's Trash, the Bot's workspace), the rows read from ai.db
+    /// here, and the delegate's state of each request read off the writer
+    /// by a [`super::children::CardsJob`], which answers its caller itself.
+    pub(in crate::worker) fn read_child_cards(
+        &mut self,
+        context: CommandContext,
+        request: BotCommand,
+        reply: SyncSender<ApiResult<BotResponse>>,
+    ) {
+        match self.child_cards_job(&context, &request, reply.clone()) {
+            Ok(Some(job)) => {
+                let Some(pool) = self.provider_admin.as_ref() else {
+                    let _ = reply.send(Err(bot_failure(BotError::Unavailable)));
+                    return;
+                };
+                if let Err(error) = pool.try_submit(ProviderAdminJob::BotChildCards(job))
+                    && let ProviderAdminJob::BotChildCards(job) = error.job
+                {
+                    let _ = job.reply.send(Err(error.failure));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = reply.send(Err(error));
+            }
+        }
+    }
+
+    fn child_cards_job(
+        &self,
+        context: &CommandContext,
+        request: &BotCommand,
+        reply: SyncSender<ApiResult<BotResponse>>,
+    ) -> ApiResult<Option<super::children::CardsJob>> {
+        use super::children::reads::{CardRow, CardsJob, CardsRead, child_end};
+        let (bot_id, chat_id, read) = match *request {
+            BotCommand::ListChildRequests { bot_id, chat_id } => {
+                (bot_id, chat_id, CardsRead::Cards)
+            }
+            BotCommand::ReadChildOrigin { bot_id, chat_id } => (bot_id, chat_id, CardsRead::Origin),
+            _ => return Err(bot_failure(BotError::Invalid)),
+        };
+        authorize(context, AiScope::ManageBots)?;
+        let proof = context
+            .prepared
+            .as_ref()
+            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+        let owner = proof.authority.owner().map_err(bot_failure)?;
+        let (bot, standing) = self
+            .repository
+            .bot_any_lifecycle(bot_id)
+            .map_err(bot_failure)?
+            .ok_or_else(not_found)?;
+        if (BotOwner {
+            user_scope: bot.user_scope,
+            device: bot.owner_device,
+        }) != owner
+        {
+            return Err(bot_failure(BotError::Forbidden));
+        }
+        if self.repository.bot_for_chat(chat_id).map_err(bot_failure)? != Some(bot_id) {
+            return Err(not_found());
+        }
+        let hold = match standing {
+            BotLifecycle::Trashed => Some(koru_ai_sqlite::BotHold::BotTrashed),
+            _ => self
+                .repository
+                .bot_chat_hold(chat_id)
+                .map_err(bot_failure)?
+                .filter(|hold| hold.hides()),
+        };
+        if let Some(hold) = hold {
+            return Err(lifecycle::hold_failure(hold));
+        }
+        proof
+            .authority
+            .workspace(bot.home_workspace)
+            .map_err(bot_failure)?;
+        let rows = match read {
+            CardsRead::Cards => self
+                .repository
+                .bot_child_requests_of_chat(
+                    owner,
+                    bot_id,
+                    chat_id,
+                    koru_ai_core::bots::BOT_CHILD_CARD_LIMIT,
+                )
+                .map_err(bot_failure)?,
+            CardsRead::Origin => self
+                .repository
+                .bot_child_origin_of_chat(owner, bot_id, chat_id)
+                .map_err(bot_failure)?
+                .into_iter()
+                .collect(),
+        };
+        if rows.is_empty() {
+            let _ = reply.send(Ok(match read {
+                CardsRead::Cards => BotResponse::ChildRequests {
+                    requests: Vec::new(),
+                },
+                CardsRead::Origin => BotResponse::ChildOrigin { origin: None },
+            }));
+            return Ok(None);
+        }
+        // Needs-you of the child conversations, from the one bounded
+        // activity read the roster uses.
+        let needs: std::collections::BTreeSet<ChatId> = self
+            .repository
+            .bot_activity(owner, bot.home_workspace, BOT_ACTIVITY_LIMIT)
+            .map_err(bot_failure)?
+            .entries
+            .into_iter()
+            .filter(|entry| entry.state == koru_ai_core::bots::BotActivityState::NeedsYou)
+            .map(|entry| entry.chat_id)
+            .collect();
+        let name = |id: BotId| -> ApiResult<String> {
+            Ok(self
+                .repository
+                .bot_any_lifecycle(id)
+                .map_err(bot_failure)?
+                .map(|(bot, _)| bot.config.name)
+                .unwrap_or_default())
+        };
+        let mut cards = Vec::with_capacity(rows.len());
+        for row in rows {
+            let attempt = match self
+                .repository
+                .bot_admission_receipt(
+                    owner,
+                    row.recipient_bot,
+                    BotRequestId::from_uuid(row.child_request.as_uuid()),
+                )
+                .map_err(bot_failure)?
+            {
+                Some(BotAdmissionReceipt::Submission(receipt)) => receipt
+                    .intent
+                    .submission
+                    .provenance
+                    .ai_attempt_id
+                    .and_then(|id| InferenceAttemptId::parse(&id.to_string())),
+                _ => None,
+            };
+            let (attempt, person_stopped) = match attempt {
+                Some(id) => (
+                    self.repository.attempt(id).map_err(ai_failure)?,
+                    self.repository
+                        .bot_replay_state(id)
+                        .map_err(ai_failure)?
+                        .stop_reason
+                        == Some(koru_ai_core::bots::replay::BotReplayStop::OwnerUnavailable),
+                ),
+                None => (None, false),
+            };
+            cards.push(CardRow {
+                recipient_name: name(row.recipient_bot)?,
+                parent_name: name(row.parent_bot)?,
+                end: child_end(attempt.as_ref(), person_stopped),
+                needs_you: needs.contains(&row.chat),
+                row,
+            });
+        }
+        let delegate = self
+            .bot_delegate
+            .clone()
+            .ok_or_else(|| bot_failure(BotError::Unavailable))?;
+        Ok(Some(CardsJob {
+            owner: koru_delegate_core::BotOwner {
+                user_scope: owner.user_scope,
+                device: owner.device,
+            },
+            home: bot.home_workspace,
+            rows: cards,
+            read,
+            delegate,
+            deadline: Instant::now() + RUN_READ_DEADLINE,
+            reply,
+        }))
+    }
+
     pub(in crate::worker) fn bot_read_command(
         &self,
         context: &CommandContext,

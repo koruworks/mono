@@ -26,6 +26,10 @@ pub use store_tools::pinned::{PinnedPage, PinnedReadError, PinnedUnavailable, re
 pub use store_tools::{
     NativeStoreAuthority, StoreToolAdapter, native_document_title, native_store_backend,
 };
+pub use worker::bots::children::{
+    ASKABLE_LIMIT, CHILD_ASK_BUDGET, RunAskableBot, RunAskableRequest, RunChildAskItem,
+    RunChildAskPending, RunChildAskRequest,
+};
 pub use worker::bots::decision_wait::{
     BotDelegateDecisionWait, DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject,
 };

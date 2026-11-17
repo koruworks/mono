@@ -25,6 +25,7 @@ pub(in crate::worker) use attachments::MAX_LISTINGS as MAX_PICTURE_LISTINGS;
 pub(in crate::worker) use controls::{
     ControlJob, ControlReadJob, ControlReadResult, ControlResult,
 };
+pub(in crate::worker) use replay::child::{ChildWaitRead, ChildWaitReadJob};
 pub(in crate::worker) use runtime::{LiveChat, StepJob, StepResult};
 pub(in crate::worker) use steering::{
     SteerBinding, SteerJob, SteerReadJob, SteerReadResult, SteerResult,

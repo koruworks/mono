@@ -51,6 +51,9 @@ pub(in crate::worker) struct LiveChat {
     /// A Koru decision wait this task is enrolled in (origin terminal proof,
     /// held wait or acknowledged consumer). `None` for every ordinary task.
     pub(super) decision: Option<super::replay::decision::DecisionWait>,
+    /// A child wait this task's origin is enrolled in (M6): the origin
+    /// terminal's proof or the held wait. `None` for every other task.
+    pub(super) child: Option<super::replay::child::ChildWait>,
     phase: Phase,
     due: Instant,
     busy: bool,
@@ -80,6 +83,7 @@ impl LiveChat {
         if self.finishing.is_some()
             || self.pending.is_some()
             || self.decision.is_some()
+            || self.child.is_some()
             || !matches!(self.phase, Phase::Observe)
         {
             return None;
@@ -122,6 +126,7 @@ impl LiveChat {
             live: Vec::new(),
             pending: None,
             decision: None,
+            child: None,
             phase: Phase::Observe,
             due: Instant::now(),
             busy: false,
@@ -252,6 +257,7 @@ impl WorkerState {
                 live: Vec::new(),
                 pending: None,
                 decision: None,
+                child: None,
                 phase: if routine {
                     Phase::RoutineAdmission
                 } else {
@@ -281,6 +287,8 @@ impl WorkerState {
         self.prune_bot_steers();
         // Decision reads use the bounded Run-read lane, never this Bot slot.
         self.schedule_bot_decision_reads();
+        // Child wait reads (M6) use the administration lane, never this slot.
+        self.schedule_bot_child_reads();
         // At most one finite Bot IO job occupies this pool at once. Native
         // waiting happens in the host, not on either AI provider thread.
         let Some(port) = self.bot_delegate.clone() else {
@@ -333,6 +341,7 @@ impl WorkerState {
                         chat.finishing.is_none()
                             && !chat.busy
                             && chat.decision.as_ref().is_none_or(|wait| wait.observes())
+                            && chat.child.as_ref().is_none_or(|wait| wait.observes())
                     }
             })
             .min_by_key(|(_, chat)| chat.due)
@@ -1017,6 +1026,7 @@ impl WorkerState {
             live: Vec::new(),
             pending: None,
             decision: None,
+            child: None,
             phase: Phase::Admission,
             due: Instant::now(),
             busy: false,
@@ -1030,10 +1040,55 @@ impl WorkerState {
         // A person's Stop is never delayed by an automatic backoff, and it
         // supersedes any decision wait: ordinary Stop keeps its own mapping.
         chat.decision = None;
+        chat.child = None;
         chat.finishing = Some(Finish::Stop);
         chat.phase = Phase::Admission;
         chat.retries = 0;
         chat.due = Instant::now();
+    }
+    /// M6: an admitted child request's opening reply. Its turn was prepared
+    /// with the ask (the task as the request, the pending reply); its task
+    /// now observes the delegate from admission on, exactly as a Bot reply
+    /// whose context job finished does, with the submission's own first
+    /// input (the task and the pages it names). `false` when the task cannot
+    /// be started now: already live, ended, or the worker is full.
+    pub(in crate::worker) fn start_child_bot_chat(&mut self, id: InferenceAttemptId) -> bool {
+        if self.bot_chats.contains_key(&id) || self.bot_chats.len() >= PROVIDER_QUEUE_CAPACITY {
+            return false;
+        }
+        let Ok(Some(receipt)) = self.repository.bot_submission_for_attempt(id) else {
+            return false;
+        };
+        if receipt.intent.submission.provenance.parent.is_none()
+            || !matches!(self.repository.attempt(id), Ok(Some(attempt)) if !attempt.status.is_terminal())
+        {
+            return false;
+        }
+        let submission = receipt.intent.submission;
+        self.work_started(id);
+        self.bot_chats.insert(
+            id,
+            LiveChat {
+                input: submission.input.clone(),
+                submission,
+                fence: None,
+                mapper: None,
+                live: Vec::new(),
+                pending: None,
+                decision: None,
+                child: None,
+                phase: Phase::Admission,
+                due: Instant::now(),
+                busy: false,
+                control_busy: false,
+                automatic: false,
+                retries: 0,
+                finishing: None,
+                resend: false,
+                staging: Default::default(),
+            },
+        );
+        true
     }
     pub(in crate::worker) fn recover_bot_chats(&mut self) {
         let Some(after) = self.bot_chat_recovery else {
@@ -1102,6 +1157,7 @@ impl WorkerState {
                     live: Vec::new(),
                     pending: None,
                     decision: None,
+                    child: None,
                     phase: if delivery && finish.is_none() {
                         Phase::Delivery
                     } else {

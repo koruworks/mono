@@ -656,6 +656,10 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
             // P1.8 B1: a Run of a conversation, read through its owner;
             // an archived Bot's history reads.
             | BotCommand::ReadRun { .. }
+            // M6: a conversation's request cards and a child conversation's
+            // origin; an archived Bot's history reads.
+            | BotCommand::ListChildRequests { .. }
+            | BotCommand::ReadChildOrigin { .. }
     )
 }
 
