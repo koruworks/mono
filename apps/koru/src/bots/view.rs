@@ -487,6 +487,11 @@ pub(crate) struct BotView {
     /// Empty for a Bot this computer runs. Boxed for the reason the
     /// settings are.
     copy: Box<copy::Copy>,
+    // ------------------------------------ mentioning another Bot
+    /// **The Bots the conversation's `@` offers**, and how fresh the list
+    /// is ([`crate::bots::mentions`]). Boxed for the reason the settings
+    /// are.
+    mentions: Box<crate::bots::mentions::Mentions>,
 }
 
 impl BotView {
@@ -573,6 +578,7 @@ impl BotView {
             children: Box::default(),
             open_request: None,
             copy: Box::default(),
+            mentions: Box::default(),
         }
     }
 
@@ -1157,6 +1163,69 @@ impl BotView {
         answered || (moved && before) || (worded && self.children.shows())
     }
 
+    // ------------------------------------ mentioning another Bot
+
+    /// **The Bots the window's roster lists**, for the conversation's `@`
+    /// until the tab's own read answers (`bots::mentions`). `true` when the
+    /// list changed.
+    pub(crate) fn know_mention_roster(&mut self, rows: &[crate::bots::roster::RosterBot]) -> bool {
+        self.mentions
+            .seed(rows.iter().map(crate::bots::mentions::Listed::from))
+    }
+
+    /// **The Bot whose conversation this is, when its `@` may offer Bots**:
+    /// asking is open in this build, the owner's own read of the Bot is
+    /// held (it says the setting), the Bot is active, and this computer
+    /// runs it. `None` otherwise: the picker then lists pages only.
+    fn mention_asker(&self) -> Option<crate::bots::mentions::Asker> {
+        if !crate::bots::children::ASKING_OPEN || self.create.is_some() || self.copy().is_some() {
+            return None;
+        }
+        let bot = self.settings.bot()?;
+        (bot.lifecycle == BotLifecycle::Active).then_some(crate::bots::mentions::Asker {
+            id: bot.id,
+            home: bot.home_workspace,
+            may_ask: bot.may_ask,
+        })
+    }
+
+    /// **Feed the conversation's `@` and keep its list fresh**: the askable
+    /// Bots and the names sent mentions read as go to the conversation; and
+    /// while its picker is open and what is held is old, the workspace's
+    /// Bots are asked for on the tab's own link (queued, never waited on).
+    /// `true` when what is drawn changed.
+    fn mentions_pass(&mut self, now: std::time::Instant) -> bool {
+        let asker = self.mention_asker();
+        let lang = self.lang;
+        if !self.conversation_live() {
+            return false;
+        }
+        let Some(conversation) = self.conversation.as_mut() else {
+            return false;
+        };
+        let (section, names) = self.mentions.feed(lang, asker);
+        let mut changed = conversation.set_mention_choices(section);
+        changed |= conversation.set_mention_names(names);
+        let open = conversation.mention_picker_open();
+        if let Some(asker) = asker.filter(|asker| open && asker.may_ask)
+            && self.mentions.due(now)
+            && let Some(link) = &self.link
+        {
+            let seq = self.mentions.asking(now);
+            if link.send(Command::List {
+                seq,
+                workspace: asker.home,
+            }) {
+                let mut work = self.work.get();
+                work.commands += 1;
+                self.work.set(work);
+            } else {
+                self.mentions.unsent();
+            }
+        }
+        changed
+    }
+
     /// The requests' pass on the window's maintenance: what the link
     /// answered, and a read come due — for a tab already shown, which only
     /// its draw makes it.
@@ -1358,6 +1427,18 @@ impl BotView {
                 } if Some(bot) == creating => changed |= self.create_answer(request, result),
                 Answer::Chats { seq, bot, result } => {
                     changed |= self.conversations.answer(seq, bot, result);
+                }
+                // The workspace's Bots, asked for when the conversation's
+                // `@` opened: who it may offer (`bots::mentions`).
+                Answer::Listed {
+                    seq,
+                    workspace,
+                    result,
+                } => {
+                    let home = self.settings.bot().map(|bot| bot.home_workspace);
+                    changed |= self
+                        .mentions
+                        .answer(seq, home, workspace, result, self.here(), now);
                 }
                 Answer::Read { seq, bot, result } if seq == self.seq && Some(bot) == self.bot => {
                     self.in_flight = false;
@@ -2449,6 +2530,9 @@ impl View for BotView {
         self.place_conversation(conversation_area);
         // The room the chat gives the quick setup, now the chat is placed.
         self.place_setup();
+        // The `@` typed since the last pass finds its Bots already there,
+        // and an old list is asked for again while the picker is open.
+        self.mentions_pass(std::time::Instant::now());
         let p = koru_draw::theme::p();
         scene::fill(
             scene_out,
@@ -2612,6 +2696,11 @@ impl View for BotView {
             checking,
             // Another computer's copy state, read again while shown (M8).
             (!self.stale).then(|| self.copy_deadline(now)).flatten(),
+            // The Bots the `@` offers, asked for and not answered yet.
+            (!self.stale && self.mentions.waiting(now)).then(|| {
+                now.checked_add(std::time::Duration::from_millis(50))
+                    .unwrap_or(now)
+            }),
         ]
         .into_iter()
         .flatten()
@@ -2646,7 +2735,10 @@ impl View for BotView {
         let children = !self.stale && self.children_maintain(now);
         // The Bot's read owed again: asked on the pass this repaint runs.
         let reread = !self.stale && self.bot_read_due(now);
+        // The conversation's `@`: whom it offers, kept fresh while open.
+        let mentions = !self.stale && self.mentions_pass(now);
         let folded = folded
+            || mentions
             || children
             || polled
             || listed

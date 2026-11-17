@@ -129,6 +129,17 @@ pub struct PillSpec {
     pub url: Option<String>,
     /// Set for document pills selected by the entity picker.
     pub document: Option<DocumentTarget>,
+    /// Set for a mention chosen from the entity picker's host-fed section:
+    /// what the host named the choice by, and the role its record takes.
+    pub mention: Option<MentionTarget>,
+}
+
+/// What a mention pill records: the host's own id for the choice, under the
+/// role the host's section named. The editor never interprets either.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct MentionTarget {
+    pub role: String,
+    pub id: String,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -147,6 +158,7 @@ impl PillSpec {
             date: None,
             url: None,
             document: None,
+            mention: None,
         }
     }
 
@@ -157,6 +169,7 @@ impl PillSpec {
             date: None,
             url: Some(url.into()),
             document: None,
+            mention: None,
         }
     }
 
@@ -167,6 +180,7 @@ impl PillSpec {
             date: Some(d),
             url: None,
             document: None,
+            mention: None,
         }
     }
 
@@ -177,6 +191,19 @@ impl PillSpec {
             date: None,
             url: None,
             document: Some(target),
+            mention: None,
+        }
+    }
+
+    /// A mention chosen from the entity picker's host-fed section.
+    pub fn mention(label: impl Into<String>, target: MentionTarget) -> Self {
+        Self {
+            kind: PillKind::Mention,
+            label: label.into(),
+            date: None,
+            url: None,
+            document: None,
+            mention: Some(target),
         }
     }
 
@@ -187,6 +214,7 @@ impl PillSpec {
             date: None,
             url: None,
             document: Some(target),
+            mention: None,
         }
     }
 }
@@ -395,6 +423,9 @@ pub fn open_for_pill(
         // A skill chip is the agent's name for a skill: nothing to edit in
         // place, and Backspace removes it whole (koru-ai D121).
         PillKind::Skill => Overlay::None,
+        // A mention is a choice from the host's list: nothing to edit in
+        // place, and Backspace removes it whole.
+        PillKind::Mention => Overlay::None,
         // Fall back to today only if the pill somehow has no stored date.
         PillKind::Date => Overlay::Date(DatePicker::for_pill(
             trigger,

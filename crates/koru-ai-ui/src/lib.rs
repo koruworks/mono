@@ -150,6 +150,9 @@ pub use composer::{ChatComposer, ComposedMessage};
 pub use composer_plus::ComputerPickerKind;
 pub use composer_plus::WorkspaceImportRequest;
 pub use dictation::{DictationPress, DictationShown};
+/// What a host feeds the composer's `@` picker beside the pages
+/// ([`ChatSurface::set_mention_choices`]): the editor's own generic section.
+pub use koru_editor::components::entity_picker::{ExtraChoice, ExtraSection};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
 pub use owned::{
@@ -546,6 +549,10 @@ pub struct ChatSurface {
     /// the chat's pinned documents, and the reader thread's lookups. Read by
     /// the conversation to draw a chip as a titled link.
     document_titles: HashMap<DocumentId, String>,
+    /// The names the host knows mentioned Bots by now, by id
+    /// ([`Self::set_mention_names`]): what a sent message's mention reads
+    /// as. Empty unless a host feeds it.
+    mention_names: HashMap<uuid::Uuid, String>,
     /// Documents whose title has been asked of the reader once already.
     titles_requested: HashSet<DocumentId>,
     /// A chip or a titled link was clicked: the document the host should open.
@@ -1073,6 +1080,7 @@ impl ChatSurface {
             composer,
             composer_hit_rect: Rect::new(14.0, 626.0, 338.0, 40.0),
             document_titles: HashMap::new(),
+            mention_names: HashMap::new(),
             titles_requested: HashSet::new(),
             open_document_request: None,
             place_document_request: None,
@@ -5411,6 +5419,9 @@ impl ChatSurface {
             .filter(|transcript| transcript.chat.title == DEFAULT_CHAT_TITLE)
             .and_then(|_| {
                 let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
+                // A mentioned Bot is read as its name too, never its link.
+                let unnamed = koru_i18n::t(self.lang, koru_i18n::Key::BotsMentionKind);
+                let typed = doc_links::mentions_named(&typed, &self.mention_names, unnamed);
                 let (read, _) = doc_links::titled(&typed, &self.document_titles, untitled);
                 title_from_message(&read)
             });
@@ -7676,6 +7687,7 @@ impl ChatSurface {
         let switches = self.model_switches();
         self.request_document_titles();
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
+        let unnamed = koru_i18n::t(self.lang, koru_i18n::Key::BotsMentionKind);
         let lang = self.lang;
         let now_ms = koru_ai_core::Timestamp::now().millis();
         let work_width = (width - PAD * 2.0).max(1.0);
@@ -7829,10 +7841,15 @@ impl ChatSurface {
                         message.markdown.clone()
                     };
                     // The person's own message carries its chips as
-                    // `[[koru://doc/…]]`; they read as titled links.
+                    // `[[koru://doc/…]]`; they read as titled links. A
+                    // mentioned Bot reads as `@` and its name.
                     let (mut display, links) = if message.role == ChatRole::User {
                         doc_links::titled_for_message(
-                            &quote_pills::quote_bars(&display),
+                            &doc_links::mentions_named(
+                                &quote_pills::quote_bars(&display),
+                                &self.mention_names,
+                                unnamed,
+                            ),
                             &self.document_titles,
                             untitled,
                         )
@@ -8203,8 +8220,13 @@ impl ChatSurface {
     ) -> MessageLayout {
         let untitled = koru_i18n::t(self.lang, koru_i18n::Key::AiDocumentLinkUntitled);
         let user_width = message_wrap_width(ChatRole::User, width);
+        let unnamed = koru_i18n::t(self.lang, koru_i18n::Key::BotsMentionKind);
         let (display, links) = doc_links::titled_for_message(
-            &quote_pills::quote_bars(markdown),
+            &doc_links::mentions_named(
+                &quote_pills::quote_bars(markdown),
+                &self.mention_names,
+                unnamed,
+            ),
             &self.document_titles,
             untitled,
         );

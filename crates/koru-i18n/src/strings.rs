@@ -4307,13 +4307,18 @@ pub enum Key {
     BotsLinkedDisclosure,
     /// Contract 6.5 (D22): where unlinking is explained.
     BotsLinkedUnlinkDisclosure,
+    // ------------------------------ mentioning a Bot in a Bot's conversation
+    /// What a row of the composer's `@` picker is when it names a Bot this Bot may ask, and what a mention with no name reads as after `@`.
+    BotsMentionKind,
+    /// Beside that word on the row of a Bot that is paused: asking it is refused until it is resumed.
+    BotsMentionPaused,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2858] = [
+    pub const ALL: [Key; 2860] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7172,6 +7177,8 @@ impl Key {
         Key::BotsLinkedAnotherComputer,
         Key::BotsLinkedDisclosure,
         Key::BotsLinkedUnlinkDisclosure,
+        Key::BotsMentionKind,
+        Key::BotsMentionPaused,
     ];
 }
 
@@ -21438,4 +21445,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsLinkedAnotherComputer, en: "another computer", es: "otro equipo", pt_br: "outro computador", de: "ein anderer Computer", fr: "un autre ordinateur", ar: "كمبيوتر آخر", zh_hans: "另一台电脑", ja: "別のコンピューター" },
     Row { key: Key::BotsLinkedDisclosure, en: "Bot chats and results are copied to your linked desktops.", es: "Los chats y resultados de los bots se copian a tus equipos vinculados.", pt_br: "As conversas e os resultados dos bots são copiados para seus computadores vinculados.", de: "Bot-Chats und -Ergebnisse werden auf deine verknüpften Desktops kopiert.", fr: "Les discussions et les résultats des bots sont copiés sur vos ordinateurs associés.", ar: "تُنسخ محادثات البوتات ونتائجها إلى أجهزة الكمبيوتر المرتبطة لديك.", zh_hans: "机器人的聊天和结果会复制到你已关联的电脑。", ja: "ボットのチャットと結果は、リンクしたデスクトップにコピーされます。" },
     Row { key: Key::BotsLinkedUnlinkDisclosure, en: "Unlinking removes the copy the next time that computer is on.", es: "Al desvincular, la copia se elimina la próxima vez que ese equipo esté encendido.", pt_br: "Desvincular remove a cópia na próxima vez que esse computador estiver ligado.", de: "Beim Trennen wird die Kopie entfernt, sobald dieser Computer das nächste Mal eingeschaltet ist.", fr: "La dissociation supprime la copie la prochaine fois que cet ordinateur est allumé.", ar: "إلغاء الربط يزيل النسخة في المرة التالية التي يكون فيها ذلك الكمبيوتر قيد التشغيل.", zh_hans: "取消关联后，该电脑下次开机时会移除副本。", ja: "リンクを解除すると、そのコンピューターが次に起動したときにコピーが削除されます。" },
+    // ------------------------------ mentioning a Bot in a Bot's conversation
+    Row { key: Key::BotsMentionKind, en: "Bot", es: "Bot", pt_br: "Bot", de: "Bot", fr: "Bot", ar: "بوت", zh_hans: "Bot", ja: "Bot" },
+    Row { key: Key::BotsMentionPaused, en: "Paused", es: "En pausa", pt_br: "Pausado", de: "Pausiert", fr: "En pause", ar: "متوقف مؤقتًا", zh_hans: "已暂停", ja: "一時停止中" },
 ];

@@ -1599,9 +1599,12 @@ fn koru_link_spans(text: &str) -> Vec<(usize, usize, Attr)> {
             koru_link::KoruLink::Chat { .. } => {
                 Attr::labelled("link", AttrValue::Url(inner.to_owned()), "Koru AI chat")
             }
+            // A mention of a Bot means something only in a message to a
+            // Bot: in a document it stays the text it was written as.
             koru_link::KoruLink::Node(_)
             | koru_link::KoruLink::Skill { .. }
-            | koru_link::KoruLink::Command { .. } => continue,
+            | koru_link::KoruLink::Command { .. }
+            | koru_link::KoruLink::Bot { .. } => continue,
         };
         spans.push((open, end, attr));
     }

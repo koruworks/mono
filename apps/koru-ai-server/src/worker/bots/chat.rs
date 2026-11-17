@@ -32,7 +32,7 @@ pub(in crate::worker) use steering::{
 };
 
 pub(in crate::worker) use preparation::{
-    chat_capture, require_interactive_predecessor, retry_anchor, retry_input,
+    chat_capture, render_sent_message, require_interactive_predecessor, retry_anchor, retry_input,
 };
 pub(in crate::worker) use questions::TerminalQuestionProof;
 pub(in crate::worker) use settings::{SettingsProof, settings_capture};

@@ -21,6 +21,49 @@ use std::collections::HashMap;
 use koru_ai_core::DocumentId;
 use koru_markdown::LinkSpan;
 
+/// **`markdown` with every mentioned Bot read as `@` and its name**, the
+/// rest untouched: the first pass over a message of the person's, before
+/// its document chips are titled.
+///
+/// The name is the one the host knows the Bot by now (`names`, by id), so a
+/// rename shows; for a Bot the host no longer names (archived, in another
+/// workspace, on another computer) it is the name the link carried; and for
+/// a link that carried none it is `unnamed`. **Never the id.** A mention is
+/// words, not a link: there is nothing to open.
+pub(crate) fn mentions_named(
+    markdown: &str,
+    names: &HashMap<uuid::Uuid, String>,
+    unnamed: &str,
+) -> String {
+    let found = koru_link::wrapped(markdown);
+    if !found
+        .iter()
+        .any(|token| matches!(token.link, koru_link::KoruLink::Bot { .. }))
+    {
+        return markdown.to_owned();
+    }
+    let mut text = String::with_capacity(markdown.len());
+    let mut at = 0;
+    for token in found {
+        let koru_link::KoruLink::Bot { bot, name } = token.link else {
+            continue;
+        };
+        text.push_str(&markdown[at..token.range.start]);
+        let name = names
+            .get(&bot)
+            .map(String::as_str)
+            .map(str::trim)
+            .filter(|known| !known.is_empty())
+            .or(Some(name.trim()).filter(|carried| !carried.is_empty()))
+            .unwrap_or(unnamed);
+        text.push('@');
+        text.push_str(name);
+        at = token.range.end;
+    }
+    text.push_str(&markdown[at..]);
+    text
+}
+
 /// Nonbreaking space reserves an icon's width in a sent message's text.
 pub(crate) const CHIP_LEAD: &str = "\u{00a0}\u{00a0}\u{00a0}\u{00a0}";
 
@@ -127,6 +170,46 @@ mod tests {
         let (text, links) = titled("a [[b]] c", &HashMap::new(), "Document");
         assert_eq!(text, "a [[b]] c");
         assert!(links.is_empty());
+    }
+
+    /// A mentioned Bot reads as its current name; one the host no longer
+    /// names reads as the name its link carried; one with no name reads as
+    /// the fallback word. Never the id, and never a link.
+    #[test]
+    fn bot_mention_in_a_sent_message_reads_as_a_name_never_an_id() {
+        let known: uuid::Uuid = "0b8f6f0e-3c5e-4d0a-9a51-7d5b7c1f2a11".parse().unwrap();
+        let gone: uuid::Uuid = "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e".parse().unwrap();
+        let bare: uuid::Uuid = "5d6e7f80-1a2b-4c3d-9e4f-a1b2c3d4e5f6".parse().unwrap();
+        let document = DocumentId::new();
+        let markdown = format!(
+            "Ask [[{}]] and [[{}]] and [[koru://bot/{bare}]] about [[koru://doc/{document}]]",
+            koru_link::bot_link(known, "CFO"),
+            koru_link::bot_link(gone, "Old Legal"),
+        );
+        // The host renamed the first since it was sent.
+        let names = HashMap::from([(known, "Finance".to_owned())]);
+
+        let read = mentions_named(&markdown, &names, "Bot");
+        assert_eq!(
+            read,
+            format!("Ask @Finance and @Old Legal and @Bot about [[koru://doc/{document}]]")
+        );
+        for id in [known, gone, bare] {
+            assert!(!read.contains(&id.to_string()));
+        }
+        assert!(!read.contains("koru://bot"));
+
+        // Then the documents are titled as they always were, and the
+        // mention is words: the only link is the document's.
+        let titles = HashMap::from([(document, "Budget".to_owned())]);
+        let (text, links) = titled(&read, &titles, "Document");
+        assert_eq!(text, "Ask @Finance and @Old Legal and @Bot about Budget");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].url, format!("koru://doc/{document}"));
+
+        // A message that mentions nobody is returned as it was.
+        let plain = format!("see [[koru://doc/{document}]] and [[not a link]]");
+        assert_eq!(mentions_named(&plain, &names, "Bot"), plain);
     }
 
     #[test]

@@ -4789,9 +4789,12 @@ impl WorkerState {
             })
             .collect();
         self.bot_answer_history(chat.id, &existing_messages, &mut provider_messages)?;
+        // A Bot mentioned in a message to a Bot is said in words to its
+        // agent; the earlier messages above are history and read it as a
+        // name (`bots::chat::render_sent_message`).
         provider_messages.push(AiRequestMessage {
             role: ChatRole::User,
-            markdown: koru_ai_core::render_prompt_text(&request.markdown),
+            markdown: bots::chat::render_sent_message(&self.repository, chat.id, &request.markdown),
             attachments: self.attachment_inputs(&attachments),
         });
         let attempt = InferenceAttempt {

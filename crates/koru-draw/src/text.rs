@@ -501,7 +501,8 @@ impl TextEngine {
             | PillKind::Schedule
             | PillKind::SchedulePaused
             | PillKind::Quote
-            | PillKind::Skill => 0.0,
+            | PillKind::Skill
+            | PillKind::Mention => 0.0,
             PillKind::File | PillKind::Contact | PillKind::Date => theme::PILL_PAD_X,
         };
         // Document titles: peel a leading emoji into the icon slot (Explore/tabs
@@ -571,8 +572,13 @@ impl TextEngine {
                 (m.baseline, m.descent.max(0.0))
             })
             .unwrap_or_default();
-        // Icon fills the capital band (baseline ←→ top of M).
-        let icon_slot = cap_height_of(&label_layout);
+        // Icon fills the capital band (baseline ←→ top of M). A mention has
+        // no icon and so no slot: its caption's own `@` leads it.
+        let icon_slot = if kind == PillKind::Mention {
+            0.0
+        } else {
+            cap_height_of(&label_layout)
+        };
         let icon = if let Some(emoji) = page_emoji {
             Some(self.emoji_layout(emoji, icon_slot))
         } else if kind == PillKind::Link {

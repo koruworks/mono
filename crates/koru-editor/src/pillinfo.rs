@@ -56,6 +56,8 @@ pub fn schedule_entity_key(schedule: &str) -> String {
 /// the one the writer stored, and this is the shape of a record that has none.
 const RUN_WITHOUT_A_LABEL: &str = "Run";
 const SCHEDULE_WITHOUT_A_LABEL: &str = "Routine";
+/// The same belt for a mention: its writer always stores the name.
+const MENTION_WITHOUT_A_LABEL: &str = "bot";
 
 /// How many characters of a quoted passage its chip shows before the `…`.
 const QUOTE_LABEL_CHARS: usize = 24;
@@ -105,6 +107,26 @@ pub fn info_for(ws: &WorkspaceDoc, attr: &Attr) -> PillInfo {
                 .clone()
                 .filter(|label| !label.is_empty())
                 .unwrap_or_else(|| format!("${name}")),
+            dangling: false,
+            trashed: false,
+            url: None,
+            entity: None,
+        };
+    }
+    // **A Bot mentioned in the chat's composer**, keyed on its role: `@` and
+    // the name the chip was picked under. The record's value is the Bot's
+    // id, which is never a caption: a record with no label says so in a
+    // word rather than showing it.
+    if attr.role == koru_core::attributes::ROLE_BOT {
+        let name = attr
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|label| !label.is_empty())
+            .unwrap_or(MENTION_WITHOUT_A_LABEL);
+        return PillInfo {
+            kind: PillKind::Mention,
+            label: format!("@{name}"),
             dangling: false,
             trashed: false,
             url: None,
@@ -375,6 +397,26 @@ mod tests {
             AttrValue::Text("review-pr".into()),
         );
         assert_eq!(info_for(&ws(), &bare).label, "$review-pr");
+    }
+
+    /// A Bot mentioned in the chat's composer is its own kind, captioned
+    /// `@` and its name — and never by the id its record holds.
+    #[test]
+    fn bot_mention_chip_is_its_own_kind_and_never_shows_the_id() {
+        let id = "0b8f6f0e-3c5e-4d0a-9a51-7d5b7c1f2a11";
+        let labelled = Attr::labelled(
+            koru_core::attributes::ROLE_BOT,
+            AttrValue::Text(id.into()),
+            "CFO".to_owned(),
+        );
+        let info = info_for(&ws(), &labelled);
+        assert_eq!(info.kind, PillKind::Mention);
+        assert_eq!(info.label, "@CFO");
+        assert_eq!(info.entity, None);
+        let bare = Attr::new(koru_core::attributes::ROLE_BOT, AttrValue::Text(id.into()));
+        let info = info_for(&ws(), &bare);
+        assert_eq!(info.label, "@bot");
+        assert!(!info.label.contains(id));
     }
 
     /// The key is what `Paragraph::adopt` matches on and what a caption cache

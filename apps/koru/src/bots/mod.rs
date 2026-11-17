@@ -45,6 +45,7 @@ pub(crate) mod lifecycle;
 pub(crate) mod link;
 pub(crate) mod linked;
 pub(crate) mod memory;
+pub(crate) mod mentions;
 pub(crate) mod onboard;
 pub(crate) mod roster;
 pub(crate) mod routines;

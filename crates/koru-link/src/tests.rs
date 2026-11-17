@@ -257,3 +257,107 @@ fn wrapped_finds_every_exported_token_and_nothing_else() {
     );
     assert!(wrapped("[[koru://doc/unclosed").is_empty());
 }
+
+/// **A mention of a Bot round-trips**: the id is what identifies it, and the
+/// name it was picked under travels with it, whatever it is written in.
+#[test]
+fn bot_mention_link_round_trips_the_id_and_the_name() {
+    let bot = uuid();
+    for name in [
+        "CFO",
+        "Head of Sales",
+        "café ☕",
+        "財務担当",
+        "a/b?c#d %",
+        "R&D \"lead\"",
+    ] {
+        let link = bot_link(bot, name);
+        assert!(link.starts_with(&format!("koru://bot/{bot}#")), "{link}");
+        assert_eq!(
+            parse(&link),
+            Ok(KoruLink::Bot {
+                bot,
+                name: name.into()
+            }),
+            "{link}"
+        );
+        let text = format!("ask [[{link}]] please");
+        let found = wrapped(&text);
+        assert_eq!(found.len(), 1, "{link}");
+        assert_eq!(&text[found[0].range.clone()], format!("[[{link}]]"));
+    }
+    assert_eq!(
+        bot_link(bot, "Head of Sales"),
+        format!("koru://bot/{bot}#Head%20of%20Sales")
+    );
+}
+
+/// The name is cleaned before it is written: one line, single spaces, no
+/// control characters, cut at a character when it is too long for a link.
+#[test]
+fn bot_mention_link_cleans_and_bounds_the_name() {
+    let bot = uuid();
+    assert_eq!(
+        parse(&bot_link(bot, "  two\n\tlines\u{7}  here ")),
+        Ok(KoruLink::Bot {
+            bot,
+            name: "two lines here".into()
+        })
+    );
+    // Nothing left of the name: the bare link, which reads back nameless.
+    assert_eq!(bot_link(bot, " \n "), format!("koru://bot/{bot}"));
+    assert_eq!(
+        parse(&format!("koru://bot/{bot}")),
+        Ok(KoruLink::Bot {
+            bot,
+            name: String::new()
+        })
+    );
+    for long in ["x".repeat(500), "財".repeat(500), "🙂 ".repeat(300)] {
+        let link = bot_link(bot, &long);
+        assert!(link.len() <= 512, "{}", link.len());
+        let Ok(KoruLink::Bot { name, .. }) = parse(&link) else {
+            panic!("a long name still writes a link that reads back: {link}");
+        };
+        assert!(!name.is_empty());
+        assert!(name.chars().count() <= BOT_NAME_CHARS);
+        assert!(long.starts_with(&name), "cut at a character, never changed");
+    }
+}
+
+/// **An unknown or malformed `koru://bot/…` is left as text**: never guessed
+/// at, never half a mention.
+#[test]
+fn bot_mention_link_unknown_or_malformed_stays_text() {
+    let bot = uuid();
+    for url in [
+        "koru://bot/".to_owned(),
+        "koru://bot/not-a-uuid".to_owned(),
+        "koru://bot/not-a-uuid#CFO".to_owned(),
+        format!("koru://bot/{bot}/history"),
+        format!("koru://bot/{bot}/history#CFO"),
+        format!("koru://bots/{bot}"),
+        format!("koru://Bot/{bot}"),
+        format!("koru://bot/{bot}#bad%ZZ"),
+        format!("koru://bot/{bot}#%FF"),
+        format!("koru://bot/{bot}#half%2"),
+        // A name this writer never writes: a control character, a doubled
+        // or leading space, a raw reserved character, more than the bound.
+        format!("koru://bot/{bot}#line%0Abreak"),
+        format!("koru://bot/{bot}#two%20%20spaces"),
+        format!("koru://bot/{bot}#%20lead"),
+        format!("koru://bot/{bot}#a/b"),
+        format!("koru://bot/{bot}#a#b"),
+        format!("koru://bot/{bot}#{}", "x".repeat(BOT_NAME_CHARS + 1)),
+    ] {
+        assert!(parse(&url).is_err(), "{url}");
+        let text = format!("ask [[{url}]] please");
+        assert!(wrapped(&text).is_empty(), "{url}");
+    }
+    // Words that look like a mention, typed by hand, are escaped like any
+    // other link-shaped words and come back as the words they were.
+    let typed = format!("see [[{}]]", bot_link(bot, "CFO"));
+    let escaped = escape_literal_links(&typed);
+    assert!(wrapped(&escaped).is_empty());
+    assert_eq!(unescape_literal_links(&escaped), typed);
+}

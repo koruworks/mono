@@ -96,3 +96,27 @@ fn assistant_only_retry_chain_uses_immutable_task_without_a_user_bubble() {
     );
     assert_eq!(prompt(input), "ANSWER-TASK");
 }
+
+/// **A retried task says what its first send said.** The task's mention is
+/// again the person asking this Bot to ask that one; the same message as
+/// history (an earlier, finished exchange) is the name alone.
+#[test]
+fn bot_mention_retry_renders_the_request_and_history_stays_a_name() {
+    let cfo = "0b8f6f0e-3c5e-4d0a-9a51-7d5b7c1f2a11";
+    let task = format!(
+        "Ask [[{}]] about the budget",
+        koru_link::bot_link(cfo.parse().unwrap(), "CFO")
+    );
+    let (mut user, failed) = pair();
+    user.markdown = task.clone();
+    let messages = vec![user.clone(), failed.clone()];
+    let mut input = history(&messages);
+    assert_eq!(input[0].markdown, "Ask @CFO about the budget");
+    retry_input(&messages, &failed, &task, &mut input).unwrap();
+    assert_eq!(input.len(), 1);
+    let text = prompt(input);
+    assert!(text.starts_with("Ask @CFO about the budget\n\n[The person mentioned @CFO here:"));
+    assert_eq!(text.matches("ask_bot").count(), 1);
+    assert!(text.contains(&format!("(bot_id {cfo})")));
+    assert!(!text.contains("koru://bot"));
+}

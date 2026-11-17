@@ -13,7 +13,7 @@ use winit::keyboard::{Key, ModifiersState, NamedKey};
 
 use super::Outcome;
 use super::text_field::TextField;
-use crate::trigger::{DocumentTarget, PillSpec, Trigger};
+use crate::trigger::{DocumentTarget, MentionTarget, PillSpec, Trigger};
 
 /// Quiet scope guidance below the selectable rows.
 pub const FOOTER_H: f32 = 28.0;
@@ -43,6 +43,35 @@ pub struct DocumentChoice {
     pub breadcrumb: String,
     /// True when the hit is a workspace file rather than a page.
     pub is_file: bool,
+}
+
+/// **One choice the host adds above the documents**: something the `@` can
+/// name that is not a page. The picker knows nothing about what it is; it
+/// shows the title, filters by it, and hands the id back in the pill it
+/// commits.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct ExtraChoice {
+    /// The host's own id for the choice. Never shown.
+    pub id: String,
+    pub title: String,
+    /// A short state the row says beside the section's label, such as
+    /// *Paused*. `None` for a choice with nothing to say.
+    pub note: Option<String>,
+}
+
+/// **The host-fed section above the documents.** Empty by default, and an
+/// empty one is exactly the picker without it: no row, no height, no
+/// keyboard stop.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub struct ExtraSection {
+    /// What every row of the section is, in the person's language: the
+    /// quiet word at the row's right, where a document says where it is.
+    pub label: String,
+    /// The role a committed choice's pill is recorded under.
+    pub role: String,
+    /// The glyph every row leads with; the document mark when there is none.
+    pub icon: Option<char>,
+    pub choices: Vec<ExtraChoice>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -115,6 +144,14 @@ pub struct EntityPicker {
     pub trigger: Trigger,
     pub query: String,
     pub hits: Vec<DocumentChoice>,
+    /// The host-fed section, whole, as the host last gave it
+    /// ([`set_extras`](Self::set_extras)). Only the mention picker takes
+    /// one: a move and a standalone link choose documents and nothing else.
+    pub extras: ExtraSection,
+    /// The section's choices that match what is typed, in the order they
+    /// are listed: **above the documents**, and the first rows the keyboard
+    /// reaches.
+    pub extra_shown: Vec<ExtraChoice>,
     pub workspaces: Vec<WorkspaceChoice>,
     pub selected_workspaces: Vec<WorkspaceId>,
     pub current_workspace: Option<WorkspaceId>,
@@ -178,6 +215,8 @@ impl Clone for EntityPicker {
             trigger: self.trigger.clone(),
             query: self.query.clone(),
             hits: self.hits.clone(),
+            extras: self.extras.clone(),
+            extra_shown: self.extra_shown.clone(),
             workspaces: self.workspaces.clone(),
             selected_workspaces: self.selected_workspaces.clone(),
             current_workspace: self.current_workspace,
@@ -208,6 +247,8 @@ impl EntityPicker {
             trigger,
             query: String::new(),
             hits: Vec::new(),
+            extras: ExtraSection::default(),
+            extra_shown: Vec::new(),
             workspaces: Vec::new(),
             selected_workspaces: Vec::new(),
             current_workspace: None,
@@ -252,6 +293,87 @@ impl EntityPicker {
         picker.own_hint = koru_i18n::t(koru_i18n::current(), koru_i18n::Key::EntityLinkHint);
         picker.own_query = Some(TextField::new(engine, koru_draw::theme::role::ui()));
         picker
+    }
+
+    /// **How many host-fed rows stand above the documents now.** None
+    /// outside the document list: the heading stage lists one document's
+    /// headings and nothing else.
+    pub fn lead(&self) -> usize {
+        match self.stage {
+            Stage::Documents => self.extra_shown.len(),
+            Stage::Headings(_) => 0,
+        }
+    }
+
+    /// **Take the host's section.** Compares first, like the recents: this
+    /// is called from the per-gesture sync, and answering "changed" for an
+    /// identical section would spin the redraw loop.
+    ///
+    /// The highlight stays on what it was on: a document the person moved
+    /// to keeps its place under however many rows now stand above it, and
+    /// a choice of the section is found again by its id. A highlight still
+    /// on the top row stays on the top row.
+    pub fn set_extras(&mut self, section: ExtraSection) -> bool {
+        if self.move_mode || self.link_mode || self.extras == section {
+            return false;
+        }
+        let before = self.lead();
+        let held = self
+            .extra_shown
+            .get(self.sel)
+            .filter(|_| self.sel < before)
+            .map(|choice| choice.id.clone());
+        self.extras = section;
+        self.filter_extras();
+        let after = self.lead();
+        if matches!(self.stage, Stage::Documents) {
+            self.sel = match held {
+                Some(id) => self
+                    .extra_shown
+                    .iter()
+                    .position(|choice| choice.id == id)
+                    .unwrap_or(0),
+                // The top row untouched stays the top row: a section that
+                // arrives as the picker opens is what the person sees first.
+                None if before == 0 && self.sel == 0 => 0,
+                None if self.sel >= before => self.sel - before + after,
+                None => 0,
+            };
+            self.sel = self.sel.min(self.total_count().saturating_sub(1));
+            self.ensure_selected_visible();
+        }
+        true
+    }
+
+    /// The section's choices matching the document half of the query: every
+    /// one while nothing is typed, then titles that start with it before
+    /// titles that only contain it, each group in the host's order. A query
+    /// that narrows the search to one kind (`doc:`, `file:`) asks for
+    /// documents, so it lists none of them.
+    fn filter_extras(&mut self) {
+        let query = self.document_query.trim().to_lowercase();
+        if query.starts_with("doc:") || query.starts_with("file:") {
+            self.extra_shown.clear();
+            return;
+        }
+        let mut starts = Vec::new();
+        let mut contains = Vec::new();
+        for choice in &self.extras.choices {
+            let title = choice.title.to_lowercase();
+            if title.starts_with(&query) {
+                starts.push(choice.clone());
+            } else if title.contains(&query) {
+                contains.push(choice.clone());
+            }
+        }
+        starts.extend(contains);
+        self.extra_shown = starts;
+    }
+
+    /// The document half of the query, and the section filtered by it.
+    fn set_document_query(&mut self, query: &str) {
+        self.document_query = query.to_owned();
+        self.filter_extras();
     }
 
     /// Whether the pinned *Add new document* row is on offer. Every picker
@@ -372,7 +494,7 @@ impl EntityPicker {
             // is what keeps the empty case out of the key handling entirely.
             Stage::Headings(headings) => headings.shown.len().max(1),
             // A create row remains available even with no matches.
-            Stage::Documents => self.hits.len() + usize::from(self.has_create_row()),
+            Stage::Documents => self.lead() + self.hits.len() + usize::from(self.has_create_row()),
         }
     }
 
@@ -493,14 +615,18 @@ impl EntityPicker {
         // A bare `@#` means this page's own headings; otherwise it is whatever
         // row is highlighted. The pinned "new page" row is not a document, so
         // there is nothing to look inside and the `#` stays ordinary text.
+        // A row of the host's section is not a document either.
         let anchor = if documents.is_empty() {
             self.current_document.clone()
         } else {
-            self.hits.get(self.sel).cloned()
+            self.sel
+                .checked_sub(self.lead())
+                .and_then(|row| self.hits.get(row))
+                .cloned()
         };
         let Some(anchor) = anchor else {
             self.stage = Stage::Documents;
-            self.document_query = documents.to_owned();
+            self.set_document_query(documents);
             self.sel = 0;
             self.first = 0;
             self.loading = true;
@@ -508,7 +634,7 @@ impl EntityPicker {
             return;
         };
         self.headings_dirty = Some(anchor.target.document);
-        self.document_query = documents.to_owned();
+        self.set_document_query(documents);
         self.stage = Stage::Headings(Headings {
             anchor,
             anchor_row: self.sel,
@@ -524,16 +650,18 @@ impl EntityPicker {
     /// Back to the document list — the `#` is gone.
     fn leave_headings(&mut self, query: &str) {
         let was = std::mem::replace(&mut self.stage, Stage::Documents);
-        self.document_query = query.to_owned();
+        self.set_document_query(query);
         if let Stage::Headings(headings) = was {
             // Put the highlight back where the person left it, by identity
             // rather than by index: the hits may have been replaced while the
             // heading list was up.
+            let lead = self.lead();
             self.sel = self
                 .hits
                 .iter()
                 .position(|hit| hit.target.document == headings.anchor.target.document)
-                .unwrap_or_else(|| headings.anchor_row.min(self.hits.len()));
+                .map(|row| lead + row)
+                .unwrap_or_else(|| headings.anchor_row.min(lead + self.hits.len()));
             self.first = 0;
             self.ensure_selected_visible();
             return;
@@ -680,6 +808,20 @@ impl EntityPicker {
                 },
             ));
         }
+        let lead = self.lead();
+        if i < lead {
+            let Some(choice) = self.extra_shown.get(i) else {
+                return Outcome::Consumed;
+            };
+            return Outcome::Commit(PillSpec::mention(
+                choice.title.clone(),
+                MentionTarget {
+                    role: self.extras.role.clone(),
+                    id: choice.id.clone(),
+                },
+            ));
+        }
+        let i = i - lead;
         if let Some(hit) = self.hits.get(i) {
             return Outcome::Commit(if hit.is_file {
                 PillSpec::file(hit.title.clone(), hit.target)
@@ -717,7 +859,7 @@ impl EntityPicker {
     fn scroll_len(&self) -> usize {
         match &self.stage {
             Stage::Headings(headings) => headings.shown.len(),
-            Stage::Documents => self.hits.len(),
+            Stage::Documents => self.lead() + self.hits.len(),
         }
     }
 
@@ -807,15 +949,13 @@ impl EntityPicker {
                 .max(usize::from(headings.shown.is_empty()));
             return (row < visible).then_some(self.first + row);
         }
-        let visible_hits = self
-            .hits
-            .len()
-            .saturating_sub(self.first)
-            .min(self.doc_capacity());
+        // The host's rows and the documents scroll as one list.
+        let listed = self.lead() + self.hits.len();
+        let visible_hits = listed.saturating_sub(self.first).min(self.doc_capacity());
         if row < visible_hits {
             Some(self.first + row)
         } else if row == visible_hits && self.has_create_row() {
-            Some(self.hits.len())
+            Some(listed)
         } else {
             None
         }
@@ -843,11 +983,9 @@ impl EntityPicker {
             Stage::Headings(_) => MAX_ROWS,
             Stage::Documents => self.doc_capacity(),
         };
-        if matches!(self.stage, Stage::Documents)
-            && self.has_create_row()
-            && self.sel == self.hits.len()
-        {
-            self.first = self.hits.len().saturating_sub(visible);
+        let listed = self.lead() + self.hits.len();
+        if matches!(self.stage, Stage::Documents) && self.has_create_row() && self.sel == listed {
+            self.first = listed.saturating_sub(visible);
             return;
         }
         if self.sel < self.first {
@@ -1545,5 +1683,441 @@ mod tests {
                 .shown
                 .is_empty()
         );
+    }
+
+    // ------------------------------------------- the host-fed section
+
+    fn extra(id: &str, title: &str, note: Option<&str>) -> ExtraChoice {
+        ExtraChoice {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            note: note.map(str::to_owned),
+        }
+    }
+
+    /// A section as a host feeds it: three choices, the second with a note.
+    fn section() -> ExtraSection {
+        ExtraSection {
+            label: "Bot".into(),
+            role: "host.role".into(),
+            icon: Some(koru_draw::icons::ROBOT),
+            choices: vec![
+                extra("id-cfo", "CFO", None),
+                extra("id-legal", "Legal", Some("Paused")),
+                extra("id-chief", "Chief of staff", None),
+            ],
+        }
+    }
+
+    /// A mention picker with two documents listed, as the `@` opens it.
+    fn mention_picker() -> EntityPicker {
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_results(vec![choice("Charter"), choice("Ledger")], false);
+        picker
+    }
+
+    /// Everything a frame of the picker publishes: each record's name, kind,
+    /// parent and bounds, in order.
+    fn published(
+        picker: &mut EntityPicker,
+    ) -> Vec<(&'static str, &'static str, Option<usize>, [i64; 4])> {
+        let mut engine = koru_draw::text::TextEngine::new();
+        let mut scene = vello::Scene::new();
+        let root = vello::kurbo::Affine::IDENTITY;
+        let frame = koru_draw::inspect::Frame::begin(
+            1,
+            root,
+            koru_draw::scene::rect(0.0, 0.0, 600.0, 600.0),
+        );
+        crate::components::draw::draw_standalone_entity_picker(
+            &mut scene,
+            root,
+            &mut engine,
+            picker,
+            (12.0, 20.0),
+            None,
+        );
+        frame
+            .finish()
+            .records
+            .iter()
+            .map(|record| {
+                (
+                    record.name,
+                    record.kind,
+                    record.parent,
+                    record.bounds.map(|value| (value * 100.0).round() as i64),
+                )
+            })
+            .collect()
+    }
+
+    /// The rows the keyboard stops on, walking Down from the top until it
+    /// is back where it began, with what choosing each would do.
+    fn keyboard_stops(picker: &mut EntityPicker) -> Vec<(usize, String)> {
+        let mut stops = Vec::new();
+        let start = picker.sel;
+        loop {
+            stops.push((picker.sel, format!("{:?}", picker.choose(picker.sel))));
+            assert!(matches!(
+                picker.key(Some(NamedKey::ArrowDown)),
+                Outcome::Consumed
+            ));
+            if picker.sel == start || stops.len() > 32 {
+                return stops;
+            }
+        }
+    }
+
+    /// **The host's choices stand above the documents**, in the host's
+    /// order, then the documents, then the pinned create row; a choice
+    /// commits a mention carrying the host's id under the section's role,
+    /// and a document commits a document exactly as before.
+    #[test]
+    fn bot_mention_picker_lists_the_hosts_choices_above_the_documents() {
+        let mut picker = mention_picker();
+        assert!(picker.set_extras(section()));
+        assert_eq!(picker.lead(), 3);
+        assert_eq!(
+            picker.row_count(),
+            6,
+            "three choices, two pages, the add row"
+        );
+        assert_eq!(
+            (0..7)
+                .map(|row| picker.visible_item(row))
+                .collect::<Vec<_>>(),
+            vec![Some(0), Some(1), Some(2), Some(3), Some(4), Some(5), None]
+        );
+        for (row, (id, title)) in [
+            ("id-cfo", "CFO"),
+            ("id-legal", "Legal"),
+            ("id-chief", "Chief of staff"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let Outcome::Commit(spec) = picker.choose(row) else {
+                panic!("a choice commits")
+            };
+            assert_eq!(spec.kind, koru_draw::pill::PillKind::Mention);
+            assert_eq!(spec.label, title);
+            assert_eq!(spec.document, None);
+            assert_eq!(
+                spec.mention,
+                Some(MentionTarget {
+                    role: "host.role".into(),
+                    id: id.into()
+                })
+            );
+        }
+        for (row, title) in [(3, "Charter"), (4, "Ledger")] {
+            let Outcome::Commit(spec) = picker.choose(row) else {
+                panic!("a document commits")
+            };
+            assert_eq!(spec.kind, koru_draw::pill::PillKind::Document);
+            assert_eq!(spec.label, title);
+            assert_eq!(spec.mention, None);
+            assert!(spec.document.is_some());
+        }
+        assert!(matches!(picker.choose(5), Outcome::NewPage(_)));
+        assert!(matches!(picker.choose(6), Outcome::Consumed));
+
+        // Drawn: one named row per choice, above the footer, in the panel.
+        let records = published(&mut picker);
+        let rows: Vec<_> = records
+            .iter()
+            .filter(|record| record.0 == "EntityExtraChoice")
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.windows(2).all(|pair| pair[0].3[1] < pair[1].3[1]));
+        let footer = records
+            .iter()
+            .find(|record| record.0 == "ScopeFooter")
+            .expect("the scope footer");
+        assert!(rows.iter().all(|row| row.3[1] < footer.3[1]));
+    }
+
+    /// **What is typed after `@` filters both lists**: the section here, by
+    /// title — a title that starts with it before one that only contains
+    /// it — and the documents through the search, which is asked for the
+    /// same words.
+    #[test]
+    fn bot_mention_picker_filters_the_section_by_what_is_typed() {
+        let mut picker = mention_picker();
+        picker.set_context(WorkspaceId::new(), Vec::new());
+        picker.take_request();
+        assert!(picker.set_extras(section()));
+
+        picker.refilter(Trigger::at_start(), "c");
+        assert_eq!(
+            picker
+                .extra_shown
+                .iter()
+                .map(|choice| choice.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CFO", "Chief of staff"]
+        );
+        assert_eq!(picker.sel, 0, "the first match is highlighted");
+        assert_eq!(
+            picker.take_request().map(|request| request.query),
+            Some("c".to_owned()),
+            "the documents are searched for the same words"
+        );
+
+        picker.refilter(Trigger::at_start(), "STAFF");
+        assert_eq!(
+            picker.extra_shown,
+            vec![extra("id-chief", "Chief of staff", None)]
+        );
+
+        picker.refilter(Trigger::at_start(), "zzz");
+        assert_eq!(picker.lead(), 0);
+        assert!(
+            matches!(picker.choose(0), Outcome::Commit(spec) if spec.mention.is_none()),
+            "with no choice left the first row is the first document"
+        );
+
+        // Narrowing the search to documents asks for documents.
+        picker.refilter(Trigger::at_start(), "doc:c");
+        assert_eq!(picker.lead(), 0);
+
+        picker.refilter(Trigger::at_start(), "");
+        assert_eq!(picker.lead(), 3, "nothing typed lists them all again");
+    }
+
+    /// A choice's note travels to its row: a paused one says so, the others
+    /// say nothing, and filtering keeps it.
+    #[test]
+    fn bot_mention_picker_keeps_a_choices_note() {
+        let mut picker = mention_picker();
+        assert!(picker.set_extras(section()));
+        assert_eq!(
+            picker
+                .extra_shown
+                .iter()
+                .map(|choice| choice.note.as_deref())
+                .collect::<Vec<_>>(),
+            vec![None, Some("Paused"), None]
+        );
+        picker.refilter(Trigger::at_start(), "leg");
+        assert_eq!(picker.extra_shown[0].note.as_deref(), Some("Paused"));
+        // A noted choice is still a choice: it commits like any other.
+        assert!(matches!(
+            picker.choose(0),
+            Outcome::Commit(spec) if spec.mention.as_ref().is_some_and(|target| target.id == "id-legal")
+        ));
+        // And its row draws (the note beside the section's label).
+        assert_eq!(
+            published(&mut picker)
+                .iter()
+                .filter(|record| record.0 == "EntityExtraChoice")
+                .count(),
+            1
+        );
+    }
+
+    /// **A picker with no choices is exactly the picker there was**: never
+    /// fed, fed an empty section, or fed a section whose list is empty, it
+    /// publishes the same tree, has the same rows and height, stops the
+    /// keyboard on the same rows and commits the same things.
+    #[test]
+    fn bot_mention_picker_with_no_choices_is_exactly_todays_picker() {
+        let hits = vec![choice("Charter"), choice("Ledger")];
+        let fresh = || {
+            let mut picker = EntityPicker::new(Trigger::at_start());
+            picker.refilter(Trigger::at_start(), "zzz");
+            picker.set_results(hits.clone(), false);
+            picker
+        };
+        let mut never_fed = fresh();
+        let mut fed_nothing = fresh();
+        assert!(
+            !fed_nothing.set_extras(ExtraSection::default()),
+            "an empty section changes nothing, and says so"
+        );
+        let mut fed_an_empty_list = fresh();
+        fed_an_empty_list.set_extras(ExtraSection {
+            choices: Vec::new(),
+            ..section()
+        });
+        let mut filtered_to_nothing = fresh();
+        assert!(filtered_to_nothing.set_extras(section()));
+
+        let tree = published(&mut never_fed);
+        assert!(tree.iter().all(|record| record.0 != "EntityExtraChoice"));
+        let stops = keyboard_stops(&mut never_fed);
+        assert_eq!(stops.len(), 3, "two documents and the add row");
+        let rows: Vec<_> = (0..MAX_ROWS + 1)
+            .map(|row| never_fed.visible_item(row))
+            .collect();
+        for other in [
+            &mut fed_nothing,
+            &mut fed_an_empty_list,
+            &mut filtered_to_nothing,
+        ] {
+            assert_eq!(other.lead(), 0);
+            assert_eq!(other.row_count(), never_fed.row_count());
+            assert_eq!(other.height(), never_fed.height());
+            assert_eq!(other.scrolls(), never_fed.scrolls());
+            assert_eq!(
+                (0..MAX_ROWS + 1)
+                    .map(|row| other.visible_item(row))
+                    .collect::<Vec<_>>(),
+                rows
+            );
+            assert_eq!(published(other), tree);
+            assert_eq!(keyboard_stops(other), stops);
+        }
+    }
+
+    /// **The keyboard walks both lists in order**: Down from the first
+    /// choice through the last, into the documents, onto the add row and
+    /// round again; Up the other way; Enter (and Tab) picks what is
+    /// highlighted; Escape closes the panel and leaves the text.
+    #[test]
+    fn bot_mention_picker_keyboard_walks_choices_then_documents() {
+        let mut picker = mention_picker();
+        assert!(picker.set_extras(section()));
+        assert_eq!(picker.sel, 0);
+        let stops = keyboard_stops(&mut picker);
+        assert_eq!(
+            stops.iter().map(|(row, _)| *row).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5]
+        );
+        assert!(
+            stops[..3]
+                .iter()
+                .all(|(_, outcome)| outcome.contains("Mention"))
+        );
+        assert!(
+            stops[3..5]
+                .iter()
+                .all(|(_, outcome)| outcome.contains("Document"))
+        );
+        assert!(stops[5].1.starts_with("NewPage"));
+
+        assert!(matches!(
+            picker.key(Some(NamedKey::ArrowUp)),
+            Outcome::Consumed
+        ));
+        assert_eq!(picker.sel, 5, "Up from the first row wraps to the last");
+        picker.key(Some(NamedKey::ArrowUp));
+        picker.key(Some(NamedKey::ArrowUp));
+        picker.key(Some(NamedKey::ArrowUp));
+        assert_eq!(picker.sel, 2);
+        let Outcome::Commit(spec) = picker.key(Some(NamedKey::Enter)) else {
+            panic!("Enter picks the highlighted choice")
+        };
+        assert_eq!(spec.label, "Chief of staff");
+        picker.key(Some(NamedKey::ArrowDown));
+        let Outcome::Commit(spec) = picker.key(Some(NamedKey::Tab)) else {
+            panic!("Tab picks, as Enter does")
+        };
+        assert_eq!(spec.label, "Charter");
+
+        let mut engine = TextEngine::new();
+        let mut overlay = crate::components::Overlay::Entity(picker);
+        assert!(matches!(
+            overlay.key(
+                &mut engine,
+                &Key::Named(NamedKey::Escape),
+                None,
+                ModifiersState::empty()
+            ),
+            Outcome::Close
+        ));
+    }
+
+    /// More choices and documents than fit scroll as one list, the add row
+    /// pinned under them, and the highlight is kept in view.
+    #[test]
+    fn bot_mention_picker_scrolls_choices_and_documents_as_one_list() {
+        let mut picker = EntityPicker::new(Trigger::at_start());
+        picker.set_results(
+            (0..6).map(|i| choice(&format!("Page {i}"))).collect(),
+            false,
+        );
+        assert!(picker.set_extras(section()));
+        assert_eq!(picker.row_count(), MAX_ROWS);
+        assert!(picker.scrolls());
+        assert_eq!(
+            picker.visible_item(MAX_ROWS - 1),
+            Some(9),
+            "the add row is pinned"
+        );
+        for _ in 0..8 {
+            picker.key(Some(NamedKey::ArrowDown));
+        }
+        assert_eq!(picker.sel, 8, "the last document");
+        assert_eq!(picker.first, 3, "scrolled so it shows");
+        assert_eq!(picker.visible_item(0), Some(3));
+        picker.key(Some(NamedKey::ArrowDown));
+        picker.key(Some(NamedKey::ArrowDown));
+        assert_eq!(
+            (picker.sel, picker.first),
+            (0, 0),
+            "round to the first choice"
+        );
+    }
+
+    /// The section may arrive after the picker opened. The highlight stays
+    /// on what it was on; an identical section is not a change.
+    #[test]
+    fn bot_mention_picker_keeps_the_highlight_when_the_section_arrives() {
+        let mut picker = mention_picker();
+        picker.key(Some(NamedKey::ArrowDown));
+        assert_eq!(picker.sel, 1, "on Ledger");
+        assert!(picker.set_extras(section()));
+        assert_eq!(picker.sel, 4, "still on Ledger, under three choices");
+        assert!(!picker.set_extras(section()), "the same section again");
+
+        picker.sel = 1;
+        let mut renamed = section();
+        renamed.choices.remove(0);
+        assert!(picker.set_extras(renamed));
+        assert_eq!(picker.sel, 0, "still on Legal, found by its id");
+        assert_eq!(picker.extra_shown[0].id, "id-legal");
+    }
+
+    /// Only the mention picker takes a section: a move chooses where a
+    /// selection goes and a standalone link chooses a document.
+    #[test]
+    fn bot_mention_picker_section_is_the_mention_pickers_alone() {
+        let mut engine = TextEngine::new();
+        let mut moving = EntityPicker::for_move(&mut engine, Trigger::at_start(), "");
+        assert!(!moving.set_extras(section()));
+        assert_eq!(moving.lead(), 0);
+        let mut linking = EntityPicker::for_link(&mut engine);
+        assert!(!linking.set_extras(section()));
+        assert_eq!(linking.lead(), 0);
+        assert!(linking.extras.choices.is_empty());
+    }
+
+    /// `#` looks inside the highlighted document. A choice of the section
+    /// is not a document: there the `#` stays text, and on a document
+    /// under the section it still opens that document's headings.
+    #[test]
+    fn bot_mention_picker_hash_looks_inside_documents_only() {
+        let mut picker = mention_picker();
+        assert!(picker.set_extras(section()));
+        let ledger = picker.hits[1].target.document;
+
+        picker.sel = 0;
+        picker.refilter(Trigger::at_start(), "c#");
+        assert!(picker.headings().is_none(), "a choice has no headings");
+
+        picker.refilter(Trigger::at_start(), "");
+        picker.sel = 4;
+        picker.refilter(Trigger::at_start(), "l#");
+        assert_eq!(
+            picker
+                .headings()
+                .map(|headings| headings.anchor.target.document),
+            Some(ledger)
+        );
+        assert_eq!(picker.lead(), 0, "the heading stage lists headings only");
+        picker.refilter(Trigger::at_start(), "l");
+        assert_eq!(picker.sel, picker.lead() + 1, "back on Ledger");
     }
 }

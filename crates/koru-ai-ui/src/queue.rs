@@ -880,6 +880,7 @@ impl ChatSurface {
             }
         }
         let untitled = t(self.lang, Key::AiDocumentLinkUntitled);
+        let unnamed = t(self.lang, Key::BotsMentionKind);
         let lines: Vec<String> = self
             .shown_queue()
             .map(|queue| {
@@ -889,7 +890,11 @@ impl ChatSurface {
                     .take(SHOWN)
                     .map(|item| {
                         let (read, _) = doc_links::titled(
-                            &crate::quote_pills::quote_bars(&item.markdown),
+                            &doc_links::mentions_named(
+                                &crate::quote_pills::quote_bars(&item.markdown),
+                                &self.mention_names,
+                                unnamed,
+                            ),
                             &self.document_titles,
                             untitled,
                         );

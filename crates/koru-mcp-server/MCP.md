@@ -2124,6 +2124,8 @@ attributed to the Run's current turn. A call that arrives before that turn is
 bound answers `turn_not_started`: nothing was sent, and the same call (for
 `ask_bot`, the same `ask_key` and identical requests) passes a moment later.
 
+**A person can ask for it by name.** A person writing to a Bot can mention another Bot with `@`; the message the agent then reads shows `@Name` and ends with one sentence per mentioned Bot saying the person asks this Bot to ask it, with its `bot_id`, using `ask_bot` (`koru_ai_core::render_bot_prompt_text`). That sentence is a hint and nothing more: Koru starts no ask itself, the agent makes the call, and every check above applies to it unchanged.
+
 | Tool | Input | Output |
 | --- | --- | --- |
 | `list_askable_bots` | `{}` | `{ bots: [ { bot_id, name } ] }`, at most 64. A paused Bot is listed; asking it is refused. |

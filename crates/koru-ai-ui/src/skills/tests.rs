@@ -808,3 +808,101 @@ fn a_queued_message_with_a_skill_is_not_text_only() {
     assert_eq!(queue.items[0].markdown, "Use [[koru://skill/review-pr]]");
     assert!(!queue.items[0].text_only());
 }
+
+// ------------------------------------------------ a mention, at send
+//
+// Here because this file holds the surface, the reader and the send that
+// the test needs; the mention itself is the composer's (`composer/tests.rs`).
+
+/// **A message with a mention chip stores the link in its markdown and
+/// sends no new field.** The host feeds the Bots; `@` and Enter pick one
+/// (Enter picks while the picker is open, and never sends); Enter again
+/// sends. What goes out is the ordinary request: the link in the text, no
+/// reference, no skill, no attachment — and it reads back through the wire
+/// type, which refuses any field it does not know.
+#[test]
+fn bot_mention_send_stores_the_link_in_the_markdown_and_no_new_field() {
+    let cfo = "0b8f6f0e-3c5e-4d0a-9a51-7d5b7c1f2a11";
+    let (mut surface, commands) = surface();
+    assert!(
+        surface.mention_choices().choices.is_empty(),
+        "a surface nobody feeds offers pages only"
+    );
+    surface.set_mention_choices(&crate::ExtraSection {
+        label: "Bot".into(),
+        role: koru_core::attributes::ROLE_BOT.into(),
+        icon: None,
+        choices: vec![crate::ExtraChoice {
+            id: cfo.into(),
+            title: "CFO".into(),
+            note: None,
+        }],
+    });
+    for ch in "Ask @".chars() {
+        let s = ch.to_string();
+        surface.key(
+            &Key::Character(s.as_str().into()),
+            Some(&s),
+            ModifiersState::empty(),
+        );
+    }
+    assert!(surface.mention_picker_open());
+    assert!(press(&mut surface, NamedKey::Enter), "picks, never sends");
+    assert!(!surface.mention_picker_open());
+    assert!(
+        commands
+            .try_iter()
+            .all(|command| !matches!(command, Command::Send(_))),
+        "picking sent nothing"
+    );
+    for ch in "about Q3".chars() {
+        let s = ch.to_string();
+        surface.key(
+            &Key::Character(s.as_str().into()),
+            Some(&s),
+            ModifiersState::empty(),
+        );
+    }
+    assert!(press(&mut surface, NamedKey::Enter));
+    let request = loop {
+        match commands.recv_timeout(Duration::from_millis(200)).unwrap() {
+            Command::Send(request) => break request,
+            _ => continue,
+        }
+    };
+    assert_eq!(
+        request.markdown,
+        format!("Ask [[koru://bot/{cfo}#CFO]] about Q3")
+    );
+    assert!(request.explicit_refs.is_empty(), "a Bot is not a reference");
+    assert!(request.skills.is_empty());
+    assert!(request.attachment_ids.is_empty());
+    assert!(request.answers.is_none());
+
+    // Nothing but the text differs from the same message without the chip,
+    // and the request is one the wire type accepts as it is.
+    let json = serde_json::to_value(&request).unwrap();
+    let mut plain = request.clone();
+    plain.markdown = "Ask about Q3".into();
+    let plain = serde_json::to_value(&plain).unwrap();
+    let (json_fields, plain_fields) = (json.as_object().unwrap(), plain.as_object().unwrap());
+    assert_eq!(
+        json_fields.keys().collect::<Vec<_>>(),
+        plain_fields.keys().collect::<Vec<_>>()
+    );
+    for (field, value) in json_fields {
+        if field != "markdown" {
+            assert_eq!(Some(value), plain_fields.get(field), "{field}");
+        }
+    }
+    let read: koru_ai_wire::SendTurnRequest = serde_json::from_value(json).unwrap();
+    assert_eq!(read.markdown, request.markdown);
+
+    // The message just sent reads `@CFO` in the conversation, not its link.
+    let shown = crate::doc_links::mentions_named(
+        &request.markdown,
+        &std::collections::HashMap::new(),
+        "Bot",
+    );
+    assert_eq!(shown, "Ask @CFO about Q3");
+}

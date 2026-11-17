@@ -135,6 +135,15 @@ pub const ROLE_SKILL: &str = "koru.skill";
 /// rendering turns it into `/name` at its selected position.
 pub const ROLE_COMMAND: &str = "koru.command";
 
+/// The role of a **Bot mentioned in a message to another Bot**, in the chat
+/// composer's private document: the mentioned Bot's id as text — a
+/// [`Text`](crate::node::AttrValue::Text) record whose label is the name the
+/// chip shows. Like a skill chip it is never stored as a record: the sent
+/// message carries it as a durable `koru://bot/…` link
+/// (`koru_export_markdown::message_text`), and only the prompt rendering for
+/// the Bot's agent turns that into words.
+pub const ROLE_BOT: &str = "koru.bot";
+
 /// The roles whose `"ref"` record means **a reference to a document**, and
 /// which are therefore read back as [`AttrValue::Document`] rather than as a
 /// bare [`AttrValue::Ref`] homed at one.

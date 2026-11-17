@@ -326,7 +326,8 @@ pub fn open_link(paths: &Paths, link: koru_link::KoruLink) -> Result<bool, Strin
         // place. Refused here rather than sent for the agent to refuse.
         koru_link::KoruLink::Node(_)
         | koru_link::KoruLink::Skill { .. }
-        | koru_link::KoruLink::Command { .. } => {
+        | koru_link::KoruLink::Command { .. }
+        | koru_link::KoruLink::Bot { .. } => {
             return Err("a Koru link must name a document or chat".to_owned());
         }
     };

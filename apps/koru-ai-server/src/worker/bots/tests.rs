@@ -8,6 +8,7 @@ mod defaults;
 mod holds;
 mod label;
 mod lifecycle;
+mod mention;
 mod reads;
 mod rename;
 mod routine_owner;

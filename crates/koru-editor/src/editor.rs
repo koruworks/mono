@@ -1126,6 +1126,20 @@ pub trait Editing {
         }
     }
 
+    /// Feed the open `@` picker its host's own section: choices that are not
+    /// pages, listed above them. `false` when nothing changed — the caller
+    /// runs per gesture, exactly as [`set_entity_recents`](Self::set_entity_recents)
+    /// does. An empty section is the picker without one.
+    fn set_entity_extras(
+        &mut self,
+        section: crate::components::entity_picker::ExtraSection,
+    ) -> bool {
+        match &mut self.view_mut().overlay {
+            Overlay::Entity(picker) => picker.set_extras(section),
+            _ => false,
+        }
+    }
+
     /// The destination write failed or was abandoned; nothing later may delete
     /// the selection whose copy never landed.
     fn cancel_selection_move(&mut self) -> bool {
@@ -3897,6 +3911,18 @@ pub trait Editing {
                 koru_core::attributes::ROLE_SKILL,
                 AttrValue::Text(spec.label.clone()),
             ),
+            // A mention chosen from the `@` picker's host-fed section: the
+            // host's id for the choice under the role its section named,
+            // captioned by the choice's title. One with no target is the
+            // caption as text, like every other spec that names nothing.
+            PillKind::Mention => match &spec.mention {
+                Some(target) => Attr::labelled(
+                    target.role.clone(),
+                    AttrValue::Text(target.id.clone()),
+                    spec.label.clone(),
+                ),
+                None => Attr::new("document", AttrValue::Text(spec.label.clone())),
+            },
         }
     }
 

@@ -43,13 +43,18 @@ pub enum PillKind {
     /// D121): the wrench glyph and the skill's name, in the document pill's
     /// neutral ink. Only the composer writes one.
     Skill,
+    /// **Somebody mentioned by name** in the chat's composer: `@` and the
+    /// name, with no glyph of its own, in the document pill's neutral ink.
+    /// Only the composer writes one, from a choice its host fed the `@`
+    /// picker.
+    Mention,
 }
 
 impl PillKind {
     pub fn palette(self) -> &'static crate::theme::PillPalette {
         let p = crate::theme::p();
         match self {
-            Self::Document | Self::File | Self::Quote | Self::Skill => &p.document,
+            Self::Document | Self::File | Self::Quote | Self::Skill | Self::Mention => &p.document,
             Self::Contact => &p.contact,
             Self::Date => &p.date,
             Self::Link => &p.link,
@@ -241,7 +246,7 @@ pub fn draw(
         draw_layout(scene, root, icon, gx, gy, brush);
     } else if kind == PillKind::Document && trashed {
         draw_trash_icon(scene, root, icon_x, baseline_y, slot, icon_color);
-    } else if kind != PillKind::Link {
+    } else if kind != PillKind::Link && kind != PillKind::Mention {
         draw_icon(scene, root, kind, icon_x, baseline_y, slot, icon_color);
     }
 
@@ -378,7 +383,10 @@ pub fn draw_icon(
         | PillKind::Schedule
         | PillKind::SchedulePaused
         | PillKind::Quote
-        | PillKind::Skill => {
+        | PillKind::Skill
+        // A mention has no glyph: its caption starts with `@`. Never reached
+        // (its slot is zero wide), and the page mark is the fallback here.
+        | PillKind::Mention => {
             let inset = width * 0.08;
             stroke(
                 scene,

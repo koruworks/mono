@@ -74,6 +74,12 @@ impl BotView {
         self.copy.page()
     }
 
+    /// This device, as the window last said: what a listed Bot's owner is
+    /// compared with (`bots::mentions`). `None` until the window says.
+    pub(super) fn here(&self) -> Option<DeviceId> {
+        self.copy.here
+    }
+
     /// **Which device this is**, as the window knows it: a Bot whose owner
     /// is another device is that computer's. `true` when it changed.
     pub(crate) fn set_here(&mut self, here: Option<DeviceId>) -> bool {

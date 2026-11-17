@@ -47,7 +47,7 @@ pub use ports::{
     WorkspaceFileData,
 };
 pub use profiles::{ChatPlacementEvidence, ChatRead, ProfileCatalog, place_chat};
-pub use prompt_links::render_prompt_text;
+pub use prompt_links::{render_bot_prompt_text, render_prompt_text};
 pub use provider::*;
 pub use questions::{
     AgentAnswer, AgentAnswerValue, AgentQuestion, AgentQuestionOption, AnswersRecord,

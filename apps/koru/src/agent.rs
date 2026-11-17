@@ -3118,9 +3118,11 @@ fn request_for_external_url(raw: &str) -> Result<Request, String> {
         Ok(koru_link::KoruLink::Node(_)) => {
             Err(koru_i18n::t(crate::format::lang(), koru_i18n::Key::LinkMissingDocument).into())
         }
-        Ok(koru_link::KoruLink::Skill { .. } | koru_link::KoruLink::Command { .. }) => {
-            Err(koru_i18n::t(crate::format::lang(), koru_i18n::Key::LinkUnsupported).into())
-        }
+        Ok(
+            koru_link::KoruLink::Skill { .. }
+            | koru_link::KoruLink::Command { .. }
+            | koru_link::KoruLink::Bot { .. },
+        ) => Err(koru_i18n::t(crate::format::lang(), koru_i18n::Key::LinkUnsupported).into()),
         Err(_) => Err(koru_i18n::t(crate::format::lang(), koru_i18n::Key::LinkUnsupported).into()),
     }
 }

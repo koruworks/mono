@@ -122,6 +122,43 @@ impl ChatSurface {
         true
     }
 
+    /// **The host's own choices for the composer's `@` picker**, listed
+    /// above the pages: a Bot's conversation feeds the Bots that Bot may
+    /// ask. This surface knows nothing about what they are. An empty
+    /// section — the default — is the picker with pages only. `true` when
+    /// what is drawn changed.
+    pub fn set_mention_choices(&mut self, section: &crate::ExtraSection) -> bool {
+        self.composer.set_extras(section)
+    }
+
+    /// The choices the host last fed: empty for a surface nobody feeds.
+    pub fn mention_choices(&self) -> &crate::ExtraSection {
+        self.composer.extras()
+    }
+
+    /// Whether the composer's `@` picker is open: when a host that feeds
+    /// it choices may want them fresh.
+    pub fn mention_picker_open(&self) -> bool {
+        self.composer.picker_open()
+    }
+
+    /// **The names the host knows mentioned Bots by now**, by id: what a
+    /// sent message's mention reads as. One the host does not name reads as
+    /// the name its link carried. `true` when a message's words changed.
+    pub fn set_mention_names(
+        &mut self,
+        names: &std::collections::HashMap<uuid::Uuid, String>,
+    ) -> bool {
+        if self.mention_names == *names {
+            return false;
+        }
+        self.mention_names = names.clone();
+        // The shown text of every message mentioning one changes, so the
+        // layout cache relays those cards and no others.
+        self.messages_dirty = true;
+        true
+    }
+
     fn plus_menu_at(&mut self, items: Vec<PlusItem>) {
         let button = self.plus_button();
         let wide = items

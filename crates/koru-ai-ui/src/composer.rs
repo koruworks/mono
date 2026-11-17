@@ -45,6 +45,19 @@
 //! pill and link at the same position. Recall restores both kinds as pills;
 //! typed `$name` and `/name` words keep their literal meaning.
 //!
+//! ## Somebody the host lets the `@` name
+//!
+//! A host may add its own choices above the pages in the `@` picker
+//! ([`ChatComposer::set_extras`], the editor's
+//! [`ExtraSection`]): a Bot's conversation lists the Bots that Bot may ask.
+//! **This crate knows nothing about them**: it is fed a label, a role and a
+//! list of ids and titles, and feeds them to the picker. A choice picked is
+//! a mention chip where the `@` was typed, holding the host's id. At send a
+//! chip under [`koru_core::attributes::ROLE_BOT`] is stored as a durable
+//! `koru://bot/<id>` link carrying its name; a recalled message brings it
+//! back as the chip it was. Nothing else is sent for it: no field, no
+//! reference.
+//!
 //! ## Where it is drawn
 //!
 //! The editor believes it owns a viewport with its own margins; the chat gives
@@ -65,7 +78,9 @@ use koru_draw::ImageCache;
 use koru_draw::geometry::Rect;
 use koru_draw::theme;
 use koru_editor::components::Overlay;
-use koru_editor::components::entity_picker::{DocumentChoice, HeadingChoice, WorkspaceChoice};
+use koru_editor::components::entity_picker::{
+    DocumentChoice, ExtraSection, HeadingChoice, WorkspaceChoice,
+};
 use koru_editor::draw::{Frame, frame};
 use koru_editor::input::action::Action;
 use koru_editor::trigger::DocumentTarget;
@@ -204,6 +219,9 @@ pub struct ChatComposer {
     /// The document the host is showing, offered to a bare `@#`.
     current_document: Option<(koru_core::DocumentId, String)>,
     recent_documents: Vec<(koru_core::DocumentId, String)>,
+    /// The host's own choices for the `@` picker, listed above the pages.
+    /// Empty unless a host feeds one ([`Self::set_extras`]).
+    extras: ExtraSection,
     /// The box the text sits in, in host coordinates, padding included.
     text: Rect,
     /// Where host coordinates put the editor's view origin.
@@ -227,6 +245,7 @@ impl ChatComposer {
             current_workspace: None,
             current_document: None,
             recent_documents: Vec::new(),
+            extras: ExtraSection::default(),
             text: Rect::new(0.0, 0.0, 1.0, 1.0),
             origin: (0.0, 0.0),
             open_request: None,
@@ -487,6 +506,13 @@ impl ChatComposer {
                     koru_link::KoruLink::Command { name } => Attr::labelled(
                         koru_core::attributes::ROLE_COMMAND,
                         AttrValue::Text(name.clone()),
+                        name,
+                    ),
+                    // A mentioned Bot comes back as the chip it was, under
+                    // the name it was sent with.
+                    koru_link::KoruLink::Bot { bot, name } => Attr::labelled(
+                        koru_core::attributes::ROLE_BOT,
+                        AttrValue::Text(bot.to_string()),
                         name,
                     ),
                     _ => continue,
@@ -768,6 +794,24 @@ impl ChatComposer {
         } else {
             false
         }
+    }
+
+    /// **The host's own choices for the `@` picker**, listed above the
+    /// pages: a label, the role a picked one is recorded under, and ids with
+    /// titles. An empty section is the picker with pages only. Kept for the
+    /// next `@`, and handed to a picker that is open now. `true` when what
+    /// is drawn changed.
+    pub(crate) fn set_extras(&mut self, section: &ExtraSection) -> bool {
+        if self.extras == *section {
+            return false;
+        }
+        self.extras = section.clone();
+        self.picker_open() && self.editor.set_entity_extras(self.extras.clone())
+    }
+
+    /// The host's choices as last fed.
+    pub(crate) fn extras(&self) -> &ExtraSection {
+        &self.extras
     }
 
     /// A chip was clicked, in the composer or in a sent message: the document
@@ -1065,6 +1109,9 @@ impl ChatComposer {
                 is_file: false,
             });
         changed |= self.editor.set_entity_current_document(here);
+        // The host's choices, above the pages. Compared inside, like the
+        // recents: an identical section is not a change.
+        changed |= self.editor.set_entity_extras(self.extras.clone());
         if !self.recent_documents.is_empty()
             && matches!(&self.editor.view.overlay, Overlay::Entity(picker) if picker.document_query.trim().is_empty())
         {

@@ -610,7 +610,8 @@ pub fn run(
             }
             koru_link::KoruLink::Node(_)
             | koru_link::KoruLink::Skill { .. }
-            | koru_link::KoruLink::Command { .. } => {}
+            | koru_link::KoruLink::Command { .. }
+            | koru_link::KoruLink::Bot { .. } => {}
         }
     }
 

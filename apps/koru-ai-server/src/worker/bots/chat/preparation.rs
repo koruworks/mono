@@ -23,15 +23,50 @@ pub(in crate::worker) fn retry_input(
             .is_some_and(|last| last.id == user.id)
     }) {
         let last = history.last_mut().ok_or_else(invariant_failure)?;
-        last.markdown = koru_ai_core::render_prompt_text(task);
+        last.markdown = render_task(task);
         return Ok(original_user.expect("matched original task").id);
     }
     history.push(AiRequestMessage {
         role: ChatRole::User,
-        markdown: koru_ai_core::render_prompt_text(task),
+        markdown: render_task(task),
         attachments: Vec::new(),
     });
     Ok(original_user.map_or(failed.id, |message| message.id))
+}
+
+/// **The task a Bot's reply is retried with**, as its agent reads it: the
+/// person's message, in which a mentioned Bot is still the person asking
+/// this Bot to ask that one (`koru_ai_core::render_bot_prompt_text`), as it
+/// was when the message was first sent. A set of answers is not a message
+/// of the person's: it renders as it always did.
+fn render_task(task: &str) -> String {
+    if koru_ai_core::AnswersRecord::decode(task).is_some() {
+        koru_ai_core::render_prompt_text(task)
+    } else {
+        koru_ai_core::render_bot_prompt_text(task)
+    }
+}
+
+/// **The message a person is sending, as the provider reads it.**
+///
+/// A Bot mentioned in a message **to a Bot** is the person asking this Bot
+/// to ask that one: the message says so in words its agent reads
+/// (`koru_ai_core::render_bot_prompt_text`). It is a hint; the agent makes
+/// the call, and every check on it applies unchanged. An ordinary chat has
+/// nobody to ask: there the mention is a name
+/// (`koru_ai_core::render_prompt_text`). A read that fails here is not a
+/// new way for a send to fail: the mention is then the name alone. The
+/// stored message, and the Run's stored objective, keep the link.
+pub(in crate::worker) fn render_sent_message(
+    repository: &Repository,
+    chat: ChatId,
+    markdown: &str,
+) -> String {
+    if matches!(repository.bot_for_chat(chat), Ok(Some(_))) {
+        koru_ai_core::render_bot_prompt_text(markdown)
+    } else {
+        koru_ai_core::render_prompt_text(markdown)
+    }
 }
 
 pub(in crate::worker) fn retry_anchor(

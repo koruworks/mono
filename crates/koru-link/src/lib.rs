@@ -14,6 +14,7 @@
 //! koru://chat/{chat-uuid}#{message-block-uuid} AI chat, optionally at one block
 //! koru://skill/{encoded-name}             selected agent skill
 //! koru://command/{encoded-name}           selected agent command
+//! koru://bot/{bot-uuid}#{encoded-name}    a Bot mentioned in a message to a Bot
 //! koru://{node-uuid}                        a bare node reference
 //! ```
 //!
@@ -55,6 +56,13 @@ pub enum KoruLink {
     Skill { name: String },
     /// A command selected from the agent's listing.
     Command { name: String },
+    /// **A Bot mentioned in a message** written to another Bot: the Bot's
+    /// id, which is what identifies it (names are not unique), and the name
+    /// it had when it was picked. The name is carried so a reader that no
+    /// longer knows the Bot (it was renamed, archived or lives elsewhere)
+    /// still shows a name and never an id; it is empty when the link carried
+    /// none.
+    Bot { bot: Uuid, name: String },
     /// A bare node, with no document named. Written by older exports.
     Node(Uuid),
 }
@@ -92,7 +100,11 @@ pub fn parse(text: &str) -> Result<KoruLink, LinkError> {
         .map(|_| &text[7..])
         .ok_or(LinkError::NotKoru)?;
 
-    if rest.contains('%') && !rest.starts_with("skill/") && !rest.starts_with("command/") {
+    if rest.contains('%')
+        && !rest.starts_with("skill/")
+        && !rest.starts_with("command/")
+        && !rest.starts_with("bot/")
+    {
         return Err(LinkError::Illegal);
     }
 
@@ -123,6 +135,15 @@ pub fn parse(text: &str) -> Result<KoruLink, LinkError> {
         ("command", Some(name)) if fragment.is_none() => Ok(KoruLink::Command {
             name: decode_name(name)?,
         }),
+        // The fragment is the Bot's name as it was when picked, not a place
+        // inside it: a Bot has no blocks to point at.
+        ("bot", Some(bot)) => Ok(KoruLink::Bot {
+            bot: id(bot)?,
+            name: fragment
+                .map(decode_bot_name)
+                .transpose()?
+                .unwrap_or_default(),
+        }),
         // A bare node takes no fragment: there is nothing for it to be inside.
         (node, None) if fragment.is_none() && !node.is_empty() => Ok(KoruLink::Node(id(node)?)),
         _ => Err(LinkError::UnknownForm),
@@ -137,6 +158,92 @@ pub fn skill_link(name: &str) -> Result<String, LinkError> {
 /// Write a selected command's durable link spelling.
 pub fn command_link(name: &str) -> Result<String, LinkError> {
     Ok(format!("koru://command/{}", encode_name(name)?))
+}
+
+/// The most characters of a Bot's name a mention link carries.
+pub const BOT_NAME_CHARS: usize = 64;
+
+/// The most bytes the encoded name may take, so the whole link stays well
+/// inside [`MAX_LEN`] whatever script the name is written in.
+const BOT_NAME_ENCODED: usize = 384;
+
+/// Write a mention of a Bot: its id, and the name it is shown by.
+///
+/// The name is cleaned first, so the link is always one that [`parse`] reads
+/// back: every run of whitespace or control characters becomes one space, the
+/// ends are trimmed, and a name too long for a link is cut at a character.
+/// A name with nothing left writes the bare `koru://bot/{id}`.
+pub fn bot_link(bot: Uuid, name: &str) -> String {
+    let mut encoded = String::new();
+    for (count, character) in bot_name(name).chars().enumerate() {
+        let mut piece = String::new();
+        let mut buffer = [0u8; 4];
+        for byte in character.encode_utf8(&mut buffer).bytes() {
+            if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+                piece.push(char::from(byte));
+            } else {
+                piece.push('%');
+                piece.push_str(&format!("{byte:02X}"));
+            }
+        }
+        if count >= BOT_NAME_CHARS || encoded.len() + piece.len() > BOT_NAME_ENCODED {
+            break;
+        }
+        encoded.push_str(&piece);
+    }
+    // A cut can leave an encoded space at the end; a name never ends in one.
+    while let Some(trimmed) = encoded.strip_suffix("%20") {
+        encoded.truncate(trimmed.len());
+    }
+    if encoded.is_empty() {
+        format!("koru://bot/{bot}")
+    } else {
+        format!("koru://bot/{bot}#{encoded}")
+    }
+}
+
+/// [`bot_link`] for an id held as text, the way a composer's chip holds it.
+/// `None` when the text is not an id: nothing is written for a Bot that
+/// cannot be named exactly.
+pub fn bot_link_for(bot: &str, name: &str) -> Option<String> {
+    Uuid::parse_str(bot).ok().map(|bot| bot_link(bot, name))
+}
+
+/// A Bot's name as a mention shows it: one line, no control characters,
+/// single spaces, trimmed.
+pub fn bot_name(name: &str) -> String {
+    name.split(|character: char| character.is_whitespace() || character.is_control())
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn decode_bot_name(encoded: &str) -> Result<String, LinkError> {
+    let mut bytes = Vec::with_capacity(encoded.len());
+    let mut source = encoded.bytes();
+    while let Some(byte) = source.next() {
+        match byte {
+            b'%' => {
+                let hi = source.next().and_then(|b| (b as char).to_digit(16));
+                let lo = source.next().and_then(|b| (b as char).to_digit(16));
+                let (Some(hi), Some(lo)) = (hi, lo) else {
+                    return Err(LinkError::BadName);
+                };
+                bytes.push(((hi << 4) | lo) as u8);
+            }
+            b if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~') => {
+                bytes.push(b);
+            }
+            _ => return Err(LinkError::BadName),
+        }
+    }
+    let name = String::from_utf8(bytes).map_err(|_| LinkError::BadName)?;
+    // Only a name this writer could have written is read back: anything
+    // else is a link somebody made by hand, and stays text.
+    if name.chars().count() > BOT_NAME_CHARS || bot_name(&name) != name {
+        return Err(LinkError::BadName);
+    }
+    Ok(name)
 }
 
 fn encode_name(name: &str) -> Result<String, LinkError> {

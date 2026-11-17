@@ -264,6 +264,23 @@ pub fn message_text(ws: &WorkspaceDoc, root: NodeId) -> Result<String, ExportErr
                         } else {
                             line.push_str(&serialize_pill(attr));
                         }
+                    } else if let Some((bot, name)) = mentioned_bot(attr) {
+                        // The Bot's id is what the message carries: names
+                        // are not unique. The name travels beside it so a
+                        // reader that no longer knows the Bot still shows
+                        // one. A chip whose id is not an id is its name as
+                        // words, never half a mention.
+                        match koru_link::bot_link_for(bot, name) {
+                            Some(link) => {
+                                line.push_str("[[");
+                                line.push_str(&link);
+                                line.push_str("]]");
+                            }
+                            None => {
+                                line.push('@');
+                                line.push_str(&koru_link::escape_literal_links(name));
+                            }
+                        }
                     } else {
                         line.push_str(&serialize_pill(attr));
                     }
@@ -307,6 +324,20 @@ fn skill_name(attr: &Attr) -> Option<&str> {
     }
     match &attr.value {
         AttrValue::Text(name) if !name.is_empty() => Some(name.as_str()),
+        _ => None,
+    }
+}
+
+/// The Bot a mention chip names, when `attr` is one: its id as the chip
+/// holds it, and the name the chip shows.
+fn mentioned_bot(attr: &Attr) -> Option<(&str, &str)> {
+    if attr.role != koru_core::attributes::ROLE_BOT {
+        return None;
+    }
+    match &attr.value {
+        AttrValue::Text(bot) if !bot.is_empty() => {
+            Some((bot.as_str(), attr.label.as_deref().unwrap_or_default()))
+        }
         _ => None,
     }
 }

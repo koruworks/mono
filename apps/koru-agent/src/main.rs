@@ -224,6 +224,9 @@ fn main() {
             ) {
                 fatal("an agent skill or command link is only meaningful in a chat");
             }
+            if matches!(&link, koru_link::KoruLink::Bot { .. }) {
+                fatal("a mention of a Bot is only meaningful in a message to a Bot");
+            }
             match koru_agent::client::open_link(&paths, link.clone()) {
                 // Handed over. This process is done, and the agent it handed to
                 // is the one with the windows.

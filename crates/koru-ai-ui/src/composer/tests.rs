@@ -626,3 +626,202 @@ fn a_recalled_message_brings_its_quotes_back() {
     typed(&mut composer, "and a comment");
     assert_eq!(composer.text(), "> only a quote\n\nand a comment");
 }
+
+// ----------------------------------------------- the host's `@` choices
+
+use koru_editor::components::entity_picker::ExtraChoice;
+
+const CFO: &str = "0b8f6f0e-3c5e-4d0a-9a51-7d5b7c1f2a11";
+const LEGAL: &str = "7c1d2e3f-4a5b-4c6d-8e7f-901a2b3c4d5e";
+
+/// What a Bot's tab feeds: two Bots, the second paused.
+fn bots() -> ExtraSection {
+    ExtraSection {
+        label: "Bot".into(),
+        role: koru_core::attributes::ROLE_BOT.into(),
+        icon: Some(koru_draw::icons::ROBOT),
+        choices: vec![
+            ExtraChoice {
+                id: CFO.into(),
+                title: "CFO".into(),
+                note: None,
+            },
+            ExtraChoice {
+                id: LEGAL.into(),
+                title: "Legal".into(),
+                note: Some("Paused".into()),
+            },
+        ],
+    }
+}
+
+fn picker(composer: &ChatComposer) -> &koru_editor::components::entity_picker::EntityPicker {
+    let Overlay::Entity(picker) = &composer.editor.view.overlay else {
+        panic!("the @ picker is open");
+    };
+    picker
+}
+
+/// **`@` in a fed composer lists the host's choices above the pages**, and
+/// picking one puts its chip where the `@` was: `@CFO` on screen, a link
+/// carrying the id and the name in the message, and nothing else — no
+/// document, no skill.
+#[test]
+fn bot_mention_picked_from_the_picker_is_a_chip_stored_as_its_link() {
+    let mut composer = ChatComposer::new(None);
+    assert!(
+        !composer.set_extras(&bots()),
+        "nothing is drawn differently yet"
+    );
+    let page = DocumentId::new();
+    typed(&mut composer, "Ask @");
+    assert!(composer.picker_open());
+    assert!(composer.offer(&[(page, "Budget 2026")]));
+    {
+        let picker = picker(&composer);
+        assert_eq!(picker.lead(), 2, "the two Bots");
+        assert_eq!(picker.extra_shown[0].title, "CFO");
+        assert_eq!(picker.extra_shown[1].note.as_deref(), Some("Paused"));
+        assert_eq!(picker.hits.len(), 1, "then the page");
+        assert_eq!(picker.sel, 0, "the first Bot is highlighted");
+    }
+    assert!(press(&mut composer, NamedKey::Enter));
+    assert!(!composer.picker_open(), "choosing closes the picker");
+    typed(&mut composer, "about Q3");
+
+    let message = composer.message();
+    assert_eq!(
+        message.markdown,
+        format!("Ask [[koru://bot/{CFO}#CFO]] about Q3")
+    );
+    assert!(message.documents.is_empty(), "a Bot is not a page");
+    assert!(message.skills.is_empty());
+
+    // The chip reads `@CFO`, and never shows the id.
+    let row = &composer.editor.body.rows[0];
+    let info = row.pills.values().next().expect("the mention chip");
+    assert_eq!(info.kind, koru_draw::pill::PillKind::Mention);
+    assert_eq!(info.label, "@CFO");
+    assert!(!row.text.contains(CFO));
+
+    // Backspace takes the chip back whole.
+    for _ in 0.."about Q3".len() + 1 {
+        press(&mut composer, NamedKey::Backspace);
+    }
+    assert!(press(&mut composer, NamedKey::Backspace));
+    assert_eq!(composer.message().markdown, "Ask ");
+}
+
+/// What is typed after `@` filters the Bots; the arrows walk Bots then
+/// pages; a page picked under them is still a document chip.
+#[test]
+fn bot_mention_picker_filters_and_walks_bots_then_pages() {
+    let mut composer = ChatComposer::new(None);
+    composer.set_extras(&bots());
+    let page = DocumentId::new();
+    typed(&mut composer, "@le");
+    assert!(composer.offer(&[(page, "Ledger")]));
+    {
+        let picker = picker(&composer);
+        assert_eq!(picker.lead(), 1);
+        assert_eq!(picker.extra_shown[0].title, "Legal");
+    }
+    // Down: off the Bot, onto the page.
+    assert!(press(&mut composer, NamedKey::ArrowDown));
+    assert_eq!(picker(&composer).sel, 1);
+    assert!(press(&mut composer, NamedKey::Enter));
+    let message = composer.message();
+    assert_eq!(message.markdown, format!("[[koru://doc/{page}]] "));
+    assert_eq!(message.documents, vec![(page, "Ledger".to_owned())]);
+
+    // Up from the page is the Bot again; Enter picks it.
+    typed(&mut composer, "@le");
+    assert!(composer.offer(&[(page, "Ledger")]));
+    press(&mut composer, NamedKey::ArrowDown);
+    press(&mut composer, NamedKey::ArrowUp);
+    assert_eq!(picker(&composer).sel, 0);
+    assert!(press(&mut composer, NamedKey::Enter));
+    assert_eq!(
+        composer.message().markdown,
+        format!("[[koru://doc/{page}]] [[koru://bot/{LEGAL}#Legal]] ")
+    );
+}
+
+/// **Escape closes the picker and the keyboard is the composer's again**:
+/// what was typed stays, nothing was picked, and the next keys type.
+#[test]
+fn bot_mention_escape_closes_the_picker_and_returns_to_the_composer() {
+    let mut composer = ChatComposer::new(None);
+    composer.set_extras(&bots());
+    typed(&mut composer, "ask @c");
+    assert!(composer.picker_open());
+    assert_eq!(picker(&composer).lead(), 1);
+    assert!(press(&mut composer, NamedKey::Escape));
+    assert!(!composer.picker_open());
+    assert_eq!(composer.text(), "ask @c", "nothing was picked");
+    typed(&mut composer, "fo");
+    assert_eq!(composer.text(), "ask @cfo", "the composer has the keyboard");
+    assert!(composer.editor.view.active);
+}
+
+/// A section that arrives while the picker is open shows in it at once; a
+/// section taken away leaves the pages.
+#[test]
+fn bot_mention_section_fed_to_an_open_picker_shows_at_once() {
+    let mut composer = ChatComposer::new(None);
+    typed(&mut composer, "@");
+    assert_eq!(picker(&composer).lead(), 0);
+    assert!(composer.set_extras(&bots()), "the open picker changed");
+    assert_eq!(picker(&composer).lead(), 2);
+    assert!(!composer.set_extras(&bots()), "the same section again");
+    assert!(composer.set_extras(&ExtraSection::default()));
+    assert_eq!(picker(&composer).lead(), 0);
+}
+
+/// **A composer nobody feeds is the composer there was**: its picker has
+/// no row of the host's, and choosing gives what it always gave.
+#[test]
+fn bot_mention_unfed_composer_lists_pages_only() {
+    let mut composer = ChatComposer::new(None);
+    assert!(composer.extras().choices.is_empty());
+    let page = DocumentId::new();
+    typed(&mut composer, "@");
+    assert!(composer.offer(&[(page, "Plan")]));
+    {
+        let picker = picker(&composer);
+        assert_eq!(picker.lead(), 0);
+        assert!(picker.extra_shown.is_empty());
+        assert_eq!(picker.row_count(), 2, "the page and the add row");
+    }
+    assert!(press(&mut composer, NamedKey::Enter));
+    assert_eq!(
+        composer.message().markdown,
+        format!("[[koru://doc/{page}]] ")
+    );
+}
+
+/// **A recalled message brings its mention back as the chip it was**, and
+/// leaves again spelled exactly as it was sent; words that only look like
+/// a mention stay words.
+#[test]
+fn bot_mention_recalled_message_brings_the_chip_back() {
+    let sent = format!(
+        r"Ask [[koru://bot/{CFO}#Head%20of%20Finance]] and \[[koru://bot/{LEGAL}#Legal]] by hand"
+    );
+    let mut composer = ChatComposer::new(None);
+    composer.set_message(&sent, |_| String::new());
+    assert_eq!(composer.message().markdown, sent);
+    let row = &composer.editor.body.rows[0];
+    let labels: Vec<&str> = row.pills.values().map(|info| info.label.as_str()).collect();
+    assert_eq!(
+        labels,
+        vec!["@Head of Finance"],
+        "one chip; the typed one is text"
+    );
+    let attrs = composer.ws.read(row.id).unwrap().content.attrs().to_vec();
+    let chip = attrs
+        .iter()
+        .find(|attr| attr.role == koru_core::attributes::ROLE_BOT)
+        .expect("the mention's record");
+    assert_eq!(chip.value, AttrValue::Text(CFO.to_owned()), "by id");
+}

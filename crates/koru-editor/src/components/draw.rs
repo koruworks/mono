@@ -1002,10 +1002,71 @@ fn draw_entity_panel(
     }
 
     let first = picker.first;
-    for (i, hit) in hits.iter().skip(first).take(doc_capacity).enumerate() {
+    // The host's section stands above the documents and scrolls with them
+    // as one list. With no section this is the document list alone.
+    let lead = picker.lead();
+    let extras = picker.extra_shown.clone();
+    let extra_label = picker.extras.label.clone();
+    let extra_icon = picker.extras.icon.unwrap_or(icons::DOCUMENT);
+    let listed = lead + hits.len();
+    for i in 0..listed.saturating_sub(first).min(doc_capacity) {
         let index = first + i;
         let ry = rows_y + i as f32 * theme::ROW_H;
         let on = index == sel || hovered_row == Some(index);
+        if let Some(choice) = extras.get(index).filter(|_| index < lead) {
+            let _row = koru_draw::inspect::scope(
+                "EntityExtraChoice",
+                "part",
+                root,
+                koru_draw::scene::rect(px, ry, pw, theme::ROW_H),
+                |_| {},
+            );
+            draw_row_bg(scene, root, px, ry, pw, on);
+            let glyph = engine.icon_layout(extra_icon, 15.0);
+            draw_layout(
+                scene,
+                root,
+                &glyph,
+                px + 10.0,
+                ry + 7.0,
+                Some(theme::p().row_hint),
+            );
+            // What the row is, then its state: `Bot · Paused`.
+            let meta = match &choice.note {
+                Some(note) if extra_label.is_empty() => note.clone(),
+                Some(note) => format!("{extra_label} \u{b7} {note}"),
+                None => extra_label.clone(),
+            };
+            let meta = engine.elided(&meta, theme::role::meta(), 110.0);
+            let meta = engine.simple_layout(&meta, theme::role::meta());
+            let fitted = engine.elided(&choice.title, theme::role::ui(), pw - 52.0 - meta.width());
+            let title = engine.simple_layout(
+                &fitted,
+                theme::role::ui().with_weight(if on {
+                    theme::FontWeight::SemiBold
+                } else {
+                    theme::FontWeight::Medium
+                }),
+            );
+            draw_layout(
+                scene,
+                root,
+                &title,
+                px + 32.0,
+                ry + 4.0,
+                Some(theme::p().text),
+            );
+            draw_layout(
+                scene,
+                root,
+                &meta,
+                px + pw - 10.0 - meta.width(),
+                ry + 5.5,
+                Some(theme::p().row_hint),
+            );
+            continue;
+        }
+        let hit = &hits[index - lead];
         draw_row_bg(scene, root, px, ry, pw, on);
         let glyph = engine.icon_layout(
             if hit.target.node.is_some() {
@@ -1072,8 +1133,8 @@ fn draw_entity_panel(
         }
         return;
     }
-    let create_index = hits.len();
-    let create_i = hits.len().saturating_sub(first).min(MAX_ROWS - 1);
+    let create_index = listed;
+    let create_i = listed.saturating_sub(first).min(MAX_ROWS - 1);
     let ry = rows_y + create_i as f32 * theme::ROW_H;
     let on = create_index == sel || hovered_row == Some(create_index);
     draw_row_bg(scene, root, px, ry, pw, on);

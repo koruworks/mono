@@ -253,7 +253,10 @@ impl WorkerState {
                     .to_string()
                     .parse()
                     .map_err(|_| conflict())?,
-                text: koru_ai_core::render_prompt_text(&request.markdown),
+                // A message steered into a Bot's running reply is the
+                // person's too: a Bot it mentions is one it asks this Bot
+                // to ask, said in the same words as in a message sent.
+                text: koru_ai_core::render_bot_prompt_text(&request.markdown),
                 attachment_ids: vec![],
                 references: vec![],
                 mode: None,

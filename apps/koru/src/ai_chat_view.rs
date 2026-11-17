@@ -464,6 +464,33 @@ impl AiChatView {
         self.surface.set_recent_documents(documents)
     }
 
+    /// **The choices a host adds to the composer's `@` picker**, above the
+    /// pages (`ChatSurface::set_mention_choices`). Only a Bot's tab feeds
+    /// one, with the Bots its Bot may ask (`bots::mentions`); an ordinary
+    /// chat tab is never fed and lists pages only.
+    pub fn set_mention_choices(&mut self, section: &koru_ai_ui::ExtraSection) -> bool {
+        self.surface.set_mention_choices(section)
+    }
+
+    /// The choices last fed: empty for a chat nobody feeds. Test only.
+    #[cfg(test)]
+    pub fn mention_choices(&self) -> &koru_ai_ui::ExtraSection {
+        self.surface.mention_choices()
+    }
+
+    /// Whether the composer's `@` picker is open.
+    pub fn mention_picker_open(&self) -> bool {
+        self.surface.mention_picker_open()
+    }
+
+    /// The names mentioned Bots are known by now, for the sent messages.
+    pub fn set_mention_names(
+        &mut self,
+        names: &std::collections::HashMap<uuid::Uuid, String>,
+    ) -> bool {
+        self.surface.set_mention_names(names)
+    }
+
     pub fn take_openai_credential_request(&mut self) -> Option<OpenAiCredentialRequest> {
         self.surface.take_openai_credential_request()
     }

@@ -1036,6 +1036,10 @@ impl MainView {
                         // The faces the request cards wear (M6).
                         moved |=
                             view.know_faces(roster.bots().iter().map(|row| (row.id, row.avatar)));
+                        // The Bots its conversation's `@` may offer, as the
+                        // roster last listed them; the tab reads them again
+                        // itself when the picker opens (`bots::mentions`).
+                        moved |= view.know_mention_roster(roster.bots());
                     }
                     // A tab restored behind another has read nothing yet:
                     // it wears its Bot's name as the roster lists it.

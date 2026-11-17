@@ -473,6 +473,52 @@ fn skill_chips_keep_durable_selected_identity() {
     );
 }
 
+/// A mentioned Bot is stored as a link carrying its id and, beside it, the
+/// name the chip showed. A chip whose id is not an id is its name as words.
+#[test]
+fn bot_mention_chip_is_stored_as_a_link_with_its_id_and_name() {
+    let bot = "0b8f6f0e-3c5e-4d0a-9a51-7d5b7c1f2a11";
+    let (mut ws, root) = with_doc("");
+    let row = ws
+        .insert(Parent::Node(root), Node::paragraph("Ask  and ").unwrap())
+        .unwrap();
+    ws.insert_pill(
+        row,
+        4,
+        &Attr::labelled(
+            koru_core::attributes::ROLE_BOT,
+            AttrValue::Text(bot.to_owned()),
+            "Head of Sales",
+        ),
+    )
+    .unwrap();
+    let at = ws.read(row).unwrap().content.as_text().unwrap().len();
+    ws.insert_pill(
+        row,
+        at,
+        &Attr::labelled(
+            koru_core::attributes::ROLE_BOT,
+            AttrValue::Text("not an id".to_owned()),
+            "Stray",
+        ),
+    )
+    .unwrap();
+    let sent = message_text(&ws, root).unwrap();
+    assert_eq!(
+        sent,
+        format!("Ask [[koru://bot/{bot}#Head%20of%20Sales]] and @Stray")
+    );
+    let found = koru_link::wrapped(&sent);
+    assert_eq!(found.len(), 1);
+    assert_eq!(
+        found[0].link,
+        koru_link::KoruLink::Bot {
+            bot: bot.parse().unwrap(),
+            name: "Head of Sales".into()
+        }
+    );
+}
+
 #[test]
 fn command_chip_and_literal_link_have_distinct_export() {
     let (mut ws, root) = with_doc("");
