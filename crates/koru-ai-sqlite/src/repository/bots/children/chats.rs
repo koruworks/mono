@@ -209,15 +209,24 @@ impl Repository {
                 ));
             }
         }
+        // An asked Bot runs as itself (O160): a new ask is written only with
+        // each recipient's own Library capture. Replay was answered above.
+        if ask.items.iter().any(|item| item.capture.is_none()) {
+            return Err(BotError::Invalid);
+        }
         // 3 and 4. Write. Any failure below drops the transaction whole.
         for (index, item) in ask.items.iter().enumerate() {
             let submission = &item.intent.submission;
             let recipient = submission.provenance.bot;
+            let capture = item.capture.as_ref().ok_or(BotError::Invalid)?;
             insert_chat(&tx, &item.chat).map_err(|_| BotError::Storage)?;
             insert_additional_chat(&tx, item.chat.id, recipient, now)?;
-            admission::prepare_bot_submission_tx(
+            // The same capture a task in the recipient's own conversation
+            // commits with its admission, in this one transaction.
+            super::super::library::prepare_library_submission_tx(
                 &tx,
                 &item.intent,
+                capture,
                 &item.fingerprint,
                 item.expected_revision,
                 now.millis(),

@@ -11,7 +11,11 @@
 //!   sends `RequestChild` to the delegate, and the writer stores the wait's
 //!   enrollment and accepts the receipts (`accept_bot_child_ask`) **before**
 //!   the tool's answer is produced. A refusal rejects every receipt with the
-//!   tool code, so the same key answers the same refusal.
+//!   tool code, so the same key answers the same refusal. An asked Bot runs
+//!   as itself (O160): each child is captured as a task in its own
+//!   conversation is, with its own Role, Knowledge and Memory plus the pages
+//!   the request named, and its reply starts with its own Memory index. The
+//!   capture is context; its authority is still the reduced policy.
 //! - **The resend** (`resend.rs`). A child request's `start` receipt that is
 //!   still `prepared` (a crash, a lost reply) is resent as `RequestChild` for
 //!   its whole ask, never as its own `Submit` (contract A2).

@@ -5,7 +5,8 @@
 //! The writer never waits on the Store or the delegate. The page checks and
 //! `RequestChild` run in [`super::job::AskJob`] on a pool lane; each phase
 //! comes back here and re-proves the asking Run before it writes.
-use super::job::{AskJob, Caller, Evidence, Step};
+use super::super::library::LibrarySources;
+use super::job::{AskJob, Caller, ChildIndex, ChildLibrary, ChildMemory, Evidence, Step};
 use super::*;
 use koru_ai_core::bots::{BotChildAsk, BotChildAskItem, BotChildAskPrepared};
 use koru_delegate_core::children::{
@@ -207,12 +208,14 @@ impl WorkerState {
                             .map(move |document| (index as u8, *document))
                     })
                     .collect();
+                let libraries = self.child_libraries(&subject, &request)?;
                 return Ok(Some(Box::new(AskJob {
                     step: Step::Pages {
                         owner: subject.owner,
                         home,
                         profile: subject.profile,
                         pages,
+                        libraries,
                     },
                     owner: subject.owner,
                     parent_run: run,
@@ -224,6 +227,7 @@ impl WorkerState {
                         request,
                         reply: reply.clone(),
                     },
+                    libraries: None,
                 })));
             }
             Ok(Some(Box::new(AskJob {
@@ -238,6 +242,7 @@ impl WorkerState {
                     request,
                     reply: reply.clone(),
                 },
+                libraries: None,
             })))
         })();
         match started {
@@ -264,9 +269,10 @@ impl WorkerState {
             job.answer(Err(status_unknown()));
             return;
         }
+        let libraries = job.libraries.take();
         let next = (|| -> ApiResult<Result<RunChildAskPending, ChildRequest>> {
             let subject = self.retained_child_subject(&request.subject)?;
-            let ask = self.build_child_ask(&subject, &request)?;
+            let ask = self.build_child_ask(&subject, &request, libraries.as_deref())?;
             let rows = match self
                 .repository
                 .prepare_bot_child_ask(&ask, Timestamp::now())
@@ -284,11 +290,22 @@ impl WorkerState {
             }
             self.child_request_of(subject.owner, &rows).map(Err)
         })();
+        let next = next.and_then(|next| match next {
+            Ok(pending) => Ok(Ok(pending)),
+            Err(request) => {
+                // After the ai.db commit: the ask is recorded either way.
+                let memory = self
+                    .child_memory_of(job.owner, &request)
+                    .map_err(|_| status_unknown())?;
+                Ok(Err((request, memory)))
+            }
+        });
         match next {
-            Ok(Err(request)) => {
+            Ok(Err((request, memory))) => {
                 job.step = Step::Send {
                     owner: request.parent.owner,
                     request: Box::new(request),
+                    memory,
                 };
                 self.submit_child_job(job);
             }
@@ -297,20 +314,100 @@ impl WorkerState {
         }
     }
 
+    /// The asking Bot, current.
+    fn asking_bot(&self, subject: &Subject) -> ApiResult<Bot> {
+        self.repository
+            .bot(subject.parent.intent.submission.provenance.bot)
+            .map_err(bot_failure)?
+            .ok_or_else(denied)
+    }
+
+    /// One named recipient, current: never the asker (`self_ask`), and the
+    /// same person, computer and home workspace (`recipient_unavailable`).
+    fn named_recipient(&self, parent_bot: &Bot, bot_id: BotId, index: u8) -> ApiResult<Bot> {
+        if bot_id == parent_bot.id {
+            return Err(coded(codes::SELF_ASK, Some(index)));
+        }
+        self.repository
+            .bot(bot_id)
+            .map_err(bot_failure)?
+            .filter(|bot| {
+                bot.user_scope == parent_bot.user_scope
+                    && bot.owner_device == parent_bot.owner_device
+                    && bot.home_workspace == parent_bot.home_workspace
+            })
+            .ok_or_else(|| coded(codes::RECIPIENT_UNAVAILABLE, Some(index)))
+    }
+
+    /// Each recipient's own Library sources for a new ask, one per item in
+    /// order (O160: an asked Bot runs as itself): its Role and Knowledge as
+    /// its own tasks read them, the pages the request named as the task's
+    /// pages, and its own Memory binding. The same `LibrarySources::read` a
+    /// task in the recipient's own conversation starts from; nothing of the
+    /// asking Bot's Library is read.
+    fn child_libraries(
+        &self,
+        subject: &Subject,
+        request: &RunChildAskRequest,
+    ) -> ApiResult<Vec<LibrarySources>> {
+        let parent_bot = self.asking_bot(subject)?;
+        let mut libraries = Vec::with_capacity(request.requests.len());
+        for (index, item) in request.requests.iter().enumerate() {
+            let index = index as u8;
+            let recipient = self.named_recipient(&parent_bot, item.bot_id, index)?;
+            let named: Vec<BotPage> = item
+                .documents
+                .iter()
+                .map(|document| BotPage {
+                    workspace: recipient.home_workspace,
+                    document: *document,
+                })
+                .collect();
+            // A task never pins its Bot's Memory page as a context page
+            // (`LibrarySources::read`, `refuse_memory_pins`); a request
+            // naming the recipient's Memory page is refused as a page.
+            let binding = self
+                .repository
+                .bot_library(
+                    BotOwner {
+                        user_scope: recipient.user_scope,
+                        device: recipient.owner_device,
+                    },
+                    recipient.id,
+                )
+                .map_err(bot_failure)?
+                .binding;
+            if let Some(page) = binding
+                .and_then(|binding| named.iter().find(|page| **page == binding.page).cloned())
+            {
+                let mut failure = coded(codes::PAGE_UNAVAILABLE, Some(index));
+                failure.details.insert(
+                    "document_id".into(),
+                    serde_json::Value::from(page.document.to_string()),
+                );
+                return Err(failure);
+            }
+            libraries.push(LibrarySources::read(&self.repository, &recipient, named)?);
+        }
+        Ok(libraries)
+    }
+
     /// Every item of a new ask: ids minted here, the new conversation, its
     /// opening turn and the recipient's ordinary `start` submission with
     /// `provenance.parent` set and the reduced policy of contract 3.3.
+    ///
+    /// With `libraries` (a new ask), each submission carries its recipient's
+    /// own captured pins and Library capture, built as a task in its own
+    /// conversation builds them (`make_library_intent`, `capture`). Without
+    /// (a key this Run already used), the items only key the replay.
     fn build_child_ask(
         &self,
         subject: &Subject,
         request: &RunChildAskRequest,
+        libraries: Option<&[ChildLibrary]>,
     ) -> ApiResult<BotChildAsk> {
         let p = &subject.parent.intent.submission.provenance;
-        let parent_bot = self
-            .repository
-            .bot(p.bot)
-            .map_err(bot_failure)?
-            .ok_or_else(denied)?;
+        let parent_bot = self.asking_bot(subject)?;
         let parent_chat = ChatId::parse(&p.chat_id.to_string()).ok_or_else(invalid)?;
         let assistant = p
             .assistant_message_id
@@ -318,22 +415,14 @@ impl WorkerState {
             .ok_or_else(invalid)?;
         let run = subject.parent.intent.submission.request.run;
         let wait = BotWaitId::mint();
+        if libraries.is_some_and(|libraries| libraries.len() != request.requests.len()) {
+            return Err(invalid());
+        }
         let mut items = Vec::with_capacity(request.requests.len());
         for (index, item) in request.requests.iter().enumerate() {
+            let library = libraries.map(|libraries| &libraries[index]);
             let index = index as u8;
-            if item.bot_id == parent_bot.id {
-                return Err(coded(codes::SELF_ASK, Some(index)));
-            }
-            let recipient = self
-                .repository
-                .bot(item.bot_id)
-                .map_err(bot_failure)?
-                .filter(|bot| {
-                    bot.user_scope == parent_bot.user_scope
-                        && bot.owner_device == parent_bot.owner_device
-                        && bot.home_workspace == parent_bot.home_workspace
-                })
-                .ok_or_else(|| coded(codes::RECIPIENT_UNAVAILABLE, Some(index)))?;
+            let recipient = self.named_recipient(&parent_bot, item.bot_id, index)?;
             let child_request = ChildRequestId::mint();
             let now = Timestamp::now();
             let chat = Chat {
@@ -355,16 +444,43 @@ impl WorkerState {
             // repository requires the two to be equal.
             let text = child_text(item.task.as_str(), &item.documents);
             let turn = child_turn(&chat, &recipient, &text, now);
-            let mut intent = admission::bare_intent(
-                &recipient,
-                BotRequestId::from_uuid(child_request.as_uuid()),
-                chat.id,
-                recipient.home_workspace,
-                &text,
-                None,
-                &[],
-                subject.profile,
-            )?;
+            let request_id = BotRequestId::from_uuid(child_request.as_uuid());
+            let mut intent = match library {
+                // The recipient's exact Role, Knowledge and named pages are
+                // its pins; the named pages are the task's pages, as an
+                // explicit page is in its own conversation.
+                Some(library) => admission::make_library_intent(
+                    &recipient,
+                    request_id,
+                    chat.id,
+                    recipient.home_workspace,
+                    &BotTask {
+                        text: text.clone(),
+                        documents: item
+                            .documents
+                            .iter()
+                            .map(|document| BotPage {
+                                workspace: recipient.home_workspace,
+                                document: *document,
+                            })
+                            .collect(),
+                    },
+                    None,
+                    &library.pins,
+                    &library.sources,
+                    subject.profile,
+                )?,
+                None => admission::bare_intent(
+                    &recipient,
+                    request_id,
+                    chat.id,
+                    recipient.home_workspace,
+                    &text,
+                    None,
+                    &[],
+                    subject.profile,
+                )?,
+            };
             let s = &mut intent.submission;
             s.provenance.parent = Some(ChildParent {
                 run,
@@ -382,6 +498,11 @@ impl WorkerState {
                 &parent_bot.connections,
             );
             intent.validate().map_err(bot_failure)?;
+            // The capture is context; the policy above alone says what the
+            // child may read and edit.
+            let capture = library
+                .map(|library| library.sources.capture(&intent))
+                .transpose()?;
             let fingerprint =
                 blake3::hash(&serde_json::to_vec(&intent.submission).map_err(|_| invalid())?)
                     .to_hex()
@@ -393,6 +514,7 @@ impl WorkerState {
                 intent,
                 fingerprint,
                 expected_revision: recipient.revision,
+                capture,
             });
         }
         Ok(BotChildAsk {
@@ -508,6 +630,47 @@ impl WorkerState {
         Ok(request)
     }
 
+    /// What reading each child's captured Memory index back needs, from the
+    /// stored rows: the capture committed with its receipt, the recipient's
+    /// binding, its home and the person's reader. `None` where no Memory was
+    /// captured, and for a child prepared before captures were taken (it
+    /// runs as it was prepared). Shared by the ask and the resend, so every
+    /// send of one ask reads back the same capture.
+    pub(super) fn child_memory_of(
+        &self,
+        owner: BotOwner,
+        request: &ChildRequest,
+    ) -> ApiResult<Vec<Option<ChildMemory>>> {
+        request
+            .requests
+            .iter()
+            .map(|item| {
+                let recipient = item.binding.recipient_bot;
+                let Some(capture) = self
+                    .repository
+                    .bot_library_capture(owner, recipient, item.submission.provenance.submission)
+                    .map_err(bot_failure)?
+                else {
+                    return Ok(None);
+                };
+                if matches!(capture.memory, BotCapturedMemory::Absent {}) {
+                    return Ok(None);
+                }
+                let binding = self
+                    .repository
+                    .bot_library(owner, recipient)
+                    .map_err(bot_failure)?
+                    .binding;
+                Ok(Some(ChildMemory {
+                    capture,
+                    binding,
+                    home: item.submission.workspace,
+                    reader: request.human,
+                }))
+            })
+            .collect()
+    }
+
     pub(super) fn submit_child_job(&mut self, job: Box<AskJob>) {
         let Some(pool) = &self.provider_admin else {
             job.answer(Err(unavailable_failure()));
@@ -558,14 +721,19 @@ impl WorkerState {
             }
         };
         match (std::mem::replace(&mut job.step, Step::Prepare), evidence) {
-            (Step::Pages { .. }, Evidence::Pages) => self.prepare_child_ask(job),
-            (Step::Send { .. }, Evidence::Sent(reply)) => self.settle_child_ask(job, reply),
+            (Step::Pages { .. }, Evidence::Pages(libraries)) => {
+                job.libraries = Some(libraries);
+                self.prepare_child_ask(job)
+            }
+            (Step::Send { .. }, Evidence::Sent(reply, indexes)) => {
+                self.settle_child_ask(job, reply, indexes)
+            }
             _ => job.answer(Err(unavailable_failure())),
         }
     }
 
     /// The delegate answered `RequestChild`, or could not be asked.
-    fn settle_child_ask(&mut self, job: Box<AskJob>, reply: Reply) {
+    fn settle_child_ask(&mut self, job: Box<AskJob>, reply: Reply, indexes: Vec<ChildIndex>) {
         let (owner, run, key) = (job.owner, job.parent_run, job.ask_key);
         let now = Timestamp::now();
         match reply {
@@ -601,7 +769,13 @@ impl WorkerState {
                 ) {
                     Ok((_, rows)) => {
                         for row in &rows {
-                            self.start_child_reply(owner, row);
+                            // Fail closed: a child whose index was not read
+                            // never starts without the Memory it captured.
+                            let index = indexes
+                                .get(usize::from(row.ordinal))
+                                .cloned()
+                                .unwrap_or(ChildIndex::Unavailable);
+                            self.start_child_reply(owner, row, index);
                         }
                         let answer = settled_answer(&rows).unwrap_or_else(|| Err(status_unknown()));
                         job.answer(answer);
@@ -635,8 +809,11 @@ impl WorkerState {
     }
 
     /// An admitted child's opening reply starts like any Bot reply: its
-    /// task observes the delegate from admission on.
-    fn start_child_reply(&mut self, owner: BotOwner, row: &BotChildChat) {
+    /// task observes the delegate from admission on. Its first input is the
+    /// request as sent followed by its own captured Memory index, as a reply
+    /// in its own conversation has it; an index that could not be read back
+    /// ends the reply instead.
+    fn start_child_reply(&mut self, owner: BotOwner, row: &BotChildChat, index: ChildIndex) {
         let Ok(Some(BotAdmissionReceipt::Submission(receipt))) =
             self.repository.bot_admission_receipt(
                 owner,
@@ -646,14 +823,29 @@ impl WorkerState {
         else {
             return;
         };
-        if let Some(attempt) = receipt
+        let Some(attempt) = receipt
             .intent
             .submission
             .provenance
             .ai_attempt_id
             .and_then(|id| InferenceAttemptId::parse(&id.to_string()))
-        {
-            self.start_child_bot_chat(attempt);
+        else {
+            return;
+        };
+        // A resend answered `already_created` finds its children running.
+        if self.bot_chats.contains_key(&attempt) {
+            return;
+        }
+        let block = match &index {
+            ChildIndex::Absent => Ok(None),
+            ChildIndex::Ready(bytes) => std::str::from_utf8(bytes).map(Some).map_err(|_| ()),
+            ChildIndex::Unavailable => Err(()),
+        };
+        match block {
+            Ok(block) => {
+                self.start_child_bot_chat(attempt, block.filter(|block| !block.is_empty()));
+            }
+            Err(()) => self.interrupt_bot_chat(attempt),
         }
     }
 

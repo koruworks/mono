@@ -1,9 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 //! Cohorts `m6_ask_checks`, `m6_ask_idempotent`, `m6_child_enroll_before_reply`
-//! and `m6_child_reads`. The ask runs through the real spawned worker over an
-//! in-memory ai.db, with a scripted delegate standing in for the execution
-//! owner. No Store, provider, browser or network is opened.
+//! and `m6_child_reads`; `m6_child_self` is in `tests/own_library.rs`. The ask
+//! runs through the real spawned worker over an in-memory ai.db, with a
+//! scripted delegate standing in for the execution owner. No Store,
+//! provider, browser or network is opened.
 use super::*;
+
+mod own_library;
 use crate::worker::bots::admission::make_intent;
 use crate::worker::bots::tests::{Authority, created, fixture, turn as pending};
 use koru_ai_core::bots::replay::BotChatPreparation;
@@ -170,10 +173,170 @@ struct World {
     worker: WorkerHandle,
     client: AiWorkerClient,
     owner: Arc<ChildOwner>,
+    authority: Arc<SelfAuthority>,
     parent: Bot,
     subject: RunBotSubject,
     fence: d::BotExecutionFence,
     recipients: Vec<Bot>,
+    profile: koru_ai_core::ProfileId,
+    /// `library_world` only: the first recipient's Knowledge page, and the
+    /// Memory pages of the asking Bot and of the first recipient.
+    library: Option<Library>,
+}
+
+struct Library {
+    knowledge: BotPage,
+    parent_memory: BotPage,
+    helper_memory: BotPage,
+}
+
+/// The fixture authority plus the Store captures a task's preparation takes
+/// (`capture`, `capture_memory`) and the Memory index read back, recorded so
+/// a test sees what each was asked for. Captured Memory bytes name their
+/// page, so a test can tell whose Memory reached a child.
+struct SelfAuthority {
+    inner: Arc<Authority>,
+    captured: Mutex<Vec<Vec<BotPage>>>,
+    history: Mutex<Vec<(d::DocumentVersionId, Vec<u8>)>>,
+    unreadable: std::sync::atomic::AtomicBool,
+}
+impl SelfAuthority {
+    fn marker(page: &BotPage) -> String {
+        format!("<memory-index-of-{}>", page.document)
+    }
+}
+impl BotAuthority for SelfAuthority {
+    fn owner(&self) -> Result<BotOwner, BotError> {
+        self.inner.owner()
+    }
+    fn workspace(&self, id: WorkspaceId) -> Result<koru_ai_core::ProfileId, BotError> {
+        self.inner.workspace(id)
+    }
+    fn page(&self, page: &BotPage) -> Result<(), BotError> {
+        self.inner.page(page)
+    }
+    fn inspect(
+        &self,
+        workspaces: &[WorkspaceId],
+        pages: &[BotPage],
+    ) -> Result<koru_ai_core::bots::BotAuthoritySnapshot, BotError> {
+        self.inner.inspect(workspaces, pages)
+    }
+    fn capture(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+        profile: koru_ai_core::ProfileId,
+        pages: &[BotPage],
+    ) -> Result<Vec<d::RunContextItem>, BotError> {
+        assert_eq!(owner, self.inner.owner()?);
+        assert_eq!(self.inner.workspace(workspace)?, profile);
+        self.captured.lock().unwrap().push(pages.to_vec());
+        Ok(pages
+            .iter()
+            .map(|page| d::RunContextItem::Document {
+                workspace: page.workspace,
+                document: page.document,
+                version: d::DocumentVersionId::new(),
+            })
+            .collect())
+    }
+    fn capture_memory(
+        &self,
+        owner: BotOwner,
+        reader: koru_ai_core::ProfileId,
+        binding: &BotMemoryBinding,
+        _: &Cancellation,
+    ) -> Result<PreparedMemoryCapture, MemoryAuthorityError> {
+        assert_eq!(owner, binding.owner);
+        assert_eq!(self.workspace(binding.page.workspace)?, reader);
+        let bytes = Self::marker(&binding.page).into_bytes();
+        let version = d::DocumentVersionId::new();
+        self.history.lock().unwrap().push((version, bytes.clone()));
+        Ok(PreparedMemoryCapture {
+            owner,
+            bot: binding.bot,
+            creation_request: binding.creation_request,
+            page: binding.page.clone(),
+            version,
+            nodes: vec![],
+            omitted_count: 0,
+            invalid_count: 0,
+            index_digest: *blake3::hash(&bytes).as_bytes(),
+        })
+    }
+    fn replay_memory_index(
+        &self,
+        owner: BotOwner,
+        reader: koru_ai_core::ProfileId,
+        home: WorkspaceId,
+        capture: &BotLibraryCapture,
+        binding: Option<&BotMemoryBinding>,
+        cancellation: &Cancellation,
+    ) -> Result<VerifiedMemoryIndex, MemoryAuthorityError> {
+        let BotCapturedMemory::Captured { version, .. } = &capture.memory else {
+            return self.inner.replay_memory_index(
+                owner,
+                reader,
+                home,
+                capture,
+                binding,
+                cancellation,
+            );
+        };
+        assert_eq!(self.workspace(home)?, reader);
+        if self.unreadable.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(MemoryAuthorityError::HistoryUnavailable);
+        }
+        let bytes = self
+            .history
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(v, _)| v == version)
+            .ok_or(MemoryAuthorityError::HistoryUnavailable)?
+            .1
+            .clone();
+        Ok(VerifiedMemoryIndex {
+            capture: capture.clone(),
+            bytes,
+        })
+    }
+}
+
+/// A Bot bound to its own Memory page, current after the binding.
+fn bind_memory(repo: &mut Repository, owner: BotOwner, bot: &Bot) -> (Bot, BotPage) {
+    let creation = repo
+        .prepare_bot_memory_creation(
+            owner,
+            bot.id,
+            BotRequestId::mint(),
+            bot.revision,
+            &BotMemorySeed {
+                title: "Memory".into(),
+                hash: [7; 32],
+            },
+            &"a".repeat(64),
+            2,
+        )
+        .unwrap();
+    repo.bind_bot_memory(
+        &BotMemoryConfirmation {
+            identity: creation.identity.clone(),
+            original_edit_revision: vec![1],
+            live_edit_revision: vec![1],
+        },
+        creation.observed(),
+        3,
+    )
+    .unwrap();
+    let page = repo
+        .bot_library(owner, bot.id)
+        .unwrap()
+        .binding
+        .unwrap()
+        .page;
+    (repo.bot(bot.id).unwrap().unwrap(), page)
 }
 impl World {
     fn stop(self) {
@@ -223,12 +386,52 @@ fn another(
 }
 
 fn world() -> World {
+    build_world(false)
+}
+
+/// `world`, where the asking Bot has its own Memory and the first recipient
+/// ("helper") has a Knowledge page and its own Memory.
+fn library_world() -> World {
+    build_world(true)
+}
+
+fn build_world(with_library: bool) -> World {
     let (mut repo, authority, create) = fixture();
-    let parent = created(&mut repo, authority.clone(), create);
-    let recipients = vec![
+    let mut parent = created(&mut repo, authority.clone(), create);
+    let mut recipients = vec![
         another(&mut repo, &authority, parent.home_workspace, "helper"),
         another(&mut repo, &authority, parent.home_workspace, "reviewer"),
     ];
+    let library = with_library.then(|| {
+        let owner = authority.owner().unwrap();
+        let knowledge = BotPage {
+            workspace: parent.home_workspace,
+            document: koru_ai_core::DocumentId::new(),
+        };
+        let helper = &recipients[0];
+        repo.set_bot_knowledge(
+            &PreparedBotKnowledge {
+                owner,
+                bot: helper.id,
+                request: BotRequestId::mint(),
+                expected_revision: helper.revision,
+                pages: vec![knowledge.clone()],
+            },
+            &"e".repeat(64),
+            2,
+        )
+        .unwrap();
+        let helper = repo.bot(helper.id).unwrap().unwrap();
+        let (helper, helper_memory) = bind_memory(&mut repo, owner, &helper);
+        recipients[0] = helper;
+        let (asker, parent_memory) = bind_memory(&mut repo, owner, &parent);
+        parent = asker;
+        Library {
+            knowledge,
+            parent_memory,
+            helper_memory,
+        }
+    });
     let profile = repo
         .chat_with_access(
             parent.main_chat,
@@ -239,7 +442,13 @@ fn world() -> World {
         .profile_id
         .unwrap();
     let owner = ChildOwner::new();
-    let (worker, client) = spawn(repo, authority, owner.clone());
+    let authority = Arc::new(SelfAuthority {
+        inner: authority,
+        captured: Mutex::default(),
+        history: Mutex::default(),
+        unreadable: Default::default(),
+    });
+    let (worker, client) = spawn(repo, authority.clone(), owner.clone());
     let bot = parent.clone();
     let (subject, fence) = on_writer(&client, move |state| {
         live_reply(&mut state.repository, &bot, profile)
@@ -248,10 +457,13 @@ fn world() -> World {
         worker,
         client,
         owner,
+        authority,
         parent,
         subject,
         fence,
         recipients,
+        profile,
+        library,
     }
 }
 
@@ -290,7 +502,7 @@ fn live_reply(
         &BotChatPreparation::Turn(turn.clone()),
         &intent,
         &"a".repeat(64),
-        1,
+        parent.revision,
         turn.attempt.queued_at,
     )
     .unwrap();
@@ -339,7 +551,7 @@ fn live_reply(
 
 fn spawn(
     repo: Repository,
-    authority: Arc<Authority>,
+    authority: Arc<SelfAuthority>,
     owner: Arc<ChildOwner>,
 ) -> (WorkerHandle, AiWorkerClient) {
     let mut config = WorkerConfig::new(

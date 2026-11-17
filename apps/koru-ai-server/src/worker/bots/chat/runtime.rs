@@ -138,6 +138,10 @@ impl LiveChat {
             staging: Default::default(),
         }
     }
+    /// Tests only: the first input this reply was started with.
+    pub(in crate::worker) fn input_text_for_fixture(&self) -> &str {
+        &self.input.text
+    }
 }
 pub(in crate::worker) struct StepJob {
     attempt: InferenceAttemptId,
@@ -1050,9 +1054,15 @@ impl WorkerState {
     /// with the ask (the task as the request, the pending reply); its task
     /// now observes the delegate from admission on, exactly as a Bot reply
     /// whose context job finished does, with the submission's own first
-    /// input (the task and the pages it names). `false` when the task cannot
-    /// be started now: already live, ended, or the worker is full.
-    pub(in crate::worker) fn start_child_bot_chat(&mut self, id: InferenceAttemptId) -> bool {
+    /// input (the task and the pages it names) followed by the child's own
+    /// captured Memory index, appended as `start_bot_chat_context` appends
+    /// it. `false` when the task cannot be started now: already live, ended,
+    /// or the worker is full.
+    pub(in crate::worker) fn start_child_bot_chat(
+        &mut self,
+        id: InferenceAttemptId,
+        memory: Option<&str>,
+    ) -> bool {
         if self.bot_chats.contains_key(&id) || self.bot_chats.len() >= PROVIDER_QUEUE_CAPACITY {
             return false;
         }
@@ -1065,11 +1075,20 @@ impl WorkerState {
             return false;
         }
         let submission = receipt.intent.submission;
+        let mut input = submission.input.clone();
+        if let Some(block) = memory {
+            input.text.push_str("\n\n");
+            input.text.push_str(block);
+            if input.text.len() > MAX_REPLAY_BYTES {
+                self.interrupt_bot_chat(id);
+                return false;
+            }
+        }
         self.work_started(id);
         self.bot_chats.insert(
             id,
             LiveChat {
-                input: submission.input.clone(),
+                input,
                 submission,
                 fence: None,
                 mapper: None,

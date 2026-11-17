@@ -76,6 +76,14 @@ pub struct BotChildAskItem {
     pub fingerprint: String,
     /// The recipient's configuration revision the worker read.
     pub expected_revision: u64,
+    /// The recipient's own Library capture (O160: an asked Bot runs as
+    /// itself): its Role, Knowledge and named pages as the submission's pins,
+    /// and its own Memory, exactly as a task in its own conversation captures
+    /// them. Context only: it grants no read or write beyond the reduced
+    /// policy. Required to write a new ask; `None` only when the caller is
+    /// answering a key it already used, which the repository replays before
+    /// it would write anything.
+    pub capture: Option<BotLibraryCapture>,
 }
 impl std::fmt::Debug for BotChildAskItem {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -153,6 +161,17 @@ impl BotChildAsk {
                 || parent.chat_id != self.parent_chat.as_uuid()
                 || parent.child_request != item.child_request
                 || s.request.run == self.parent_run
+            {
+                return Err(BotError::Invalid);
+            }
+            // The capture is the recipient's own, of this submission.
+            if let Some(capture) = &item.capture
+                && (capture.owner.user_scope != p.owner.user_scope
+                    || capture.owner.device != p.owner.device
+                    || capture.bot != p.bot
+                    || capture.submission != p.submission
+                    || capture.config_revision != p.config_revision
+                    || capture.validate(s.workspace).is_err())
             {
                 return Err(BotError::Invalid);
             }

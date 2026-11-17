@@ -81,10 +81,16 @@ impl WorkerState {
                 return false;
             }
         };
+        // Each child's capture was committed with its receipt; the resend
+        // reads back that same capture, never a new one.
+        let Ok(memory) = self.child_memory_of(owner, &request) else {
+            return false;
+        };
         let job = Box::new(AskJob {
             step: Step::Send {
                 owner: request.parent.owner,
                 request: Box::new(request),
+                memory,
             },
             caller: Caller::Resend { held: held.clone() },
             owner,
@@ -93,6 +99,7 @@ impl WorkerState {
             authority,
             delegate,
             deadline: Instant::now() + RESEND_DEADLINE,
+            libraries: None,
         });
         for key in held {
             self.bot_coordination.insert(key);

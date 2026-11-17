@@ -2,6 +2,7 @@
 //! The finite off-writer work of one ask: the page checks against the
 //! person's authority, and `RequestChild` to the delegate. Holds no writer
 //! state and writes nothing; its result goes back to the writer.
+use super::super::library::LibrarySources;
 use super::*;
 use koru_delegate_api::bots::BotCommand as DelegateCommand;
 use koru_delegate_core::children::ChildRequest;
@@ -12,19 +13,58 @@ pub(in crate::worker) enum Step {
     /// recipient at the ask (contract 3.3). Both Bots share the home
     /// workspace and Bots have no page-level read rule, so one check of each
     /// page under the person's authority in that workspace is both checks.
+    ///
+    /// Then each recipient's own Library (O160: an asked Bot runs as
+    /// itself), captured exactly as a task in its own conversation captures
+    /// it: its Role, Knowledge and the named pages at exact history versions,
+    /// and its own Memory. `libraries` is one per item, in order, read on the
+    /// writer from the recipient's current rows.
     Pages {
         owner: BotOwner,
         home: WorkspaceId,
         profile: koru_ai_core::ProfileId,
         pages: Vec<(u8, koru_ai_core::DocumentId)>,
+        libraries: Vec<LibrarySources>,
     },
     /// On the writer only: prepare (or replay) the whole ask.
     Prepare,
-    /// The delegate: the stored ask, sent as `RequestChild`.
+    /// The delegate: the stored ask, sent as `RequestChild`. First each
+    /// child's captured Memory index is read back for its first input, as the
+    /// context job of a reply in its own conversation reads it.
     Send {
         owner: koru_delegate_core::BotOwner,
         request: Box<ChildRequest>,
+        /// One per item, in order: `None` where no Memory was captured.
+        memory: Vec<Option<ChildMemory>>,
     },
+}
+
+/// One recipient's Library as the capture step took it: the sources the
+/// writer read, with the Memory proof filled in, and the exact history pins.
+pub(in crate::worker) struct ChildLibrary {
+    pub(super) sources: LibrarySources,
+    pub(super) pins: Vec<koru_delegate_core::RunContextItem>,
+}
+
+/// What reading a child's captured Memory index back needs: the stored
+/// capture, the recipient's binding, and the reader of its home workspace.
+pub(in crate::worker) struct ChildMemory {
+    pub(super) capture: BotLibraryCapture,
+    pub(super) binding: Option<BotMemoryBinding>,
+    pub(super) home: WorkspaceId,
+    pub(super) reader: koru_ai_core::ProfileId,
+}
+
+/// A child's Memory index for its first input.
+#[derive(Clone)]
+pub(in crate::worker) enum ChildIndex {
+    /// No Memory was captured: the first input is the request as sent.
+    Absent,
+    /// The captured index, its digest checked against the capture.
+    Ready(Vec<u8>),
+    /// The captured index cannot be read back. The ask is not sent; should
+    /// a child still be started without one, its reply ends instead.
+    Unavailable,
 }
 
 /// Who is owed the ask's answer.
@@ -53,11 +93,15 @@ pub(in crate::worker) struct AskJob {
     pub(super) authority: Arc<dyn BotAuthority>,
     pub(super) delegate: Port,
     pub(super) deadline: Instant,
+    /// Each recipient's captured Library, once the capture step ran. `None`
+    /// for a key this Run already used (answered from its rows) and a resend.
+    pub(super) libraries: Option<Vec<ChildLibrary>>,
 }
 
 pub(in crate::worker) enum Evidence {
-    Pages,
-    Sent(Reply),
+    Pages(Vec<ChildLibrary>),
+    /// The delegate's answer and each child's Memory index, in order.
+    Sent(Reply, Vec<ChildIndex>),
 }
 
 /// Retryable refusals are asked again inside the call, after 250 ms doubling
@@ -104,6 +148,7 @@ impl AskJob {
                 home,
                 profile,
                 pages,
+                libraries,
             } => {
                 let wanted: Vec<BotPage> = pages
                     .iter()
@@ -132,10 +177,125 @@ impl AskJob {
                         return Err(failure);
                     }
                 }
-                Ok(Evidence::Pages)
+                let mut captured = Vec::with_capacity(libraries.len());
+                for (index, sources) in libraries.iter().enumerate() {
+                    captured.push(self.capture_library(
+                        *owner,
+                        *home,
+                        *profile,
+                        &proof,
+                        index as u8,
+                        sources.clone(),
+                    )?);
+                }
+                Ok(Evidence::Pages(captured))
             }
             Step::Prepare => Err(unavailable_failure()),
-            Step::Send { owner, request } => Ok(Evidence::Sent(self.send(*owner, request))),
+            Step::Send {
+                owner,
+                request,
+                memory,
+            } => {
+                // Read back before the delegate hears of the ask: a child
+                // whose captured Memory cannot be read must not be admitted
+                // to run without it. Nothing changes anywhere on a failure:
+                // the receipts stay `prepared` and the answer is
+                // `child_status_unknown` (an earlier send whose reply was
+                // lost may have been admitted; only the delegate knows).
+                let mut indexes = Vec::with_capacity(memory.len());
+                for memory in memory {
+                    match self.read_index(memory.as_ref()) {
+                        ChildIndex::Unavailable => return Err(status_unknown()),
+                        index => indexes.push(index),
+                    }
+                }
+                self.live()?;
+                Ok(Evidence::Sent(self.send(*owner, request), indexes))
+            }
+        }
+    }
+
+    /// The cancellation a Store read of this job honors.
+    fn cancellation(&self) -> Cancellation {
+        match &self.caller {
+            Caller::Tool { request, .. } => request.cancellation.clone(),
+            Caller::Resend { .. } => Cancellation::default(),
+        }
+    }
+
+    /// One recipient's Library, through the same two Store captures a task
+    /// in its own conversation takes (`preparation.rs`): the exact history of
+    /// its Role, Knowledge and the named pages, and its Memory when one is
+    /// bound. A capture that fails refuses the whole ask: a child never runs
+    /// with part of itself.
+    fn capture_library(
+        &self,
+        owner: BotOwner,
+        home: WorkspaceId,
+        profile: koru_ai_core::ProfileId,
+        proof: &koru_ai_core::bots::BotAuthoritySnapshot,
+        index: u8,
+        mut sources: LibrarySources,
+    ) -> ApiResult<ChildLibrary> {
+        // Retryable only when the Store could not answer; anything else says
+        // the recipient cannot run as itself now (its Role page is gone, say).
+        let refused = |retryable: bool| {
+            if retryable {
+                unavailable_failure()
+            } else {
+                coded(codes::RECIPIENT_UNAVAILABLE, Some(index))
+            }
+        };
+        let pins = self
+            .authority
+            .capture(owner, home, profile, &sources.pages())
+            .map_err(|error| refused(matches!(error, BotError::Unavailable | BotError::Storage)))?;
+        self.live()?;
+        if let Some(binding) = &sources.memory_binding {
+            let reader = proof
+                .workspace(binding.page.workspace)
+                .map_err(|_| denied())?;
+            let memory = self
+                .authority
+                .capture_memory(binding.owner, reader, binding, &self.cancellation())
+                .map_err(|error| {
+                    refused(matches!(
+                        error,
+                        MemoryAuthorityError::Authority(BotError::Unavailable | BotError::Storage)
+                    ))
+                })?;
+            memory
+                .validate_for_binding(binding)
+                .map_err(|_| refused(false))?;
+            sources.memory_capture = Some(memory);
+            self.live()?;
+        }
+        Ok(ChildLibrary { sources, pins })
+    }
+
+    /// A child's captured Memory index, read back exactly as the context job
+    /// of a reply in its own conversation reads it, and checked against the
+    /// capture's digest. Never logged; it goes only into the child's input.
+    fn read_index(&self, memory: Option<&ChildMemory>) -> ChildIndex {
+        let Some(memory) = memory else {
+            return ChildIndex::Absent;
+        };
+        match self.authority.replay_memory_index(
+            memory.capture.owner,
+            memory.reader,
+            memory.home,
+            &memory.capture,
+            memory.binding.as_ref(),
+            &self.cancellation(),
+        ) {
+            Ok(index)
+                if index.capture == memory.capture
+                    && index.validate_shape(memory.home).is_ok()
+                    && *blake3::hash(&index.bytes).as_bytes() == memory.capture.index_digest =>
+            {
+                ChildIndex::Ready(index.bytes)
+            }
+            _ => ChildIndex::Unavailable,
         }
     }
 

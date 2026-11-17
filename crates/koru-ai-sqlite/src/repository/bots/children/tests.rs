@@ -130,6 +130,7 @@ fn item(parent: &Parent, recipient: &Bot) -> BotChildAskItem {
     };
     submission.input.idempotency_key = d::IdempotencyKey::mint();
     assert!(submission.valid());
+    let capture = own_capture(parent.owner, recipient, &submission);
     BotChildAskItem {
         child_request,
         chat: conversation,
@@ -140,6 +141,27 @@ fn item(parent: &Parent, recipient: &Bot) -> BotChildAskItem {
         },
         fingerprint: "b".repeat(64),
         expected_revision: recipient.revision,
+        capture: Some(capture),
+    }
+}
+
+/// The recipient's own Library capture of this submission: no Knowledge and
+/// no Memory bound, as a fresh Bot has.
+fn own_capture(
+    owner: BotOwner,
+    recipient: &Bot,
+    submission: &d::BotSubmission,
+) -> BotLibraryCapture {
+    BotLibraryCapture {
+        version: 1,
+        owner,
+        bot: recipient.id,
+        submission: submission.provenance.submission,
+        config_revision: recipient.revision,
+        knowledge: vec![],
+        memory: BotCapturedMemory::Absent {},
+        // The repository stores the digest as given; the worker computes it.
+        index_digest: [0; 32],
     }
 }
 
@@ -378,6 +400,76 @@ fn m6_child_chat_rows_an_ask_is_prepared_whole_and_replayed_by_its_key() {
             assert!(!row.contains("Question") && !row.contains("Asked"), "{row}");
         }
     }
+}
+
+// ---- m6_child_self (O160: an asked Bot runs as itself) -----------------------
+
+#[test]
+fn m6_child_self_each_child_commits_its_own_capture_with_its_admission() {
+    let mut parent = parent();
+    let (scout, scribe) = (
+        recipient(&mut parent, "scout"),
+        recipient(&mut parent, "scribe"),
+    );
+    let request = ask(&parent, vec![item(&parent, &scout), item(&parent, &scribe)]);
+    let rows = prepared(parent.repo.prepare_bot_child_ask(&request, at(6)).unwrap());
+    for (row, item) in rows.iter().zip(&request.items) {
+        let stored = parent
+            .repo
+            .bot_library_capture(
+                parent.owner,
+                row.recipient_bot,
+                BotRequestId::from_uuid(row.child_request.as_uuid()),
+            )
+            .unwrap()
+            .expect("the child's capture is committed with its receipt");
+        assert_eq!(Some(&stored), item.capture.as_ref());
+        assert_eq!(stored.bot, row.recipient_bot, "the recipient's own");
+        assert_ne!(stored.bot, parent.bot.id, "never the asker's");
+    }
+    // The asker's own submission keeps its own capture, untouched.
+    let asker = parent
+        .repo
+        .bot_library_capture(
+            parent.owner,
+            parent.bot.id,
+            parent.submission.provenance.submission,
+        )
+        .unwrap();
+    assert!(asker.is_none_or(|capture| capture.bot == parent.bot.id));
+}
+
+#[test]
+fn m6_child_self_a_new_ask_without_a_capture_is_refused_and_a_replay_needs_none() {
+    let mut parent = parent();
+    let scout = recipient(&mut parent, "scout");
+    let before = counts(&parent.repo);
+    let mut bare = ask(&parent, vec![item(&parent, &scout)]);
+    bare.items[0].capture = None;
+    assert_eq!(
+        parent.repo.prepare_bot_child_ask(&bare, at(6)),
+        Err(BotError::Invalid)
+    );
+    assert_eq!(counts(&parent.repo), before, "nothing was written");
+    // A capture of another Bot is not this child's.
+    let mut foreign = ask(&parent, vec![item(&parent, &scout)]);
+    if let Some(capture) = foreign.items[0].capture.as_mut() {
+        capture.bot = parent.bot.id;
+    }
+    assert_eq!(
+        parent.repo.prepare_bot_child_ask(&foreign, at(6)),
+        Err(BotError::Invalid)
+    );
+    assert_eq!(counts(&parent.repo), before);
+    // Written once with its capture, the same key answers without one.
+    let request = ask(&parent, vec![item(&parent, &scout)]);
+    let rows = prepared(parent.repo.prepare_bot_child_ask(&request, at(6)).unwrap());
+    let mut replay = request.clone();
+    replay.items[0].capture = None;
+    assert_eq!(
+        parent.repo.prepare_bot_child_ask(&replay, at(7)).unwrap(),
+        BotChildAskPrepared::Retained(rows)
+    );
 }
 
 #[test]
