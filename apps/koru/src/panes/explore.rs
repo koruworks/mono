@@ -987,6 +987,10 @@ pub struct ExploreView {
     quick_input: Option<koru_ui::text_input::TextInput>,
     /// Whether typing in the sidebar goes to the quick filter.
     quick_armed: bool,
+    /// The filter holds the keyboard when no row can: nothing matched, so
+    /// there is nowhere to land the focus ring, and Escape still has to be
+    /// able to put the filter away.
+    quick_holds_keyboard: bool,
     /// Rows the filter kept only because a match is inside them.
     quick_dim: HashSet<NodeId>,
     quick_matches: usize,
@@ -1651,6 +1655,11 @@ impl ExploreView {
     /// Whether the tree holds the keyboard — and therefore whether the arrows
     /// and Enter belong to it rather than to the document.
     pub fn has_focus(&self) -> bool {
+        // A filter with nothing under it still holds the keyboard, so Escape
+        // reaches it. Cleared with the filter and with every other give-back.
+        if self.quick_holds_keyboard && self.quick.is_some() {
+            return true;
+        }
         // The artifacts column holds the keyboard on its own terms — its
         // rows are not `self.rows` — and *the column has the keyboard* is
         // one question however the mode answers it.
@@ -1697,6 +1706,8 @@ impl ExploreView {
     /// decide whether the press that did it was worth a repaint.
     pub fn clear_focus(&mut self) -> bool {
         self.focus_parked = None;
+        let filter_had = self.quick_holds_keyboard;
+        self.quick_holds_keyboard = false;
         let artifacts = self.mode == NavigatorMode::Artifacts
             && self.artifacts.key(
                 Rect::new(0.0, 0.0, 1.0, 1.0),
@@ -1712,7 +1723,7 @@ impl ExploreView {
         });
         let rail_had_focus = self.rail.clear_queue_focus();
         let tree_had_focus = self.focus.take().is_some();
-        tree_had_focus || artifacts || chats || socials || rail_had_focus
+        tree_had_focus || artifacts || chats || socials || rail_had_focus || filter_had
     }
 
     /// Take the keyboard, landing on the row that is already open if one is —
@@ -1736,15 +1747,21 @@ impl ExploreView {
         // list holds it, else the newest.
         if self.mode == NavigatorMode::Chats {
             let top = self.rows_top(area);
-            return self.chats.focus_first(area, top) || self.chats.has_keyboard();
+            if self.chats.focus_first(area, top) || self.chats.has_keyboard() {
+                return true;
+            }
+            return self.hold_keyboard_for_filter();
         }
         if self.showing_tasks() {
             let top = self.rows_top(area);
             self.focus = None;
-            return self.rail.focus_queues(area, top);
+            if self.rail.focus_queues(area, top) {
+                return true;
+            }
+            return self.hold_keyboard_for_filter();
         }
         if self.rows.is_empty() {
-            return false;
+            return self.hold_keyboard_for_filter();
         }
         let landing = self
             .selected
@@ -1753,6 +1770,25 @@ impl ExploreView {
         self.focus = Some(self.rows[landing].node);
         self.scroll_into_view(area, landing);
         true
+    }
+
+    /// No row can take the keyboard, but a showing filter still has to, so
+    /// Escape can put it away. `false` when there is no filter.
+    fn hold_keyboard_for_filter(&mut self) -> bool {
+        if self.quick.is_none() {
+            return false;
+        }
+        self.quick_holds_keyboard = true;
+        true
+    }
+
+    /// A press on empty ground while a filter is showing: the pane takes the
+    /// keyboard, the way a press on a row does, so the next Escape clears it.
+    fn take_quick_filter_keyboard(&mut self, area: Rect) {
+        if self.quick.is_none() || self.has_focus() {
+            return;
+        }
+        let _ = self.focus_tree(area);
     }
 
     /// Which row the keyboard is on, as an index into the visible rows.
@@ -5309,7 +5345,13 @@ impl ExploreView {
             // A queue or a list opens a page with nothing to type in: the
             // next letters are the filter's.
             self.quick_armed = true;
-            return match self.rail.mouse_down(area, top, x, y, mods.ctrl, mods.shift) {
+            let request = self.rail.mouse_down(area, top, x, y, mods.ctrl, mods.shift);
+            // Nothing matched: the press is on empty ground, and that is
+            // still activating the pane.
+            if request.is_none() {
+                self.take_quick_filter_keyboard(area);
+            }
+            return match request {
                 Some(request) => Outcome::Tasks(request),
                 None => Outcome::Consumed,
             };
@@ -5348,7 +5390,14 @@ impl ExploreView {
             }
             // A press on a chat row is being in the sidebar too.
             self.quick_armed = true;
+            // A press off every row is the pane's empty ground. A press on a
+            // row keeps the meaning it already had and does not also pull the
+            // keyboard off the chat it just opened.
+            let on_row = self.chats.chat_at(area, top, x, y).is_some();
             self.chats.mouse_down_with(area, top, x, y, ctrl, shift);
+            if !on_row {
+                self.take_quick_filter_keyboard(area);
+            }
             return self.chats_outcome();
         }
 
@@ -5380,7 +5429,9 @@ impl ExploreView {
 
         let Some(i) = self.row_at(area, x, y) else {
             // Still ours — a press on the column's background must not fall
-            // through to whatever is behind it.
+            // through to whatever is behind it. While a filter is showing,
+            // that press is also how the pane takes the keyboard.
+            self.take_quick_filter_keyboard(area);
             return Outcome::Consumed;
         };
         // Pointing at a row is also how the tree takes the keyboard, so the

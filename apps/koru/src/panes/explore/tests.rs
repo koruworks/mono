@@ -7316,6 +7316,53 @@ fn typing_in_the_sidebar_filters_the_tree_and_escape_restores_it() {
     assert!(!pressed(&mut view, NamedKey::Escape, none));
 }
 
+/// The filter stays after the keyboard has gone back to the page. Activating
+/// the pane — a press on its empty ground, which is all a filter with no
+/// matches has — gives Escape the filter again, armed or not.
+#[test]
+fn activating_the_pane_while_it_is_filtered_lets_escape_clear_it() {
+    use winit::keyboard::ModifiersState;
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(typed(&mut view, "zzzz"));
+    assert!(labels(&view).is_empty());
+    // The page took the keyboard. The filter is still showing.
+    view.clear_focus();
+    view.arm_quick_filter(false);
+    assert!(!view.has_focus());
+    let a = area();
+    view.mouse_down(a, (1200.0, 1200.0), a.x + 16.0, a.y + a.h * 0.5, false);
+    assert!(view.has_focus(), "a press in the pane takes the keyboard");
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
+
+    // The same press on the Tasks rail, whose answers are not these rows.
+    view.show_tasks();
+    view.arm_quick_filter(true);
+    assert!(view.focus_tree(a));
+    assert!(typed(&mut view, "Story"));
+    assert_eq!(view.quick_filter(), Some("Story"));
+    assert_eq!(view.quick_match_count(), 0);
+    view.clear_focus();
+    assert!(!view.has_focus());
+    view.mouse_down(a, (1200.0, 1200.0), a.x + 16.0, a.y + a.h * 0.5, false);
+    assert!(view.has_focus(), "the tasks pane takes the keyboard too");
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+}
+
 /// A chord is never filter text, and another view starts unfiltered.
 #[test]
 fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {

@@ -13,7 +13,10 @@
 //! page; it is disarmed by opening a document or a chat with a click or
 //! Enter, because then the next letters are meant for that page (owner,
 //! 2026-11-16). The filter itself stays, with its rows, until it is cleared:
-//! Escape, the `×`, or another view.
+//! Escape, the `×`, or another view. Escape does that whenever the pane holds
+//! the keyboard, armed or not — a press on the pane's empty ground (a filter
+//! that matched nothing has no row to land on) is what gives it the keyboard
+//! back, so the next Escape can put the filter away.
 //!
 //! **What shows.** A row whose name holds every word typed, whatever the
 //! case, and above it the rows it is inside, dim, so a match in a shut branch
@@ -181,7 +184,18 @@ impl ExploreView {
         mods: winit::keyboard::ModifiersState,
     ) -> bool {
         use winit::keyboard::{Key, NamedKey};
-        if !self.quick_armed || !self.quick_filterable() {
+        if !self.quick_filterable() {
+            return false;
+        }
+        // A filter that is showing goes away on Escape whether or not the
+        // next letter would come here. The second Escape is not the filter's:
+        // with nothing left to clear, it falls through and gives the keyboard
+        // back.
+        if self.quick.is_some() && matches!(key, Key::Named(NamedKey::Escape)) {
+            self.clear_quick_filter();
+            return true;
+        }
+        if !self.quick_armed {
             return false;
         }
         if matches!(
@@ -202,9 +216,6 @@ impl ExploreView {
                 engine,
                 theme::role::row(),
             ));
-        } else if matches!(key, Key::Named(NamedKey::Escape)) {
-            self.clear_quick_filter();
-            return true;
         }
         let Some(input) = self.quick_input.as_mut() else {
             return false;
@@ -230,6 +241,7 @@ impl ExploreView {
 
     /// Put the filter away. `true` when there was one.
     pub fn clear_quick_filter(&mut self) -> bool {
+        self.quick_holds_keyboard = false;
         if self.quick.take().is_none() {
             return false;
         }
