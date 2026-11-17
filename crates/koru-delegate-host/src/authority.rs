@@ -160,6 +160,15 @@ impl McpEndpoints for GatewayAuthority {
             .publish_wait(run, wait)
             .map_err(|e| PortError::new(Port::Mcp, e.code, "Run decision wait"))
     }
+    fn publish_child_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<koru_delegate_runtime::ChildWaitMark>,
+    ) -> PortResult<()> {
+        self.projection
+            .publish_child_wait(run, wait)
+            .map_err(|e| PortError::new(Port::Mcp, e.code, "Run child wait"))
+    }
     fn launch(&mut self, launch: McpLaunch<'_>) -> PortResult<DelegationLaunch> {
         let run = launch.run;
         let tools = launch_tools(&launch.authority, &self.tools);

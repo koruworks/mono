@@ -324,6 +324,15 @@ const DELEGATE_PRIOR_ATTEMPT: &[&str] = &["ended", "unknown"];
 /// re-submitted with the recorded pins and the artifacts so far.
 const DELEGATE_RESUME_SEAM: &[&str] = &["native", "recorded_context"];
 
+/// The two stored states of a child request (M6).
+const DELEGATE_CHILD_STATE: &[&str] = &["open", "settled"];
+
+/// A child request's own 15-minute clock.
+const DELEGATE_CHILD_CLOCK: &[&str] = &["running", "paused", "stopped"];
+
+/// Who settled a child request. A request settles exactly once.
+const DELEGATE_CHILD_SETTLED_BY: &[&str] = &["child_ended", "timed_out", "parent_stopped"];
+
 /// `PrivateOperationKind` (M5): what one private operation does. One read.
 const DELEGATE_PRIVATE_KIND: &[&str] = &["read_item"];
 
@@ -1854,6 +1863,79 @@ pub const REGISTRY: &[EventSpec] = &[
               that stage, under an id derived from the run and the operation, \
               so a retry is deduplicated and an effect has one row. Every \
               final stage is final. The actor is the orchestrator.",
+    },
+    // ------------------------------------------------ child requests (M6)
+    //
+    // One Bot Run asked another Bot. Both rows are content-free wakes on the
+    // parent Run's chain: a reader reads the requests from the delegate, and
+    // no subscriber starts work from a row. `run` is the parent Run, as on
+    // every `delegate.*` row, so the contract's `parent_run` is not repeated.
+    //
+    // The contract's third item, an attention token `waiting_for_bot`, is
+    // not registered: this registry has no attention vocabulary. A waiting
+    // marker is a fact of the Run document, not an attribute of any row.
+    EventSpec {
+        name: "delegate.child.requested",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr("run", "The parent run: the one that asked."),
+            id_attr("request", "The child request's own id."),
+            id_attr("child_run", "The run admitted for the Bot that was asked."),
+            id_attr("parent_bot", "The Bot that asked."),
+            id_attr("recipient_bot", "The Bot that was asked."),
+            count_attr(
+                "revision",
+                "The request's committed revision this row reports. One row \
+                 per revision.",
+            ),
+        ],
+        doc: "One Bot run asked another Bot. Published after the transaction \
+              that admitted the ask, once per request, under an id derived \
+              from the request and its revision, so a retry is deduplicated. \
+              A wake, never a fact to act on: it carries no task, title or \
+              page. The actor is the orchestrator.",
+    },
+    EventSpec {
+        name: "delegate.child.changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[
+            id_attr("run", "The parent run: the one that asked."),
+            id_attr("request", "The child request's own id."),
+            id_attr("child_run", "The run admitted for the Bot that was asked."),
+            id_attr("parent_bot", "The Bot that asked."),
+            id_attr("recipient_bot", "The Bot that was asked."),
+            count_attr(
+                "revision",
+                "The request's committed revision this row reports. One row \
+                 per revision.",
+            ),
+            token_attr(
+                "state",
+                DELEGATE_CHILD_STATE,
+                "Whether the request is still open.",
+            ),
+            token_attr(
+                "clock",
+                DELEGATE_CHILD_CLOCK,
+                "The request's clock: running, paused with its parent Bot, or \
+                 stopped because the request settled. Never a time.",
+            ),
+            optional(token_attr(
+                "settled_by",
+                DELEGATE_CHILD_SETTLED_BY,
+                "Who settled the request, exactly for `settled`: the child's \
+                 own ending, the timeout, or the parent's stop.",
+            )),
+        ],
+        doc: "A later committed change of a child request: its clock paused \
+              or restarted, or it settled. Published after the change is \
+              committed, under an id derived from the request and its \
+              revision. A wake: a reader reads the request from the delegate. \
+              The actor is the orchestrator.",
     },
     // ------------------------------------------- the Store's catalog facts
     //

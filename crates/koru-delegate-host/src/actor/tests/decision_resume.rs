@@ -373,6 +373,14 @@ fn an_idle_resume_turn_releases_the_maintenance_tick_and_a_bot_command_rearms_it
         "no open wait, no step"
     );
     assert!(!actor.decision_resume_pending);
+    // M6: a restart may find open child waits too; an idle child turn
+    // releases its half of the deadline the same way.
+    assert!(actor.child_resume_pending);
+    assert_eq!(
+        actor.advance_child_resume(),
+        crate::actor::child_resume::ChildTurn::Idle
+    );
+    assert!(!actor.child_resume_pending);
     assert!(
         !actor.publications_pending(),
         "an idle actor keeps no maintenance deadline"
@@ -391,5 +399,9 @@ fn an_idle_resume_turn_releases_the_maintenance_tick_and_a_bot_command_rearms_it
     assert!(
         actor.decision_resume_pending,
         "a decision command may have opened a wait"
+    );
+    assert!(
+        actor.child_resume_pending,
+        "a Bot command may have opened a child wait"
     );
 }

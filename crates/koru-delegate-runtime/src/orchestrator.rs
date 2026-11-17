@@ -11,6 +11,7 @@ mod bot_boot;
 mod bot_controls;
 mod bot_delivery;
 mod bots;
+mod children;
 mod control;
 mod create;
 mod decisions;
@@ -37,6 +38,9 @@ use koru_delegate_scope::{ReconcileReport, ScopeClaims, ScopeIdentity, ScopeRefu
 
 use crate::{CaptureFailure, PortError, Ports, SessionEvents, SourceRefusal};
 
+pub use children::{
+    CHILD_STALL_LIMIT_MS, ChildClockSample, ChildClockTick, ChildEnrollmentBridge, ChildResumeStep,
+};
 pub use create::CreateIntentStatus;
 pub use decisions::{DecisionEditRequest, DecisionEnrollmentBridge, DecisionResumeStep};
 pub use deletion::{Purged, RunPlace};
@@ -376,6 +380,8 @@ pub struct Orchestrator {
     /// Run and operation. Bounded; only a convenience: the event id is
     /// derived from the same pair, so a repeat is deduplicated by the journal.
     private_settled: std::collections::BTreeSet<(RunId, uuid::Uuid)>,
+    /// Working memory of the child waits this process drives (M6).
+    children: children::ChildState,
 }
 
 impl Orchestrator {
@@ -394,6 +400,7 @@ impl Orchestrator {
             decision_authority: std::collections::BTreeMap::new(),
             decision_authority_seeded: false,
             private_settled: std::collections::BTreeSet::new(),
+            children: children::ChildState::default(),
         }
     }
 

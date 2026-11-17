@@ -23,9 +23,21 @@ pub use koru_delegate_core::{
 };
 use serde::{Deserialize, Serialize};
 
+mod children;
 mod decisions;
 mod private;
 mod routine_control;
+pub use children::{
+    BOT_CHILD_RESUME_FLOOR_MS, BOT_CHILD_WAIT_MS, BotChildWaitCleanupIntentV1,
+    BotChildWaitEnrollmentKey, BotChildWaitEnrollmentReply, BotChildWaitObservation,
+    CHILD_DOCUMENT_LIMIT, CHILD_FAILURES, CHILD_FRAME_LIMIT, CHILD_REQUEST_LIMIT,
+    CHILD_WAIT_UNKNOWN, CHILD_WAIT_WIRE_LIMIT, CHILD_WIRE_LIMIT, ChildClock, ChildParent,
+    ChildPolicyRef, ChildRefusal, ChildRefused, ChildRequest, ChildRequestBindingV1,
+    ChildRequestId, ChildRequestItem, ChildRequestReceipt, ChildRequestState, ChildRequested,
+    ChildRequestedOutcome, ChildRequests, ChildResume, ChildSettledBy, ChildWaitDisposition,
+    ChildWaitView, EnrollBotChildWaitCleanup, ReadBotChildWaitCleanup, child_failure,
+    child_frame_oversized, child_refused,
+};
 pub use decisions::{DecisionAnswerRequest, DecisionEditProposal, DecisionReceiptView};
 pub use koru_delegate_core::{
     ROUTINE_CONTROL_WIRE_LIMIT, RoutineControlLifecycle, RoutineControlOutcome,
@@ -398,8 +410,51 @@ pub enum BotCommand {
         operation_id: uuid::Uuid,
         dispatcher: PrivateDispatcherId,
     },
+    /// IPC 19, sent by the AI worker only: one ask of one to three other
+    /// Bots. `request.parent` is the parent Run's exact executing attempt and
+    /// turn; each item carries the child's own version 1 submission with
+    /// `provenance.parent` set. One ledger transaction admits every child,
+    /// opens the parent's wait and freezes its cleanup intent, or does
+    /// nothing. `boot` is the delegate boot this owner learned from `Hello`.
+    RequestChild {
+        request: ChildRequest,
+        boot: koru_delegate_core::DelegateBootId,
+    },
+    /// IPC 19: the parent Run's child requests in creation order, with its
+    /// open child wait. History only: it grants no stop, resume or result.
+    ReadChildRequests {
+        subject: BotRunKey,
+    },
+    /// IPC 19: the retained observation of one child wait, for the AI
+    /// owner's terminal interceptor. Historical; never permission to stop.
+    ReadBotChildWait {
+        owner: koru_delegate_core::BotOwner,
+        bot: koru_delegate_core::BotId,
+        run: koru_delegate_core::RunId,
+        wait_id: koru_delegate_core::decisions::BotWaitId,
+    },
 }
 impl BotCommand {
+    /// IPC 19 child commands only: whether the command is well formed, and
+    /// for the two reads, within the 8 KiB encoded bound. `None` for every
+    /// other command. `RequestChild` carries child submissions and keeps the
+    /// existing frame bound. The sender checks it while encoding and the
+    /// delegate before it acts.
+    pub fn child_valid(&self) -> Option<bool> {
+        Some(match self {
+            Self::RequestChild { request, .. } => children::request_valid(request),
+            Self::ReadChildRequests { subject } => {
+                children::subject_valid(subject) && children::within(self, CHILD_WIRE_LIMIT)
+            }
+            Self::ReadBotChildWait {
+                bot, run, wait_id, ..
+            } => {
+                children::wait_subject_valid(*bot, *run, *wait_id)
+                    && children::within(self, CHILD_WIRE_LIMIT)
+            }
+            _ => return None,
+        })
+    }
     /// IPC 18 private commands only: whether the command is well formed, and
     /// for the three that carry no policy proof, within the 16 KiB encoded
     /// bound. `None` for every other command. The sender checks it while
@@ -486,6 +541,9 @@ impl BotCommand {
             | Self::ConsumePrivateDecision { fence, .. }
             | Self::PreparePrivateEffect { fence, .. } => Some(&fence.owner),
             Self::AnnouncePrivateDispatcher { owner, .. } => Some(owner),
+            Self::RequestChild { request, .. } => Some(&request.parent.owner),
+            Self::ReadChildRequests { subject } => Some(&subject.owner),
+            Self::ReadBotChildWait { owner, .. } => Some(owner),
             Self::AnswerDecision { answer, .. } => Some(&answer.owner),
             Self::ReadBotDecisionWait { owner, .. } => Some(owner),
             Self::ControlRoutine { route, .. } | Self::TestRoutine { route, .. } => {
@@ -640,8 +698,52 @@ pub enum BotReply {
         dispatcher: PrivateDispatcherId,
         resolved: u16,
     },
+    /// IPC 19: an admitted ask, or the exact replay of one. `enrollment` is
+    /// the cleanup intent frozen in the admitting transaction; `receipts`
+    /// holds one per item in the same order.
+    ChildRequested {
+        outcome: ChildRequestedOutcome,
+        wait: ChildWaitView,
+        enrollment: BotChildWaitCleanupIntentV1,
+        receipts: Vec<ChildRequestReceipt>,
+    },
+    /// IPC 19: a parent Run's requests (at most three, in creation order) and
+    /// its open child wait, if any.
+    ChildRequests {
+        wait: Option<ChildWaitView>,
+        requests: Vec<ChildRequestReceipt>,
+    },
+    /// IPC 19: the retained observation of one child wait. An unknown wait
+    /// is the refusal `bot_child_wait_unknown`, never this reply.
+    ChildWait {
+        observation: BotChildWaitObservation,
+    },
 }
 impl BotReply {
+    /// IPC 19 child replies only: well formed and within their encoded bound
+    /// (8 KiB; 16 KiB for `child_wait`). `None` for every other reply.
+    pub fn child_valid(&self) -> Option<bool> {
+        Some(match self {
+            Self::ChildRequested {
+                wait,
+                enrollment,
+                receipts,
+                ..
+            } => {
+                children::requested_valid(wait, enrollment, receipts)
+                    && children::within(self, CHILD_WIRE_LIMIT)
+            }
+            Self::ChildRequests { wait, requests } => {
+                children::requests_valid(wait.as_ref(), requests)
+                    && children::within(self, CHILD_WIRE_LIMIT)
+            }
+            Self::ChildWait { observation } => {
+                children::observation_valid(observation)
+                    && children::within(self, CHILD_WAIT_WIRE_LIMIT)
+            }
+            _ => return None,
+        })
+    }
     /// IPC 18 private replies only: well formed and within the 16 KiB encoded
     /// bound. `None` for every other reply.
     pub fn private_valid(&self) -> Option<bool> {
@@ -848,13 +950,21 @@ impl LocalBotDelegate {
                 false,
             ));
         }
+        if command.child_valid() == Some(false) {
+            return Err(crate::Failure::new(
+                "invalid_request",
+                "The child request is malformed or too large.",
+                false,
+            ));
+        }
         Ok(())
     }
     fn answer(response: crate::ipc::Response) -> Result<BotReply, crate::Failure> {
         match response {
             crate::ipc::Response::Bot(reply)
                 if reply.routine_control_valid() != Some(false)
-                    && reply.private_valid() != Some(false) =>
+                    && reply.private_valid() != Some(false)
+                    && reply.child_valid() != Some(false) =>
             {
                 Ok(reply)
             }

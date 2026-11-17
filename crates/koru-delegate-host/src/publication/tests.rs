@@ -226,6 +226,7 @@ fn publication_worker_shutdown_with_queued_request_returns_handle() {
         ticket: None,
         waiting: false,
         enrollment: EnrollmentSlot::new(mpsc::sync_channel(1).1),
+        child: ChildEnrollmentSlot::new(mpsc::sync_channel(1).1),
     };
     let (start, applies, dropped) = fixture();
     let ticket = start.ticket;
@@ -336,6 +337,7 @@ fn publication_worker_shutdown_records_actual_loss_when_thread_ends_without_repl
         ticket: None,
         waiting: false,
         enrollment: EnrollmentSlot::new(mpsc::sync_channel(1).1),
+        child: ChildEnrollmentSlot::new(mpsc::sync_channel(1).1),
     };
     let (start, applies, dropped) = fixture();
     let ticket = start.ticket;

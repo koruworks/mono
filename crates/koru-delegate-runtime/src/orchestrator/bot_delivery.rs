@@ -11,6 +11,7 @@ use koru_delegate_core::{
 use koru_delegate_sqlite::AttemptPhase;
 use koru_session_protocol::{AgentEvent, HandoverState, ManagedState};
 
+mod child;
 mod decision;
 
 impl Orchestrator {
@@ -68,9 +69,18 @@ impl Orchestrator {
             match mirrored {
                 Some(turn) => turn,
                 // After a restart or settlement: the durable acknowledgment.
-                None => self
-                    .decision_resume_turn(key.run, row.attempt, row.generation, session)?
-                    .ok_or_else(|| refused("bot_fenced"))?,
+                None => match self.decision_resume_turn(
+                    key.run,
+                    row.attempt,
+                    row.generation,
+                    session,
+                )? {
+                    Some(turn) => turn,
+                    // The recorded successor of a child wait (M6).
+                    None => self
+                        .child_resume_turn(key.run, row.attempt, row.generation, session)?
+                        .ok_or_else(|| refused("bot_fenced"))?,
+                },
             }
         };
         let header = self.header(key.run)?;

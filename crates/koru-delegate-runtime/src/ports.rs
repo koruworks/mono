@@ -285,9 +285,11 @@ pub trait RunStore: ScheduleLedger {
     ) -> Result<WriteOutcome, LedgerError>;
 }
 
+mod children;
 mod private;
 mod publication;
 mod routines;
+pub use children::*;
 pub use private::*;
 pub use publication::*;
 pub use routines::*;
@@ -1370,6 +1372,21 @@ pub trait RunEvents {
         let _ = (event, fact);
         Ok(())
     }
+    /// `delegate.child.requested` and `delegate.child.changed` (M6): one
+    /// committed revision of one child request. Called after the ledger
+    /// committed that revision, under the id [`ChildRequestFact::event_id`]
+    /// derives from the request and the revision, so every retry carries the
+    /// same id and the journal keeps one row. Like the private settlement it
+    /// does not ride the pending-publication queue. A host without a bus
+    /// keeps nothing.
+    fn publish_child_request(
+        &mut self,
+        event: EventId,
+        fact: &ChildRequestFact,
+    ) -> Result<(), PublishFailure> {
+        let _ = (event, fact);
+        Ok(())
+    }
 }
 
 // ------------------------------------------------------------- the preamble
@@ -1430,6 +1447,23 @@ pub trait McpEndpoints {
             koru_delegate_core::decisions::DecisionPhase,
         )>,
     ) -> PortResult<()>;
+
+    /// Publish (`Some`) or clear (`None`) the Run's open child wait (M6), so
+    /// a Bot Run classifies as `BotChildWait` from its ask until its
+    /// successor's continuation input is acknowledged. Clearing nothing is
+    /// always possible. An adapter that cannot publish a wait refuses, so a
+    /// waiting parent is never silently left unfenced.
+    fn publish_child_wait(&mut self, run: RunId, wait: Option<ChildWaitMark>) -> PortResult<()> {
+        let _ = run;
+        match wait {
+            None => Ok(()),
+            Some(_) => Err(PortError::new(
+                Port::Mcp,
+                "run_authority_unavailable",
+                "this host cannot publish a child wait",
+            )),
+        }
+    }
 
     /// Issue this attempt's authority — or advance the generation, when the
     /// run already has one — and answer with what the adapter must render:

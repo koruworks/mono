@@ -567,7 +567,58 @@ pub(crate) fn private_settled_row(
     })
 }
 
+/// The rows one committed revision of a child request becomes (M6): the ask
+/// itself, or a later change. Ids, a revision and closed tokens only.
+pub(crate) fn child_request_rows(
+    fact: &koru_delegate_runtime::ChildRequestFact,
+) -> (
+    koru_delegate_events::ChildRequestRef,
+    Option<koru_delegate_events::ChildRequestChanged>,
+) {
+    let request = koru_delegate_events::ChildRequestRef {
+        request: fact.request,
+        child_run: fact.child_run,
+        parent_bot: fact.parent_bot,
+        recipient_bot: fact.recipient_bot,
+        revision: fact.revision,
+    };
+    let changed = (!fact.requested).then_some(koru_delegate_events::ChildRequestChanged {
+        request,
+        state: fact.state,
+        clock: fact.clock,
+        settled_by: fact.settled_by,
+    });
+    (request, changed)
+}
+
 impl RunEvents for BusRunEvents {
+    fn publish_child_request(
+        &mut self,
+        event: EventId,
+        fact: &koru_delegate_runtime::ChildRequestFact,
+    ) -> Result<(), PublishFailure> {
+        let (request, changed) = child_request_rows(fact);
+        let stamp = Stamp {
+            event_id: event,
+            occurred_at_ms: now_ms(),
+        };
+        // The chain is the parent Run's.
+        let envelope = match self.chain(fact.parent_run) {
+            Some(chain) => match changed {
+                Some(changed) => chain.child_changed(stamp, changed),
+                None => chain.child_requested(stamp, request),
+            },
+            None => {
+                tracing::warn!(
+                    target: "koru::delegate",
+                    "this device holds no chain for the parent run; the child request stays in the ledger"
+                );
+                return Err(PublishFailure { retryable: false });
+            }
+        };
+        self.send(&envelope)
+    }
+
     fn publish_private_settled(
         &mut self,
         event: EventId,

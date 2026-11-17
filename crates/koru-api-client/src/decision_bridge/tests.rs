@@ -247,3 +247,161 @@ fn decision_transport_timeout_is_unknown_and_refusal_is_a_typed_reply() {
         DecisionBridgeTransportError::NotSent(BeforeSend::Deadline)
     );
 }
+
+// ---- child waits (M6): the two routes of `/private/bots/children/` ----
+
+fn child_intent() -> koru_delegate_core::children::BotChildWaitCleanupIntentV1 {
+    let owner: BotOwner =
+        serde_json::from_value(serde_json::json!({"user_scope":fresh(),"device":fresh()})).unwrap();
+    koru_delegate_core::children::BotChildWaitCleanupIntentV1::frozen(
+        BotWaitId::mint(),
+        &koru_delegate_core::decisions::DecisionFence {
+            owner,
+            bot: BotId::mint(),
+            run: RunId::mint(),
+            attempt: RunAttemptId::mint(),
+            generation: AttemptGeneration::from_raw(1).unwrap(),
+            session: SessionId::mint(),
+            turn: AgentTurnId::mint(),
+        },
+    )
+    .unwrap()
+}
+/// Read one request line and body at exactly `route`, under the decision
+/// credential.
+fn child_request(stream: &mut TcpStream, route: &str) -> Vec<u8> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .unwrap();
+    let mut reader = BufReader::new(stream);
+    let mut headers = String::new();
+    loop {
+        let mut line = String::new();
+        assert!(reader.read_line(&mut line).unwrap() > 0);
+        headers.push_str(&line);
+        assert!(headers.len() < 16384);
+        if line == "\r\n" {
+            break;
+        }
+    }
+    assert!(headers.starts_with(&format!("POST {route} ")));
+    let header = |name: &str| {
+        headers
+            .lines()
+            .find_map(|line| {
+                line.split_once(':')
+                    .filter(|(key, _)| key.eq_ignore_ascii_case(name))
+                    .map(|(_, value)| value.trim().to_owned())
+            })
+            .unwrap()
+    };
+    assert!(
+        parent()
+            .decision_bridge_authority()
+            .matches_authorization(header("authorization").as_bytes())
+    );
+    assert!(!headers.contains("ORDINARY-BEARER-SENTINEL"));
+    let mut body = vec![0; header("content-length").parse().unwrap()];
+    reader.read_exact(&mut body).unwrap();
+    body
+}
+
+#[test]
+fn m6_ipc19_codec_child_transport_uses_its_own_routes_and_never_turns_enroll_into_missing() {
+    use koru_delegate_core::children::{
+        BotChildWaitEnrollmentReply, EnrollBotChildWaitCleanup, ReadBotChildWaitCleanup,
+    };
+    let intent = child_intent();
+    let key = intent.key().unwrap();
+    let enroll = DecisionBridgeEnvelope::new(EnrollBotChildWaitCleanup {
+        key: key.clone(),
+        cleanup_intent: intent,
+    })
+    .unwrap();
+
+    // Enroll: the exact correlated Enrolled reply, at the child enroll route.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = bridge(&listener);
+    let expected = enroll.clone();
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let body = child_request(&mut stream, CHILD_ENROLL_ROUTE);
+        let received = DecisionBridgeEnvelope::<EnrollBotChildWaitCleanup>::decode(&body).unwrap();
+        assert_eq!(received, expected);
+        let key = received.payload.key.clone();
+        let reply = DecisionBridgeEnvelope::reply_to(
+            &received,
+            BotChildWaitEnrollmentReply::Enrolled {
+                receipt_digest: key.receipt_digest,
+                key,
+                ai_attempt: RunId::mint().as_uuid(),
+            },
+        )
+        .unwrap();
+        answer(&mut stream, "200 OK", &reply.encode().unwrap());
+    });
+    assert!(matches!(
+        client.enroll_child_until(&enroll, soon()).unwrap().payload,
+        BotChildWaitEnrollmentReply::Enrolled { .. }
+    ));
+
+    // Enroll answered Missing for the exact key is unknown, never Missing.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = bridge(&listener);
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let body = child_request(&mut stream, CHILD_ENROLL_ROUTE);
+        let received = DecisionBridgeEnvelope::<EnrollBotChildWaitCleanup>::decode(&body).unwrap();
+        let missing = DecisionBridgeEnvelope {
+            version: 1,
+            request_id: received.request_id,
+            payload: BotChildWaitEnrollmentReply::Missing {
+                key: received.payload.key.clone(),
+            },
+        };
+        answer(
+            &mut stream,
+            "200 OK",
+            &serde_json::to_vec(&missing).unwrap(),
+        );
+    });
+    assert_eq!(
+        client.enroll_child_until(&enroll, soon()).unwrap_err(),
+        DecisionBridgeTransportError::Unknown(AfterSend::MismatchedResponse)
+    );
+
+    // Read: Missing is a real answer there, at the child read route.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = bridge(&listener);
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let body = child_request(&mut stream, CHILD_READ_ROUTE);
+        let received = DecisionBridgeEnvelope::<ReadBotChildWaitCleanup>::decode(&body).unwrap();
+        let reply = DecisionBridgeEnvelope::reply_to(
+            &received,
+            BotChildWaitEnrollmentReply::Missing {
+                key: received.payload.key.clone(),
+            },
+        )
+        .unwrap();
+        answer(&mut stream, "200 OK", &reply.encode().unwrap());
+    });
+    let read = DecisionBridgeEnvelope::new(ReadBotChildWaitCleanup { key }).unwrap();
+    assert!(matches!(
+        client.read_child_until(&read, soon()).unwrap().payload,
+        BotChildWaitEnrollmentReply::Missing { .. }
+    ));
+
+    // A lost response and an older server's "not found" are both unknown.
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let client = bridge(&listener);
+    std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let _ = child_request(&mut stream, CHILD_ENROLL_ROUTE);
+        answer(&mut stream, "404 Not Found", b"{}");
+    });
+    assert_eq!(
+        client.enroll_child_until(&enroll, soon()).unwrap_err(),
+        DecisionBridgeTransportError::Unknown(AfterSend::UnexpectedStatus(404))
+    );
+}

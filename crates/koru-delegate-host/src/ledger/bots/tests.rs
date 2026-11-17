@@ -509,43 +509,67 @@ fn actual_shared_ledger_retains_route_across_clones_without_run_or_session() {
     );
 }
 
-/// Cohort `m6_sweeps_inert`: this owner forwards no child-request method yet,
-/// so each one answers the trait's refusing default and nothing is written,
-/// whatever the ledger underneath can do.
+/// Cohort `m6_child_actor` (piece R): this owner forwards every child-request
+/// method to the one production ledger. Before piece R each answered the
+/// trait's refusing default; now a read reaches the rows and a write is
+/// refused or accepted by the ledger itself, never by a default.
 #[test]
-fn m6_sweeps_inert_shared_owner_refuses_every_child_request_method() {
-    use koru_delegate_core::decisions::BotWaitId;
+fn m6_child_actor_shared_owner_forwards_every_child_request_method() {
+    use koru_delegate_core::decisions::{BotWaitId, DecisionRevision, DecisionWaitExpected};
     let mut shared = SharedLedger::new(RunsDb::open(std::path::Path::new(":memory:")).unwrap());
     let s = submission();
     shared.bots().unwrap().admit_bot(&s).unwrap();
     let (owner, bot, run) = (s.provenance.owner, s.provenance.bot, s.request.run);
-    let mut guard = shared.bots().unwrap();
-    let ledger: &mut dyn BotLedger = &mut *guard;
-    let fenced = BotLedgerError::Fenced;
-    assert_eq!(
-        ledger.read_child_requests(owner, run, 0),
-        Err(fenced.clone())
-    );
-    assert_eq!(ledger.child_request_of(owner, run, 0), Err(fenced.clone()));
-    assert_eq!(ledger.child_wait_execution(owner, run), Err(fenced.clone()));
+    let guard = shared.bots().unwrap();
+    let ledger: &mut dyn BotLedger = guard;
+    // Reads answer what the ledger holds: nothing yet, and never `Fenced`.
+    let read = ledger.read_child_requests(owner, run, 0).unwrap();
+    assert!(read.wait.is_none() && read.requests.is_empty());
+    assert_eq!(ledger.child_request_of(owner, run, 0), Ok(None));
+    assert_eq!(ledger.child_wait_execution(owner, run), Ok(None));
     assert_eq!(
         ledger.read_bot_child_wait(owner, bot, run, BotWaitId::mint()),
-        Err(fenced.clone())
+        Ok(None)
     );
     assert_eq!(
         ledger.settle_child_requests(owner, DelegateBootId::mint(), &[]),
-        Err(fenced.clone())
+        Ok(vec![])
     );
     assert_eq!(
         ledger.fold_child_clocks(owner.device, DelegateBootId::mint(), 0, 0),
-        Err(fenced.clone())
+        Ok(vec![])
+    );
+    assert_eq!(ledger.child_resume_runs(owner.device, None, 16), Ok(vec![]));
+    assert_eq!(ledger.child_acknowledged_continuation(owner, run), Ok(None));
+    // A step for a wait that does not exist is the ledger's own `Stale`,
+    // not the default's `Fenced`.
+    let expected = DecisionWaitExpected {
+        owner,
+        run,
+        wait: BotWaitId::mint(),
+        revision: DecisionRevision::new(1).unwrap(),
+        decision: None,
+    };
+    assert_eq!(
+        ledger
+            .reserve_child_successor(
+                &expected,
+                HostInstanceId::from_uuid(uuid::Uuid::new_v4()),
+                [0; 32],
+                None
+            )
+            .unwrap_err(),
+        BotLedgerError::Stale
     );
     assert_eq!(
-        ledger.child_resume_runs(owner.device, None, 16),
-        Err(fenced.clone())
-    );
-    assert_eq!(
-        ledger.child_acknowledged_continuation(owner, run),
-        Err(fenced)
+        ledger
+            .bind_child_successor(
+                &expected,
+                IdempotencyKey::mint(),
+                HostInstanceId::from_uuid(uuid::Uuid::new_v4()),
+                SessionId::mint()
+            )
+            .unwrap_err(),
+        BotLedgerError::Stale
     );
 }

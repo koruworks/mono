@@ -148,7 +148,10 @@ impl Orchestrator {
 
     /// The attached document's current state as the first projection base.
     /// No synthetic header, status or timeline offset is used.
-    fn decision_base(&mut self, run: RunId) -> Result<DecisionPublicationBase, RunError> {
+    pub(super) fn decision_base(
+        &mut self,
+        run: RunId,
+    ) -> Result<DecisionPublicationBase, RunError> {
         let state = self.open(run)?;
         let (workspace, document) = (state.workspace, state.document);
         let doc = state.doc.document()?;

@@ -76,7 +76,10 @@ fn child_fence(
     resume: Option<&koru_delegate_core::children::ChildResume>,
 ) -> Result<DecisionFence, BotLedgerError> {
     if receipt.attempt == wait.origin.attempt && receipt.generation == wait.origin.generation {
-        require(resume.is_none())?;
+        // M6 piece R (O127): a successor that was reserved but never
+        // acknowledged does not take the origin's answer away; its resume is
+        // being cleaned up. An acknowledged successor does.
+        require(resume.is_none_or(|resume| resume.accepted_turn().is_none()))?;
         return Ok(wait.origin);
     }
     let resume = resume.ok_or(BotLedgerError::Fenced)?;
@@ -130,6 +133,18 @@ fn record_on(
         require(match &child {
             // M6: a child wait completes only through its acknowledged
             // successor, while nothing of the wait is being cleaned up.
+            Some((record, resume))
+                if receipt.attempt == record.origin.attempt
+                    && receipt.generation == record.origin.generation =>
+            {
+                // M6 piece R (O127): the origin's own turn completed
+                // naturally before any successor was acknowledged. It is an
+                // ordinary completion and stands as the Run's one answer;
+                // the requests settle below and the wait is cleaned up.
+                resume
+                    .as_ref()
+                    .is_none_or(|resume| resume.accepted_turn().is_none())
+            }
             Some((_, resume)) => {
                 current.wait.phase == BotWaitPhase::ResumeReserved
                     && current.wait.cleanup.is_none()

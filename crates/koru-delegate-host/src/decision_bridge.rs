@@ -100,5 +100,54 @@ impl DecisionEnrollmentBridge for HostDecisionBridge {
     }
 }
 
+/// The child wait's enrollment (M6): the same finite call on the child
+/// route, with the child payload. Only an exact, correlated `Enrolled` reply
+/// is returned; a refusal is typed, and every failure after sending is
+/// unknown completion.
+impl koru_delegate_runtime::ChildEnrollmentBridge for HostDecisionBridge {
+    fn enroll_child(
+        &mut self,
+        request: &koru_delegate_core::children::EnrollBotChildWaitCleanup,
+    ) -> PortResult<koru_delegate_core::children::BotChildWaitEnrollmentReply> {
+        use koru_delegate_core::children::BotChildWaitEnrollmentReply as Reply;
+        let deadline = Instant::now()
+            .checked_add(DECISION_BRIDGE_DEADLINE)
+            .ok_or_else(|| error("decision_enrollment_not_sent"))?;
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(error("decision_enrollment_not_sent"));
+        }
+        let client = self
+            .client
+            .as_ref()
+            .ok_or_else(|| error("decision_bridge_unavailable"))?;
+        let envelope = DecisionBridgeEnvelope::new(request.clone())
+            .map_err(|_| error("decision_enrollment_invalid_request"))?;
+        let answer =
+            client
+                .enroll_child_until(&envelope, deadline)
+                .map_err(|failure| match failure {
+                    DecisionBridgeTransportError::NotSent(_) => {
+                        error("decision_enrollment_not_sent")
+                    }
+                    DecisionBridgeTransportError::Unknown(_) => {
+                        error("decision_enrollment_unknown")
+                    }
+                });
+        if self.stopped.load(Ordering::Acquire) || Instant::now() >= deadline {
+            return match answer {
+                Err(failure) if failure.code == "decision_enrollment_not_sent" => Err(failure),
+                _ => Err(error("decision_enrollment_unknown")),
+            };
+        }
+        match answer?.payload {
+            reply @ Reply::Enrolled { .. } if reply.matches_request(&request.key, false) => {
+                Ok(reply)
+            }
+            Reply::Refused { code } => Err(refused(code)),
+            _ => Err(error("decision_enrollment_unknown")),
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests;

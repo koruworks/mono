@@ -362,13 +362,16 @@ pub(super) struct RecordingMcp {
     workspaces: HashMap<RunId, PathBuf>,
     /// The last decision wait published per Run (O147), shared with the test.
     waits: PublishedWaits,
+    /// The last child wait published per Run (M6), shared with the test.
+    child_waits: super::PublishedChildWaits,
 }
 
 impl RecordingMcp {
-    pub(super) fn new(waits: PublishedWaits) -> Self {
+    pub(super) fn new(waits: PublishedWaits, child_waits: super::PublishedChildWaits) -> Self {
         Self {
             workspaces: HashMap::new(),
             waits,
+            child_waits,
         }
     }
 }
@@ -435,6 +438,26 @@ impl McpEndpoints for RecordingMcp {
             .0
             .lock()
             .expect("the published waits are not poisoned");
+        match wait {
+            Some(wait) => {
+                waits.insert(run, wait);
+            }
+            None => {
+                waits.remove(&run);
+            }
+        }
+        Ok(())
+    }
+    fn publish_child_wait(
+        &mut self,
+        run: RunId,
+        wait: Option<crate::ChildWaitMark>,
+    ) -> PortResult<()> {
+        let mut waits = self
+            .child_waits
+            .0
+            .lock()
+            .expect("the published child waits are not poisoned");
         match wait {
             Some(wait) => {
                 waits.insert(run, wait);

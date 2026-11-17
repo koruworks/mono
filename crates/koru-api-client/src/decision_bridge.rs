@@ -13,6 +13,9 @@ use crate::routine_bridge::{
     origin, read_bounded,
 };
 use koru_delegate_api::decision_bridge::*;
+use koru_delegate_core::children::{
+    BotChildWaitEnrollmentReply, EnrollBotChildWaitCleanup, ReadBotChildWaitCleanup,
+};
 use koru_delegate_core::decisions::{
     BotWaitEnrollmentReply, EnrollBotWaitCleanup, ReadBotWaitCleanup,
 };
@@ -124,6 +127,27 @@ impl DecisionBridgeClient {
         deadline: Instant,
     ) -> DecisionBridgeTransportResult<DecisionBridgeEnvelope<BotWaitEnrollmentReply>> {
         self.call_until(DECISION_READ_ROUTE, request, deadline)
+    }
+
+    /// One enrollment attempt for a child wait (M6), on its own route with
+    /// its own payload type, under the same credential and deadline. Enroll
+    /// never answers Missing.
+    pub fn enroll_child_until(
+        &self,
+        request: &DecisionBridgeEnvelope<EnrollBotChildWaitCleanup>,
+        deadline: Instant,
+    ) -> DecisionBridgeTransportResult<DecisionBridgeEnvelope<BotChildWaitEnrollmentReply>> {
+        self.call_until(CHILD_ENROLL_ROUTE, request, deadline)
+    }
+
+    /// The exact historical enrollment read of a child wait. Missing here is
+    /// a real answer only because the server read the exact subject.
+    pub fn read_child_until(
+        &self,
+        request: &DecisionBridgeEnvelope<ReadBotChildWaitCleanup>,
+        deadline: Instant,
+    ) -> DecisionBridgeTransportResult<DecisionBridgeEnvelope<BotChildWaitEnrollmentReply>> {
+        self.call_until(CHILD_READ_ROUTE, request, deadline)
     }
 
     fn call_until<Q, R>(

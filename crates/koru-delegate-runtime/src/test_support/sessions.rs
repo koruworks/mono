@@ -68,6 +68,9 @@ pub struct SessionScript {
     inputs: HashMap<IdempotencyKey, (SessionId, PendingInput, AgentTurnId)>,
     created: Vec<(IdempotencyKey, SessionId)>,
     attached: BTreeSet<SessionId>,
+    /// Live sessions whose last turn completed (M6 delivery evidence): their
+    /// summary reads Completed and idle, their observation ends with it.
+    completed: HashMap<SessionId, AgentTurnId>,
     calls: Vec<SessionCall>,
 }
 
@@ -100,6 +103,7 @@ impl SessionScript {
             inputs: HashMap::new(),
             created: Vec::new(),
             attached: BTreeSet::new(),
+            completed: HashMap::new(),
             calls: Vec::new(),
         }
     }
@@ -134,6 +138,13 @@ impl SessionScript {
     /// `lookup(key)` answers `answer` on this host (every time).
     pub fn script_lookup(&mut self, key: IdempotencyKey, answer: CreationLookup) {
         self.lookups.insert(key, answer);
+    }
+
+    /// `turn` completed on the live `session`: its summary is Completed with
+    /// no active turn and its observation ends with that `TurnCompleted`,
+    /// the evidence a delivery receipt needs. Identities only.
+    pub fn script_completed_turn(&mut self, session: SessionId, turn: AgentTurnId) {
+        self.completed.insert(session, turn);
     }
 
     /// Every call received, oldest first.
@@ -283,8 +294,33 @@ impl Sessions for ScriptedSessions {
         }
     }
 
-    fn summary(&mut self, _session: SessionId) -> PortResult<Option<SessionSummary>> {
-        Err(self.script().unscripted("summary"))
+    fn summary(&mut self, session: SessionId) -> PortResult<Option<SessionSummary>> {
+        let mut script = self.script();
+        if !script.live.contains(&session) || !script.completed.contains_key(&session) {
+            return Err(script.unscripted("summary"));
+        }
+        Ok(Some(SessionSummary {
+            id: session,
+            parent_session_id: None,
+            profile: SessionProfileKey::BuiltIn("codex".parse().expect("a built-in profile")),
+            display_name: String::new(),
+            working_directory: None,
+            mode: koru_session_protocol::SessionMode::Managed {
+                provider: "codex".parse().expect("a provider kind"),
+            },
+            process: koru_session_protocol::ProcessState::Running,
+            controller: koru_session_protocol::ControllerState::Detached,
+            managed: Some(koru_session_protocol::ManagedState::Completed),
+            active_turn_id: None,
+            attention: Default::default(),
+            pending_attachment_count: 0,
+            capabilities: Default::default(),
+            project_id: None,
+            handover: Default::default(),
+            model: None,
+            origin: Default::default(),
+            created_at_ms: 0,
+        }))
     }
 
     fn attach(&mut self, session: SessionId) -> PortResult<()> {
@@ -359,10 +395,23 @@ impl Sessions for ScriptedSessions {
         if !script.live.contains(&session) {
             return Err(script.not_live("observe"));
         }
+        let events = script
+            .completed
+            .get(&session)
+            .map(|turn| koru_session_protocol::SequencedAgentEvent {
+                session_id: session,
+                sequence: StreamSequence::new(
+                    koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR + 1,
+                )
+                .expect("a valid sequence"),
+                event: koru_session_protocol::AgentEvent::TurnCompleted { turn_id: *turn },
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
+        let cursor = koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR + events.len() as u64;
         Ok(AgentEventObservation {
-            events: Vec::new(),
-            cursor: StreamSequence::new(koru_session_protocol::AGENT_EVENT_INITIAL_CURSOR)
-                .expect("the initial cursor is a valid sequence"),
+            events,
+            cursor: StreamSequence::new(cursor).expect("the cursor is a valid sequence"),
             earlier_truncated: false,
             commands: None,
             session_cursor: None,

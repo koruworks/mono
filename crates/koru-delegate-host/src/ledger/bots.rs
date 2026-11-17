@@ -598,6 +598,160 @@ impl BotLedger for SharedLedger {
     ) -> Result<EventId, BotLedgerError> {
         self.0.lock().unwrap().record_bot_delivery(receipt)
     }
+    // M6 child requests: every method reaches the one production ledger.
+    fn request_child(
+        &mut self,
+        request: &koru_delegate_core::children::ChildRequest,
+        boot: DelegateBootId,
+        base: &DecisionPublicationBase,
+    ) -> Result<koru_delegate_core::children::ChildRequestOutcome, BotLedgerError> {
+        self.0.lock().unwrap().request_child(request, boot, base)
+    }
+    fn read_child_requests(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+        now_ms: i64,
+    ) -> Result<koru_delegate_core::children::ChildRequests, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .read_child_requests(owner, run, now_ms)
+    }
+    fn child_request_of(
+        &self,
+        owner: BotOwner,
+        child_run: RunId,
+        now_ms: i64,
+    ) -> Result<Option<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .child_request_of(owner, child_run, now_ms)
+    }
+    fn child_wait_execution(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<ChildWaitExecution>, BotLedgerError> {
+        self.0.lock().unwrap().child_wait_execution(owner, run)
+    }
+    fn read_bot_child_wait(
+        &self,
+        owner: BotOwner,
+        bot: BotId,
+        run: RunId,
+        wait: BotWaitId,
+    ) -> Result<Option<koru_delegate_core::children::BotChildWaitObservation>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .read_bot_child_wait(owner, bot, run, wait)
+    }
+    fn settle_child_requests(
+        &mut self,
+        owner: BotOwner,
+        boot: DelegateBootId,
+        due: &[ChildRequestId],
+    ) -> Result<Vec<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .settle_child_requests(owner, boot, due)
+    }
+    fn fold_child_clocks(
+        &mut self,
+        device: DeviceId,
+        boot: DelegateBootId,
+        counted_until_ms: i64,
+        resume_at_ms: i64,
+    ) -> Result<Vec<koru_delegate_core::children::ChildRequestReceipt>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .fold_child_clocks(device, boot, counted_until_ms, resume_at_ms)
+    }
+    fn child_resume_runs(
+        &self,
+        device: DeviceId,
+        after: Option<&ChildWaitCursor>,
+        limit: usize,
+    ) -> Result<Vec<ChildWaitRun>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .child_resume_runs(device, after, limit)
+    }
+    fn record_child_enrollment(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        reply: &koru_delegate_core::children::BotChildWaitEnrollmentReply,
+    ) -> Result<ChildWaitRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .record_child_enrollment(expected, reply)
+    }
+    fn record_child_origin_stop(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        release: &OriginWaitStop,
+    ) -> Result<ChildWaitRecord, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .record_child_origin_stop(expected, release)
+    }
+    fn reserve_child_successor(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        host: HostInstanceId,
+        fingerprint: [u8; 32],
+        proof: Option<&FreshBotPolicyProof>,
+    ) -> Result<ChildSuccessorReservation, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .reserve_child_successor(expected, host, fingerprint, proof)
+    }
+    fn bind_child_successor(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        creation: IdempotencyKey,
+        host: HostInstanceId,
+        session: SessionId,
+    ) -> Result<ChildWaitExecution, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .bind_child_successor(expected, creation, host, session)
+    }
+    fn record_child_resume_input(
+        &mut self,
+        expected: &DecisionWaitExpected,
+        transition: DecisionTransitionId,
+        input: IdempotencyKey,
+        fingerprint: [u8; 32],
+        acknowledgment: Option<&DecisionInputAcknowledgment>,
+    ) -> Result<ChildWaitExecution, BotLedgerError> {
+        self.0.lock().unwrap().record_child_resume_input(
+            expected,
+            transition,
+            input,
+            fingerprint,
+            acknowledgment,
+        )
+    }
+    fn child_acknowledged_continuation(
+        &self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<ChildAcknowledgedContinuation>, BotLedgerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .child_acknowledged_continuation(owner, run)
+    }
 }
 impl NativeResultLedger for SharedLedger {
     fn memory_edit_allocation(

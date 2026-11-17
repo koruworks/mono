@@ -25,6 +25,11 @@ impl Orchestrator {
         record: &BotExecutionRecord,
     ) -> Result<(), RunError> {
         let run = key.run;
+        // A child wait has no decision: its delivery is the child arm's (M6).
+        // A ledger that does not model child requests has none.
+        if let Ok(Some(child)) = self.bot_ledger()?.child_wait_execution(key.owner, run) {
+            return self.bot_acknowledge_child_delivery(key, device, receipt, child);
+        }
         let execution = self
             .bot_ledger()?
             .decision_wait_execution(key.owner, run)?
@@ -176,7 +181,7 @@ impl Orchestrator {
     /// The same native completion evidence the ordinary owner requires: live
     /// exact consumer under the Orchestrator's control, no pending effect,
     /// approval or handback, and the exact last native turn completed.
-    fn bot_decision_delivery_completed(
+    pub(super) fn bot_decision_delivery_completed(
         &mut self,
         fence: &BotExecutionFence,
         device: DeviceId,

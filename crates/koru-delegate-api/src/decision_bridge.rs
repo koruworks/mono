@@ -5,6 +5,9 @@
 //! and the gateway (server). No handler is installed here. A decoded reply is
 //! evidence to compare with the request, never authority by itself, and no
 //! codec failure is evidence that an enrollment is missing.
+use koru_delegate_core::children::{
+    BotChildWaitEnrollmentReply, EnrollBotChildWaitCleanup, ReadBotChildWaitCleanup,
+};
 use koru_delegate_core::decisions::{
     BotWaitEnrollmentReply, DecisionValidate, EnrollBotWaitCleanup, ReadBotWaitCleanup,
 };
@@ -24,6 +27,11 @@ pub const DECISION_BRIDGE_METHOD: &str = "POST";
 /// The contract's literal private paths (O115), distinct from the Routine prefix.
 pub const DECISION_ENROLL_ROUTE: &str = "/private/bots/decisions/enroll-wait-cleanup";
 pub const DECISION_READ_ROUTE: &str = "/private/bots/decisions/read-wait-cleanup";
+/// The two routes of a child wait (M6): the same envelope, credential and
+/// deadline, their own payload types. The payload type follows from the
+/// route, so a decision payload is never decoded as a child payload.
+pub const CHILD_ENROLL_ROUTE: &str = "/private/bots/children/enroll-wait-cleanup";
+pub const CHILD_READ_ROUTE: &str = "/private/bots/children/read-wait-cleanup";
 
 fn v4(id: Uuid) -> bool {
     id.get_version() == Some(uuid::Version::Random) && id.get_variant() == uuid::Variant::RFC4122
@@ -42,6 +50,9 @@ mod sealed {
     impl Sealed for koru_delegate_core::decisions::EnrollBotWaitCleanup {}
     impl Sealed for koru_delegate_core::decisions::ReadBotWaitCleanup {}
     impl Sealed for koru_delegate_core::decisions::BotWaitEnrollmentReply {}
+    impl Sealed for koru_delegate_core::children::EnrollBotChildWaitCleanup {}
+    impl Sealed for koru_delegate_core::children::ReadBotChildWaitCleanup {}
+    impl Sealed for koru_delegate_core::children::BotChildWaitEnrollmentReply {}
 }
 
 /// Only the bridge's closed DTOs implement this. Validation is shape only.
@@ -78,6 +89,34 @@ impl DecisionBridgeReply<EnrollBotWaitCleanup> for BotWaitEnrollmentReply {
 impl DecisionBridgeReply<ReadBotWaitCleanup> for BotWaitEnrollmentReply {
     fn matches_request(&self, request: &ReadBotWaitCleanup) -> bool {
         BotWaitEnrollmentReply::matches_request(self, &request.key, true)
+    }
+}
+
+impl DecisionBridgePayload for EnrollBotChildWaitCleanup {
+    fn valid(&self) -> bool {
+        self.validate().is_ok()
+    }
+}
+impl DecisionBridgePayload for ReadBotChildWaitCleanup {
+    fn valid(&self) -> bool {
+        self.validate().is_ok()
+    }
+}
+impl DecisionBridgePayload for BotChildWaitEnrollmentReply {
+    fn valid(&self) -> bool {
+        self.validate().is_ok()
+    }
+}
+/// As for a decision: Enroll answers Enrolled for the exact key or Refused,
+/// never Missing; only Read can answer Missing.
+impl DecisionBridgeReply<EnrollBotChildWaitCleanup> for BotChildWaitEnrollmentReply {
+    fn matches_request(&self, request: &EnrollBotChildWaitCleanup) -> bool {
+        BotChildWaitEnrollmentReply::matches_request(self, &request.key, false)
+    }
+}
+impl DecisionBridgeReply<ReadBotChildWaitCleanup> for BotChildWaitEnrollmentReply {
+    fn matches_request(&self, request: &ReadBotChildWaitCleanup) -> bool {
+        BotChildWaitEnrollmentReply::matches_request(self, &request.key, true)
     }
 }
 

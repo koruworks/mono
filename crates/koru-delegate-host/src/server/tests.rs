@@ -311,7 +311,7 @@ fn decision_commands_need_the_private_capability_device_and_the_current_frame() 
 fn ipc15_frames_are_refused_before_decoding_and_dropped_unanswered_so_the_peer_sees_delegate_unavailable()
  {
     use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
-    assert_eq!(WIRE_VERSION, 18);
+    assert_eq!(WIRE_VERSION, 19);
     let previous = WIRE_VERSION - 1;
     let owner: koru_delegate_core::BotOwner = serde_json::from_value(
         serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":uuid::Uuid::new_v4()}),
@@ -378,7 +378,7 @@ fn routine_control_route(
 #[test]
 fn routine_control_frames_need_the_private_capability_this_device_and_ipc17() {
     use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority, RoutineControlAction};
-    assert_eq!(WIRE_VERSION, 18);
+    assert_eq!(WIRE_VERSION, 19);
     let capability =
         BotDelegateAuthority::new("routine-control-private-capability-0123456789012345".into())
             .unwrap();
@@ -553,7 +553,7 @@ fn m5_ipc18_frame_version_an_ipc17_peer_is_refused_cleanly_and_an_oversized_priv
         BotCommand, BotDelegateAuthority, PRIVATE_FRAME_LIMIT, PrivateDispatcherId,
         PrivateEffectKey, PrivateEffectTransition,
     };
-    assert_eq!(WIRE_VERSION, 18);
+    assert_eq!(WIRE_VERSION, 19);
     let capability =
         BotDelegateAuthority::new("private-operation-capability-01234567890123456".into()).unwrap();
     let device = koru_delegate_core::DeviceId::new();

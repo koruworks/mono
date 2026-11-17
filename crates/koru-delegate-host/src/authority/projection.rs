@@ -13,6 +13,7 @@
 use koru_delegate_api::Failure;
 use koru_delegate_core::decisions::{DecisionId, DecisionPhase};
 use koru_delegate_core::{AttemptGeneration, RunId, RunToolAuthority};
+use koru_delegate_runtime::ChildWaitMark;
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -25,6 +26,8 @@ struct Entries {
     launch: HashMap<RunId, (AttemptGeneration, RunToolAuthority)>,
     /// The ledger's open decision wait per Run, as the actor last read it.
     waits: HashMap<RunId, (DecisionId, DecisionPhase)>,
+    /// The ledger's open child wait per Run (M6), as the actor last read it.
+    child_waits: HashMap<RunId, ChildWaitMark>,
 }
 
 #[derive(Clone, Default)]
@@ -45,7 +48,10 @@ impl AuthorityProjection {
     ) -> Result<(), Failure> {
         // Only a launch classification is published here; the wait is the
         // overlay's, so a waiting value can never become a launch value.
-        if matches!(authority, RunToolAuthority::BotDecisionWait { .. }) {
+        if matches!(
+            authority,
+            RunToolAuthority::BotDecisionWait { .. } | RunToolAuthority::BotChildWait { .. }
+        ) {
             return Err(unavailable());
         }
         let mut entries = self.0.lock().map_err(|_| unavailable())?;
@@ -80,6 +86,28 @@ impl AuthorityProjection {
         }
         Ok(())
     }
+    /// Set (`Some`) or clear (`None`) the Run's open child wait, exactly as
+    /// the actor read it from the ledger. Bounded like the launch map.
+    pub fn publish_child_wait(
+        &self,
+        run: RunId,
+        wait: Option<ChildWaitMark>,
+    ) -> Result<(), Failure> {
+        let mut entries = self.0.lock().map_err(|_| unavailable())?;
+        match wait {
+            Some(wait) => {
+                if !entries.child_waits.contains_key(&run) && entries.child_waits.len() >= CAPACITY
+                {
+                    return Err(unavailable());
+                }
+                entries.child_waits.insert(run, wait);
+            }
+            None => {
+                entries.child_waits.remove(&run);
+            }
+        }
+        Ok(())
+    }
     pub fn resolve(
         &self,
         run: RunId,
@@ -92,17 +120,34 @@ impl AuthorityProjection {
             .filter(|(current, _)| *current == generation)
             .map(|(_, value)| value.clone())
             .ok_or_else(unavailable)?;
-        Ok(match (launch, entries.waits.get(&run)) {
-            (RunToolAuthority::Bot { provenance, policy }, Some((decision, phase))) => {
-                RunToolAuthority::BotDecisionWait {
-                    provenance,
-                    policy,
-                    decision: *decision,
-                    phase: *phase,
+        // A Run has one open wait (A5). Should both ever be published, the
+        // decision wait is named: both refuse every new mutation.
+        Ok(
+            match (
+                launch,
+                entries.waits.get(&run),
+                entries.child_waits.get(&run),
+            ) {
+                (RunToolAuthority::Bot { provenance, policy }, Some((decision, phase)), _) => {
+                    RunToolAuthority::BotDecisionWait {
+                        provenance,
+                        policy,
+                        decision: *decision,
+                        phase: *phase,
+                    }
                 }
-            }
-            (launch, _) => launch,
-        })
+                (RunToolAuthority::Bot { provenance, policy }, None, Some(child)) => {
+                    RunToolAuthority::BotChildWait {
+                        provenance,
+                        policy,
+                        wait: child.wait,
+                        phase: child.phase,
+                        open_requests: child.open_requests,
+                    }
+                }
+                (launch, _, _) => launch,
+            },
+        )
     }
     pub fn remove(&self, run: RunId, generation: Option<AttemptGeneration>) {
         if let Ok(mut entries) = self.0.lock() {

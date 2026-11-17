@@ -51,7 +51,7 @@ fn frame(command: &BotCommand) -> Vec<u8> {
 
 #[test]
 fn routine_control_commands_are_ipc17_strict_and_owner_bound_to_the_route() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 18);
+    assert_eq!(crate::ipc::WIRE_VERSION, 19);
     for (command, tag, action) in [
         (
             control(RoutineControlAction::Enable {}),

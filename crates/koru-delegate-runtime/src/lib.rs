@@ -73,7 +73,9 @@ mod scheduler;
 pub use counters::{Counters, CountingCapture};
 pub use facts::{RunFact, UsageReport};
 pub use orchestrator::{
-    CreateError, CreateIntentStatus, Created, DecisionEditRequest, DecisionEnrollmentBridge,
+    CHILD_STALL_LIMIT_MS, ChildClockSample, ChildClockTick, ChildEnrollmentBridge,
+    ChildResumeStep, CreateError, CreateIntentStatus, Created, DecisionEditRequest,
+    DecisionEnrollmentBridge,
     DecisionResumeStep, HandleOutcome, Options, Orchestrator, Purged,
     RestartReport, RunError, RunPlace, RunView, ScheduledScopeReservation,
     ScopeReservationResolution, SourceProducer, SourceProgress, Started, TOOL_STEP_BOUND,
@@ -84,7 +86,7 @@ pub use ports::{
     Clock, ContextCapture, ContextPin, CreatedSession, ListedRun, ListedSchedule,
     MaterializeFailure, MaterializeStage, MaterializedContext, McpEndpoints, McpLaunch,
     NoScheduleEvents, Port, PortError, PortResult, Ports, Preamble, PreparedScheduleEvent,
-    PrivateEffectLedger, PrivateOperationSettled,
+    ChildRequestFact, ChildWaitMark, PrivateEffectLedger, PrivateOperationSettled,
     PublishFailure, RoutineBridge, RoutineBridgeFailure, RoutineBridgeResult, RoutineCandidate,
     RoutineLedger, RoutinePreparationObservation, RoutinePreparedReply, RoutineWork,
     DecisionUsageLookup, DecisionUsageObservation, RecoveredDecisionUsage, RunDocumentHandle,

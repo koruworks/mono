@@ -14,15 +14,27 @@ use std::{
     thread::{self, JoinHandle},
 };
 
+use koru_delegate_core::children::{
+    BotChildWaitEnrollmentKey, BotChildWaitEnrollmentReply, EnrollBotChildWaitCleanup,
+};
 use koru_delegate_core::decisions::{
     BotWaitEnrollmentKey, BotWaitEnrollmentReply, DecisionPreparedProjection, DecisionTransitionId,
     EnrollBotWaitCleanup,
 };
 use koru_delegate_runtime::{
-    AppliedRunProjection, DecisionEnrollmentBridge, DecisionUsageObservation, Port, PortError,
-    PortResult, RunDocumentHandle, RunPublicationDocument, RunPublicationOperation,
-    RunPublicationStart, RunPublicationTicket,
+    AppliedRunProjection, ChildEnrollmentBridge, DecisionEnrollmentBridge,
+    DecisionUsageObservation, Port, PortError, PortResult, RunDocumentHandle,
+    RunPublicationDocument, RunPublicationOperation, RunPublicationStart, RunPublicationTicket,
 };
+
+/// The host's enrollment client for child waits (M6), owned by the worker
+/// thread like the decision one. It arrives after the worker started.
+pub(crate) type ChildEnrollmentClient = Box<dyn ChildEnrollmentBridge + Send>;
+/// One finished child enrollment job: the exact key and the bridge's answer.
+type ChildEnrollmentReply = (
+    BotChildWaitEnrollmentKey,
+    PortResult<BotChildWaitEnrollmentReply>,
+);
 
 /// The host's enrollment client, owned by the worker thread.
 pub(crate) type EnrollmentClient = Box<dyn DecisionEnrollmentBridge + Send>;
@@ -44,6 +56,12 @@ enum Request {
     },
     Enroll {
         request: EnrollBotWaitCleanup,
+    },
+    /// The child enrollment client, handed over once at composition.
+    ChildClient(ChildEnrollmentClient),
+    /// One finite child enrollment job; shares the single ticket.
+    EnrollChild {
+        request: EnrollBotChildWaitCleanup,
     },
     Shutdown,
 }
@@ -109,6 +127,31 @@ pub(crate) struct PublicationWorker {
     ticket: Option<RunPublicationTicket>,
     waiting: bool,
     enrollment: EnrollmentSlot,
+    child: ChildEnrollmentSlot,
+}
+
+/// The child-wait enrollment half of the single ticket (M6). The same
+/// invariant as [`EnrollmentSlot`], keyed by the child wait's own key: at
+/// most one job in flight, at most one finished reply retained, handed only
+/// to its own key, and discarded only after a full rotation without its
+/// owner. A discarded owner resends the same request; the AI owner's
+/// enrollment is "insert if absent, else require the same digest".
+pub(crate) struct ChildEnrollmentSlot {
+    replies: Receiver<ChildEnrollmentReply>,
+    active: Option<BotChildWaitEnrollmentKey>,
+    returned: Option<ChildEnrollmentReply>,
+    missed: Vec<BotChildWaitEnrollmentKey>,
+}
+
+impl ChildEnrollmentSlot {
+    fn new(replies: Receiver<ChildEnrollmentReply>) -> Self {
+        Self {
+            replies,
+            active: None,
+            returned: None,
+            missed: Vec::new(),
+        }
+    }
 }
 
 /// The enrollment half of the single ticket.
@@ -174,9 +217,10 @@ impl PublicationWorker {
         let (send, requests) = mpsc::sync_channel(1);
         let (completed, receive) = mpsc::sync_channel(1);
         let (enrolled, replies) = mpsc::sync_channel(1);
+        let (child_enrolled, child_replies) = mpsc::sync_channel(1);
         let thread = thread::Builder::new()
             .name("koru-delegate publication".into())
-            .spawn(move || run_with(requests, completed, enrolled, client, wake))?;
+            .spawn(move || run_with(requests, completed, enrolled, child_enrolled, client, wake))?;
         Ok(Self {
             send,
             receive,
@@ -184,12 +228,88 @@ impl PublicationWorker {
             ticket: None,
             waiting: false,
             enrollment: EnrollmentSlot::new(replies),
+            child: ChildEnrollmentSlot::new(child_replies),
         })
+    }
+
+    /// Hand the child enrollment client to the worker thread. Called once at
+    /// composition, while the request slot is empty. Without it every child
+    /// enrollment answers `decision_enrollment_unavailable`.
+    pub(crate) fn attach_child_enrollment(&mut self, client: ChildEnrollmentClient) -> bool {
+        self.send.try_send(Request::ChildClient(client)).is_ok()
+    }
+
+    /// Take a finished child enrollment reply off its slot, if one came back.
+    fn collect_child_enrollment(&mut self) {
+        match self.child.replies.try_recv() {
+            Ok(reply) => {
+                self.child.active = None;
+                self.child.returned = Some(reply);
+                self.child.missed.clear();
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(TryRecvError::Disconnected) => {
+                if let Some(key) = self.child.active.take() {
+                    self.child.returned = Some((key, Err(enrollment_lost())));
+                    self.child.missed.clear();
+                }
+            }
+        }
+    }
+
+    /// The mailbox behind `ChildEnrollmentMailbox`: the finished reply for
+    /// exactly this request's key if one came back; otherwise start this
+    /// request when the single ticket is idle (no handle out, no enrollment
+    /// of either kind in flight) and answer pending. Never blocks the caller
+    /// and never invents a reply.
+    pub(crate) fn child_enrollment(
+        &mut self,
+        request: &EnrollBotChildWaitCleanup,
+    ) -> PortResult<BotChildWaitEnrollmentReply> {
+        self.collect_enrollment();
+        self.collect_child_enrollment();
+        if let Some((key, _)) = &self.child.returned {
+            if *key == request.key {
+                let (_, result) = self.child.returned.take().expect("matched above");
+                self.child.missed.clear();
+                return result;
+            }
+            let rotated = self.child.missed.contains(&request.key)
+                || self.child.missed.len() >= MAX_MISSED_KEYS;
+            if !rotated {
+                self.child.missed.push(request.key.clone());
+                return Err(enrollment_pending());
+            }
+            self.child.returned = None;
+            self.child.missed.clear();
+        }
+        if self.child.active.is_some()
+            || self.enrollment.active.is_some()
+            || self.ticket.is_some()
+            || self.waiting
+        {
+            return Err(enrollment_pending());
+        }
+        if self
+            .send
+            .try_send(Request::EnrollChild {
+                request: request.clone(),
+            })
+            .is_ok()
+        {
+            self.child.active = Some(request.key.clone());
+        }
+        Err(enrollment_pending())
     }
 
     pub(crate) fn begin(&mut self, start: RunPublicationStart) -> Result<(), RunPublicationStart> {
         self.collect_enrollment();
-        if self.ticket.is_some() || self.waiting || self.enrollment.active.is_some() {
+        self.collect_child_enrollment();
+        if self.ticket.is_some()
+            || self.waiting
+            || self.enrollment.active.is_some()
+            || self.child.active.is_some()
+        {
             return Err(start);
         }
         let ticket = start.ticket;
@@ -322,7 +442,12 @@ impl PublicationWorker {
             self.enrollment.returned = None;
             self.enrollment.missed.clear();
         }
-        if self.enrollment.active.is_some() || self.ticket.is_some() || self.waiting {
+        self.collect_child_enrollment();
+        if self.enrollment.active.is_some()
+            || self.child.active.is_some()
+            || self.ticket.is_some()
+            || self.waiting
+        {
             return Err(enrollment_pending());
         }
         if self
@@ -375,6 +500,9 @@ impl PublicationWorker {
         self.collect_enrollment();
         self.enrollment.active = None;
         self.enrollment.returned = None;
+        self.collect_child_enrollment();
+        self.child.active = None;
+        self.child.returned = None;
         // A worker may end outside execute's unwind boundary (for example its
         // wake callback fails). Joining is actual physical completion; an
         // absent returned handle is now loss, not an indefinitely live ticket.
@@ -431,6 +559,25 @@ impl DecisionEnrollmentBridge for EnrollmentMailbox<'_> {
     }
 }
 
+/// Through this the child wait's per-turn driver reaches the worker's child
+/// enrollment slot; it never runs the HTTP call itself.
+pub(crate) struct ChildEnrollmentMailbox<'a> {
+    worker: &'a mut PublicationWorker,
+}
+impl<'a> ChildEnrollmentMailbox<'a> {
+    pub(crate) fn new(worker: &'a mut PublicationWorker) -> Self {
+        Self { worker }
+    }
+}
+impl ChildEnrollmentBridge for ChildEnrollmentMailbox<'_> {
+    fn enroll_child(
+        &mut self,
+        request: &EnrollBotChildWaitCleanup,
+    ) -> PortResult<BotChildWaitEnrollmentReply> {
+        self.worker.child_enrollment(request)
+    }
+}
+
 fn busy() -> PortError {
     PortError::new(
         Port::Documents,
@@ -442,18 +589,53 @@ fn busy() -> PortError {
 #[cfg(test)]
 fn run(requests: Receiver<Request>, completed: SyncSender<Completion>, wake: impl Fn()) {
     let (enrolled, _replies) = mpsc::sync_channel(1);
-    run_with(requests, completed, enrolled, None, wake)
+    let (child_enrolled, _child_replies) = mpsc::sync_channel(1);
+    run_with(requests, completed, enrolled, child_enrolled, None, wake)
 }
 
 fn run_with(
     requests: Receiver<Request>,
     completed: SyncSender<Completion>,
     enrolled: SyncSender<EnrollmentReply>,
+    child_enrolled: SyncSender<ChildEnrollmentReply>,
     mut client: Option<EnrollmentClient>,
     wake: impl Fn(),
 ) {
     let mut active: Option<Active> = None;
+    let mut child_client: Option<ChildEnrollmentClient> = None;
     while let Ok(request) = requests.recv() {
+        let request = match request {
+            Request::ChildClient(client) => {
+                child_client = Some(client);
+                continue;
+            }
+            Request::EnrollChild { request } => {
+                // No document handle is held: the single ticket admitted
+                // this job only while none was out.
+                let key = request.key.clone();
+                let result = if active.is_some() {
+                    Err(busy())
+                } else {
+                    match child_client.as_mut() {
+                        Some(client) => {
+                            catch_unwind(AssertUnwindSafe(|| client.enroll_child(&request)))
+                                .unwrap_or_else(|_| Err(enrollment_lost()))
+                        }
+                        None => Err(PortError::new(
+                            Port::Documents,
+                            "decision_enrollment_unavailable",
+                            "this host has no child enrollment client",
+                        )),
+                    }
+                };
+                if child_enrolled.send((key, result)).is_err() {
+                    break;
+                }
+                wake();
+                continue;
+            }
+            other => other,
+        };
         if let Request::Enroll { request } = request {
             // No document handle is held: the single ticket admitted this job
             // only while none was out.
@@ -493,7 +675,10 @@ fn run_with(
         let ticket = match &request {
             Request::Start(start) => start.ticket,
             Request::Apply { ticket, .. } | Request::Return { ticket, .. } => *ticket,
-            Request::Enroll { .. } | Request::Shutdown => unreachable!(),
+            Request::Enroll { .. }
+            | Request::ChildClient(_)
+            | Request::EnrollChild { .. }
+            | Request::Shutdown => unreachable!(),
         };
         let completion = match catch_unwind(AssertUnwindSafe(|| execute(&mut active, request))) {
             Ok(completion) => completion,
@@ -587,7 +772,10 @@ fn execute(active: &mut Option<Active>, request: Request) -> Completion {
                 }
             }
         }
-        Request::Enroll { .. } | Request::Shutdown => unreachable!(),
+        Request::Enroll { .. }
+        | Request::ChildClient(_)
+        | Request::EnrollChild { .. }
+        | Request::Shutdown => unreachable!(),
     }
 }
 fn returned(active: &mut Option<Active>, error: Option<PortError>) -> Completion {

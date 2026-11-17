@@ -32,6 +32,34 @@ pub trait RowToken: Copy {
     fn token(self) -> &'static str;
 }
 
+/// The two stored states of a child request (M6).
+impl RowToken for koru_delegate_core::children::ChildRequestState {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Settled => "settled",
+        }
+    }
+}
+
+/// A child request's own 15-minute clock.
+impl RowToken for koru_delegate_core::children::ChildClock {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Paused => "paused",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+/// Who settled a child request.
+impl RowToken for koru_delegate_core::children::ChildSettledBy {
+    fn token(self) -> &'static str {
+        koru_delegate_core::children::ChildSettledBy::token(self)
+    }
+}
+
 impl RowToken for koru_delegate_core::PrivateOperationKind {
     fn token(self) -> &'static str {
         match self {

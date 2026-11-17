@@ -40,8 +40,8 @@ fn every_delegate_row_has_exactly_one_builder() {
     assert_eq!(built_set, registered);
     assert_eq!(
         registered.len(),
-        33,
-        "the roadmap's rows, and M5's settled private operation, exactly"
+        35,
+        "the roadmap's rows, M5's settled private operation and M6's two child-request rows, exactly"
     );
 }
 

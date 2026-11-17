@@ -456,10 +456,12 @@ impl Orchestrator {
         // Avoid futile writer transactions; the C writer remains decisive.
         let eligible = match &execution.decision_state {
             Some(decision) => decision.phase == DecisionPhase::Settled,
-            None => matches!(
-                execution.wait.cleanup,
-                Some(ConsumerCleanup::Confirmed { .. })
-            ),
+            None => {
+                matches!(
+                    execution.wait.cleanup,
+                    Some(ConsumerCleanup::Confirmed { .. })
+                ) || self.child_wait_resumed(owner, run)
+            }
         };
         if !eligible {
             return Ok(None);
@@ -532,6 +534,27 @@ impl Orchestrator {
             status,
             events: Some(events),
         }))
+    }
+
+    /// A child wait may settle without a cleanup once it has no open request
+    /// and its successor's continuation input is acknowledged (M6): the
+    /// Control that cleared the waiting marker is then the last one owed.
+    /// The ledger remains decisive.
+    fn child_wait_resumed(&mut self, owner: koru_delegate_core::BotOwner, run: RunId) -> bool {
+        use koru_delegate_core::decisions::{BotWaitPhase, DecisionResumeState};
+        let Ok(Some(child)) = self
+            .bot_ledger()
+            .and_then(|ledger| Ok(ledger.child_wait_execution(owner, run)))
+            .and_then(|read| Ok(read?))
+        else {
+            return false;
+        };
+        child.open_requests == 0
+            && child.wait.phase == BotWaitPhase::ResumeReserved
+            && child.wait.cleanup.is_none()
+            && child.resume.as_ref().is_some_and(|resume| {
+                matches!(resume.state, DecisionResumeState::InputAcknowledged { .. })
+            })
     }
 
     /// Runs to offer the single physical ticket, rotating after `after`: one

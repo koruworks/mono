@@ -239,6 +239,13 @@ fn serve(
         bootstrap.bot_authority(),
         Arc::clone(&schedule_stopped),
     );
+    // The child wait's enrollment client (M6): the same credential domain on
+    // the child routes, as its own client so each has its own in-flight slot.
+    let child_bridge = decision_bridge::HostDecisionBridge::new(
+        &gateway.client,
+        bootstrap.bot_authority(),
+        Arc::clone(&schedule_stopped),
+    );
     let scheduler = ScheduleCoordinator::new(
         Box::new(schedules::StoreSchedules::new(gateway.client.clone())),
         Box::new(ledger.clone()),
@@ -266,6 +273,9 @@ fn serve(
     actor
         .attach_decision_bridge(Box::new(decision_bridge))
         .map_err(|error| format!("could not start the publication worker: {error}"))?;
+    actor
+        .attach_child_bridge(Box::new(child_bridge))
+        .map_err(|error| format!("could not attach the child enrollment client: {error}"))?;
     let scheduler = scheduler::Handle::spawn(
         scheduler,
         gateway.client.clone(),

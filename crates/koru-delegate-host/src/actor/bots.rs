@@ -33,6 +33,11 @@ pub(super) fn bot_failure(error: RunError) -> Failure {
         {
             koru_delegate_api::bots::private_failure(&error.code).expect("checked above")
         }
+        // IPC 19: each child refusal has its one fixed text. Exactly one,
+        // `bot_child_wait_closing`, is retryable.
+        RunError::Port(error) if koru_delegate_api::bots::child_failure(&error.code).is_some() => {
+            koru_delegate_api::bots::child_failure(&error.code).expect("checked above")
+        }
         RunError::Port(error) if error.code.starts_with("bot_") => {
             Failure::new(error.code, "The Bot operation was refused.", false)
         }
@@ -126,6 +131,10 @@ impl Actor {
         // IPC 18: a private command that is malformed, or over its 16 KiB
         // bound, is refused before anything reads the ledger.
         if command.private_valid() == Some(false) {
+            return Err(unavailable("bot_invalid"));
+        }
+        // IPC 19: the same for a child command.
+        if command.child_valid() == Some(false) {
             return Err(unavailable("bot_invalid"));
         }
         let device = self.device;
@@ -648,6 +657,64 @@ impl Actor {
                 // The Run's exact owner read succeeded and found no effect;
                 // an error above is never reported as Missing.
                 None => BotReply::Missing,
+            },
+            BotCommand::RequestChild { request, boot } => {
+                use koru_delegate_api::bots::ChildRequestedOutcome;
+                use koru_delegate_core::children::ChildRequestOutcome;
+                let outcome = self
+                    .orchestrator
+                    .bot_request_child(&request, device, boot)
+                    .map_err(bot_failure)?;
+                let (outcome, requested) = match outcome {
+                    ChildRequestOutcome::Created(requested) => {
+                        (ChildRequestedOutcome::Created, requested)
+                    }
+                    ChildRequestOutcome::AlreadyCreated(requested) => {
+                        (ChildRequestedOutcome::AlreadyCreated, requested)
+                    }
+                    // A refusal committed nothing. Its code is final on the
+                    // wire, except a wait that is still closing.
+                    ChildRequestOutcome::Refused(refused) => {
+                        return Err(koru_delegate_api::bots::child_refused(refused));
+                    }
+                };
+                self.notify(request.parent.run);
+                BotReply::ChildRequested {
+                    outcome,
+                    wait: requested.wait,
+                    enrollment: requested.enrollment,
+                    receipts: requested.receipts,
+                }
+            }
+            BotCommand::ReadChildRequests { subject } => {
+                let read = self
+                    .orchestrator
+                    .bot_read_child_requests(&subject, device)
+                    .map_err(bot_failure)?;
+                BotReply::ChildRequests {
+                    wait: read.wait,
+                    requests: read.requests,
+                }
+            }
+            BotCommand::ReadBotChildWait {
+                owner,
+                bot,
+                run,
+                wait_id,
+            } => match self
+                .orchestrator
+                .bot_read_child_wait(owner, bot, run, wait_id, device)
+                .map_err(bot_failure)?
+            {
+                Some(observation) => BotReply::ChildWait { observation },
+                // The exact owner and Run read succeeded and found no such
+                // wait; an error above is never reported as unknown.
+                None => {
+                    return Err(koru_delegate_api::bots::child_failure(
+                        koru_delegate_api::bots::CHILD_WAIT_UNKNOWN,
+                    )
+                    .expect("a listed code"));
+                }
             },
             BotCommand::TakeOver { .. } | BotCommand::HandBack { .. } => {
                 return Err(unavailable("bot_control_unsupported"));

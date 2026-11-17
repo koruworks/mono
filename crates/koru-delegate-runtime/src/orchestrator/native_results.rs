@@ -81,6 +81,11 @@ impl Orchestrator {
         // resolvable again, it already resolves fenced.
         if let RunToolAuthority::Bot { provenance, .. } = &authority {
             self.sync_decision_authority(provenance.owner, run)?;
+            // An open child wait fences the Run the same way (M6). A failed
+            // read keeps whatever was published before.
+            if let Err(error) = self.sync_child_authority(provenance.owner, run) {
+                self.trace(run, "child_wait_unpublished", format_args!("{error}"));
+            }
         }
         self.ports
             .mcp

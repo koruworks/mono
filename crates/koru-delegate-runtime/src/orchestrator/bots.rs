@@ -215,8 +215,20 @@ impl Orchestrator {
         device: DeviceId,
     ) -> Result<BotAdmissionBarrier, RunError> {
         owner_device(barrier.owner, device)?;
+        // A pause counts the wall interval since each clock last started, so
+        // anything this process has not counted is folded away first (M6).
+        if let Err(error) = self.bot_fold_child_clocks(device) {
+            tracing::debug!(target: "koru::delegate", %error, "child clocks not folded before a barrier");
+        }
         let applied = self.bot_ledger()?.apply_bot_barrier(barrier)?;
         self.invalidate_boot_for_barrier(&applied);
+        if !applied.paused {
+            // A paused child clock restarts only through a fold once its
+            // parent Bot is unpaused; without it the request never times out.
+            if let Err(error) = self.bot_fold_child_clocks(device) {
+                tracing::debug!(target: "koru::delegate", %error, "child clocks not restarted after a barrier");
+            }
+        }
         Ok(applied)
     }
 
@@ -631,6 +643,10 @@ impl Orchestrator {
             koru_delegate_core::decisions::DecisionClosureReason::Canceled,
         );
         if !matches!(request, Ok(false)) {
+            // Stopping a parent that waits for other Bots cancels its open
+            // requests (the ledger settled them with the cleanup request)
+            // and stops their Runs (M6, contract 6.4).
+            self.child_cleanup_requested(key.run, device);
             // SQL receipt loss does not suppress physical cleanup. The exact
             // retained current consumer is independently re-read by this path.
             let observed = self.stop_decision_consumer(key.run);
@@ -722,6 +738,8 @@ impl Orchestrator {
                 // consumed/settled native answer still has a stoppable Run.
                 koru_delegate_core::decisions::DecisionClosureReason::Canceled,
             );
+            // The budget stop of a waiting parent reaches its children too.
+            self.child_cleanup_requested(run, record.owner.device);
             let observed = self.stop_decision_consumer(run);
             requested?;
             observed?;

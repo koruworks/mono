@@ -58,12 +58,14 @@ use crate::{
     RunPublicationOperation, RunPublicationStart, RunPublicationTicket,
 };
 
+mod children;
 mod inert;
 mod ledger;
 mod sessions;
 #[cfg(test)]
 mod tests;
 
+pub use children::*;
 pub use inert::{DocumentFaults, PublishedWaits};
 pub use sessions::{SessionCall, SessionScript};
 
@@ -682,6 +684,7 @@ struct Live {
     clock: Arc<AtomicI64>,
     documents: DocumentFaults,
     waits: PublishedWaits,
+    child_waits: PublishedChildWaits,
     submission: BotSubmission,
     fence: BotExecutionFence,
     proof: FreshBotPolicyProof,
@@ -721,6 +724,7 @@ fn live(routine: bool, grant: Option<koru_delegate_core::ConnectionGrantRef>) ->
     let documents = inert::MemoryRunDocuments::new();
     let faults = documents.faults();
     let waits = PublishedWaits::default();
+    let child_waits = PublishedChildWaits::default();
     let ports = Ports {
         store: Box::new(ledger::UncountedLedger(store)),
         documents: Box::new(documents),
@@ -731,7 +735,7 @@ fn live(routine: bool, grant: Option<koru_delegate_core::ConnectionGrantRef>) ->
         events: Box::new(inert::InertEvents),
         preamble: Box::new(inert::FixedPreamble),
         roots: Box::new(inert::FixtureRoots),
-        mcp: Box::new(inert::RecordingMcp::new(waits.clone())),
+        mcp: Box::new(inert::RecordingMcp::new(waits.clone(), child_waits.clone())),
         registrations: Box::new(inert::NoRegistrations),
         clock: Box::new(inert::SharedClock(Arc::clone(&clock))),
         sleep: Box::new(inert::NoSleep),
@@ -810,6 +814,7 @@ fn live(routine: bool, grant: Option<koru_delegate_core::ConnectionGrantRef>) ->
         clock,
         documents: faults,
         waits,
+        child_waits,
         submission,
         fence,
         proof,
@@ -832,6 +837,7 @@ fn chain(asked: Asked, routine: bool) -> DecisionChain {
         proof,
         boot,
         host,
+        ..
     } = live;
     let owner = submission.provenance.owner;
     let device = owner.device;

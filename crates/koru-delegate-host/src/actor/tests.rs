@@ -22,6 +22,7 @@ use koru_session_protocol::{
 
 use super::*;
 mod admission_read;
+mod child_composition;
 mod decision_composition;
 mod decision_resume;
 mod decisions;

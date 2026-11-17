@@ -60,7 +60,7 @@ fn admission_read_wire_is_closed_correlated_and_keeps_ipc16() {
     let (owner, bot) = subject();
     let command = BotCommand::ReadAdmissionBarrier { owner, bot };
     assert_eq!(command.owner(), Some(&owner));
-    assert_eq!(crate::ipc::WIRE_VERSION, 18);
+    assert_eq!(crate::ipc::WIRE_VERSION, 19);
     let frame = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     assert_eq!(
         koru_ipc::frame::read_frame::<_, BotCommand>(&mut frame.as_slice())

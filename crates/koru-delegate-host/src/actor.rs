@@ -175,6 +175,7 @@ pub enum Command {
 }
 
 mod bots;
+mod child_resume;
 mod decision_resume;
 mod publication;
 mod routine;
@@ -259,6 +260,19 @@ pub struct Actor {
     /// Every resume turn, as tests observe it.
     #[cfg(test)]
     resume_log: Vec<decision_resume::ResumeTurnRecord>,
+    /// The last child wait offered to the child driver (M6 rotation).
+    child_resume_cursor: Option<koru_delegate_sqlite::ChildWaitCursor>,
+    /// Whether the last child turn found an open child wait (or none has run
+    /// yet, or a Bot command may have opened one).
+    child_resume_pending: bool,
+    /// When the child clocks are next sampled. `None` while no child wait is
+    /// open and no child Stop is owed.
+    child_clock_at: Option<Instant>,
+    /// Every child driver turn and clock tick, as tests observe them.
+    #[cfg(test)]
+    child_log: Vec<child_resume::ChildTurn>,
+    #[cfg(test)]
+    child_ticks: Vec<koru_delegate_runtime::ChildClockTick>,
 }
 
 impl Actor {
@@ -295,6 +309,15 @@ impl Actor {
             decision_resume_pending: true,
             #[cfg(test)]
             resume_log: Vec::new(),
+            child_resume_cursor: None,
+            // A restart may find child waits a previous process left open,
+            // and their clocks are adopted on the first tick.
+            child_resume_pending: true,
+            child_clock_at: Some(Instant::now()),
+            #[cfg(test)]
+            child_log: Vec::new(),
+            #[cfg(test)]
+            child_ticks: Vec::new(),
         }
     }
 
@@ -547,6 +570,16 @@ impl Actor {
                 };
             }
 
+            if self.child_clock_at.is_some_and(|deadline| deadline <= now) {
+                // The child clocks (M6): count, fold, time out, reach the
+                // children. A request that timed out may free a slot or make
+                // a parent resumable, so the other deadlines look again.
+                self.child_clock_at = self.child_clock_tick();
+                if publication_at.is_none() && self.publications_pending() {
+                    publication_at = Some(Instant::now());
+                }
+                bot_budget_at = None;
+            }
             if bot_budget_at.is_some_and(|deadline| deadline <= now) {
                 let mut released = false;
                 for run in self.orchestrator.bot_budget_runs() {
@@ -566,6 +599,7 @@ impl Actor {
             }
             let wait = [
                 bot_budget_at,
+                self.child_clock_at,
                 publication_at,
                 watched_at,
                 settle_at,
@@ -606,6 +640,10 @@ impl Actor {
                 Ok(command) => {
                     self.handle(command);
                     bot_budget_at = None;
+                    if self.child_clock_at.is_none() && self.child_resume_pending {
+                        // A command may have opened a child wait.
+                        self.child_clock_at = Some(Instant::now());
+                    }
                     if !self.watchers.is_empty() && watched_at.is_none() {
                         watched_at = Some(Instant::now() + WATCH_POLL);
                     }
@@ -626,6 +664,8 @@ impl Actor {
         for pump in self.pumps.values() {
             pump.stop.store(true, Ordering::Release);
         }
+        // A clean stop folds every running child clock first (M6).
+        self.fold_child_clocks_for_stop();
         self.shutdown_publication();
         // What was sent is acknowledged before this process is gone.
         self.orchestrator.settle_all();
@@ -640,11 +680,17 @@ impl Actor {
         if let Err(error) = self.orchestrator.retry_publications(64) {
             tracing::warn!(target: "koru::delegate", %error, "publications could not be retried");
         }
-        let stepped = matches!(
+        let mut stepped = matches!(
             self.advance_decision_resume(),
             decision_resume::ResumeTurn::Stepped(..)
         );
+        // One Run's child wait per turn, rotating (M6).
+        stepped |= matches!(
+            self.advance_child_resume(),
+            child_resume::ChildTurn::Stepped(..)
+        );
         self.sync_decision_authorities();
+        self.sync_child_authorities();
         stepped
     }
 
@@ -681,6 +727,8 @@ impl Actor {
                         | koru_delegate_api::bots::BotCommand::Barrier { .. }
                         | koru_delegate_api::bots::BotCommand::Stop { .. }
                         | koru_delegate_api::bots::BotCommand::Interrupt { .. }
+                        // An admitted ask queued up to three child Runs.
+                        | koru_delegate_api::bots::BotCommand::RequestChild { .. }
                 );
                 let response = match self.bot_command(command) {
                     Ok(reply) => Response::Bot(reply),
@@ -691,6 +739,9 @@ impl Actor {
                 // wait; its classification follows the ledger.
                 self.sync_decision_authorities();
                 self.decision_resume_pending = true;
+                // The same for a child wait (M6).
+                self.sync_child_authorities();
+                self.child_resume_pending = true;
                 if queue_changed {
                     self.wake_bots();
                 }
@@ -1154,6 +1205,7 @@ impl Actor {
         // owed projections, observations and producer reconnects progress.
         if self.publication_ack.is_some()
             || self.decision_resume_pending
+            || self.child_resume_pending
             || !self.orchestrator.publication_candidates().is_empty()
         {
             return true;

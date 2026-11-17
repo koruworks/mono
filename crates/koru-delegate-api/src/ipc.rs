@@ -47,7 +47,10 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 17 adds the owner control and the owner Test of one Bot Routine.
 // Version 18 adds private operations: their decision, their one-use consume,
 // their effect intent and receipt, and the dispatcher's announce.
-pub const WIRE_VERSION: u8 = 18;
+// Version 19 adds child requests: the ask, its read, the wait's cleanup read,
+// the child wait classification, parent provenance and the version id of a
+// saved result.
+pub const WIRE_VERSION: u8 = 19;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

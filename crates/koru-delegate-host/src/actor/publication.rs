@@ -30,6 +30,28 @@ impl Actor {
         Ok(())
     }
 
+    /// Hand the child wait's enrollment client (M6) to the worker the
+    /// decision bridge started. Called once at composition, right after
+    /// [`Self::attach_decision_bridge`].
+    pub(crate) fn attach_child_bridge(
+        &mut self,
+        client: crate::publication::ChildEnrollmentClient,
+    ) -> std::io::Result<()> {
+        self.ensure_publication_worker()
+            .map_err(|_| std::io::Error::other("the publication worker could not start"))?;
+        let attached = self
+            .publication_worker
+            .as_mut()
+            .is_some_and(|worker| worker.attach_child_enrollment(client));
+        if attached {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(
+                "the publication worker did not take the child enrollment client",
+            ))
+        }
+    }
+
     /// Owned sender in, so the wake borrows nothing of the actor.
     fn publication_wake(commands: mpsc::Sender<Command>) -> impl Fn() + Send + 'static {
         move || {
@@ -98,6 +120,8 @@ impl Actor {
         // After the drain (an enrollment reply also wakes the actor here):
         // one Run's decision wait per turn, rotating.
         self.advance_decision_resume();
+        // And one Run's child wait per turn, rotating (M6).
+        self.advance_child_resume();
         // A completed projection may have settled a wait (O147).
         self.sync_decision_authorities();
     }

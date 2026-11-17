@@ -37,6 +37,7 @@
 
 mod artifacts;
 mod chain;
+mod children;
 mod control;
 mod economics;
 mod execution;
@@ -48,6 +49,7 @@ mod tokens;
 
 pub use artifacts::{ArtifactAttached, ArtifactRegistered};
 pub use chain::{RunChain, RunRef, Stamp, actor_for};
+pub use children::{ChildRequestChanged, ChildRequestRef};
 pub use control::{ControlReturned, ControlTaken};
 pub use economics::{RunRated, RunUsage, TurnUsage};
 pub use execution::{

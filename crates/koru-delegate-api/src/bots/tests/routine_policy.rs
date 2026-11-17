@@ -14,7 +14,7 @@ fn ipc15_routine_policy_sync_is_strict_owner_bound_and_rejects_ipc14() {
         barrier: barrier.clone(),
     };
     assert_eq!(command.owner(), Some(&barrier.owner));
-    assert_eq!(crate::ipc::WIRE_VERSION, 18);
+    assert_eq!(crate::ipc::WIRE_VERSION, 19);
     let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     let (version, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();

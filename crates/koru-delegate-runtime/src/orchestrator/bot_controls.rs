@@ -121,6 +121,15 @@ impl Orchestrator {
             // durable acknowledgment for this exact consumer restores it.
             current =
                 self.decision_resume_turn(fence.run, fence.attempt, fence.generation, fence.session)?;
+            if current.is_none() {
+                // The recorded successor of a child wait (M6).
+                current = self.child_resume_turn(
+                    fence.run,
+                    fence.attempt,
+                    fence.generation,
+                    fence.session,
+                )?;
+            }
             if let Some(memory) = self.open(fence.run)?.attempt.as_mut() {
                 memory.resume_turn = current;
             }
