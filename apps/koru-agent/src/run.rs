@@ -146,20 +146,13 @@ pub fn run(
         None
     };
     // 1. The claim. Before anything is read, written or spawned.
-    let endpoint = crate::endpoint(&paths).map_err(|e| StartError::Failed(e.to_string()))?;
-    let listener = match rendezvous::bind(endpoint) {
-        Ok(listener) => listener,
-        Err(koru_ipc::IpcError::AlreadyBound(_)) => return Err(StartError::AlreadyRunning),
-        Err(e) => return Err(StartError::Failed(e.to_string())),
-    };
-    koru_ipc::ipc_debug!("agent: bound {}", listener.endpoint().name());
+    let listener = claim_endpoint(&paths)?;
 
     // 2. Who this device is. A file that will not parse is replaced rather than
     //    fatal — see `device.rs`.
     //    A reset the last run was asked for happens first, before anything
     //    here has opened `agent.db` (see `IdentityManager::reset`).
-    crate::identity::IdentityManager::reset_if_requested(&paths, now_millis());
-    let sync_identity = crate::identity::IdentityManager::open(&paths, now_millis());
+    let sync_identity = open_sync_identity(&paths);
     let account_descriptor = sync_identity.as_ref().ok().and_then(|identity| {
         koru_account_wire::SignedDeviceDescriptorV1::try_from(identity.descriptor.clone()).ok()
     });
@@ -171,27 +164,7 @@ pub fn run(
     });
     let lifecycle_identity = enrollment_identity.clone();
     let (device, sync_status) = match &sync_identity {
-        Ok(identity) => {
-            let view = crate::identity::SqliteTrustRepository::open(&paths.identity_db())
-                .and_then(|repository| repository.trust_view());
-            let (trusted_device_count, authorization_generation) = view
-                .map(|view| (view.devices.len(), view.effective_revision))
-                .unwrap_or((0, 0));
-            (
-                Device {
-                    id: identity.descriptor.device_id.to_storage(),
-                    name: identity.descriptor.display_name.clone(),
-                    created_at_millis: identity.descriptor.created_at_millis,
-                },
-                koru_agent_wire::SyncStatus {
-                    endpoint_id: Some(identity.descriptor.endpoint_id.to_storage()),
-                    sync_ready: true,
-                    sync_error: None,
-                    trusted_device_count,
-                    authorization_generation,
-                },
-            )
-        }
+        Ok(identity) => device_and_sync_status(&paths, identity),
         Err(error) => {
             koru_ipc::ipc_debug!("agent: sync identity unavailable: {error}");
             let device = Device::open(&paths.device_file(), now_millis())
@@ -224,21 +197,12 @@ pub fn run(
     // sessions` — is ready before any Terminal window can be routed here.
     // Its guard owns ordered shutdown and the kill fallback; no terminal
     // message or runtime object enters the Agent.
-    let session_host = Some(
-        crate::session_host::Supervisor::start(&paths_for_producers)
-            .map_err(|error| StartError::Failed(format!("session host: {error}")))?,
-    );
-    let session_lifecycle = session_host.as_ref().map(|host| host.lifecycle());
-    let session_catalog = session_lifecycle
-        .as_ref()
-        .map(crate::session_host::Lifecycle::catalog)
-        .transpose()
-        .map_err(|error| StartError::Failed(format!("session host catalog: {error}")))?;
+    let (session_host, session_lifecycle, session_catalog) =
+        start_session_host(&paths_for_producers)?;
+    let session_host = Some(session_host);
     let mut initial_agent = Agent::new(paths, device.id.clone(), instance_id.clone());
     initial_agent.set_machine_input_enabled(machine_input_enabled);
-    if let (Some(lifecycle), Some(catalog)) = (session_lifecycle, session_catalog) {
-        initial_agent.set_session_lifecycle(lifecycle, catalog);
-    }
+    initial_agent.set_session_lifecycle(session_lifecycle, session_catalog);
     initial_agent.set_update_lease(update_lease);
     // Retained until the asynchronous gateway ensure has proved the bridge and
     // Store. A token acknowledged here would let the updater delete its backup
@@ -260,12 +224,7 @@ pub fn run(
         ),
         Err(error) => initial_agent.set_sync_unavailable(error.code),
     }
-    match crate::identity::profile_lifecycle::pending_deleted_profiles(&paths_for_producers) {
-        Ok(profiles) => initial_agent.set_pending_profile_cleanup(profiles),
-        Err(code) => {
-            koru_ipc::ipc_debug!("agent: Profile cleanup markers unavailable: {code}")
-        }
-    }
+    note_pending_profile_cleanup(&mut initial_agent, &paths_for_producers);
     let agent = Arc::new(Mutex::new(initial_agent));
     // **Producers start below, and the loop does not exist until step 5.**
     // Everything raised in between is held here and replayed when the loop
@@ -293,68 +252,16 @@ pub fn run(
         })
     });
     if let Some((local_device, endpoint_secret)) = sync_identity {
-        let network = crate::network::AgentNetwork::start(&paths_for_producers, endpoint_secret)
-            .and_then(|network| network.install().cloned())
-            .map_err(|error| StartError::Failed(format!("device network: {error}")))?;
-        // **Startup does not wait for the gateway.** The supervision is
-        // created here and returns at once; the first child is spawned on its
-        // own control thread and readiness is awaited only by ensure callers,
-        // on worker threads. There is deliberately no equivalent of the
-        // sessions host's blocking first-child wait above: a person holding a
-        // dictation chord must not wait behind a Store that is opening.
-        //
-        // It goes here, after the device network is installed, because every
-        // launch registers its expected bridge with it — and before the sync
-        // control worker below, which ensures a gateway at the top of every
-        // attempt.
-        // One independent capability per Agent lifetime, retained by both
-        // supervisors across child restarts. Never a CLI argument or env var.
-        let bot_authority = koru_delegate_api::bots::BotDelegateAuthority::new(format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        ))
-        .expect("generated Bot authority");
-        crate::gateway_host::start(
+        let services = start_device_services(
             &paths_for_producers,
             local_device,
-            koru_network_bridge::BotDelegateAuthority::new(bot_authority.clone().into()),
-        );
-        // The delegate worker (D12), after the sessions and gateway workers
-        // it reaches. Like the gateway's, its supervision returns at once;
-        // the child waits for the gateway to publish on its own thread.
-        if let Err(error) =
-            crate::delegate_host::start(&paths_for_producers, local_device, bot_authority)
-        {
-            tracing::error!(
-                target: "koru::delegate_host",
-                %error,
-                "the delegate worker could not be supervised; delegated runs are unavailable"
-            );
-        }
-        let control = crate::service::start_sync_control(
-            paths_for_producers.clone(),
-            local_device,
             endpoint_secret,
-            network.runtime().clone(),
-            waker.clone(),
-        );
-        enrollment_network = Some(network.runtime().clone());
-        enrollment_sync = Some(control.clone());
-        if let Some((descriptor, signing_secret)) = &lifecycle_identity {
-            let signing_key = koru_device::DeviceSigningKey::from_secret_bytes(*signing_secret);
-            if let Err(code) = crate::identity::profile_lifecycle::resume_pending(
-                &paths_for_producers,
-                descriptor,
-                &signing_key,
-                &control,
-            ) {
-                koru_ipc::ipc_debug!("agent: Profile lifecycle resume deferred: {code}");
-            }
-        }
-        if let Ok(mut agent) = agent.lock() {
-            agent.set_sync_control(control);
-        }
+            lifecycle_identity.as_ref(),
+            &agent,
+            &waker,
+        )?;
+        enrollment_network = Some(services.network);
+        enrollment_sync = Some(services.sync);
     }
     let account_origin = koru_env::cloud_origin();
     if account_origin.is_none() {
@@ -709,30 +616,14 @@ pub fn run(
 
     // 3. Answer the endpoint. On a thread, because `accept` blocks and the loop
     //    may never block.
-    {
-        let agent = Arc::clone(&agent);
-        let waker = waker.clone();
-        let device_id = device.id.clone();
-        let instance_id = instance_id.clone();
-        let sync_status = sync_status.clone();
-        std::thread::Builder::new()
-            .name("koru-agent rendezvous".into())
-            .spawn(move || {
-                rendezvous::serve(
-                    listener,
-                    device_id,
-                    instance_id,
-                    sync_status,
-                    waker,
-                    move |connection| {
-                        if let Ok(mut agent) = agent.lock() {
-                            agent.adopt(connection);
-                        }
-                    },
-                )
-            })
-            .map_err(|e| StartError::Failed(format!("could not answer the endpoint: {e}")))?;
-    }
+    answer_endpoint(
+        listener,
+        &agent,
+        &waker,
+        device.id.clone(),
+        instance_id.clone(),
+        sync_status.clone(),
+    )?;
 
     // 4. The shortcut. Its own thread, because `RegisterHotKey` delivers to
     //    the thread that registered and `GetMessageW` blocks. A headless root
@@ -775,6 +666,212 @@ pub fn run(
     // Bounded; the job object is still the fallback.
     crate::app::finish_quit_stop();
     ended.map_err(|e| StartError::Failed(e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Start-up steps shared with `crate::server::run_server`.
+//
+// Each function below is a block lifted out of `run` unchanged: same calls,
+// same order, same error text. `run` calls them where the block used to be;
+// the display-free supervisor calls the same ones and leaves the rest of `run`
+// (the update lease, the account block, the reminder and Socials workers, the
+// hotkey, the tray and the window loop) uncalled.
+// ---------------------------------------------------------------------------
+
+/// Step 1, the claim: bind the Agent's endpoint, or say that another Agent
+/// already holds it.
+pub(crate) fn claim_endpoint(paths: &Paths) -> Result<koru_ipc::Listener, StartError> {
+    let endpoint = crate::endpoint(paths).map_err(|e| StartError::Failed(e.to_string()))?;
+    let listener = match rendezvous::bind(endpoint) {
+        Ok(listener) => listener,
+        Err(koru_ipc::IpcError::AlreadyBound(_)) => return Err(StartError::AlreadyRunning),
+        Err(e) => return Err(StartError::Failed(e.to_string())),
+    };
+    koru_ipc::ipc_debug!("agent: bound {}", listener.endpoint().name());
+    Ok(listener)
+}
+
+/// Step 2, the sync identity. A reset the last run was asked for happens
+/// first, before anything has opened `agent.db`.
+pub(crate) fn open_sync_identity(
+    paths: &Paths,
+) -> Result<koru_device::StoredLocalDevice, koru_device::DeviceError> {
+    crate::identity::IdentityManager::reset_if_requested(paths, now_millis());
+    crate::identity::IdentityManager::open(paths, now_millis())
+}
+
+/// What an Agent with a sync identity greets shells with: its device, and the
+/// sync status read from the trust view at start.
+pub(crate) fn device_and_sync_status(
+    paths: &Paths,
+    identity: &koru_device::StoredLocalDevice,
+) -> (Device, koru_agent_wire::SyncStatus) {
+    let view = crate::identity::SqliteTrustRepository::open(&paths.identity_db())
+        .and_then(|repository| repository.trust_view());
+    let (trusted_device_count, authorization_generation) = view
+        .map(|view| (view.devices.len(), view.effective_revision))
+        .unwrap_or((0, 0));
+    (
+        Device {
+            id: identity.descriptor.device_id.to_storage(),
+            name: identity.descriptor.display_name.clone(),
+            created_at_millis: identity.descriptor.created_at_millis,
+        },
+        koru_agent_wire::SyncStatus {
+            endpoint_id: Some(identity.descriptor.endpoint_id.to_storage()),
+            sync_ready: true,
+            sync_error: None,
+            trusted_device_count,
+            authorization_generation,
+        },
+    )
+}
+
+/// Start and prove the session worker, and read its catalog once. The returned
+/// supervisor owns ordered shutdown and the kill fallback: keep it for as long
+/// as the Agent's loop runs and drop it when the loop ends.
+pub(crate) fn start_session_host(
+    paths: &Paths,
+) -> Result<
+    (
+        crate::session_host::Supervisor,
+        crate::session_host::Lifecycle,
+        crate::session_host::CatalogFact,
+    ),
+    StartError,
+> {
+    let session_host = crate::session_host::Supervisor::start(paths)
+        .map_err(|error| StartError::Failed(format!("session host: {error}")))?;
+    let session_lifecycle = session_host.lifecycle();
+    let session_catalog = session_lifecycle
+        .catalog()
+        .map_err(|error| StartError::Failed(format!("session host catalog: {error}")))?;
+    Ok((session_host, session_lifecycle, session_catalog))
+}
+
+/// Tell a new Agent which deleted Profiles still wait for local cleanup.
+pub(crate) fn note_pending_profile_cleanup(agent: &mut Agent, paths: &Paths) {
+    match crate::identity::profile_lifecycle::pending_deleted_profiles(paths) {
+        Ok(profiles) => agent.set_pending_profile_cleanup(profiles),
+        Err(code) => {
+            koru_ipc::ipc_debug!("agent: Profile cleanup markers unavailable: {code}")
+        }
+    }
+}
+
+/// The two handles the account block composes enrollment from. A caller that
+/// enters no account block drops them.
+pub(crate) struct DeviceServices {
+    pub(crate) network: koru_network_iroh::RuntimeHandle,
+    pub(crate) sync: crate::service::SyncControl,
+}
+
+/// The workers that exist only for a device with a sync identity, in the order
+/// they depend on each other: the device network, the gateway supervision, the
+/// delegate supervision, then sync control.
+pub(crate) fn start_device_services(
+    paths: &Paths,
+    local_device: koru_device::DeviceId,
+    endpoint_secret: [u8; 32],
+    lifecycle_identity: Option<&(koru_device::DeviceDescriptorV1, [u8; 32])>,
+    agent: &Arc<Mutex<Agent>>,
+    waker: &crate::event::Waker,
+) -> Result<DeviceServices, StartError> {
+    let network = crate::network::AgentNetwork::start(paths, endpoint_secret)
+        .and_then(|network| network.install().cloned())
+        .map_err(|error| StartError::Failed(format!("device network: {error}")))?;
+    // **Startup does not wait for the gateway.** The supervision is
+    // created here and returns at once; the first child is spawned on its
+    // own control thread and readiness is awaited only by ensure callers,
+    // on worker threads. There is deliberately no equivalent of the
+    // sessions host's blocking first-child wait above: a person holding a
+    // dictation chord must not wait behind a Store that is opening.
+    //
+    // It goes here, after the device network is installed, because every
+    // launch registers its expected bridge with it — and before the sync
+    // control worker below, which ensures a gateway at the top of every
+    // attempt.
+    // One independent capability per Agent lifetime, retained by both
+    // supervisors across child restarts. Never a CLI argument or env var.
+    let bot_authority = koru_delegate_api::bots::BotDelegateAuthority::new(format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    ))
+    .expect("generated Bot authority");
+    crate::gateway_host::start(
+        paths,
+        local_device,
+        koru_network_bridge::BotDelegateAuthority::new(bot_authority.clone().into()),
+    );
+    // The delegate worker (D12), after the sessions and gateway workers
+    // it reaches. Like the gateway's, its supervision returns at once;
+    // the child waits for the gateway to publish on its own thread.
+    if let Err(error) = crate::delegate_host::start(paths, local_device, bot_authority) {
+        tracing::error!(
+            target: "koru::delegate_host",
+            %error,
+            "the delegate worker could not be supervised; delegated runs are unavailable"
+        );
+    }
+    let control = crate::service::start_sync_control(
+        paths.clone(),
+        local_device,
+        endpoint_secret,
+        network.runtime().clone(),
+        waker.clone(),
+    );
+    let services = DeviceServices {
+        network: network.runtime().clone(),
+        sync: control.clone(),
+    };
+    if let Some((descriptor, signing_secret)) = lifecycle_identity {
+        let signing_key = koru_device::DeviceSigningKey::from_secret_bytes(*signing_secret);
+        if let Err(code) = crate::identity::profile_lifecycle::resume_pending(
+            paths,
+            descriptor,
+            &signing_key,
+            &control,
+        ) {
+            koru_ipc::ipc_debug!("agent: Profile lifecycle resume deferred: {code}");
+        }
+    }
+    if let Ok(mut agent) = agent.lock() {
+        agent.set_sync_control(control);
+    }
+    Ok(services)
+}
+
+/// Step 3: answer the endpoint, on a thread, because `accept` blocks and the
+/// loop may never block.
+pub(crate) fn answer_endpoint(
+    listener: koru_ipc::Listener,
+    agent: &Arc<Mutex<Agent>>,
+    waker: &crate::event::Waker,
+    device_id: String,
+    instance_id: String,
+    sync_status: koru_agent_wire::SyncStatus,
+) -> Result<(), StartError> {
+    let agent = Arc::clone(agent);
+    let waker = waker.clone();
+    std::thread::Builder::new()
+        .name("koru-agent rendezvous".into())
+        .spawn(move || {
+            rendezvous::serve(
+                listener,
+                device_id,
+                instance_id,
+                sync_status,
+                waker,
+                move |connection| {
+                    if let Ok(mut agent) = agent.lock() {
+                        agent.adopt(connection);
+                    }
+                },
+            )
+        })
+        .map_err(|e| StartError::Failed(format!("could not answer the endpoint: {e}")))?;
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -964,7 +1061,7 @@ struct Host {
 /// notices as a hang, so a line here is always news
 /// ([PRINCIPLES](../../../guide/contributing/PRINCIPLES.md) — the flag nobody had set is
 /// the diagnostic that was off during the incident).
-const STALL_FLOOR: std::time::Duration = std::time::Duration::from_secs(1);
+pub(crate) const STALL_FLOOR: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Store's existing supervisor signal is the observable reconnect lifecycle
 /// for reminders. The live event tail remains only a wake hint; after Store
@@ -982,7 +1079,7 @@ fn reminder_command(event: &AgentEvent) -> Option<crate::reminders::Command> {
 /// stretch in the routing log becomes attributable. The line carries the
 /// callsite and a duration, never content.
 #[track_caller]
-fn locked(agent: &Mutex<Agent>) -> std::sync::LockResult<std::sync::MutexGuard<'_, Agent>> {
+pub(crate) fn locked(agent: &Mutex<Agent>) -> std::sync::LockResult<std::sync::MutexGuard<'_, Agent>> {
     let started = std::time::Instant::now();
     let guard = agent.lock();
     let waited = started.elapsed();
@@ -1327,7 +1424,7 @@ impl koru_window::WindowApp for Host {
 }
 
 /// Epoch milliseconds. Read once, at start-up, for the device file's stamp.
-fn now_millis() -> i64 {
+pub(crate) fn now_millis() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)

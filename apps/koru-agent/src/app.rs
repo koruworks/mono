@@ -5195,6 +5195,19 @@ impl Agent {
         self.stop_sessions_then_quit();
     }
 
+    /// The same quit, for the display-free supervisor's signal handling
+    /// (`crate::server`), and for nothing else.
+    ///
+    /// A termination signal has nobody to ask. The tray's path
+    /// ([`Self::request_agent_quit`]) asks for confirmation while sessions are
+    /// active, and where no dialog exists the answer is "no": a server with a
+    /// running Bot would refuse to stop. This is the entry `Request::Shutdown`
+    /// already reaches over a connection, opened to one more caller inside the
+    /// crate; no desktop path calls it.
+    pub(crate) fn quit_without_asking(&mut self) {
+        self.quit_because_asked();
+    }
+
     /// Queue [`Push::Quitting`] for every live window.
     fn announce_quit(&mut self) {
         let ids: Vec<ConnectionId> = self.connections.iter().map(Connection::id).collect();

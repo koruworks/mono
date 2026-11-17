@@ -90,6 +90,12 @@ pub struct Invocation {
     /// deliberately asked for; `koru.bat root` uses it for its interactive
     /// development stack. Start-at-login remains unavailable.
     pub tray: bool,
+    /// Run with no window: the display-free supervisor for a Bot on a server a
+    /// person operates (`crate::server`). **Only this flag turns it on**: no
+    /// environment variable and no file does, so it cannot be reached by
+    /// accident. [`parse`] refuses it without `--root`, with `--tray`, with an
+    /// update flag, and with any command but `run`.
+    pub server: bool,
     /// Optional Koru profile selector, valid only for `open`.
     pub open_profile: Option<String>,
     /// Keep an Agent-launched Koru child's output on Agent's console. This is
@@ -146,6 +152,13 @@ const FLAGS: &[Flag] = &[
         takes_value: false,
         args: "--tray",
         help: "show a rooted Agent tray icon and enable its global shortcuts",
+    },
+    Flag {
+        name: "--server",
+        short: None,
+        takes_value: false,
+        args: "--server",
+        help: "run with no window, tray or account, for a Bot on a server (requires --root)",
     },
     Flag {
         name: "--profile",
@@ -236,6 +249,9 @@ pub struct Rejected {
 pub enum Why {
     Unknown { did_you_mean: Option<&'static str> },
     MissingValue,
+    /// Understood, and not allowed in this combination. The text finishes the
+    /// sentence that starts with the argument's name.
+    Refused(&'static str),
 }
 
 impl Rejected {
@@ -246,6 +262,7 @@ impl Rejected {
             } => format!("unknown argument `{}` — did you mean `{near}`?", self.arg),
             Why::Unknown { did_you_mean: None } => format!("unknown argument `{}`", self.arg),
             Why::MissingValue => format!("`{}` needs a value", self.arg),
+            Why::Refused(reason) => format!("`{}` {reason}", self.arg),
         }
     }
 
@@ -264,6 +281,9 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
     let mut root: Option<PathBuf> = None;
     let mut console = false;
     let mut tray = false;
+    let mut server = false;
+    // Seen, whatever its value: a malformed health token parses to `None`.
+    let mut update_flag = false;
     let mut open_profile = None;
     let mut inherit_stdio = false;
     let mut update_health_token: Option<String> = None;
@@ -281,6 +301,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 root,
                 console,
                 tray,
+                server,
                 open_profile,
                 inherit_stdio,
                 update_health_token,
@@ -293,6 +314,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 root,
                 console,
                 tray,
+                server,
                 open_profile,
                 inherit_stdio,
                 update_health_token,
@@ -336,8 +358,10 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                 if flag.name == "--root" {
                     root = Some(PathBuf::from(value));
                 } else if flag.name == "--update-health-token" {
+                    update_flag = true;
                     update_health_token = health_token(&value);
                 } else if flag.name == "--rehearse-update" {
+                    update_flag = true;
                     rehearse_update = Some(PathBuf::from(value));
                 } else if flag.name == "--profile" {
                     open_profile = Some(value);
@@ -347,6 +371,8 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
                     console = true;
                 } else if flag.name == "--tray" {
                     tray = true;
+                } else if flag.name == "--server" {
+                    server = true;
                 } else if flag.name == "--inherit-stdio" {
                     inherit_stdio = true;
                 }
@@ -422,13 +448,39 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
         i += 1;
     }
 
+    // **Running is the default**, because that is what a Run-key launch and
+    // a double-click mean, and neither can pass an argument.
+    let command = command.unwrap_or(Command::Run);
+    if server {
+        // Refused here rather than in `main`, so that no `Invocation` with
+        // `server` set and one of these wrong can exist at all.
+        let refusal = if command != Command::Run {
+            Some("is valid only when running the Agent")
+        } else if root.is_none() {
+            // A server never uses the per-user root: that is a person's own
+            // Koru, and this mode would start it with no window to reach it.
+            Some("needs `--root <path>`: a server never uses the per-user root")
+        } else if tray {
+            Some("cannot be combined with `--tray`: a server has no notification area")
+        } else if update_flag {
+            Some("cannot be combined with an update flag: a server takes no update lease")
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            return Err(Rejected {
+                arg: "--server".into(),
+                why: Why::Refused(reason),
+            });
+        }
+    }
+
     Ok(Invocation {
-        // **Running is the default**, because that is what a Run-key launch and
-        // a double-click mean, and neither can pass an argument.
-        command: command.unwrap_or(Command::Run),
+        command,
         root,
         console,
         tray,
+        server,
         open_profile,
         inherit_stdio,
         update_health_token,

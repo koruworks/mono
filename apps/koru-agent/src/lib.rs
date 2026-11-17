@@ -82,6 +82,7 @@ pub mod rendezvous;
 pub mod route;
 pub mod routing_log;
 pub mod run;
+pub mod server;
 pub mod service;
 pub mod session_host;
 pub mod session_worker;
@@ -98,6 +99,7 @@ pub use paths::Paths;
 pub use registry::{ConnectionId, Registry};
 pub use route::{Routed, Router};
 pub use run::{StartError, run};
+pub use server::{ServerExit, run_server};
 
 /// This build's channel — the segment the agent binds and the store is found on.
 ///

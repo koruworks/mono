@@ -104,6 +104,10 @@ fn every_command_and_flag_parses() {
     for flag in FLAGS {
         let args = if flag.takes_value {
             vec![flag.name, "/tmp/value"]
+        } else if flag.name == "--server" {
+            // The one flag that is refused alone: it needs a root. See
+            // `server_mode_needs_an_explicit_root`.
+            vec![flag.name, "--root", "/tmp/value"]
         } else {
             vec![flag.name]
         };
@@ -340,4 +344,100 @@ fn the_url_scheme_verbs_parse() {
         parse_args(&["unregister-url-scheme"]).unwrap().command,
         Command::UnregisterUrlScheme
     );
+}
+
+/// **A server never uses the per-user root.** That root is a person's own
+/// Koru; started this way it would have no window to reach it. Refused by the
+/// parser, with the usage and exit 2, like any other argument that cannot be
+/// run as written.
+#[test]
+fn server_mode_needs_an_explicit_root() {
+    let rejected = parse_args(&["--server"]).unwrap_err();
+    assert_eq!(rejected.arg, "--server");
+    assert!(matches!(rejected.why, Why::Refused(_)), "{:?}", rejected.why);
+    assert!(
+        rejected.message().contains("--root"),
+        "{}",
+        rejected.message()
+    );
+    // The explicit verb changes nothing.
+    assert!(parse_args(&["run", "--server"]).is_err());
+
+    // Both orders, and both spellings of a value flag.
+    for args in [
+        vec!["--server", "--root", "/srv/koru"],
+        vec!["--root", "/srv/koru", "--server"],
+        vec!["--root=/srv/koru", "run", "--server"],
+    ] {
+        let parsed = parse_args(&args).unwrap();
+        assert!(parsed.server, "{args:?}");
+        assert_eq!(parsed.command, Command::Run);
+        assert_eq!(parsed.root, Some(PathBuf::from("/srv/koru")));
+        assert!(!parsed.tray);
+    }
+}
+
+/// Server mode is reached by its flag and by nothing else: not by default, not
+/// by naming a root, not by any other flag. (No environment variable or file
+/// is read by the parser at all, so none can turn it on.)
+#[test]
+fn server_mode_is_off_unless_its_flag_is_given() {
+    assert!(!parse_args(&[]).unwrap().server);
+    assert!(!parse_args(&["run"]).unwrap().server);
+    assert!(!parse_args(&["--root", "/srv/koru"]).unwrap().server);
+    assert!(!parse_args(&["--root", "/srv/koru", "--console"]).unwrap().server);
+    assert!(!parse_args(&["--root", "/srv/koru", "--tray"]).unwrap().server);
+    // A near miss is an unknown argument with a suggestion, never a guess.
+    let rejected = parse_args(&["--root", "/srv/koru", "--servr"]).unwrap_err();
+    assert_eq!(
+        rejected.why,
+        Why::Unknown {
+            did_you_mean: Some("--server")
+        }
+    );
+}
+
+/// What a server does not have, it does not accept: a notification area, an
+/// update lease, or any verb but `run`.
+#[test]
+fn server_mode_refuses_what_a_server_does_not_have() {
+    let root = ["--root", "/srv/koru", "--server"];
+    let token = "0123456789abcdef0123456789abcdef";
+    for extra in [
+        vec!["--tray"],
+        vec!["--update-health-token", token],
+        // A token in the wrong shape is absent as a value; the flag was still
+        // given, and it is the flag a server refuses.
+        vec!["--update-health-token", "not-a-token"],
+        vec!["--rehearse-update", "/tmp/manifest.json"],
+        vec!["status"],
+        vec!["stop"],
+        vec!["open"],
+        vec!["delegate"],
+    ] {
+        let mut args = root.to_vec();
+        args.extend(extra.iter().copied());
+        let rejected = parse_args(&args).unwrap_err();
+        assert_eq!(rejected.arg, "--server", "{args:?}");
+        assert!(matches!(rejected.why, Why::Refused(_)), "{args:?}");
+    }
+    // The console is not a display: a service manager reads standard output.
+    let parsed = parse_args(&["--root", "/srv/koru", "--server", "--console"]).unwrap();
+    assert!(parsed.server && parsed.console);
+    // Asking a question still wins, as it does everywhere else.
+    assert_eq!(
+        parse_args(&["--server", "--help"]).unwrap().command,
+        Command::Help
+    );
+}
+
+#[test]
+fn the_help_lists_server_mode_and_what_it_requires() {
+    let text = help();
+    let line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with("--server"))
+        .expect("the help has no --server line");
+    assert!(line.contains("--root"), "{line}");
+    assert!(line.contains("no window"), "{line}");
 }

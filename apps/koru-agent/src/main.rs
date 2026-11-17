@@ -128,6 +128,15 @@ fn main() {
 
     match invocation.command {
         cli::Command::Help | cli::Command::Version => unreachable!("answered above"),
+        // **The display-free supervisor.** `--server` is the only way in, and
+        // the parser has already refused it without `--root`, with `--tray`
+        // and with an update flag. Nothing below this arm runs for it: no
+        // tray, no update token, no window loop.
+        cli::Command::Run if invocation.server => {
+            if let Err(why) = serve(paths, invocation.console) {
+                fatal(&why);
+            }
+        }
         cli::Command::Run => {
             // An explicit root normally takes nothing machine-wide. The
             // interactive launcher opts into the tray and global input so it
@@ -368,6 +377,62 @@ fn main() {
             },
             Err(why) => fatal(&why),
         },
+    }
+}
+
+/// Run the Agent with no window until it stops.
+///
+/// Its own function so the log writer's guard is dropped, and the last lines
+/// written, before a failure becomes a non-zero exit: `fatal` ends the process
+/// without running destructors.
+///
+/// **Every way of not serving exits non-zero**, including the one a desktop
+/// treats as success. A second desktop launch stands down quietly because the
+/// person wanted an Agent and there is one. A service manager that started
+/// this process wanted *this* process to be the server, and a clean exit
+/// would tell it the service had stopped on purpose.
+fn serve(paths: koru_agent::Paths, console: bool) -> Result<(), String> {
+    let log_filter = if koru_env::switch(koru_env::name::KORU_SYNC_DEBUG) {
+        LOG_FILTER_SYNC_DEBUG
+    } else {
+        LOG_FILTER
+    };
+    let _logging = if console {
+        koru_log::init_file_and_stdout(&paths.store_dir(), "koru-agent.log", log_filter)
+    } else {
+        koru_log::init_file(&paths.store_dir(), "koru-agent.log", log_filter)
+    };
+    let (parent_pid, parent) = koru_agent::launched_by();
+    tracing::info!(
+        target: "koru::startup",
+        version = env!("CARGO_PKG_VERSION"),
+        pid = std::process::id(),
+        parent_pid,
+        parent = %parent,
+        root = %paths.root().display(),
+        server = true,
+        "agent started"
+    );
+    match koru_agent::run_server(paths) {
+        Ok(koru_agent::ServerExit::Stopped) => {
+            tracing::info!(
+                target: "koru::startup",
+                pid = std::process::id(),
+                "agent stopped cleanly"
+            );
+            Ok(())
+        }
+        Ok(koru_agent::ServerExit::StopTimedOut) => Err(format!(
+            "the Agent had not finished stopping {} seconds after the signal; leaving anyway",
+            koru_agent::server::STOP_PATIENCE.as_secs()
+        )),
+        Ok(koru_agent::ServerExit::Abandoned) => {
+            Err("the Agent's event queue closed while it was running".into())
+        }
+        Err(koru_agent::StartError::AlreadyRunning) => {
+            Err("an agent is already running for this root; this server did not start".into())
+        }
+        Err(error) => Err(error.to_string()),
     }
 }
 
