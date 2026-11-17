@@ -142,6 +142,102 @@ pub(in crate::repository) fn prepared()
         .unwrap();
     (repo, turn, submission, fence)
 }
+
+/// A reply as it is once the delegate has answered `Submit`, in the order a
+/// real Run takes: the Run is queued, so the answer stored on the receipt
+/// names no execution, and nothing is bound. The fence returned is the
+/// execution the delegate goes on to name, with its turn; a test binds it
+/// (first without the turn, as `Phase::Admission` does, then with it).
+pub(in crate::repository) fn submitted()
+-> (Repository, PendingTurn, BotSubmission, BotExecutionFence) {
+    let mut repo = Repository::in_memory().unwrap();
+    let (_, turn, submission) = fixture(&mut repo);
+    repo.prepare_bot_turn(&turn, &submission, at(1)).unwrap();
+    let fence = BotExecutionFence {
+        owner: submission.provenance.owner,
+        bot: submission.provenance.bot,
+        run: submission.request.run,
+        attempt: RunAttemptId::mint(),
+        generation: AttemptGeneration::FIRST,
+        session: SessionId::mint(),
+        turn: Some(AgentTurnId::mint()),
+    };
+    answer_submit(&mut repo, &submission, None);
+    (repo, turn, submission, fence)
+}
+
+/// The delegate's answer to `Submit`, stored on the receipt: queued with no
+/// execution, or (a fixture's shortcut) executing under `fence`.
+pub(in crate::repository) fn answer_submit(
+    repo: &mut Repository,
+    submission: &BotSubmission,
+    fence: Option<BotExecutionFence>,
+) {
+    let p = &submission.provenance;
+    repo.connection
+        .execute(
+            "UPDATE bots SET folder_lock_request_id=?1 WHERE bot_id=?2",
+            params![p.submission.to_storage(), p.bot.to_storage()],
+        )
+        .unwrap();
+    repo.acknowledge_bot_submission(
+        koru_ai_core::bots::BotOwner {
+            user_scope: p.owner.user_scope,
+            device: p.owner.device,
+        },
+        p.bot,
+        p.submission,
+        &delegate::BotAdmissionView {
+            key: delegate::BotSubmissionKey {
+                owner: p.owner,
+                bot: p.bot,
+                request: p.submission,
+            },
+            run: submission.request.run,
+            state: if fence.is_some() {
+                delegate::BotAdmissionState::Executing
+            } else {
+                delegate::BotAdmissionState::Queued
+            },
+            queue_sequence: 1,
+            fence,
+        },
+        3,
+    )
+    .unwrap();
+    repo.connection
+        .execute(
+            "UPDATE bot_command_receipts SET fingerprint=?1 WHERE request_id=?2",
+            params!["a".repeat(64), p.submission.to_storage()],
+        )
+        .unwrap();
+}
+
+/// The execution the receipt of this Run names, as the wait enrollments
+/// read it.
+pub(in crate::repository) fn receipt_execution(
+    repo: &Repository,
+    submission: &BotSubmission,
+) -> Option<BotExecutionFence> {
+    let p = &submission.provenance;
+    let receipt = repo
+        .bot_submission_for_run(
+            koru_ai_core::bots::BotOwner {
+                user_scope: p.owner.user_scope,
+                device: p.owner.device,
+            },
+            p.bot,
+            submission.request.run,
+        )
+        .unwrap()
+        .unwrap();
+    match receipt.outcome {
+        Some(koru_ai_core::bots::BotExecutionOutcome::Accepted { admission, .. }) => {
+            admission.fence
+        }
+        other => panic!("an accepted receipt, not {other:?}"),
+    }
+}
 fn event(event: AiEvent) -> BotReplayEffect {
     BotReplayEffect::Event {
         terminal_cleanup: event.is_terminal().then(|| BotTerminalCleanup {

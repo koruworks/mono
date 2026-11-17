@@ -415,3 +415,174 @@ fn m5_ai_enrollment_private_decision_is_held_like_an_edit_and_a_native_one_is_no
         assert_eq!(count(&repo), 0);
     }
 }
+
+// ---- m6_enrollment_bind: the order a real Run takes -------------------------
+
+use koru_ai_core::bots::replay::BotExecutionFence;
+
+/// A decision wait held on `fence`'s turn and the delegate's observation of
+/// it, as [`fixture`] builds them.
+fn wait_on(
+    submission: &d::BotSubmission,
+    fence: &BotExecutionFence,
+) -> (EnrollBotWaitCleanup, BotDecisionWaitObservation) {
+    let p = &submission.provenance;
+    let cleanup_intent = BotWaitCleanupIntentV1 {
+        version: DecisionVersionV1,
+        owner: p.owner,
+        bot: p.bot,
+        run: submission.request.run,
+        wait_id: BotWaitId::mint(),
+        decision_id: DecisionId::mint(),
+        decision_revision: DecisionRevision::new(2).unwrap(),
+        wait_revision: DecisionRevision::new(2).unwrap(),
+        origin_attempt: fence.attempt,
+        origin_generation: fence.generation,
+        origin_session: fence.session,
+        origin_turn: fence.turn.unwrap(),
+        cause: BotWaitCleanupCause::DecisionWaitCleanup,
+    };
+    let key = cleanup_intent.key().unwrap();
+    let observation = BotDecisionWaitObservation {
+        key: key.clone(),
+        cleanup_intent: cleanup_intent.clone(),
+        current_revision: key.wait_revision,
+        fresh_stop_eligibility: FreshWaitStopEligibility::EligibleOriginWaitStop,
+        origin_stop: OriginWaitStop::Pending {},
+        consumer_cleanup: ConsumerCleanup::NotRequested {},
+        disposition: DecisionDisposition::Open {
+            state: DecisionState {
+                kind: DecisionKind::KoruEdit,
+                authorization: DecisionAuthorization::Pending,
+                phase: DecisionPhase::Holding,
+                revision: key.decision_revision,
+            },
+        },
+        publication: DecisionPublication::Applied {
+            transition: DecisionTransitionId::mint(),
+            sequence: key.wait_revision,
+            target_digest: DecisionDigest::from_bytes([1; 32]),
+            observed_version: DecisionVersionVector::new(vec![1]).unwrap(),
+        },
+    };
+    (
+        EnrollBotWaitCleanup {
+            key,
+            cleanup_intent,
+        },
+        observation,
+    )
+}
+
+fn owner_of(submission: &d::BotSubmission) -> BotOwner {
+    BotOwner {
+        user_scope: submission.provenance.owner.user_scope,
+        device: submission.provenance.owner.device,
+    }
+}
+
+fn session_of(fence: &BotExecutionFence) -> BotExecutionFence {
+    let mut session = fence.clone();
+    session.turn = None;
+    session
+}
+
+/// The delegate answers `Submit` while the Run is queued, so the receipt
+/// names no execution; the session and then the turn are bound later. The
+/// decision wait then enrolls on that turn.
+#[test]
+fn m6_enrollment_bind_a_decision_wait_enrolls_in_the_order_a_real_run_takes() {
+    use crate::repository::bot_replay::tests::{receipt_execution, submitted};
+    let (mut repo, turn, submission, fence) = submitted();
+    let owner = owner_of(&submission);
+    assert_eq!(receipt_execution(&repo, &submission), None);
+    repo.bind_bot_execution(
+        turn.attempt.id,
+        &session_of(&fence),
+        Timestamp::from_millis(4),
+    )
+    .unwrap();
+    repo.bind_bot_execution(turn.attempt.id, &fence, Timestamp::from_millis(5))
+        .unwrap();
+    let (request, qualified) = wait_on(&submission, &fence);
+    let reply = enroll(&mut repo, owner, &request, &qualified).unwrap();
+    // The bind recorded the execution on the receipt, where the enrollment
+    // reads it.
+    assert_eq!(receipt_execution(&repo, &submission), Some(fence.clone()));
+    assert!(
+        matches!(&reply, BotWaitEnrollmentReply::Enrolled { ai_attempt, .. } if *ai_attempt == turn.attempt.id.as_uuid())
+    );
+    assert_eq!(count(&repo), 1);
+}
+
+#[test]
+fn m6_enrollment_bind_a_decision_on_another_execution_or_an_unbound_turn_is_refused() {
+    use crate::repository::bot_replay::tests::{answer_submit, receipt_execution, submitted};
+    // Bound in the real order, then asked about an execution that is not
+    // the Run's current one.
+    let (mut repo, turn, submission, fence) = submitted();
+    let owner = owner_of(&submission);
+    repo.bind_bot_execution(
+        turn.attempt.id,
+        &session_of(&fence),
+        Timestamp::from_millis(4),
+    )
+    .unwrap();
+    repo.bind_bot_execution(turn.attempt.id, &fence, Timestamp::from_millis(5))
+        .unwrap();
+    let mut generation = fence.clone();
+    generation.generation = fence.generation.next();
+    let mut stale = fence.clone();
+    stale.turn = Some(d::AgentTurnId::mint());
+    let mut session = fence.clone();
+    session.session = d::SessionId::mint();
+    let mut attempt = fence.clone();
+    attempt.attempt = d::RunAttemptId::mint();
+    for other in [generation, stale, session, attempt] {
+        let (request, qualified) = wait_on(&submission, &other);
+        assert_eq!(
+            enroll(&mut repo, owner, &request, &qualified),
+            Err(BotError::Conflict)
+        );
+    }
+    let mut foreign = fence.clone();
+    foreign.run = d::RunId::mint();
+    let (mut request, mut qualified) = wait_on(&submission, &fence);
+    request.cleanup_intent.run = foreign.run;
+    request.key = request.cleanup_intent.key().unwrap();
+    qualified.key = request.key.clone();
+    qualified.cleanup_intent = request.cleanup_intent.clone();
+    assert!(enroll(&mut repo, owner, &request, &qualified).is_err());
+    assert_eq!(count(&repo), 0);
+    // The session is bound and the turn is not: no enrollment.
+    let (mut repo, turn, submission, fence) = submitted();
+    let owner = owner_of(&submission);
+    let (request, qualified) = wait_on(&submission, &fence);
+    assert!(enroll(&mut repo, owner, &request, &qualified).is_err());
+    repo.bind_bot_execution(
+        turn.attempt.id,
+        &session_of(&fence),
+        Timestamp::from_millis(4),
+    )
+    .unwrap();
+    assert_eq!(
+        enroll(&mut repo, owner, &request, &qualified),
+        Err(BotError::Conflict)
+    );
+    // A receipt that names another execution is kept by the bind, and the
+    // enrollment refuses as it always did.
+    let (mut repo, turn, submission, fence) = submitted();
+    let owner = owner_of(&submission);
+    let mut answered = fence.clone();
+    answered.session = d::SessionId::mint();
+    answer_submit(&mut repo, &submission, Some(answered.clone()));
+    repo.bind_bot_execution(turn.attempt.id, &fence, Timestamp::from_millis(5))
+        .unwrap();
+    assert_eq!(receipt_execution(&repo, &submission), Some(answered));
+    let (request, qualified) = wait_on(&submission, &fence);
+    assert_eq!(
+        enroll(&mut repo, owner, &request, &qualified),
+        Err(BotError::Conflict)
+    );
+    assert_eq!(count(&repo), 0);
+}

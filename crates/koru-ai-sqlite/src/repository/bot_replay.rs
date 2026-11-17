@@ -275,7 +275,10 @@ impl Repository {
                 return Err(invariant_failed());
             }
             if old.turn == fence.turn {
-                return Ok(());
+                // Bound already. A receipt written before this was recorded
+                // on it (an older build's) is made true now.
+                record_bound_execution_on(&tx, attempt)?;
+                return tx.commit().map_err(storage_failed);
             }
         }
         if query_attempt(&tx, "id", &attempt.to_storage())?
@@ -288,6 +291,8 @@ impl Repository {
         tx.execute("UPDATE bot_run_replay SET run_attempt_id=?2,generation=?3,session_id=?4,turn_id=?5,updated_at_ms=?6 WHERE ai_attempt_id=?1",
             params![attempt.to_storage(),fence.attempt.to_storage(),fence.generation.get(),fence.session.to_string(),
                 fence.turn.map(|id|id.to_string()),now.millis()]).map_err(storage_failed)?;
+        // In the same transaction: the receipt names what was just bound.
+        record_bound_execution_on(&tx, attempt)?;
         tx.commit().map_err(storage_failed)
     }
 
@@ -771,6 +776,148 @@ fn validate_fence_link(
         WHERE l.ai_attempt_id=?1 AND l.user_scope_id=?2 AND l.owner_device_id=?3 AND l.bot_id=?4 AND l.run_id=?5)",
         params![attempt.to_storage(),fence.owner.user_scope.to_string(),fence.owner.device.to_string(),fence.bot.to_storage(),fence.run.to_storage()],|r|r.get(0)).map_err(storage_failed)?;
     if !matches {
+        return Err(invariant_failed());
+    }
+    Ok(())
+}
+
+/// Make the receipt of this attempt's Run name the execution the worker has
+/// bound for it. In the caller's transaction; nothing is committed here.
+///
+/// **Why.** The delegate answers `Submit` when it admits the Run, which is
+/// before a session exists, and that answer is stored on the receipt once
+/// (`acknowledge_submission_on`). The session and then the turn are bound
+/// later, here, on the replay state. A wait's enrollment and its rollover
+/// (a decision's and a child wait's) require "the admission's own execution"
+/// read from the receipt to be the asking turn's, so the receipt must say
+/// what was bound, or no wait of a real Run can enroll.
+///
+/// **What it can write.** Only the replay state's own execution, which
+/// [`Repository::bind_bot_execution`] moves one way: unbound, then one
+/// attempt, generation and session, then that execution's one turn. A
+/// different execution, an older or later generation or another turn is
+/// refused there before this runs. On the receipt the stored execution moves
+/// the same way and no other:
+///
+/// - absent, to the bound execution;
+/// - the same execution without a turn, to it with its turn;
+/// - anything else is left exactly as it is. A receipt that names another
+///   execution is never replaced, and the enrollment refuses it as before.
+///
+/// Nothing is written once a wait has rolled this attempt's replay over to
+/// a successor: the replay then holds a consumer, and the receipt keeps the
+/// admission's own execution. Nor before the receipt is accepted; the
+/// acknowledgment calls this again. Only `admission.fence` changes: the
+/// state the delegate answered, the stage and the row's time stay.
+pub(super) fn record_bound_execution_on(
+    conn: &Connection,
+    attempt: InferenceAttemptId,
+) -> Result<(), AiError> {
+    use koru_ai_core::bots::BotExecutionOutcome;
+    let id = attempt.to_storage();
+    // A wait that rolled the replay over left a row in its own table (ai22
+    // for a decision, ai26 for a child wait). A database opened at an older
+    // version, as a migration is prepared on, has no such table and so no
+    // such wait.
+    for table in [
+        "bot_decision_replay_rollovers",
+        "bot_child_replay_rollovers",
+    ] {
+        let exists: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1)",
+                [table],
+                |r| r.get(0),
+            )
+            .map_err(storage_failed)?;
+        if !exists {
+            continue;
+        }
+        let rolled: bool = conn
+            .query_row(
+                &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE ai_attempt_id=?1)"),
+                [&id],
+                |r| r.get(0),
+            )
+            .map_err(storage_failed)?;
+        if rolled {
+            return Ok(());
+        }
+    }
+    let original: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT l.user_scope_id,l.bot_id,l.run_id FROM bot_chat_runs l JOIN bot_run_replay r USING(ai_attempt_id)
+             WHERE l.ai_attempt_id=?1 AND r.run_attempt_id IS NOT NULL",
+            [&id],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(storage_failed)?;
+    let Some((scope, bot, run)) = original else {
+        return Ok(());
+    };
+    let Some(bound) = replay_on(conn, attempt)?.fence else {
+        return Ok(());
+    };
+    let receipts: Vec<(String, Option<String>)> = {
+        let mut statement = conn
+            .prepare(
+                "SELECT request_id,outcome_json FROM bot_command_receipts
+                 WHERE user_scope_id=?1 AND bot_id=?2 AND planned_run_id=?3
+                 AND command_kind IN ('start','continue','routine_occurrence')
+                 AND stage IN ('accepted','completed') LIMIT 2",
+            )
+            .map_err(storage_failed)?;
+        statement
+            .query_map(params![scope, bot, run], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(storage_failed)?
+            .collect::<Result<_, _>>()
+            .map_err(storage_failed)?
+    };
+    // Exactly one accepted receipt of this Run, or nothing is touched. A
+    // stored answer this cannot read is left for its own decoder to refuse.
+    let [(request, Some(stored))] = receipts.as_slice() else {
+        return Ok(());
+    };
+    let Ok(BotExecutionOutcome::Accepted {
+        version: 1,
+        mut admission,
+    }) = serde_json::from_str::<BotExecutionOutcome>(stored)
+    else {
+        return Ok(());
+    };
+    if admission.run != bound.run
+        || admission.key.owner != bound.owner
+        || admission.key.bot != bound.bot
+    {
+        return Ok(());
+    }
+    let advances = match &admission.fence {
+        None => true,
+        Some(held) if held.turn.is_none() && bound.turn.is_some() => {
+            let mut same = held.clone();
+            same.turn = bound.turn;
+            same == bound
+        }
+        Some(_) => false,
+    };
+    if !advances {
+        return Ok(());
+    }
+    admission.fence = Some(bound);
+    let next = serde_json::to_string(&BotExecutionOutcome::Accepted {
+        version: 1,
+        admission,
+    })
+    .map_err(|_| invariant_failed())?;
+    let changed = conn
+        .execute(
+            "UPDATE bot_command_receipts SET outcome_json=?4
+             WHERE user_scope_id=?1 AND request_id=?2 AND outcome_json=?3",
+            params![scope, request, stored, next],
+        )
+        .map_err(storage_failed)?;
+    if changed != 1 {
         return Err(invariant_failed());
     }
     Ok(())

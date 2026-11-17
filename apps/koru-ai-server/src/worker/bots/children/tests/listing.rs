@@ -327,10 +327,9 @@ fn m6_ask_listing_a_call_before_the_turn_is_bound_is_refused_and_the_same_call_p
     // exactly that turn.
     let (reply, turn) = on_writer(&w.client, move |state| {
         let turn = bind_turn(&mut state.repository, &reply);
-        // The receipt names the execution with its turn, as this module's
-        // `live_reply` fixture records it: the wait's enrollment compares
-        // the two (`enroll_on`). See the ignored test below for the order a
-        // real Run takes.
+        // The delegate's view once the turn exists, stored as this module's
+        // `live_reply` fixture stores it. The test below takes the order a
+        // real Run takes, where nothing is stored after `Submit`'s answer.
         let mut fence = reply.fence.clone();
         fence.turn = Some(turn);
         acknowledge(
@@ -378,22 +377,16 @@ fn m6_ask_listing_a_call_before_the_turn_is_bound_is_refused_and_the_same_call_p
     w.stop();
 }
 
-/// **An open defect, found while writing this cohort and not fixed here.**
-/// It is ignored because it fails; `--ignored` runs it.
-///
 /// The same ask in the order a real Run takes. The delegate answers the
 /// submission when it admits the Run, before any session exists, and that
 /// answer is the one stored on the receipt (`acknowledge_bot_submission`, the
 /// coordination job's only write of it). The session and the turn are bound
-/// later, on the replay state only. The wait's enrollment (`enroll_on` in
-/// `koru-ai-sqlite`) requires the receipt's stored execution to equal the
-/// asking turn's, so it refuses: the delegate has created the requests and
-/// the tool answers `child_status_unknown`, for this key every time. Every
-/// other test of this module passes because its fixture writes the receipt
-/// with the turn already in it. The decision wait's enrollment makes the same
-/// comparison. See `docs/features/bots/M6.ASK-LISTING.EXECUTION.notes.md`.
+/// later. The wait's enrollment (`enroll_on` in `koru-ai-sqlite`) requires
+/// the receipt's execution to be the asking turn's, so the bind records the
+/// bound execution on the receipt (`record_bound_execution_on`). Before it
+/// did, this ask reached the delegate and then answered
+/// `child_status_unknown`, for the same key every time.
 #[test]
-#[ignore = "open defect: the wait enrollment compares the receipt's admission, stored before the turn existed"]
 fn m6_ask_listing_an_ask_in_the_order_a_real_run_takes_is_admitted() {
     let w = world();
     let reply = helper_starting(&w);

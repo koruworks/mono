@@ -8,6 +8,8 @@ use koru_ai_core::bots::BotRepository;
 use koru_delegate_core as d;
 use std::collections::BTreeSet;
 
+mod real_order;
+
 fn at(n: i64) -> Timestamp {
     Timestamp::from_millis(1_770_000_000_000 + n)
 }

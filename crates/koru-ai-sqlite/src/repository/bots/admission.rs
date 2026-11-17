@@ -607,6 +607,20 @@ pub(super) fn acknowledge_submission_on(
     }
     tx.execute("UPDATE bot_command_receipts SET stage='completed',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;
     super::client_feed::touch_admitted(tx, owner.user_scope, request).map_err(bad)?;
+    // The delegate's answer to `Submit` names no execution, or an earlier
+    // view of it. If the worker has bound this reply's execution already
+    // (the two replies raced), the receipt names it, as a later bind makes
+    // it: the same one-way rule, and never over a different execution.
+    if let Some(attempt) = r
+        .intent
+        .submission
+        .provenance
+        .ai_attempt_id
+        .and_then(|id| InferenceAttemptId::parse(&id.to_string()))
+    {
+        crate::repository::bot_replay::record_bound_execution_on(tx, attempt)
+            .map_err(|_| BotError::Storage)?;
+    }
     read_bot_submission_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)
 }
 
