@@ -648,6 +648,8 @@ impl MainView {
     /// menu row's *Complete*, a confirmed *Remove*); a command the page asked
     /// for has already echoed itself on the way out.
     pub(super) fn queue_task_command(&mut self, command: TaskCommand, echo: bool) {
+        // Making or changing a task is using the tab it was done on.
+        self.mark_tab_used();
         self.queue_task_command_landing(command, echo, None);
     }
 
@@ -813,6 +815,9 @@ impl MainView {
         if self.search_only || !koru_features::tasks() {
             return false;
         }
+        // **Choosing a result closes search**, as it does for a document: the
+        // surface is kept, not dropped, so reopening it is where it was.
+        self.retained_search = self.search.take();
         match target {
             koru_workspace_host::TasksTarget::List(list) => {
                 self.search_landing.retire();
@@ -840,6 +845,18 @@ impl MainView {
                     ));
                     crate::tasks::debug_line(format_args!("search landing: list gone"));
                 }
+                true
+            }
+            koru_workspace_host::TasksTarget::Queue(bucket) => {
+                self.search_landing.retire();
+                let target = RailTarget::Bucket(Self::rail_bucket(bucket));
+                self.record_jump();
+                if !self.open_tasks_tab(target, false) {
+                    return false;
+                }
+                self.explore.show_tasks();
+                self.explore.rail_mut().set_selected(Some(target));
+                crate::tasks::debug_line(format_args!("search landing: queue"));
                 true
             }
             koru_workspace_host::TasksTarget::Task { document, node } => {

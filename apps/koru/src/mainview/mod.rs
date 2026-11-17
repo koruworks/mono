@@ -104,6 +104,7 @@ pub mod panes;
 mod place_chooser;
 mod profile_probe;
 mod profile_wait;
+mod quick_switch;
 mod rail_overflow;
 mod reader_offer;
 mod recording;
@@ -760,6 +761,12 @@ pub struct MainView {
     /// `None` is the common case and costs nothing, the same shape the rename
     /// field has.
     new_list: Option<new_list::NewList>,
+    /// Ctrl+Tab held: the open tabs, most recent first.
+    quick_switch: Option<quick_switch::QuickSwitch>,
+    /// When each tab was last *used* (written in, a task made on), by tab id,
+    /// on `use_clock`. What the quick switch orders by. Absent: never used.
+    tab_used: std::collections::HashMap<u64, u64>,
+    use_clock: u64,
     /// A list the rail asked for, waiting for the shell to create it in the
     /// workspace system document. The tag chooser's `wants_create_tag` seam,
     /// one for one.
@@ -1933,6 +1940,9 @@ impl MainView {
             context_tasks_stale: true,
             context_tasks_doc: None,
             new_list: None,
+            quick_switch: None,
+            tab_used: std::collections::HashMap::new(),
+            use_clock: 0,
             wants_create_list: None,
             list_field_origin: None,
             list_edits: Vec::new(),
@@ -2637,6 +2647,11 @@ impl MainView {
         let bounds = self.search_bounds();
         View::set_viewport(&mut search, bounds.w, bounds.h);
         search.configure_modal(Self::command_bar_chips());
+        if koru_features::tasks()
+            && let Some(workspace) = self.current_workspace()
+        {
+            search.offer_queues(workspace);
+        }
         self.search = Some(search);
         // The observation, not the work: one channel send, a no-op under
         // `cargo test` (nothing starts the host there).
@@ -3886,6 +3901,49 @@ impl MainView {
         self.recents_stale = true;
     }
 
+    /// Stamp the tab in front as used now.
+    pub(super) fn mark_tab_used(&mut self) {
+        self.use_clock += 1;
+        let id = self.tabs().active_tab().id;
+        self.tab_used.insert(id, self.use_clock);
+        // Closed tabs leave their stamps behind; drop them once they
+        // outnumber anything a window holds.
+        if self.tab_used.len() > 512 {
+            let open: std::collections::HashSet<u64> = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.tabs().iter().map(|tab| tab.id))
+                .collect();
+            self.tab_used.retain(|id, _| open.contains(id));
+        }
+    }
+
+    /// Go to the tab the quick switch is on, and put the list away.
+    fn finish_quick_switch(&mut self) -> bool {
+        let Some(switch) = self.quick_switch.take() else {
+            return false;
+        };
+        // Nothing typed matches a tab: there is nowhere to go.
+        let Some((group, chosen)) = switch.chosen() else {
+            return true;
+        };
+        // By identity: a tab closed while the list stood is simply not there.
+        let found = self
+            .panes
+            .iter_groups()
+            .find(|(path, _)| *path == group)
+            .and_then(|(_, tabs)| tabs.tabs().position(|tab| tab.id == chosen));
+        if let Some(i) = found {
+            // The tab may be in another split: the keyboard goes there too.
+            self.panes.set_focus(group);
+            self.select(i);
+            self.ensure_tab_visible(self.tabs().active());
+            self.size_visible_groups();
+            self.wake_workspaces_tab();
+        }
+        true
+    }
+
     fn select(&mut self, i: usize) -> bool {
         // Switching tabs is a jump like any other: Back after it should return
         // you to the tab you came from, which is what it does everywhere else
@@ -4338,6 +4396,7 @@ impl MainView {
                     action,
                     MenuAction::Documents
                         | MenuAction::OpenWelcome
+                        | MenuAction::ViewOpenTabs
                         | MenuAction::Socials
                         | MenuAction::Delegate
                         | MenuAction::NewDocument
@@ -4748,6 +4807,8 @@ impl MainView {
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
                 MenuAction::OpenWelcome => self.open_welcome_tab(),
+                // The quick switch, for somebody who has not met its chord.
+                MenuAction::ViewOpenTabs => self.cycle_tab(1),
                 MenuAction::Socials => self.open_socials_tab(),
                 MenuAction::Delegate => self.begin_delegation(delegate::DelegationOrigin::Blank),
                 MenuAction::NewCanvas => self.new_canvas(),
@@ -5308,7 +5369,7 @@ impl MainView {
                 // the row between the top-level rows.
                 MenuAction::ListMoveToTop => {
                     self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::MoveList {
-                        id,
+                        ids: vec![id],
                         parent: None,
                         before: None,
                     })
@@ -9140,14 +9201,23 @@ impl MainView {
             }
             // Where the row already is on the rail, written to the table so
             // every window and every peer agrees with it. No task moves.
-            Request::MoveList { id, parent, before } => {
+            Request::MoveList {
+                ids,
+                parent,
+                before,
+            } => {
                 crate::tasks::debug_line(format_args!(
-                    "list move nested={} before={}",
+                    "list move lists={} nested={} before={}",
+                    ids.len(),
                     parent.is_some(),
                     before.is_some()
                 ));
-                self.list_edits
-                    .push(koru_workspace_host::tasks::ListEdit::Move { id, parent, before });
+                // One edit per list, each before the same sibling and in the
+                // order given, so a selection lands together.
+                for id in ids {
+                    self.list_edits
+                        .push(koru_workspace_host::tasks::ListEdit::Move { id, parent, before });
+                }
                 // A parent's shut row shows what is inside it, so a move
                 // changes numbers the table push alone would not redraw.
                 self.refresh_rail_lists();
@@ -9595,6 +9665,9 @@ impl MainView {
                 }
                 WelcomeWant::VoiceSettings => {
                     self.open_voice_settings_tab();
+                }
+                WelcomeWant::ReaderSettings => {
+                    self.open_reader_settings();
                 }
                 WelcomeWant::Import(format) => {
                     self.ask_pane(PaneRequest::ImportContent {
@@ -10264,6 +10337,18 @@ impl MainView {
         self.pointer = (x, y);
         if self.file_preview.is_some() {
             return self.file_preview_press(x, y);
+        }
+        // On a row of the quick switch: go there. Anywhere else: put it away,
+        // and the press is spent.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            if switch.press(self.viewport, x, y) {
+                self.finish_quick_switch();
+            } else if !switch.contains(self.viewport, x, y) {
+                // Off the panel puts it away; on its heading or its field
+                // is not a choice and not a dismissal.
+                self.quick_switch = None;
+            }
+            return true;
         }
         // A press anywhere moves the keyboard off the chrome stop it was on.
         self.chrome_focus = None;
@@ -11606,6 +11691,11 @@ impl View for MainView {
         if self.file_preview.is_some() {
             return true;
         }
+        // The quick switch stands over everything: the pointer lights its
+        // rows and nothing underneath it.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            return switch.hover(self.viewport, x, y);
+        }
         if let Some(fab) = self.fab.as_mut() {
             let viewport = self.viewport;
             let changed = fab.mouse_move(x, y, viewport);
@@ -11796,6 +11886,14 @@ impl View for MainView {
             // Reached only by a press that landed in the column, so it is on
             // screen and its rows have to be current before they are hit-tested.
             self.refresh_explore(ws, true);
+            // A row that holds rows opens or shuts on a double-click.
+            if self
+                .explore
+                .toggle_fold_at(self.explore_area(), self.viewport, x, y)
+            {
+                self.explore_stale = true;
+                return true;
+            }
             let out = self
                 .explore
                 .mouse_double_click(self.explore_area(), self.viewport, x, y);
@@ -11843,6 +11941,16 @@ impl View for MainView {
             return;
         }
         if self.delegation_scroll(-Self::wheel_lines(delta) * 32.0) {
+            return;
+        }
+        // The quick switch stands over everything, and the wheel is its
+        // list's: a row a notch.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            let rows = match delta {
+                MouseScrollDelta::LineDelta(_, y) => -y.round() as i32,
+                MouseScrollDelta::PixelDelta(p) => (-p.y / 38.0).round() as i32,
+            };
+            switch.scroll_rows(rows);
             return;
         }
         if self.reminder_creation.is_open() {
@@ -12105,6 +12213,11 @@ impl View for MainView {
 
     fn cursor_icon(&self) -> CursorIcon {
         if self.file_preview.is_some() {
+            return CursorIcon::Default;
+        }
+        // Over the quick switch the pointer is the plain arrow, whatever is
+        // underneath: a text caret over a list of rows says the wrong thing.
+        if self.quick_switch.is_some() {
             return CursorIcon::Default;
         }
         match self.lifted_viewer() {
@@ -15328,14 +15441,48 @@ impl View for MainView {
         had
     }
 
+    /// **Ctrl+Tab is the quick switch.** The first press stands the list
+    /// up on the tab used before this one; each further press moves the
+    /// highlight. It stays until Enter or a click chooses, or Escape or a
+    /// click elsewhere puts it away. It used to step along the strip at once.
     fn cycle_tab(&mut self, delta: i32) -> bool {
-        if !self.tabs_mut().cycle(delta) {
-            return false;
+        if let Some(switch) = self.quick_switch.as_mut() {
+            switch.step(delta);
+            return true;
         }
-        self.ensure_tab_visible(self.tabs().active());
-        self.size_visible_groups();
-        self.wake_workspaces_tab();
-        true
+        // Every split's tabs: the focused split first, each in the order
+        // its tabs last showed. That is the order among tabs nobody has used.
+        let focused = self.panes.focused_path().clone();
+        let current = self.tabs().active_tab().id;
+        let mut groups: Vec<_> = self.panes.iter_groups().collect();
+        groups.sort_by_key(|(path, _)| *path != focused);
+        let mut entries: Vec<(u64, quick_switch::Entry)> = Vec::new();
+        for (path, group) in groups {
+            for i in group.tabs().by_recency() {
+                let Some(tab) = group.tabs().get(i) else {
+                    continue;
+                };
+                entries.push((
+                    self.tab_used.get(&tab.id).copied().unwrap_or(0),
+                    quick_switch::Entry {
+                        tab: tab.id,
+                        group: path.clone(),
+                        label: tab.label.clone(),
+                        glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
+                        emoji: tab.icon.clone(),
+                        current: tab.id == current,
+                        status: tab.view.status_mark(),
+                    },
+                ));
+            }
+        }
+        // **By last use**, most recent first; the sort is stable, so tabs
+        // never used keep the order above. The tab in front leads whatever
+        // its stamp: the list starts from where you are.
+        entries.sort_by(|a, b| b.1.current.cmp(&a.1.current).then(b.0.cmp(&a.0)));
+        let entries = entries.into_iter().map(|(_, entry)| entry).collect();
+        self.quick_switch = quick_switch::QuickSwitch::new(entries, delta);
+        self.quick_switch.is_some()
     }
 
     fn restore(&mut self, ws: &Workspace, settings: &Settings) {
@@ -15388,11 +15535,10 @@ impl View for MainView {
         if settings.tabs_per_workspace {
             self.adopt_workspace_strip(ws, settings);
         }
-        // Explore width / collapsed are per workspace; the strip is not.
-        if let Some(w) = settings.workspace.and_then(|id| settings.sidebar_w_in(id)) {
-            self.sidebar
-                .set_full(w.clamp(layout::SIDEBAR_MIN_W, layout::SIDEBAR_MAX_W));
-        }
+        // What is collapsed is per workspace. **The pane's width is not**: it
+        // is left exactly as it is across a switch.
+        // Nor is the quick filter: it was typed over the other workspace.
+        self.explore.clear_quick_filter();
         let collapsed = settings
             .workspace
             .map(|id| settings.collapsed_in(id).to_vec())
@@ -15710,6 +15856,16 @@ impl View for MainView {
                 .rail_mut()
                 .set_counts(self.task_counts.counts());
             self.refresh_rail_lists();
+        }
+        // *Search everywhere for …* under a quick filter that found nothing.
+        if let Some(text) = self.explore.take_wants_search() {
+            self.open_search();
+            if let Some(search) = self.search.as_mut() {
+                search.type_query(&text);
+            }
+        }
+        if self.explore.take_quick_filter_stale() {
+            self.explore_stale = true;
         }
         let landing_changed = self.finish_search_landing(now);
         let context_tasks_changed = self.refresh_context_tasks(ws) | landing_changed;
@@ -16077,6 +16233,46 @@ impl MainView {
         if self.file_preview.is_some() {
             return self.file_preview_key(key);
         }
+        // The quick switch holds the keyboard while it stands: Escape puts
+        // it away, Enter goes, the arrows move. Tab itself arrives through
+        // `cycle_tab`.
+        if let Some(switch) = self.quick_switch.as_mut() {
+            match key {
+                Key::Named(winit::keyboard::NamedKey::Escape) => self.quick_switch = None,
+                Key::Named(winit::keyboard::NamedKey::Enter) => {
+                    self.finish_quick_switch();
+                }
+                Key::Named(winit::keyboard::NamedKey::Tab) => {
+                    switch.step(if mods.shift_key() { -1 } else { 1 })
+                }
+                Key::Named(winit::keyboard::NamedKey::ArrowDown) => switch.step(1),
+                Key::Named(winit::keyboard::NamedKey::ArrowUp) => switch.step(-1),
+                // Everything else is typed: the list narrows to the tabs
+                // whose name holds it.
+                _ => {
+                    switch.type_key(&mut self.engine, key, text, mods);
+                }
+            }
+            return true;
+        }
+        // **Writing is using.** A key that types, with nothing standing over
+        // the page to take it, stamps the tab in front as the one last used:
+        // what the quick switch orders by.
+        let types = !mods.control_key()
+            && !mods.alt_key()
+            && !mods.super_key()
+            && (text.is_some_and(|t| t.chars().any(|ch| !ch.is_control()))
+                || matches!(
+                    key,
+                    Key::Named(
+                        winit::keyboard::NamedKey::Enter
+                            | winit::keyboard::NamedKey::Backspace
+                            | winit::keyboard::NamedKey::Delete
+                    )
+                ));
+        if types && self.search.is_none() && self.menu.is_none() {
+            self.mark_tab_used();
+        }
         self.flush_promoted_draft(ws);
         self.trace_input_state("key");
         // **The blocking prefix, in an order this function no longer owns.**
@@ -16343,6 +16539,24 @@ impl MainView {
             // questions yet (including first-run setup). Reporting it as
             // unhandled lets the shell/OS reinterpret a shortcut whose
             // destination is already unambiguous.
+            return true;
+        }
+        // **The quick filter, while the sidebar holds the keyboard**: what
+        // types narrows its rows (`explore/quick_filter.rs`). Ahead of the
+        // navigation keys, which it leaves alone.
+        if self.sidebar.is_open()
+            && self.explore.has_focus()
+            && !self.tabs().active_tab().view.is_prompting()
+            && self
+                .explore
+                .quick_filter_key(&mut self.engine, key, text, mods)
+        {
+            inputdebug::write(format_args!(
+                "[Koru][input] view key claimed=explore-filter"
+            ));
+            if self.explore.take_quick_filter_stale() {
+                self.explore_stale = true;
+            }
             return true;
         }
         // **The tree, while it holds the keyboard.** Only the navigation keys —

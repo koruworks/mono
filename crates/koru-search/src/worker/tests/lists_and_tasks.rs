@@ -869,3 +869,56 @@ fn with_neither_flag_the_answer_is_what_it_was() {
         "a word only a list holds finds nothing"
     );
 }
+
+// ------------------------------------------------------------ short queries
+
+/// Before there is enough typed to rank, names are matched and body text is
+/// not: one or two letters begin a word in nearly every paragraph, and
+/// ordering all of them is the slow way to show a page nobody meant.
+#[test]
+fn one_and_two_letters_match_names_and_not_body_text() {
+    let mut world = World::new();
+    world.page("Budget", vec![a_node("big bananas, bought in bulk")]);
+    world.page("Notes", vec![a_node("a budget line")]);
+    world.settle();
+    world.lists_changed(vec![a_list("l-b", None, "Backlog")]);
+
+    for short in ["b", "bu"] {
+        let hits = world.find(short, true, true);
+        assert!(!hits.is_empty(), "{short}: names still match");
+        assert!(
+            hits.iter().all(|hit| hit.field != field::BODY),
+            "{short}: {:?}",
+            shape(&hits)
+        );
+    }
+    let names: Vec<String> = world
+        .find("b", true, true)
+        .iter()
+        .map(|hit| hit.title.clone())
+        .collect();
+    assert!(names.contains(&"Backlog".to_owned()) && names.contains(&"Budget".to_owned()));
+
+    // From three letters on everything is searched, as before.
+    let hits = world.find("bud", false, false);
+    assert!(hits.iter().any(|hit| hit.field == field::BODY));
+    assert!(hits.iter().any(|hit| hit.field == field::TITLE));
+    // A short word beside a long one does not narrow the search.
+    assert!(
+        world
+            .find("a budget", false, false)
+            .iter()
+            .any(|hit| hit.field == field::BODY)
+    );
+}
+
+/// Two characters are a whole word in Chinese and Japanese: they are searched
+/// everywhere.
+#[test]
+fn two_ideographs_are_a_word_and_search_body_text() {
+    let mut world = World::new();
+    world.page("Notes", vec![a_node("来年の 計画 を立てる")]);
+    world.settle();
+    let hits = world.find("計画", false, false);
+    assert!(hits.iter().any(|hit| hit.field == field::BODY));
+}

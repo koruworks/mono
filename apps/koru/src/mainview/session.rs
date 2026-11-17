@@ -38,7 +38,7 @@ impl MainView {
         // to the content in the same breath: a restored width is not a drag,
         // and the first frame should be laid out against it rather than snapping
         // to it a moment later.
-        if let Some(w) = settings.workspace.and_then(|id| settings.sidebar_w_in(id)) {
+        if let Some(w) = settings.sidebar_width_for(settings.workspace) {
             self.sidebar.set_full(w.clamp(SIDEBAR_MIN_W, SIDEBAR_MAX_W));
         }
         self.sidebar.set_immediately(settings.sidebar_open);
@@ -176,9 +176,8 @@ impl MainView {
         // `regions.sidebar.w`: `solve` clamps against `CONTENT_MIN_W`, so
         // storing the clamped one would mean opening on a laptop permanently
         // shrank the width chosen on a desktop.
-        if let Some(id) = settings.workspace {
-            settings.set_sidebar_w_in(id, self.sidebar.full());
-        }
+        // One width for every workspace: switching must not resize the pane.
+        settings.sidebar_width = Some(self.sidebar.full());
         // Persist the full split tree. The legacy focused-group fields below
         // are kept so older builds can still restore *something*.
         settings.pane_tree = Some(self.pane_tree_state());

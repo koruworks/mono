@@ -2636,9 +2636,33 @@ pub mod role {
     pub const fn row() -> TextStyle {
         TextStyle::new(text_metrics::SM, MEDIUM)
     }
+    /// **A row of somebody's own words, shown in a list**: a task's title on
+    /// the Tasks page. The row's size (13/18) at the *document body's*
+    /// weight — 400 on a light ground, 500 on a dark one
+    /// ([`Appearance::body_weight`]).
+    ///
+    /// [`row`](row) is chrome and is always 500. A task's title is content:
+    /// set at 500 on a light theme it read as bolder than the same words in
+    /// the document beside it, which is the fault the body's weight was
+    /// corrected for.
+    pub fn content_row() -> TextStyle {
+        let weight = match themes::active().appearance {
+            Appearance::Light => FontWeight::Regular,
+            Appearance::Dark => FontWeight::Medium,
+        };
+        TextStyle::new(text_metrics::SM, weight)
+    }
     /// Large body, document subtitle. 18/26.
     pub fn subtitle() -> TextStyle {
         TextStyle::new(text_metrics::LG, MEDIUM)
+    }
+    /// **A page's own name, at the size a document's title is**: 24/31, bold
+    /// — the type ramp's second step ([`TITLE_LEVEL`]), which is what a
+    /// document's title row is set at. A list's page and a document open side
+    /// by side are two pages of one app, and their names are one size
+    /// (owner, 2026-11-16); the Tasks page's was the subtitle's 18.
+    pub const fn page_title() -> TextStyle {
+        TextStyle::new(TextMetrics::new(24.0, 31.0), FontWeight::Bold)
     }
     /// A screen's title — *Welcome to Koru*. 24/32. Drawn through
     /// `koru_ui::KoruTextTitle`, so every title is this one size.

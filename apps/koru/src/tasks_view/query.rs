@@ -987,8 +987,18 @@ pub struct TaskListPanel {
 impl TaskListPanel {
     /// Cache the store client supplied during drawing. **No request is made
     /// here** — a view with no client (every unit test) makes none at all.
+    ///
+    /// **A client arriving makes the page due at once.** It reaches a page
+    /// while the window is drawn, and a page opened from outside a frame — a
+    /// list chosen in search — is maintained once before its first draw:
+    /// that maintain asked nobody and put the next ask a whole interval away,
+    /// so the list opened empty and stayed empty (owner, 2026-11-16).
     pub fn set_client(&mut self, client: Option<koru_api_client::Client>) {
+        let arrived = self.client.is_none() && client.is_some();
         self.client = client;
+        if arrived && self.next_refresh.is_some() {
+            self.next_refresh = Some(Instant::now());
+        }
     }
 
     pub fn rows(&self) -> &[TaskEntry] {

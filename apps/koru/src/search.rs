@@ -81,6 +81,29 @@ impl SearchSurface {
         self.0.resume();
     }
 
+    /// Put `text` in the query as though it had been typed, and search.
+    pub(crate) fn type_query(&mut self, text: &str) {
+        self.0.commit_dictation(text);
+    }
+
+    /// **Today, Next, Upcoming and Later are lists to the person looking for
+    /// them**, and they are in no index: they are pages this app computes.
+    /// So the app names them to the surface, which offers the ones the query
+    /// spells ahead of what the index found.
+    pub(crate) fn offer_queues(&mut self, workspace: WorkspaceId) {
+        use crate::panes::explore::rail;
+        let places = QUEUES
+            .into_iter()
+            .map(|(word, bucket, shown)| koru_search_ui::Place {
+                id: format!("{QUEUE_PREFIX}{word}"),
+                workspace: store_workspace(workspace),
+                name: rail::bucket_label(shown).to_owned(),
+                glyph: rail::bucket_glyph(bucket),
+            })
+            .collect();
+        self.0.set_places(places);
+    }
+
     /// In-app search offers result navigation, with its keyboard hints below.
     pub(crate) fn configure_modal(&mut self, chips: Vec<koru_search_ui::FooterChip>) {
         self.0.set_footer_chips(chips);
@@ -150,6 +173,34 @@ fn store_workspace(id: WorkspaceId) -> koru_store_core::ids::WorkspaceId {
 /// `None` when the target names a node this app cannot parse — the same shape
 /// the surface's own refusals have: a navigation that cannot be performed is
 /// declined rather than performed somewhere arbitrary.
+const QUEUE_PREFIX: &str = "queue:";
+
+/// The standing queues search offers, and the word each is named by in a
+/// place id.
+const QUEUES: [(
+    &str,
+    koru_core::tasks::Bucket,
+    crate::panes::explore::rail::Bucket,
+); 4] = {
+    use crate::panes::explore::rail::Bucket as Shown;
+    use koru_core::tasks::Bucket;
+    [
+        ("today", Bucket::Today, Shown::Today),
+        ("next", Bucket::Next, Shown::Next),
+        ("upcoming", Bucket::Upcoming, Shown::Upcoming),
+        ("later", Bucket::Later, Shown::Later),
+    ]
+};
+
+/// The queue a place id names. A list's id never begins with the prefix.
+fn queue_of(id: &str) -> Option<koru_core::tasks::Bucket> {
+    let word = id.strip_prefix(QUEUE_PREFIX)?;
+    QUEUES
+        .into_iter()
+        .find(|(named, ..)| *named == word)
+        .map(|(_, bucket, _)| bucket)
+}
+
 pub(crate) fn pane_request(target: koru_search_ui::Target) -> Option<PaneRequest> {
     let (profile, workspace, document, node, match_text, disposition) = match target {
         koru_search_ui::Target::Store {
@@ -175,6 +226,19 @@ pub(crate) fn pane_request(target: koru_search_ui::Target) -> Option<PaneRequest
             list,
             disposition,
         } => {
+            // One of the standing queues, which this app named itself
+            // (`offer_queues`).
+            if let Some(bucket) = queue_of(&list) {
+                return Some(PaneRequest::Navigate {
+                    target: koru_workspace_host::NavigationTarget::TaskQueue {
+                        profile: ProfileId::from_uuid(profile.as_uuid()),
+                        workspace: WorkspaceId::from_uuid(workspace.as_uuid()),
+                        bucket,
+                    },
+                    match_text: None,
+                    disposition: host_disposition(disposition),
+                });
+            }
             let Some(list) = koru_core::ids::ListId::parse(&list) else {
                 koru_workspace_host::search_debug!(
                     "[Koru][search-open][pid={}] target rejected: unparseable list id",

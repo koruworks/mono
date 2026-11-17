@@ -172,6 +172,10 @@ impl ChatsSurface {
             if pinned > 0 && index == pinned {
                 plan.push(Row::GroupGap);
             }
+            // The host's quick filter: a chat it does not hold is not a row.
+            if !self.filter_holds(chat) {
+                continue;
+            }
             plan.push(Row::Chat(index));
             if self.deleting.contains_key(&chat.id) {
                 plan.push(Row::Note(index));

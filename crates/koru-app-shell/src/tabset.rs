@@ -95,6 +95,19 @@ impl<T> TabSet<T> {
         self.visits[self.active] = self.clock;
     }
 
+    /// The tabs by when each last showed, most recent first: the tab in
+    /// front, then the one before it, and so on. Tabs never shown (a restored
+    /// session) follow in strip order.
+    pub fn by_recency(&self) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..self.tabs.len()).collect();
+        order.sort_by(|a, b| self.visits[*b].cmp(&self.visits[*a]).then(a.cmp(b)));
+        if let Some(at) = order.iter().position(|i| *i == self.active) {
+            let active = order.remove(at);
+            order.insert(0, active);
+        }
+        order
+    }
+
     /// Mint the floor, if this set has one.
     fn mint(&self) -> Option<T> {
         self.floor.as_ref().map(|floor| floor())

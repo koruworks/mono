@@ -1170,7 +1170,7 @@ fn a_filter_changes_the_query_and_nothing_else() {
 fn the_heading_is_one_row_of_title_date_and_count() {
     use super::heading::{DATE, HEADING, HEADING_TEXT, SWATCH, SWATCH_STEP, TITLE};
     use koru_draw::theme::{Profile, roles};
-    assert_eq!(super::draw::TITLE, roles::SUBTITLE.style());
+    assert_eq!(super::draw::TITLE, roles::PAGE_TITLE.style());
     assert_eq!(SWATCH_STEP.px(Profile::Desktop), super::view::SWATCH_GAP);
 
     let today = view_on(RailTarget::Bucket(Bucket::Today), vec![entry("One", None)]);
@@ -1195,13 +1195,13 @@ fn the_heading_is_one_row_of_title_date_and_count() {
     );
     assert_eq!(
         date.h,
-        roles::SUBTITLE.style().metrics.line_height,
+        roles::PAGE_TITLE.style().metrics.line_height,
         "the date is the title's size"
     );
     let (title_base, date_base) = crate::input_engine::with(|engine| {
         (
-            title.y + super::heading::baseline(engine, &heading.title, roles::SUBTITLE),
-            date.y + super::heading::baseline(engine, &date_text, roles::SUBTITLE),
+            title.y + super::heading::baseline(engine, &heading.title, roles::PAGE_TITLE),
+            date.y + super::heading::baseline(engine, &date_text, roles::PAGE_TITLE),
         )
     });
     assert!(
@@ -3442,7 +3442,7 @@ fn slash_due_opens_the_calendar_under_the_command() {
     let field = view.capture_rect();
     let words = crate::input_engine::with(|engine| {
         engine
-            .simple_layout("Chase it ", koru_draw::theme::role::row())
+            .simple_layout("Chase it ", koru_draw::theme::role::content_row())
             .width()
     });
     assert!(

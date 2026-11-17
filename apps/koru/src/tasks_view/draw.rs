@@ -29,8 +29,10 @@ use super::view::{CONTROL_W, Hit, Line, PAD, TasksView};
 /// title, and weight on top of that is a second answer to a question the type
 /// scale has answered. The Trash tab's, so the two pages read as one app. It is
 /// `role::subtitle()`, which the heading's elements name as `roles::SUBTITLE`.
-pub(super) const TITLE: theme::TextStyle =
-    theme::TextStyle::new(theme::text_metrics::LG, theme::FontWeight::Medium);
+///
+/// **At a document title's size** since 2026-11-16 (`role::page_title`): a
+/// list's page beside a document is two pages of one app.
+pub(super) const TITLE: theme::TextStyle = theme::role::page_title();
 
 /// What the freshness chip says. **A state, not a verb with a subject**: which
 /// workspace is behind is not a thing a reader of this page can act on, and
@@ -508,7 +510,7 @@ impl TasksView {
                 root,
                 &mut self.engine,
                 super::capture::input_rect(field),
-                koru_editor::components::text_input::InputStyle::bare(theme::role::row()),
+                koru_editor::components::text_input::InputStyle::bare(theme::role::content_row()),
                 None,
                 caret_on,
             );

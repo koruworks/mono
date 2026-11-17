@@ -215,6 +215,19 @@ impl<T: TabElement> TabStrip<T> {
         true
     }
 
+    /// Flat indices by when each tab last showed, most recent first, the tab
+    /// in front at the head. The two groups keep separate clocks, so the
+    /// group in front comes first and the other follows in its own order.
+    pub fn by_recency(&self) -> Vec<usize> {
+        let offset = self.pinned.len();
+        let pinned = self.pinned.by_recency();
+        let main = self.main.by_recency().into_iter().map(|i| offset + i);
+        match self.active_group {
+            TabGroup::Pinned => pinned.into_iter().chain(main).collect(),
+            TabGroup::Main => main.chain(pinned).collect(),
+        }
+    }
+
     pub fn cycle(&mut self, delta: i32) -> bool {
         if self.len() < 2 {
             return false;

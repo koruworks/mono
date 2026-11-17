@@ -248,13 +248,14 @@ pub enum TasksRailRequest {
         target: RailTarget,
         at: (f32, f32),
     },
-    /// A list row was dragged somewhere else: under `parent` (`None` is the
+    /// One or more list rows were dragged somewhere else: under `parent` (`None` is the
     /// top level), immediately before the sibling `before` (`None` is last).
     /// Nesting, un-nesting and reordering are this one request. The rows are
     /// already drawn that way here; what the container owes is the write that
     /// makes the table agree. **No task moves.**
     MoveList {
-        id: ListId,
+        /// One list, or a whole selection: in the order they are to sit.
+        ids: Vec<ListId>,
         parent: Option<ListId>,
         before: Option<ListId>,
     },
@@ -336,6 +337,11 @@ pub struct TasksRail {
     /// The parents somebody shut, on this device. A set of what is *shut*,
     /// as the document tree's is, so a list nested a moment ago is showing.
     collapsed: HashSet<ListId>,
+    /// The sidebar's quick filter, as lowercased words; `None` when off.
+    filter: Option<Vec<Vec<char>>>,
+    /// Lists (by index) shown only because a match is inside them.
+    filter_dim: HashSet<usize>,
+    filter_matches: usize,
     /// **The cache a drag reads**: the indices of `lists` whose ancestors are
     /// all open, in order. Rebuilt when the table, the open set or a carried
     /// row's place changes, and never per frame.
@@ -343,9 +349,12 @@ pub struct TasksRail {
     /// Per list: its own tasks plus everything inside it, `(count, overdue)`.
     /// What a shut parent's row shows.
     totals: Vec<(usize, usize)>,
-    /// Whether any list is inside another. A flat table pays for no caret
-    /// lane, so a rail nobody has nested in looks as it always did.
-    nested: bool,
+    /// **The lists picked with Ctrl+click and Shift+click**, the document
+    /// tree's gesture: a selection to drag together. A plain press picks one.
+    /// It is not the page that is open — that is [`selected`](Self::selected).
+    picked: Vec<ListId>,
+    /// Where a Shift+click ranges from: the last list pressed without Shift.
+    anchor: Option<ListId>,
     /// How many times the visible rows were rebuilt — what the work-count
     /// tests read, so "a drag reads the cache" is asserted and not hoped.
     rebuilds: usize,
@@ -394,6 +403,15 @@ type Landing = (Option<ListId>, Option<ListId>);
 struct ListDrag {
     /// The list under the pointer when the press began.
     id: ListId,
+    /// **Everything being carried**, in table order: the grabbed list alone,
+    /// or — when it is one of several picked — every picked list that is not
+    /// inside another picked one (those travel with their parent). Filled
+    /// when the drag arms.
+    carried: Vec<ListId>,
+    /// The press landed on one of several picked lists, so it did not open
+    /// the list or drop the others: a drag may follow. A release that never
+    /// armed does both then, as a click on a document row does.
+    open_on_release: bool,
     /// The press's offset into the row, so the row travels from the point it
     /// was grabbed rather than snapping its top edge under the pointer.
     grab_dy: f32,
@@ -434,15 +452,15 @@ fn subtree_end(lists: &[RailList], at: usize) -> usize {
         .map_or(lists.len(), |n| at + 1 + n)
 }
 
-/// The sibling after the list at `at`, skipping `skip` — what *after this
-/// row* means as *before which list*.
-fn next_sibling(lists: &[RailList], at: usize, skip: ListId) -> Option<ListId> {
+/// The sibling after the list at `at`, skipping what is being carried — what
+/// *after this row* means as *before which list*.
+fn next_sibling(lists: &[RailList], at: usize, skip: &[ListId]) -> Option<ListId> {
     let depth = lists[at].depth;
     for list in &lists[at + 1..] {
         if list.depth < depth {
             return None;
         }
-        if list.depth == depth && list.id != skip {
+        if list.depth == depth && !skip.contains(&list.id) {
             return Some(list.id);
         }
     }
@@ -563,6 +581,10 @@ impl TasksRail {
         let changed = self.lists != lists;
         if changed {
             self.lists = lists;
+            // A list a peer deleted is not picked any more.
+            let lists = &self.lists;
+            self.picked
+                .retain(|picked| lists.iter().any(|list| list.id == *picked));
             self.rebuild_visible();
             // A slide is recorded against a row's place; a new table renumbers
             // them.
@@ -614,16 +636,107 @@ impl TasksRail {
         changed
     }
 
+    /// The sidebar's quick filter: only the queues and lists whose name
+    /// holds every word, with the lists a match is inside. Folds are not
+    /// touched. Answers whether it changed.
+    pub fn set_filter(&mut self, words: Option<Vec<Vec<char>>>) -> bool {
+        if self.filter == words {
+            return false;
+        }
+        self.filter = words;
+        self.scroll = 0.0;
+        self.rebuild_visible();
+        self.slides.clear();
+        true
+    }
+
+    /// Put the keyboard on the first row the filter matched: a queue, else
+    /// the first matching list.
+    pub fn focus_first_match(&mut self) {
+        let Some(words) = self.filter.clone() else {
+            return;
+        };
+        let holds = |name: &str| super::quick_filter::spans(name, &words).is_some();
+        let queue = QUEUES
+            .into_iter()
+            .find(|bucket| holds(bucket_label(*bucket)))
+            .map(RailFocus::Bucket);
+        let list = self
+            .visible
+            .iter()
+            .find(|&&i| !self.filter_dim.contains(&i))
+            .map(|&i| RailFocus::List(self.lists[i].id));
+        let completed =
+            holds(bucket_label(Bucket::Completed)).then_some(RailFocus::Bucket(Bucket::Completed));
+        if let Some(first) = queue.or(list).or(completed) {
+            self.focus = Some(first);
+        }
+    }
+
+    /// Whether the quick filter is narrowing the rail.
+    pub(crate) fn filtering(&self) -> bool {
+        self.filter.is_some()
+    }
+
+    /// How many rows the filter matched.
+    pub fn filter_matches(&self) -> usize {
+        self.filter_matches
+    }
+
+    fn filter_holds(&self, name: &str) -> bool {
+        self.filter
+            .as_ref()
+            .is_none_or(|words| super::quick_filter::spans(name, words).is_some())
+    }
+
     /// **The one place the visible rows and the rolled-up counts are made.**
     /// Linear in the table, and called when the table, the open set or a
     /// carried row's place changes — never from drawing or hit-testing.
     fn rebuild_visible(&mut self) {
-        let carried = self.drag.as_ref().filter(|d| d.armed).map(|d| d.id);
+        let carried: Vec<ListId> = self
+            .drag
+            .as_ref()
+            .filter(|d| d.armed)
+            .map(|d| d.carried.clone())
+            .unwrap_or_default();
         self.visible.clear();
-        self.nested = false;
+        self.filter_dim.clear();
+        self.filter_matches = 0;
+        if let Some(words) = &self.filter {
+            let facts: Vec<(u16, bool)> = self
+                .lists
+                .iter()
+                .map(|list| {
+                    (
+                        list.depth as u16,
+                        super::quick_filter::spans(&list.name, words).is_some(),
+                    )
+                })
+                .collect();
+            let (keep, dim) = super::quick_filter::keep_with_ancestors(&facts);
+            for i in 0..self.lists.len() {
+                if keep[i] {
+                    self.visible.push(i);
+                }
+                if dim[i] {
+                    self.filter_dim.insert(i);
+                }
+            }
+            self.filter_matches = facts.iter().filter(|(_, matches)| *matches).count()
+                + QUEUES
+                    .into_iter()
+                    .chain([Bucket::Completed])
+                    .filter(|bucket| {
+                        super::quick_filter::spans(bucket_label(*bucket), words).is_some()
+                    })
+                    .count();
+        }
+        let filtering = self.filter.is_some();
         let mut shut_at: Option<usize> = None;
         for (i, list) in self.lists.iter().enumerate() {
-            self.nested |= list.depth > 0;
+            if filtering {
+                break;
+            }
             if let Some(depth) = shut_at {
                 if list.depth > depth {
                     continue;
@@ -631,9 +744,10 @@ impl TasksRail {
                 shut_at = None;
             }
             self.visible.push(i);
-            // The carried row is drawn shut: what is inside travels with it
+            // A carried row is drawn shut: what is inside travels with it
             // and is nowhere to be dropped on.
-            if list.has_children && (self.collapsed.contains(&list.id) || carried == Some(list.id))
+            if list.has_children
+                && (self.collapsed.contains(&list.id) || carried.contains(&list.id))
             {
                 shut_at = Some(list.depth);
             }
@@ -786,6 +900,7 @@ impl TasksRail {
             return false;
         };
         let (id, area, top) = (drag.id, drag.area, drag.top);
+        let carried = drag.carried.clone();
         let centre = drag.y - drag.grab_dy + theme::NAV_ROW_H * 0.5;
         let Some(first) = self.first_list_top(area, top) else {
             return false;
@@ -811,7 +926,9 @@ impl TasksRail {
                 hidden_under = None;
             }
             packed.push(i);
-            if list.has_children && (list.id == id || self.collapsed.contains(&list.id)) {
+            if list.has_children
+                && (carried.contains(&list.id) || self.collapsed.contains(&list.id))
+            {
                 hidden_under = Some(list.depth);
             }
         }
@@ -819,7 +936,7 @@ impl TasksRail {
             .iter()
             .map(|&i| Row {
                 depth: base[i].depth,
-                carried: base[i].id == id,
+                carried: carried.contains(&base[i].id),
                 can_nest: true,
             })
             .collect();
@@ -844,7 +961,7 @@ impl TasksRail {
                 let over = &base[at];
                 match zone {
                     Zone::Before => ((over.parent, Some(over.id)), None),
-                    Zone::After => ((over.parent, next_sibling(base, at, id)), None),
+                    Zone::After => ((over.parent, next_sibling(base, at, &carried)), None),
                     Zone::Nest => ((Some(over.id), None), Some(over.id)),
                 }
             }
@@ -863,8 +980,15 @@ impl TasksRail {
             .as_ref()
             .map(|d| d.base.clone())
             .unwrap_or_default();
-        if !apply_move(&mut next, id, landing.0, landing.1) {
-            return false;
+        // Each carried list goes before the same sibling, in table order, so
+        // a selection lands together and keeps its order. Back over the slot
+        // it was lifted from, nothing has moved.
+        if target.is_some() {
+            for list in &carried {
+                if !apply_move(&mut next, *list, landing.0, landing.1) {
+                    return false;
+                }
+            }
         }
         self.lists = next;
         self.rebuild_visible();
@@ -905,27 +1029,87 @@ impl TasksRail {
     pub fn mouse_up(&mut self) -> Option<TasksRailRequest> {
         let drag = self.drag.take()?;
         if !drag.armed {
-            return None;
+            if !drag.open_on_release {
+                return None;
+            }
+            // A click, not a drag, on one of several picked lists: it is the
+            // one picked now, and its page opens.
+            self.picked = vec![drag.id];
+            self.anchor = Some(drag.id);
+            self.selected = Some(RailTarget::List(drag.id));
+            return Some(TasksRailRequest::OpenList {
+                id: drag.id,
+                new_tab: false,
+            });
         }
-        let landed = drag.last.filter(|landing| {
-            // Where it began is not a move, however far it travelled.
-            landing_of(&drag.base, drag.id) != landing_of(&self.lists, drag.id)
-                && landing_of(&self.lists, drag.id).is_some_and(|now| now.0 == landing.0)
-        });
-        // Dropped into a shut parent: open it, so the list that was just put
-        // there is showing rather than gone under a caret.
+        // Where they began is not a move, however far they travelled.
+        let moved = drag
+            .carried
+            .iter()
+            .any(|list| landing_of(&drag.base, *list) != landing_of(&self.lists, *list));
+        let landed = drag.last.filter(|_| moved);
+        // Dropped into a shut parent: open it, so the lists that were just put
+        // there are showing rather than gone under a caret.
         if let Some((Some(parent), _)) = landed {
             self.collapsed.remove(&parent);
         }
         self.rebuild_visible();
         self.slides.clear();
-        let (parent, _) = landed?;
-        let before = landing_of(&self.lists, drag.id)?.1;
+        let (parent, before) = landed?;
         Some(TasksRailRequest::MoveList {
-            id: drag.id,
+            ids: drag.carried,
             parent,
             before,
         })
+    }
+
+    /// The picked lists that are not inside another picked list, in table
+    /// order: what a drag of the selection carries.
+    fn picked_roots(&self) -> Vec<ListId> {
+        let mut roots = Vec::new();
+        let mut under: Option<usize> = None;
+        for list in &self.lists {
+            if let Some(depth) = under {
+                if list.depth > depth {
+                    continue;
+                }
+                under = None;
+            }
+            if self.picked.contains(&list.id) {
+                roots.push(list.id);
+                under = Some(list.depth);
+            }
+        }
+        roots
+    }
+
+    /// Shift+click: pick every showing list from the anchor to `id`.
+    fn pick_range(&mut self, id: ListId) {
+        let anchor = self
+            .anchor
+            .or(match self.selected {
+                Some(RailTarget::List(open)) => Some(open),
+                _ => None,
+            })
+            .unwrap_or(id);
+        let slot = |want: ListId| self.visible.iter().position(|&i| self.lists[i].id == want);
+        let (Some(from), Some(to)) = (slot(anchor), slot(id)) else {
+            self.picked = vec![id];
+            self.anchor = Some(id);
+            return;
+        };
+        let (from, to) = (from.min(to), from.max(to));
+        self.picked = self.visible[from..=to]
+            .iter()
+            .map(|&i| self.lists[i].id)
+            .collect();
+        self.anchor = Some(anchor);
+    }
+
+    /// The lists picked together, for the container and the suite.
+    #[cfg(test)]
+    pub fn picked(&self) -> &[ListId] {
+        &self.picked
     }
 
     pub fn selected(&self) -> Option<RailTarget> {
@@ -1027,9 +1211,17 @@ impl TasksRail {
         let mut out = Vec::with_capacity(self.visible.len() + 9);
         let mut y = top - self.scroll;
         let row = |y: f32, h: f32| Rect::new(area.x, y, area.w, h);
+        let filtering = self.filter.is_some();
         for bucket in QUEUES {
+            // Filtered: a queue shows when its name holds what was typed.
+            if !self.filter_holds(bucket_label(bucket)) {
+                continue;
+            }
             out.push((RailRow::Bucket(bucket), row(y, theme::NAV_ROW_H)));
             y += theme::NAV_ROW_H;
+            if filtering {
+                continue;
+            }
             // Reminders sits under Upcoming: a page rather than a fifth
             // queue, kept inside the queue block because that is where a
             // reader looks for *what needs me*.
@@ -1039,6 +1231,24 @@ impl TasksRail {
                 out.push((RailRow::Reminders, row(y, theme::NAV_ROW_H)));
                 y += theme::NAV_ROW_H;
             }
+        }
+        if filtering {
+            // The matching lists, under their heading when there are any,
+            // then Completed if it matches. No section air: a short list of
+            // answers reads as one.
+            if !self.visible.is_empty() {
+                out.push((RailRow::ListsHeading, row(y, SECTION_H)));
+                y += SECTION_H;
+            }
+            for &i in &self.visible {
+                out.push((RailRow::List(i), row(y, theme::NAV_ROW_H)));
+                y += theme::NAV_ROW_H;
+            }
+            if self.filter_holds(bucket_label(Bucket::Completed)) {
+                y += RULE_GAP;
+                out.push((RailRow::Bucket(Bucket::Completed), row(y, theme::NAV_ROW_H)));
+            }
+            return out;
         }
         y += SECTION_GAP;
         out.push((RailRow::ListsHeading, row(y, SECTION_H)));
@@ -1096,20 +1306,22 @@ impl TasksRail {
         }
     }
 
-    /// Whether `row` is showing its `+` — the list row under the pointer, or
-    /// the one the keyboard is on, and never while a row is being carried.
-    fn shows_add(&self, row: RailRow) -> bool {
+    /// Whether `row` is showing its chevron, its `+` and its `…` — the list
+    /// row under the pointer, and never while a row is being carried. The
+    /// document row's rule.
+    fn shows_actions(&self, row: RailRow) -> bool {
         let RailRow::List(i) = row else {
             return false;
         };
         if self.drag_armed() {
             return false;
         }
-        let focused = self
-            .lists
-            .get(i)
-            .is_some_and(|list| self.focus == Some(RailFocus::List(list.id)));
-        self.hover == Some(row) || focused
+        // Under the pointer only. The keyboard's row keeps its number: a
+        // click leaves the keyboard on the row, and a row that swapped its
+        // count for buttons until you clicked elsewhere would hide the one
+        // thing the lane is for. The menu key opens the same menu.
+        let _ = i;
+        self.hover == Some(row)
     }
 
     /// Every rect inside a row, derived from the row and its band alone.
@@ -1118,25 +1330,24 @@ impl TasksRail {
     /// the heading. Reserved on every row whether or not anything is drawn in
     /// it, so a label never reflows as a number arrives — `row_parts`'s rule.
     ///
-    /// A list row is indented by its depth, **up to [`MAX_INDENT`] levels**
-    /// (nested-lists D7): the model has no depth limit, and a name must not
-    /// be squeezed out of a narrow rail by a deep chain. Its hover `+` sits
-    /// immediately left of the count lane, so the number never shifts.
+    /// **A list row is laid out as a document row is.** It is indented by its
+    /// depth and by nothing else — up to [`MAX_INDENT`] levels (nested-lists
+    /// D7), so a deep chain cannot squeeze a name out of a narrow rail. A
+    /// parent has no caret lane of its own: its chevron takes the swatch's
+    /// slot while the row is under the pointer. Its `+` and `…` sit at the
+    /// row's right edge, inside the count lane, and are drawn in the count's
+    /// place while the row is under the pointer — so the label never reflows.
     pub fn row_parts(&self, row: RailRow, r: Rect) -> RailRowParts {
-        let is_list = matches!(row, RailRow::List(_) | RailRow::Compose);
         let depth = self.depth_of(row).min(MAX_INDENT);
-        let base = icon_lane(r.x, depth as u16, false);
-        // The caret lane is paid for by every list row once any list is
-        // inside another, so siblings with and without children line up.
-        let lane = is_list && (self.nested || depth > 0);
+        let icon_x = icon_lane(r.x, depth as u16, false);
+        let icon = Rect::new(icon_x, r.y, ICON_W, r.h);
         let has_caret = matches!(row, RailRow::List(i)
             if self.lists.get(i).is_some_and(|list| list.has_children));
-        let caret = if lane && has_caret {
-            Rect::new(base, r.y, theme::NAV_INDENT, r.h)
+        let caret = if has_caret {
+            icon
         } else {
-            Rect::new(base, r.y, 0.0, 0.0)
+            Rect::new(icon_x, r.y, 0.0, 0.0)
         };
-        let icon_x = base + if lane { theme::NAV_INDENT } else { 0.0 };
         let text_x = icon_x + ICON_W + 6.0;
         let trailing_w = match row {
             RailRow::ListsHeading => HEADING_PLUS,
@@ -1148,15 +1359,21 @@ impl TasksRail {
             trailing_w,
             trailing_w.min(r.h),
         );
-        let add = if matches!(row, RailRow::List(_)) {
-            Rect::new(
-                (trailing.x - ROW_PLUS_GAP - HEADING_PLUS).max(r.x),
-                r.y + (r.h - HEADING_PLUS.min(r.h)) * 0.5,
-                HEADING_PLUS,
-                HEADING_PLUS.min(r.h),
+        let side = super::ROW_DOTS;
+        let (add, dots) = if matches!(row, RailRow::List(_)) {
+            let dots = Rect::new(
+                (r.x + r.w - theme::NAV_PAD - side).max(r.x),
+                r.y + (r.h - side) * 0.5,
+                side,
+                side,
+            );
+            (
+                Rect::new(dots.x - side - ROW_PLUS_GAP, dots.y, side, side),
+                dots,
             )
         } else {
-            Rect::new(trailing.x, r.y, 0.0, 0.0)
+            let none = Rect::new(trailing.x, r.y, 0.0, 0.0);
+            (none, none)
         };
         // The heading is not a row of the list: its label starts at the pane's
         // own inset, where a section heading belongs, rather than in the icon
@@ -1165,16 +1382,12 @@ impl TasksRail {
             RailRow::ListsHeading => r.x + theme::NAV_PAD + 2.0,
             _ => text_x,
         };
-        let label_end = if self.shows_add(row) {
-            add.x
-        } else {
-            trailing.x
-        };
         RailRowParts {
             caret,
-            icon: Rect::new(icon_x, r.y, ICON_W, r.h),
-            label: Rect::new(text_x, r.y, (label_end - 6.0 - text_x).max(1.0), r.h),
+            icon,
+            label: Rect::new(text_x, r.y, (trailing.x - 6.0 - text_x).max(1.0), r.h),
             add,
+            dots,
             trailing,
         }
     }
@@ -1298,8 +1511,8 @@ impl TasksRail {
     /// `None` means *ours, and nothing for the container to do* — the caller
     /// turns that into `Outcome::Consumed`, because a press on the rail's
     /// background must not fall through to whatever is behind the column.
-    /// `ctrl` opens in a new tab, the modifier the library rows beside this one
-    /// already answer with. **The selection does not move then**, and that is
+    /// On a queue or the Reminders row `ctrl` opens in a new tab. On a list
+    /// row `ctrl` and `shift` pick lists instead, as they pick documents. **The selection does not move then**, and that is
     /// the point of the modifier: a background tab is opened *without* leaving
     /// the queue you are reading, so moving the rail's card would be the one
     /// visible side effect the gesture exists to avoid.
@@ -1310,6 +1523,7 @@ impl TasksRail {
         x: f32,
         y: f32,
         ctrl: bool,
+        shift: bool,
     ) -> Option<TasksRailRequest> {
         let (row, r) = self
             .rows(area, top)
@@ -1326,7 +1540,14 @@ impl TasksRail {
             // The container's field is over this row and takes its own
             // presses; one that reaches here is on the swatch.
             RailRow::Compose => None,
-            RailRow::Bucket(bucket) => Some(self.open_bucket(bucket, ctrl)),
+            // **A press leaves the keyboard on the row it pressed**, as a
+            // press on a document row does, so the arrows carry on from
+            // there rather than going to the page that just opened.
+            RailRow::Bucket(bucket) => {
+                let request = self.open_bucket(bucket, ctrl);
+                self.focus = Some(RailFocus::Bucket(bucket));
+                Some(request)
+            }
             // A queue row's behavior, verbatim: the page is a tab, so the
             // card moves on a plain press and `ctrl` carries the disposition.
             // The keyboard position is cleared for the same reason
@@ -1340,39 +1561,81 @@ impl TasksRail {
             }
             RailRow::List(i) => {
                 let id = self.lists.get(i)?.id;
-                // **The caret opens and shuts; it opens no page and arms no
-                // drag.**
+                // **The chevron opens and shuts; it opens no page and arms no
+                // drag.** It is in the swatch's slot, as a document's is in
+                // its icon's.
                 if parts.caret.contains(x, y) {
                     let open = !self.is_open(id);
                     self.set_open(id, open);
                     return None;
                 }
-                if self.shows_add(row) && parts.add.contains(x, y) {
-                    return Some(TasksRailRequest::BeginNewList { parent: Some(id) });
+                if self.shows_actions(row) {
+                    if parts.add.contains(x, y) {
+                        return Some(TasksRailRequest::BeginNewList { parent: Some(id) });
+                    }
+                    if parts.dots.contains(x, y) {
+                        return Some(TasksRailRequest::RowMenu {
+                            target: RailTarget::List(id),
+                            at: (parts.dots.x + parts.dots.w, parts.dots.y + parts.dots.h),
+                        });
+                    }
                 }
-                if !ctrl {
+                self.focus = Some(RailFocus::List(id));
+                // **Ctrl and Shift pick lists, as they pick documents**: Ctrl
+                // adds or takes away one, Shift takes the run from the last
+                // list pressed. Neither opens a page. *Open in new tab* is in
+                // the row's menu.
+                let was_picked = self.picked.contains(&id);
+                let mut opens = false;
+                let mut open_on_release = false;
+                if shift {
+                    self.pick_range(id);
+                } else if ctrl {
+                    // The page that is open is where a selection starts from.
+                    if self.picked.is_empty()
+                        && let Some(RailTarget::List(open)) = self.selected
+                        && open != id
+                    {
+                        self.picked.push(open);
+                    }
+                    if was_picked {
+                        self.picked.retain(|picked| *picked != id);
+                    } else {
+                        self.picked.push(id);
+                    }
+                    self.anchor = Some(id);
+                } else if was_picked && self.picked.len() > 1 {
+                    // One of several: a drag of them all may follow, so the
+                    // others are kept until the release says it was a click.
+                    open_on_release = true;
+                } else {
+                    self.picked = vec![id];
+                    self.anchor = Some(id);
                     self.selected = Some(RailTarget::List(id));
+                    opens = true;
                 }
-                self.focus = None;
-                // **The press opens, and arms a drag behind it.** Opening on
-                // the press is what keeps the card instant; the gesture that
-                // may follow moves the list. A release that never armed has
-                // already done its job, which is why it asks for nothing.
-                self.drag = Some(ListDrag {
-                    id,
-                    grab_dy: y - r.y,
-                    origin_y: y,
-                    home: r.y + self.scroll,
-                    y,
-                    area,
-                    top,
-                    armed: false,
-                    base: Vec::new(),
-                    last: None,
-                    spring: Default::default(),
-                    tick: None,
-                });
-                Some(TasksRailRequest::OpenList { id, new_tab: ctrl })
+                // **A plain press opens, and arms a drag behind it.** Opening
+                // on the press is what keeps the card instant; the gesture
+                // that may follow moves the list — or every picked list.
+                if self.picked.contains(&id) {
+                    self.drag = Some(ListDrag {
+                        id,
+                        carried: Vec::new(),
+                        open_on_release,
+                        grab_dy: y - r.y,
+                        origin_y: y,
+                        home: r.y + self.scroll,
+                        y,
+                        area,
+                        top,
+                        armed: false,
+                        base: Vec::new(),
+                        last: None,
+                        spring: Default::default(),
+                        tick: None,
+                    });
+                }
+                opens.then_some(TasksRailRequest::OpenList { id, new_tab: false })
             }
         }
     }
@@ -1422,11 +1685,25 @@ impl TasksRail {
             drag.y = y;
             drag.area = area;
             drag.top = top;
-            let arming = !drag.armed && (y - drag.origin_y).abs() >= DRAG_ARM_PX;
+            // Nothing is carried while the quick filter is on: the rows
+            // shown are not neighbours.
+            let arming =
+                self.filter.is_none() && !drag.armed && (y - drag.origin_y).abs() >= DRAG_ARM_PX;
             if arming {
                 drag.armed = true;
                 drag.base = self.lists.clone();
-                // What is inside the carried row folds under it for the trip.
+                let grabbed = drag.id;
+                // The grabbed list alone, or every picked one with it.
+                let roots = self.picked_roots();
+                let carried = if roots.contains(&grabbed) {
+                    roots
+                } else {
+                    vec![grabbed]
+                };
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.carried = carried;
+                }
+                // What is inside a carried row folds under it for the trip.
                 self.rebuild_visible();
             }
             let carried = self.carry(std::time::Instant::now());
@@ -1438,6 +1715,31 @@ impl TasksRail {
         let changed = self.hover != hover;
         self.hover = hover;
         changed
+    }
+
+    /// A double-click on a list that holds lists opens it, or shuts it.
+    /// Not on the chevron's slot, where each press already toggled.
+    pub fn toggle_fold_at(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
+        let Some((row, r)) = self
+            .rows(area, top)
+            .into_iter()
+            .find(|(_, r)| r.contains(x, y))
+        else {
+            return false;
+        };
+        let RailRow::List(i) = row else {
+            return false;
+        };
+        let Some(list) = self.lists.get(i) else {
+            return false;
+        };
+        if !list.has_children || self.row_parts(row, r).caret.contains(x, y) {
+            return false;
+        }
+        let (id, open) = (list.id, self.is_open(list.id));
+        // The first click of the two armed a drag; it is over.
+        self.drag = None;
+        self.set_open(id, !open)
     }
 
     /// Light `list`'s row as where dragged tasks would land, or none.
@@ -1584,7 +1886,10 @@ impl TasksRail {
                     1.5,
                     &row_chip(Rect::new(r.x + 0.75, r.y + 0.75, r.w - 1.5, r.h - 1.5)),
                 );
-            } else if active {
+            } else if active
+                || row_list.is_some_and(|id| self.picked.len() > 1 && self.picked.contains(&id))
+            {
+                // The open page's row, and every row of a selection.
                 draw_chosen_row(scene, root, r, p);
             } else if (self.hover == Some(row) && !matches!(row, RailRow::ListsHeading))
                 || (row_list.is_some() && row_list == carried)
@@ -1684,8 +1989,11 @@ impl TasksRail {
                     let Some(list) = self.lists.get(i) else {
                         continue;
                     };
-                    if list.has_children {
-                        let open = self.is_open(list.id) && carried != Some(list.id);
+                    let acting = self.shows_actions(row);
+                    if list.has_children && acting {
+                        // **The chevron takes the swatch's slot under the
+                        // pointer**, as a document's takes its icon's.
+                        let open = self.is_open(list.id);
                         let _caret = koru_draw::inspect::scope(
                             "ExploreRowCaret",
                             "part",
@@ -1693,7 +2001,7 @@ impl TasksRail {
                             scene::rect(parts.caret.x, parts.caret.y, parts.caret.w, parts.caret.h),
                             |record| {
                                 record.property("open", open, "this device's open set");
-                                record.property("lane", "NAV_INDENT", "theme");
+                                record.property("slot", "the swatch's", "shown on hover");
                             },
                         );
                         let (cx, cy) = parts.caret.centre();
@@ -1704,8 +2012,15 @@ impl TasksRail {
                         };
                         let spun = root * Affine::rotate_about(turn, (cx as f64, cy as f64));
                         super::draw_caret(scene, spun, engine, parts.caret, p.text_dim);
+                    } else {
+                        draw_swatch(
+                            scene,
+                            root,
+                            parts.icon,
+                            list.color.as_deref(),
+                            list.has_children,
+                        );
                     }
-                    draw_swatch(scene, root, parts.icon, list.color.as_deref());
                     // While this row is being renamed the container draws the
                     // field over it, exactly as it does over the compose row:
                     // the swatch is this module's contribution and the name is
@@ -1714,7 +2029,9 @@ impl TasksRail {
                         continue;
                     }
                     self.draw_label(scene, root, engine, &list.name, parts.label, fg);
-                    if self.shows_add(row) {
+                    if acting {
+                        // **`+` and `…` at the row's right edge, in the
+                        // count's place**, as a document row has them.
                         let _add = koru_draw::inspect::scope(
                             "ExploreRowAdd",
                             "part",
@@ -1722,10 +2039,23 @@ impl TasksRail {
                             scene::rect(parts.add.x, parts.add.y, parts.add.w, parts.add.h),
                             |record| {
                                 record.property("action", "new list inside", "TasksRailRequest");
-                                record.property("gap", "ROW_PLUS_GAP", "left of the count lane");
+                                record.property("gap", "ROW_PLUS_GAP", "left of the dots");
                             },
                         );
                         draw_icon(scene, root, engine, icons::PLUS, parts.add, p.text_dim);
+                        drop(_add);
+                        let _dots = koru_draw::inspect::scope(
+                            "ExploreRowDots",
+                            "part",
+                            root,
+                            scene::rect(parts.dots.x, parts.dots.y, parts.dots.w, parts.dots.h),
+                            |record| {
+                                record.property("action", "row menu", "TasksRailRequest");
+                                record.property("side", "ROW_DOTS", "the document row's");
+                            },
+                        );
+                        super::actions::draw_dots(scene, root, engine, parts.dots, false);
+                        continue;
                     }
                     // **The overdue share replaces the count on a list row**,
                     // where Today's row shows both. A queue is a place you look
@@ -1755,7 +2085,7 @@ impl TasksRail {
                     // The container draws the field over this row: this
                     // module contributes the swatch the new list will wear and
                     // nothing else, or the two would draw over each other.
-                    draw_swatch(scene, root, parts.icon, Some(self.suggested_color()));
+                    draw_swatch(scene, root, parts.icon, Some(self.suggested_color()), false);
                 }
             }
         }
@@ -1820,6 +2150,49 @@ impl TasksRail {
         rect: Rect,
         colour: vello::peniko::Color,
     ) {
+        // While the quick filter is on, a match wears its highlight and a
+        // list kept for what is inside it is dim.
+        if let Some(words) = &self.filter {
+            match super::quick_filter::spans(text, words) {
+                Some(spans) => {
+                    let p = theme::p();
+                    let line = engine.simple_layout(text, theme::role::row());
+                    koru_ui::highlighted_text::draw_highlighted_line(
+                        scene,
+                        root,
+                        engine,
+                        text,
+                        spans,
+                        rect.x,
+                        rect.y + (rect.h - scene::first_line_height(&line)) * 0.5,
+                        rect.w,
+                        theme::role::row(),
+                        colour,
+                        p.text,
+                        p.highlights[0].1,
+                    );
+                    return;
+                }
+                None => {
+                    let label = engine.simple_layout(text, theme::role::row());
+                    scene.push_clip_layer(
+                        vello::peniko::Fill::NonZero,
+                        root,
+                        &scene::rect(rect.x, rect.y, rect.w, rect.h),
+                    );
+                    scene::draw_layout_first_line(
+                        scene,
+                        root,
+                        &label,
+                        rect.x,
+                        rect.y + (rect.h - scene::first_line_height(&label)) * 0.5,
+                        Some(theme::p().placeholder),
+                    );
+                    scene.pop_layer();
+                    return;
+                }
+            }
+        }
         let label = engine.simple_layout(text, theme::role::row());
         scene.push_clip_layer(
             vello::peniko::Fill::NonZero,
@@ -1885,16 +2258,18 @@ impl TasksRail {
 /// Every rect inside a rail row. See [`TasksRail::row_parts`].
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub struct RailRowParts {
-    /// A parent list's caret, left of its swatch. Zero-sized on every other
-    /// row, so a press where a caret would be opens the row instead.
+    /// A parent list's chevron: the swatch's own slot. Zero-sized on every
+    /// other row, so a press on a leaf's swatch opens the row instead.
     pub caret: Rect,
     /// The glyph lane: a queue's icon, a list's swatch.
     pub icon: Rect,
     pub label: Rect,
-    /// A list row's `+` — *new list inside* — immediately left of the count
-    /// lane. Zero-sized on every other row; drawn and pressable only while
-    /// the row is under the pointer or the keyboard.
+    /// A list row's `+` — *new list inside* — immediately left of its `…`.
+    /// Zero-sized on every other row; drawn and pressable only while the row
+    /// is under the pointer or the keyboard.
     pub add: Rect,
+    /// A list row's `…`, at the row's right edge: its menu. As `add`.
+    pub dots: Rect,
     /// The count lane on a row, the `+` on the heading.
     pub trailing: Rect,
 }
@@ -1938,24 +2313,41 @@ fn warm() -> vello::peniko::Color {
 
 /// A list's colour square. A square rather than a dot, because a list is a
 /// bucket and the round swatch already means *this node's colour*.
-fn draw_swatch(scene: &mut Scene, root: Affine, lane: Rect, token: Option<&str>) {
+///
+/// **A list that holds lists wears two**, one behind and offset, as a
+/// document that holds documents wears the stacked-pages glyph: a group
+/// reads as one before its chevron is found by hovering.
+fn draw_swatch(scene: &mut Scene, root: Affine, lane: Rect, token: Option<&str>, group: bool) {
     let colour = token
         .and_then(theme::accent_tone)
         .map(|tone| tone.swatch)
         .unwrap_or(theme::p().text_dim);
     let (cx, cy) = lane.centre();
-    scene::fill(
-        scene,
-        root,
-        colour,
-        &scene::rrect(
-            cx - SWATCH * 0.5,
-            cy - SWATCH * 0.5,
+    let square = |dx: f32, dy: f32| {
+        scene::rrect(
+            cx - SWATCH * 0.5 + dx,
+            cy - SWATCH * 0.5 + dy,
             SWATCH,
             SWATCH,
             SWATCH * 0.25,
-        ),
+        )
+    };
+    if !group {
+        scene::fill(scene, root, colour, &square(0.0, 0.0));
+        return;
+    }
+    // The pair is centred in the lane as one mark: the back square up and to
+    // the right and fainter, the front one over it. Told apart by strength
+    // rather than by an outline, because the row behind them changes ground
+    // when it is hovered or chosen and an outline in one ground would show.
+    let step = SWATCH_STACK * 0.5;
+    scene::fill(
+        scene,
+        root,
+        colour.multiply_alpha(0.45),
+        &square(step, -step),
     );
+    scene::fill(scene, root, colour, &square(-step, step));
 }
 
 /// The glyph lane's width. Narrower than the library's page-icon slot, which
@@ -1963,6 +2355,8 @@ fn draw_swatch(scene: &mut Scene, root: Affine, lane: Rect, token: Option<&str>)
 const ICON_W: f32 = 16.0;
 /// The list swatch inside that lane.
 const SWATCH: f32 = 9.0;
+/// How far apart the two squares of a group's swatch sit.
+const SWATCH_STACK: f32 = 3.0;
 /// Air above the Lists heading and above the rule over Completed.
 const SECTION_GAP: f32 = 10.0;
 /// The band the hairline sits in the middle of.

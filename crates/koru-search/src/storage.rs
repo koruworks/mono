@@ -109,6 +109,23 @@ impl Listed {
 pub struct SearchIndex {
     pub(crate) connection: Connection,
     pub(crate) vocabulary: SharedVocabulary,
+    /// Where the last query's time went. For the timing tool and a
+    /// diagnostic; nothing in the product reads it.
+    pub(crate) last_timing: std::cell::Cell<Option<QueryTiming>>,
+}
+
+/// The three parts of one query's time, in milliseconds, and how many
+/// word-matches it had to consider (`-1` when not counted: fast queries are
+/// not charged a count).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct QueryTiming {
+    /// Matching the typed words, and their typo alternatives, in the index.
+    pub evidence_ms: f64,
+    /// Choosing, scoring and ordering the page.
+    pub statement_ms: f64,
+    /// Dressing each hit: its highlights, its path, its task and list.
+    pub hits_ms: f64,
+    pub evidence_rows: i64,
 }
 
 impl SearchIndex {
@@ -194,10 +211,16 @@ impl SearchIndex {
         Ok(Self {
             connection,
             vocabulary,
+            last_timing: std::cell::Cell::new(None),
         })
     }
 
     // ------------------------------------------------------------- the fuzzy
+
+    /// Where the last query's time went, if one has run.
+    pub fn last_query_timing(&self) -> Option<QueryTiming> {
+        self.last_timing.get()
+    }
 
     pub fn fuzzy_stats(&self) -> FuzzyIndexStats {
         self.vocabulary.stats()

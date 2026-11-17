@@ -255,6 +255,18 @@ impl TasksRail {
 
     /// Every stop of the ring, in the order the rows are drawn.
     fn ring(&self) -> Vec<RailFocus> {
+        // Filtered: the rows that are showing, and nothing that is not.
+        if self.filtering() {
+            return self
+                .laid_out(Rect::new(0.0, 0.0, 400.0, 400.0), 0.0)
+                .into_iter()
+                .filter_map(|(row, _)| match row {
+                    RailRow::Bucket(bucket) => Some(RailFocus::Bucket(bucket)),
+                    RailRow::List(i) => self.lists.get(i).map(|list| RailFocus::List(list.id)),
+                    _ => None,
+                })
+                .collect();
+        }
         let mut ring: Vec<RailFocus> = super::QUEUES.into_iter().map(RailFocus::Bucket).collect();
         ring.push(RailFocus::NewList);
         ring.extend(
@@ -341,8 +353,15 @@ impl TasksRail {
     pub(crate) fn queue_key(&mut self, area: Rect, top: f32, key: &WKey) -> Option<Outcome> {
         let focus = self.focus?;
         let ring = self.ring();
+        if ring.is_empty() {
+            return None;
+        }
         let index = ring.iter().position(|stop| *stop == focus).unwrap_or(0);
+        // Filtered, the answers are a ring: Down from the last is the first.
+        let wraps = self.filtering();
         let next = match key {
+            WKey::Named(NamedKey::ArrowDown) if wraps => (index + 1) % ring.len(),
+            WKey::Named(NamedKey::ArrowUp) if wraps => (index + ring.len() - 1) % ring.len(),
             WKey::Named(NamedKey::ArrowDown) => (index + 1).min(ring.len() - 1),
             WKey::Named(NamedKey::ArrowUp) => index.saturating_sub(1),
             WKey::Named(NamedKey::Home) => 0,
@@ -354,9 +373,11 @@ impl TasksRail {
                 self.focus = None;
                 return Some(Outcome::Consumed);
             }
-            // The document tree's keys, on a list row: Right opens a shut
-            // parent and then steps inside it; Left shuts an open one and
-            // then steps out to the list it is inside.
+            // The document tree's keys, on a list row. Right opens a shut
+            // parent and then steps inside it. **Left shuts an open parent;
+            // on anything else it shuts the list this one is inside and lands
+            // on it** — so pressed again and again from deep inside, it folds
+            // the branch up level by level to the top.
             WKey::Named(NamedKey::ArrowRight) | WKey::Named(NamedKey::ArrowLeft) => {
                 let RailFocus::List(id) = focus else {
                     return None;
@@ -364,18 +385,19 @@ impl TasksRail {
                 let list = self.lists.iter().find(|list| list.id == id)?.clone();
                 let right = matches!(key, WKey::Named(NamedKey::ArrowRight));
                 let open = list.has_children && self.is_open(id);
-                if list.has_children && right != open {
-                    self.set_open(id, right);
+                if right {
+                    if list.has_children && !open {
+                        self.set_open(id, true);
+                        self.set_focus(area, top, focus);
+                    } else if open && let Some(step) = ring.get(index + 1).copied() {
+                        self.set_focus(area, top, step);
+                    }
+                } else if open {
+                    self.set_open(id, false);
                     self.set_focus(area, top, focus);
-                    return Some(Outcome::Consumed);
-                }
-                let step = if right {
-                    open.then(|| ring.get(index + 1).copied()).flatten()
-                } else {
-                    list.parent.map(RailFocus::List)
-                };
-                if let Some(step) = step {
-                    self.set_focus(area, top, step);
+                } else if let Some(parent) = list.parent {
+                    self.set_open(parent, false);
+                    self.set_focus(area, top, RailFocus::List(parent));
                 }
                 return Some(Outcome::Consumed);
             }

@@ -64,6 +64,7 @@ fn queue_geometry_and_activation_match_the_existing_pointer_path() {
                 bounds.x + bounds.w / 2.0,
                 bounds.y + bounds.h / 2.0,
                 false,
+                false,
             )
             .unwrap();
         let actual = rail.queue_action(context.area, 100.0, node.occurrence, Action::Click);

@@ -179,7 +179,15 @@ fn copy(row: RowId, workspace: &str) -> RowCopy {
             ],
         ),
         RowId::Documents => (DOCUMENTS_TITLE, plain(DOCUMENTS_HINT)),
-        RowId::Files => (FILES_TITLE, plain(&files_hint(workspace))),
+        RowId::Files => (
+            FILES_TITLE,
+            vec![
+                (files_hint(workspace), None),
+                (FILES_READ_BEFORE.to_owned(), None),
+                (FILES_READ_LINK.to_owned(), Some(Target::ReaderLink)),
+                (FILES_READ_AFTER.to_owned(), None),
+            ],
+        ),
         RowId::Learn => (LEARN_TITLE, plain(LEARN_HINT)),
         RowId::AppMenu => (
             koru_i18n::t(crate::format::lang(), koru_i18n::Key::WelcomeAppMenu),

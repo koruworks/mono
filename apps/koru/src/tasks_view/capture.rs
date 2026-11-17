@@ -120,7 +120,7 @@ pub(super) struct Capture {
 impl Capture {
     pub fn new(engine: &mut TextEngine) -> Self {
         Self {
-            input: TextInput::new(engine, theme::role::row()),
+            input: TextInput::new(engine, theme::role::content_row()),
             word: None,
             due: None,
             priority: None,
@@ -143,7 +143,7 @@ impl Capture {
         let at = at.min(value.len());
         self.field.x
             + engine
-                .simple_layout(&value[..at], theme::role::row())
+                .simple_layout(&value[..at], theme::role::content_row())
                 .width()
     }
 
@@ -433,7 +433,7 @@ impl Capture {
             root,
             engine,
             input_rect(field),
-            InputStyle::bare(theme::role::row()),
+            InputStyle::bare(theme::role::content_row()),
             Some(PLACEHOLDER),
             caret_on,
         );
@@ -508,7 +508,7 @@ pub(super) fn paint_empty(
         root,
         engine,
         input_rect(text),
-        InputStyle::bare(theme::role::row()),
+        InputStyle::bare(theme::role::content_row()),
         Some(PLACEHOLDER),
         false,
     );

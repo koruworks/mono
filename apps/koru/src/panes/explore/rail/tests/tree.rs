@@ -60,7 +60,7 @@ fn drag_to(rail: &mut TasksRail, id: ListId, y: f32) -> Option<TasksRailRequest>
     let r = rect_of(rail, id);
     let x = rail.row_parts(rail.row_of_list(id).unwrap(), r).label.x + 2.0;
     let (_, cy) = r.centre();
-    rail.mouse_down(area(), top(), x, cy, false);
+    rail.mouse_down(area(), top(), x, cy, false, false);
     // Two moves: the first arms the drag, the second is the carry proper.
     rail.mouse_move(
         area(),
@@ -139,7 +139,7 @@ fn the_caret_shuts_and_opens_and_opens_no_page() {
     let r = rect_of(&rail, top3);
     let (cx, cy) = rail.row_parts(RailRow::List(0), r).caret.centre();
 
-    assert_eq!(rail.mouse_down(area(), top(), cx, cy, false), None);
+    assert_eq!(rail.mouse_down(area(), top(), cx, cy, false, false), None);
     assert_eq!(
         showing(&rail),
         vec![top3, other, solo],
@@ -149,7 +149,7 @@ fn the_caret_shuts_and_opens_and_opens_no_page() {
     assert!(!rail.dragging(), "and no drag was armed");
     assert_eq!(rail.collapsed(), vec![top3]);
 
-    assert_eq!(rail.mouse_down(area(), top(), cx, cy, false), None);
+    assert_eq!(rail.mouse_down(area(), top(), cx, cy, false, false), None);
     assert_eq!(showing(&rail), vec![top3, backlog, core, other, solo]);
     assert!(rail.collapsed().is_empty());
 }
@@ -268,10 +268,11 @@ fn composing_under_a_list_that_is_gone_falls_to_the_top_level() {
     assert_eq!(rail.composing(), Some(None));
 }
 
-/// The row's `+` sits immediately left of the count lane, so the number
-/// never shifts; it is there for the row under the pointer and no other.
+/// A list row is laid out as a document row is: its `+` and `…` sit at the
+/// row's right edge, in the count's place, for the row under the pointer and
+/// no other — and the name never reflows as the pointer moves.
 #[test]
-fn the_hover_plus_makes_a_child_and_never_moves_the_count() {
+fn hovering_a_row_shows_its_plus_and_dots_where_the_count_was() {
     let (mut rail, [_, _, _, other, _]) = tree();
     let row = rail.row_of_list(other).unwrap();
     let r = rect_of(&rail, other);
@@ -280,7 +281,7 @@ fn the_hover_plus_makes_a_child_and_never_moves_the_count() {
 
     // Not under the pointer: a press where the `+` would be opens the list.
     assert_eq!(
-        rail.mouse_down(area(), top(), ax, ay, false),
+        rail.mouse_down(area(), top(), ax, ay, false, false),
         Some(TasksRailRequest::OpenList {
             id: other,
             new_tab: false
@@ -290,17 +291,182 @@ fn the_hover_plus_makes_a_child_and_never_moves_the_count() {
 
     assert!(rail.mouse_move(area(), top(), ax, ay));
     let lit = rail.row_parts(row, r);
-    assert_eq!(lit.trailing, quiet.trailing, "the count lane did not move");
-    assert_eq!(lit.add, quiet.add);
-    assert!(lit.add.x + lit.add.w <= lit.trailing.x);
-    assert!(lit.label.x + lit.label.w <= lit.add.x, "the name gives way");
+    assert_eq!(lit.label, quiet.label, "the name does not reflow");
+    assert!(lit.add.x + lit.add.w <= lit.dots.x, "`+` then `…`");
+    assert!(lit.add.x >= lit.trailing.x, "inside the count's own lane");
     assert_eq!(
-        rail.mouse_down(area(), top(), ax, ay, false),
+        lit.dots.x + lit.dots.w,
+        r.x + r.w - theme::NAV_PAD,
+        "at the row's right edge, as a document row's are"
+    );
+    assert_eq!(
+        rail.mouse_down(area(), top(), ax, ay, false, false),
         Some(TasksRailRequest::BeginNewList {
             parent: Some(other)
         })
     );
     assert!(!rail.dragging(), "the `+` arms no drag");
+
+    let (dx, dy) = lit.dots.centre();
+    let Some(TasksRailRequest::RowMenu { target, .. }) =
+        rail.mouse_down(area(), top(), dx, dy, false, false)
+    else {
+        panic!("the `…` opens the row's menu");
+    };
+    assert_eq!(target, RailTarget::List(other));
+    assert!(!rail.dragging(), "and arms no drag either");
+}
+
+/// A parent has no caret lane: its chevron is the swatch's own slot, so a
+/// parent and a leaf at one depth start at the same place.
+#[test]
+fn a_parents_chevron_takes_the_swatchs_slot() {
+    let (rail, [top3, _, _, other, _]) = tree();
+    let parts = |id| rail.row_parts(rail.row_of_list(id).unwrap(), rect_of(&rail, id));
+    assert_eq!(parts(top3).caret, parts(top3).icon);
+    assert_eq!(parts(top3).icon.x, parts(other).icon.x);
+    assert_eq!(parts(top3).icon.x, rect_of(&rail, top3).x + theme::NAV_PAD);
+}
+
+// ------------------------------------------------------------ picking lists
+
+fn press(rail: &mut TasksRail, id: ListId, ctrl: bool, shift: bool) -> Option<TasksRailRequest> {
+    let r = rect_of(rail, id);
+    let x = rail.row_parts(rail.row_of_list(id).unwrap(), r).label.x + 2.0;
+    let (_, cy) = r.centre();
+    let request = rail.mouse_down(area(), top(), x, cy, ctrl, shift);
+    request.or(rail.mouse_up())
+}
+
+/// Ctrl+click adds a list to the selection and takes it away again, and
+/// opens no page — the document tree's gesture.
+#[test]
+fn ctrl_click_picks_lists_without_opening_them() {
+    let (mut rail, [top3, _, _, other, solo]) = tree();
+    assert!(
+        press(&mut rail, other, false, false).is_some(),
+        "a plain click opens"
+    );
+    assert_eq!(rail.picked(), [other]);
+
+    assert_eq!(
+        press(&mut rail, solo, true, false),
+        None,
+        "Ctrl opens nothing"
+    );
+    assert_eq!(rail.picked(), [other, solo]);
+    assert_eq!(
+        rail.selected(),
+        Some(RailTarget::List(other)),
+        "the page stays"
+    );
+    assert_eq!(press(&mut rail, top3, true, false), None);
+    assert_eq!(rail.picked(), [other, solo, top3]);
+    assert_eq!(press(&mut rail, solo, true, false), None);
+    assert_eq!(rail.picked(), [other, top3], "and Ctrl again takes it away");
+}
+
+/// Shift+click picks the run of showing rows from the last list pressed.
+#[test]
+fn shift_click_picks_the_run_from_the_anchor() {
+    let (mut rail, [top3, backlog, core, other, solo]) = tree();
+    press(&mut rail, backlog, false, false);
+    assert_eq!(
+        press(&mut rail, other, false, true),
+        None,
+        "Shift opens nothing"
+    );
+    assert_eq!(rail.picked(), [backlog, core, other]);
+    // The anchor holds: a second Shift+click ranges from the same list.
+    press(&mut rail, top3, false, true);
+    assert_eq!(rail.picked(), [top3, backlog]);
+    press(&mut rail, solo, false, true);
+    assert_eq!(rail.picked(), [backlog, core, other, solo]);
+}
+
+/// A selection is dragged as one: every picked list goes into the list it is
+/// dropped on, in the order they were in.
+#[test]
+fn a_selection_of_lists_is_dragged_into_another_list_together() {
+    let (mut rail, [top3, backlog, core, other, solo]) = tree();
+    press(&mut rail, backlog, false, false);
+    press(&mut rail, core, true, false);
+    let (_, into) = rect_of(&rail, solo).centre();
+    assert_eq!(
+        drag_to(&mut rail, backlog, into),
+        Some(TasksRailRequest::MoveList {
+            ids: vec![backlog, core],
+            parent: Some(solo),
+            before: None
+        })
+    );
+    let inside: Vec<ListId> = rail
+        .lists()
+        .iter()
+        .filter(|l| l.parent == Some(solo))
+        .map(|l| l.id)
+        .collect();
+    assert_eq!(inside, vec![backlog, core]);
+    assert!(
+        !rail
+            .lists()
+            .iter()
+            .find(|l| l.id == top3)
+            .unwrap()
+            .has_children
+    );
+    let _ = other;
+}
+
+/// A picked list that is inside another picked list travels with it: it is
+/// not moved a second time, out from under its parent.
+#[test]
+fn a_picked_child_travels_with_its_picked_parent() {
+    let (mut rail, [top3, backlog, _, _, solo]) = tree();
+    press(&mut rail, top3, false, false);
+    press(&mut rail, backlog, true, false);
+    // A carried parent is drawn shut, so the rows under it move up as the
+    // drag arms: where *Solo* is has to be read after that, as a hand does.
+    let r = rect_of(&rail, top3);
+    let x = rail.row_parts(rail.row_of_list(top3).unwrap(), r).label.x + 2.0;
+    let (_, cy) = r.centre();
+    rail.mouse_down(area(), top(), x, cy, false, false);
+    rail.mouse_move(area(), top(), x, cy + DRAG_ARM_PX + 1.0);
+    let (_, into) = rect_of(&rail, solo).centre();
+    rail.mouse_move(area(), top(), x, into);
+    assert_eq!(
+        rail.mouse_up(),
+        Some(TasksRailRequest::MoveList {
+            ids: vec![top3],
+            parent: Some(solo),
+            before: None
+        })
+    );
+    let child = rail.lists().iter().find(|l| l.id == backlog).unwrap();
+    assert_eq!((child.parent, child.depth), (Some(top3), 2));
+}
+
+/// A plain click on one of several picked lists is a click after all: that
+/// list alone is picked, and its page opens — on the release, because a drag
+/// of them all might have followed the press.
+#[test]
+fn clicking_one_of_several_picked_lists_opens_it_on_release() {
+    let (mut rail, [_, _, _, other, solo]) = tree();
+    press(&mut rail, other, false, false);
+    press(&mut rail, solo, true, false);
+    let r = rect_of(&rail, solo);
+    let x = rail.row_parts(rail.row_of_list(solo).unwrap(), r).label.x + 2.0;
+    let (_, cy) = r.centre();
+    assert_eq!(rail.mouse_down(area(), top(), x, cy, false, false), None);
+    assert_eq!(rail.picked(), [other, solo], "kept until the release");
+    assert_eq!(
+        rail.mouse_up(),
+        Some(TasksRailRequest::OpenList {
+            id: solo,
+            new_tab: false
+        })
+    );
+    assert_eq!(rail.picked(), [solo]);
 }
 
 // ------------------------------------------------------------------ the drag
@@ -312,7 +478,7 @@ fn dragging_onto_the_middle_of_a_row_nests() {
     assert_eq!(
         drag_to(&mut rail, other, into),
         Some(TasksRailRequest::MoveList {
-            id: other,
+            ids: vec![other],
             parent: Some(solo),
             before: None
         })
@@ -332,7 +498,7 @@ fn dragging_out_past_the_last_row_un_nests() {
     assert_eq!(
         drag_to(&mut rail, backlog, below.y + below.h * 3.0),
         Some(TasksRailRequest::MoveList {
-            id: backlog,
+            ids: vec![backlog],
             parent: None,
             before: None
         })
@@ -356,7 +522,7 @@ fn dragging_to_a_rows_top_edge_reorders_among_siblings() {
     assert_eq!(
         drag_to(&mut rail, solo, over.y + over.h * 0.1),
         Some(TasksRailRequest::MoveList {
-            id: solo,
+            ids: vec![solo],
             parent: None,
             before: Some(other)
         })
@@ -408,7 +574,7 @@ fn a_release_where_the_row_began_asks_for_nothing() {
     assert_eq!(rail.lists(), before);
     // A slip of the hand: lifted a few pixels and let go.
     let x = rail.row_parts(rail.row_of_list(other).unwrap(), r).label.x + 2.0;
-    rail.mouse_down(area(), top(), x, cy, false);
+    rail.mouse_down(area(), top(), x, cy, false, false);
     rail.mouse_move(area(), top(), x, cy - DRAG_ARM_PX - 2.0);
     assert_eq!(rail.mouse_up(), None);
     assert_eq!(rail.lists(), before);
@@ -422,7 +588,7 @@ fn cancelling_a_drag_puts_the_table_back() {
     let x = rail.row_parts(rail.row_of_list(other).unwrap(), r).label.x + 2.0;
     let (_, cy) = r.centre();
     let (_, into) = rect_of(&rail, solo).centre();
-    rail.mouse_down(area(), top(), x, cy, false);
+    rail.mouse_down(area(), top(), x, cy, false, false);
     rail.mouse_move(area(), top(), x, cy + DRAG_ARM_PX + 1.0);
     rail.mouse_move(area(), top(), x, into);
     assert_ne!(rail.lists(), before, "the preview moved the row");
@@ -439,7 +605,7 @@ fn a_carry_inside_one_landing_rebuilds_nothing() {
     let x = rail.row_parts(rail.row_of_list(other).unwrap(), r).label.x + 2.0;
     let (_, cy) = r.centre();
     let (_, into) = rect_of(&rail, solo).centre();
-    rail.mouse_down(area(), top(), x, cy, false);
+    rail.mouse_down(area(), top(), x, cy, false, false);
     rail.mouse_move(area(), top(), x, cy + DRAG_ARM_PX + 1.0);
     rail.mouse_move(area(), top(), x, into);
 
@@ -579,4 +745,95 @@ fn revealing_a_list_opens_every_parent_above_it() {
     assert!(!showing(&rail).contains(&backlog));
     assert!(rail.reveal_list(area(), top(), backlog));
     assert!(showing(&rail).contains(&backlog));
+}
+
+// ------------------------------------------------- the keyboard after a click
+
+/// A press leaves the keyboard on the row it pressed, so Down goes to the
+/// next row rather than to the page that just opened.
+#[test]
+fn a_click_leaves_the_keyboard_on_the_row() {
+    let (mut rail, [top3, backlog, ..]) = tree();
+    press(&mut rail, top3, false, false);
+    assert_eq!(rail.focus(), Some(RailFocus::List(top3)));
+    key(&mut rail, NamedKey::ArrowDown);
+    assert_eq!(rail.focus(), Some(RailFocus::List(backlog)));
+    assert_eq!(
+        rail.selected(),
+        Some(RailTarget::List(top3)),
+        "the arrows move the keyboard, not the page; Enter opens"
+    );
+
+    // A queue too.
+    let (_, today) = rail
+        .rows(area(), top())
+        .into_iter()
+        .find(|(row, _)| *row == RailRow::Bucket(Bucket::Today))
+        .unwrap();
+    let (x, y) = today.centre();
+    rail.mouse_down(area(), top(), x, y, false, false);
+    assert_eq!(rail.focus(), Some(RailFocus::Bucket(Bucket::Today)));
+    key(&mut rail, NamedKey::ArrowDown);
+    assert_eq!(rail.focus(), Some(RailFocus::Bucket(Bucket::Next)));
+}
+
+/// The row the keyboard is on keeps its number: `+` and `…` are the
+/// pointer's.
+#[test]
+fn the_keyboards_row_keeps_its_count() {
+    let (mut rail, [_, _, _, other, _]) = tree();
+    press(&mut rail, other, false, false);
+    rail.clear_hover();
+    assert!(!rail.shows_actions(rail.row_of_list(other).unwrap()));
+}
+
+/// Left from deep inside folds the branch up one level a press: four levels
+/// down, three presses reach the top with everything shut behind them.
+#[test]
+fn left_folds_the_branch_up_to_the_top() {
+    let mut lists: Vec<RailList> = Vec::new();
+    for depth in 0..4 {
+        let mut list = leaf(&format!("level {depth}"), lists.last(), 0, 0);
+        list.has_children = depth < 3;
+        lists.push(list);
+    }
+    let ids: Vec<ListId> = lists.iter().map(|l| l.id).collect();
+    let mut rail = TasksRail::default();
+    rail.set_lists(lists);
+    rail.set_focus(area(), top(), RailFocus::List(ids[3]));
+
+    for level in (0..3).rev() {
+        key(&mut rail, NamedKey::ArrowLeft);
+        assert_eq!(rail.focus(), Some(RailFocus::List(ids[level])), "{level}");
+        assert!(!rail.is_open(ids[level]), "level {level} is shut behind it");
+    }
+    assert_eq!(showing(&rail), vec![ids[0]]);
+}
+
+/// A double-click on a list that holds lists opens it or shuts it — but not
+/// on the chevron's slot, where each press already did.
+#[test]
+fn a_double_click_opens_and_shuts_a_parent() {
+    let (mut rail, [top3, _, _, other, _]) = tree();
+    let r = rect_of(&rail, top3);
+    let parts = rail.row_parts(rail.row_of_list(top3).unwrap(), r);
+    let (lx, ly) = (parts.label.x + 2.0, r.y + r.h * 0.5);
+
+    assert!(rail.toggle_fold_at(area(), top(), lx, ly));
+    assert!(!rail.is_open(top3));
+    let r = rect_of(&rail, top3);
+    assert!(rail.toggle_fold_at(area(), top(), lx, r.y + r.h * 0.5));
+    assert!(rail.is_open(top3));
+
+    let (cx, cy) = parts.caret.centre();
+    assert!(
+        !rail.toggle_fold_at(area(), top(), cx, cy),
+        "not on the chevron"
+    );
+    let leaf_row = rect_of(&rail, other);
+    let (x, y) = leaf_row.centre();
+    assert!(
+        !rail.toggle_fold_at(area(), top(), x, y),
+        "a leaf has nothing to open"
+    );
 }

@@ -2455,6 +2455,12 @@ pub enum NavigationTarget {
         workspace: WorkspaceId,
         list: koru_core::ids::ListId,
     },
+    /// One of a workspace's standing task queues, opened as its page.
+    TaskQueue {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        bucket: koru_core::tasks::Bucket,
+    },
     /// A task, opened in Tasks on the page where it is now. Located through
     /// its document, as a document is.
     Task {
@@ -2467,6 +2473,8 @@ pub enum NavigationTarget {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TasksTarget {
     List(koru_core::ids::ListId),
+    /// One of the standing queues: Today, Next, Upcoming, Later.
+    Queue(koru_core::tasks::Bucket),
     Task {
         document: koru_core::DocumentId,
         node: NodeId,
