@@ -71,6 +71,12 @@ pub struct SessionScript {
     /// Live sessions whose last turn completed (M6 delivery evidence): their
     /// summary reads Completed and idle, their observation ends with it.
     completed: HashMap<SessionId, AgentTurnId>,
+    /// Whether this host serves the decision-window stream, as the real
+    /// session adapter does. Off by default: `subscribe_decision` refuses.
+    decision_stream: bool,
+    /// Sessions this host terminated. With the decision stream on, each
+    /// reports its process end on the Session stream, as a real host does.
+    ended: BTreeSet<SessionId>,
     calls: Vec<SessionCall>,
 }
 
@@ -104,6 +110,8 @@ impl SessionScript {
             created: Vec::new(),
             attached: BTreeSet::new(),
             completed: HashMap::new(),
+            decision_stream: false,
+            ended: BTreeSet::new(),
             calls: Vec::new(),
         }
     }
@@ -145,6 +153,25 @@ impl SessionScript {
     /// the evidence a delivery receipt needs. Identities only.
     pub fn script_completed_turn(&mut self, session: SessionId, turn: AgentTurnId) {
         self.completed.insert(session, turn);
+    }
+
+    /// Serve the decision-window stream the way the real session adapter
+    /// does: a subscription to a session this host terminated reports
+    /// `SessionEvent::Exited` on the Session stream, once, past the
+    /// subscriber's frontier. Without this the scripted host refuses the
+    /// stream, so no test ever saw a stopped session report its own end.
+    pub fn report_session_ends(&mut self) {
+        self.decision_stream = true;
+    }
+
+    /// The process of `session` ended by itself (it crashed or exited): no
+    /// one asked this host to terminate it. With the decision stream on, its
+    /// subscribers read that end.
+    pub fn end_session(&mut self, session: SessionId) {
+        if self.live.remove(&session) {
+            self.attached.remove(&session);
+            self.ended.insert(session);
+        }
     }
 
     /// Every call received, oldest first.
@@ -226,6 +253,41 @@ impl ScriptedSessions {
     }
 }
 
+/// The Session-stream sequence at which a scripted session reports its end.
+const EXIT_SEQUENCE: u64 = 3;
+
+/// The decision-window stream of one scripted session: nothing while the
+/// session is live; its process end once the host has terminated it, unless
+/// the subscriber's Session frontier is already past it.
+struct EndEvents {
+    script: Arc<Mutex<SessionScript>>,
+    session: SessionId,
+    seen: bool,
+}
+
+impl SessionEvents for EndEvents {
+    fn next(&mut self, timeout: Duration) -> Option<SessionUpdate> {
+        let ended = self
+            .script
+            .lock()
+            .expect("the session script is not poisoned")
+            .ended
+            .contains(&self.session);
+        if self.seen || !ended {
+            std::thread::sleep(timeout.min(Duration::from_millis(5)));
+            return None;
+        }
+        self.seen = true;
+        Some(SessionUpdate::Session(
+            koru_session_protocol::SequencedSessionEvent {
+                session_id: self.session,
+                sequence: StreamSequence::new(EXIT_SEQUENCE).expect("a valid sequence"),
+                event: koru_session_protocol::SessionEvent::Exited { code: Some(0) },
+            },
+        ))
+    }
+}
+
 /// A stream nothing is ever published on: a test drives events directly.
 struct QuietEvents;
 
@@ -236,6 +298,33 @@ impl SessionEvents for QuietEvents {
 }
 
 impl Sessions for ScriptedSessions {
+    fn subscribe_decision(
+        &mut self,
+        session: SessionId,
+        after: &koru_delegate_core::decisions::DecisionSourceFrontiers,
+    ) -> PortResult<Box<dyn SessionEvents>> {
+        let mut script = self.script();
+        if !script.decision_stream {
+            // The trait's own answer for an adapter without the stream.
+            return Err(PortError::new(
+                Port::Sessions,
+                "decision_stream_unavailable",
+                "the session adapter does not support decision source ownership",
+            ));
+        }
+        script.calls.push(SessionCall::Subscribe(session));
+        if !script.live.contains(&session) && !script.ended.contains(&session) {
+            return Err(script.not_live("subscribe_decision"));
+        }
+        Ok(Box::new(EndEvents {
+            script: Arc::clone(&self.script),
+            session,
+            seen: after.session_after.is_some_and(|seen| {
+                seen >= StreamSequence::new(EXIT_SEQUENCE).expect("a valid sequence")
+            }),
+        }))
+    }
+
     fn supports_delegation(&self) -> bool {
         self.script().delegation
     }
@@ -382,6 +471,7 @@ impl Sessions for ScriptedSessions {
             return Err(script.not_live("terminate"));
         }
         script.attached.remove(&session);
+        script.ended.insert(session);
         Ok(())
     }
 

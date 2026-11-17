@@ -149,6 +149,11 @@ impl Orchestrator {
         }) else {
             return Ok(None);
         };
+        // The origin Koru stopped for its wait has ended; nothing connects
+        // to it again. The successor is another consumer.
+        if state.source_origin_ended == Some((attempt, generation, session)) {
+            return Ok(None);
+        }
         let owner = self.publication_owner(run)?;
         if self
             .bot_ledger()?
@@ -294,6 +299,24 @@ impl Orchestrator {
         {
             return Err(publication_pending().into());
         }
+        // The process Koru itself stopped for an enrolled wait ended. That is
+        // the origin stop taking effect, not the Run ending: nothing is
+        // staged (the Run is not interrupted) and no cleanup is owed. The
+        // wait's driver proves the end on its own and records the stop.
+        if matches!(frame, Frame::ProcessEnded(_))
+            && self.origin_stop_owns_end(owner, run, &base.fence)?
+        {
+            let ended = (
+                base.fence.attempt,
+                base.fence.generation,
+                base.fence.session,
+            );
+            self.runs
+                .get_mut(&run)
+                .ok_or_else(publication_pending)?
+                .source_origin_ended = Some(ended);
+            return Ok(SourceProgress::Paused);
+        }
         let (stream, sequence) = match frame {
             Frame::Agent(sequence, _) => (DecisionSourceStream::Agent, sequence),
             Frame::ProcessEnded(sequence) => (DecisionSourceStream::Session, sequence),
@@ -379,6 +402,59 @@ impl Orchestrator {
         });
         self.retry_decision_source(run)?;
         Ok(SourceProgress::Paused)
+    }
+
+    /// Whether the process end of the consumer named by `fence` is Koru's own
+    /// origin stop taking effect (M6 contract 4.1 steps 5 to 7; the decision
+    /// wait's stop-and-successor chain): the Run has an open wait whose
+    /// enrollment the AI worker stored, its origin is exactly this consumer,
+    /// no successor exists yet and nobody has asked for the wait's cleanup.
+    ///
+    /// Enrollment is what authorizes the stop, so from then on the origin's
+    /// end is the expected outcome whatever ended it. Everything else is as
+    /// before: an end before the enrollment, an end of a successor, and any
+    /// end once a person's Stop, the budget, a pause's cleanup or a failure
+    /// has moved the wait to cleanup still interrupts the Run and hands the
+    /// wait to its cleanup owner.
+    fn origin_stop_owns_end(
+        &mut self,
+        owner: koru_delegate_core::BotOwner,
+        run: RunId,
+        fence: &DecisionFence,
+    ) -> Result<bool, RunError> {
+        use koru_delegate_core::children::BotChildWaitEnrollmentReply;
+        let stops = |phase: BotWaitPhase| {
+            matches!(phase, BotWaitPhase::HoldRequested | BotWaitPhase::Retired)
+        };
+        let same = |origin: &DecisionFence| {
+            origin.attempt == fence.attempt
+                && origin.generation == fence.generation
+                && origin.session == fence.session
+        };
+        if let Some(child) = self.bot_ledger()?.child_wait_execution(owner, run)? {
+            return Ok(child.resume.is_none()
+                && child.wait.cleanup.is_none()
+                && stops(child.wait.phase)
+                && matches!(
+                    child.wait.enrollment,
+                    Some(BotChildWaitEnrollmentReply::Enrolled { .. })
+                )
+                && same(&child.wait.origin));
+        }
+        let Some(decision) = self.bot_ledger()?.decision_wait_execution(owner, run)? else {
+            return Ok(false);
+        };
+        Ok(
+            matches!(decision.wait.reason, BotWaitReason::Decision { .. })
+                && decision.resume.is_none()
+                && decision.wait.cleanup.is_none()
+                && stops(decision.wait.phase)
+                && matches!(
+                    decision.wait.enrollment,
+                    Some(BotWaitEnrollmentReply::Enrolled { .. })
+                )
+                && same(&decision.wait.origin),
+        )
     }
 
     /// Explicit loss on either stream. It is never proof that the process

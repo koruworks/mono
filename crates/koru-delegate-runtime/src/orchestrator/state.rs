@@ -43,6 +43,12 @@ pub struct RunState {
     pub source_gap: bool,
     pub(crate) source_identity: Option<(RunAttemptId, AttemptGeneration, SessionId)>,
     pub(crate) source_epoch: Option<uuid::Uuid>,
+    /// The consumer whose process ended because Koru stopped it for an
+    /// enrolled wait (the origin stop). Its stream has nothing more to say:
+    /// no producer is offered for exactly this consumer again. A successor
+    /// is another consumer and is offered as usual. Volatile; after a
+    /// restart the same end is read once more and recognized again.
+    pub(crate) source_origin_ended: Option<(RunAttemptId, AttemptGeneration, SessionId)>,
     pub(crate) decision_source: Option<super::publication::source::DecisionSourceRetry>,
     /// At most one reobserve-owed identity. While present the producer stays
     /// disconnected; nothing beyond the accepted frontiers is marked consumed.
@@ -120,6 +126,7 @@ impl RunState {
             source_gap: false,
             source_identity: None,
             source_epoch: None,
+            source_origin_ended: None,
             decision_source: None,
             source_obligation: None,
             source_usage: Default::default(),

@@ -219,6 +219,249 @@ fn m6_child_actor_the_thirteen_steps_on_the_real_tick() {
     assert_eq!(script.created().len(), 2);
 }
 
+/// Cohort `m6_origin_stop`: the thirteen steps again, on a session host that
+/// behaves as the real one does. The real session adapter serves the
+/// decision-window stream, and a session Koru terminates reports its own end
+/// on it (`SessionEvent::Exited`). The scripted host of the test above
+/// refuses that stream, so nothing there ever saw the asking session end.
+///
+/// Koru's own stop of the asking session, for an enrolled wait, is not the
+/// asking Run ending: the request stays open, the wait is not cleaned up,
+/// and the Run is resumed by a successor.
+#[test]
+fn m6_origin_stop_the_stopped_sessions_own_end_does_not_cancel_the_request() {
+    let ChildChain {
+        orchestrator,
+        sessions,
+        parent,
+        ..
+    } = child_chain();
+    let (owner, run) = (parent.owner, parent.run);
+    let successor = SessionId::mint();
+    let turn = AgentTurnId::mint();
+    {
+        let mut script = sessions.lock().unwrap();
+        script.report_session_ends();
+        parent.script_resume(&mut script, successor, turn);
+    }
+
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let unused = TcpListener::bind("127.0.0.1:0").unwrap();
+    actor
+        .attach_decision_bridge(Box::new(bridge(&unused)))
+        .unwrap();
+    actor
+        .attach_child_bridge(Box::new(bridge(&listener)))
+        .unwrap();
+    let ai_attempt = parent.ai_attempt;
+    let server = std::thread::spawn(move || {
+        let mut stream = accept_within(&listener, Duration::from_secs(30));
+        child_reply(&mut stream, |request| {
+            BotChildWaitEnrollmentReply::Enrolled {
+                receipt_digest: request.key.receipt_digest,
+                key: request.key.clone(),
+                ai_attempt,
+            }
+        });
+    });
+
+    let request = parent.ask(&mut actor.orchestrator, &[1]);
+    let reply = actor.bot_command(BotCommand::RequestChild {
+        request,
+        boot: parent.boot,
+    });
+    let Ok(BotReply::ChildRequested { receipts, .. }) = reply else {
+        panic!("the ask was not admitted: {reply:?}");
+    };
+    let subject = koru_delegate_core::BotRunKey {
+        owner,
+        bot: parent.bot,
+        run,
+    };
+    let read = |actor: &mut Actor| {
+        let read = actor.bot_command(BotCommand::ReadChildRequests {
+            subject: subject.clone(),
+        });
+        let Ok(BotReply::ChildRequests { wait, requests }) = read else {
+            panic!("{read:?}");
+        };
+        (wait, requests)
+    };
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut child_stopped = false;
+    // Ticks after the origin stop during which the request must stay open:
+    // long enough for the stopped session's end to be read and acted on.
+    let mut held = 0;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "the child wait did not resume: steps {:?}",
+            child_steps(&actor.child_log)
+        );
+        actor.maintenance_tick();
+        let drain_until = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < drain_until {
+            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+                break;
+            };
+            actor.handle(command);
+        }
+        // The actor loop's budget deadline, which is where a retained
+        // cleanup of a Run is requested (`publication_cleanup_tick`).
+        for due in actor.orchestrator.bot_budget_runs() {
+            let _ = actor.orchestrator.bot_budget_tick(due);
+        }
+        let taken = child_steps(&actor.child_log);
+        let (wait, requests) = read(&mut actor);
+        // Whatever the stopped session reported, the asking Run did not end.
+        assert_ne!(
+            requests[0].settled_by,
+            Some(ChildSettledBy::ParentStopped),
+            "Koru's own stop of the asking session canceled the request: steps {taken:?}, wait {:?}",
+            wait.as_ref().map(|wait| wait.phase)
+        );
+        if !child_stopped && taken.contains(&Step::OriginStopped) {
+            assert_eq!(requests[0].state, ChildRequestState::Open);
+            assert_eq!(
+                wait.as_ref().map(|wait| wait.phase),
+                Some(BotWaitPhase::Retired),
+                "the wait holds for the asked Bot; it is not cleaned up"
+            );
+            held += 1;
+            if held < 4 {
+                continue;
+            }
+            // The asked Bot's Run ends (a person stops the queued child).
+            let stopped = actor.bot_command(BotCommand::Stop {
+                key: koru_delegate_core::BotRunKey {
+                    owner,
+                    bot: receipts[0].recipient,
+                    run: receipts[0].child_run,
+                },
+                fence: None,
+            });
+            assert!(stopped.is_ok(), "{stopped:?}");
+            child_stopped = true;
+        }
+        if taken.last() == Some(&Step::InputAcknowledged) {
+            break;
+        }
+    }
+    server.join().unwrap();
+    assert_eq!(
+        child_steps(&actor.child_log),
+        vec![
+            Step::Enrolled,
+            Step::OriginStopped,
+            Step::SuccessorReserved,
+            Step::SuccessorBound,
+            Step::SuccessorInstalled,
+            Step::InputAcknowledged,
+        ]
+    );
+    let (_, requests) = read(&mut actor);
+    assert_eq!(requests[0].state, ChildRequestState::Settled);
+    assert_eq!(requests[0].settled_by, Some(ChildSettledBy::ChildEnded));
+    // The stopped session did report its end, and the successor was created.
+    let script = sessions.lock().unwrap();
+    assert!(
+        script.calls().iter().any(|call| matches!(
+            call,
+            koru_delegate_runtime::test_support::SessionCall::Subscribe(_)
+        )),
+        "the decision-window stream was served"
+    );
+    assert!(script.attached(successor));
+    assert_eq!(script.created().len(), 2);
+}
+
+/// Cohort `m6_origin_stop`, the other side: the asking session ends **by
+/// itself** while the wait is not enrolled (the AI worker never answers).
+/// Nobody authorized a stop, so this is the asking Run ending: the request
+/// is settled `parent_stopped` and the wait goes to its cleanup owner, as
+/// before the origin stop was told apart.
+#[test]
+fn m6_origin_stop_an_asking_session_that_ends_by_itself_still_cancels_the_request() {
+    let ChildChain {
+        orchestrator,
+        sessions,
+        parent,
+        ..
+    } = child_chain();
+    let (owner, run) = (parent.owner, parent.run);
+    sessions.lock().unwrap().report_session_ends();
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    // The bridges exist and nobody answers: the wait is never enrolled.
+    let unused = TcpListener::bind("127.0.0.1:0").unwrap();
+    let silent = TcpListener::bind("127.0.0.1:0").unwrap();
+    actor
+        .attach_decision_bridge(Box::new(bridge(&unused)))
+        .unwrap();
+    actor
+        .attach_child_bridge(Box::new(bridge(&silent)))
+        .unwrap();
+    let request = parent.ask(&mut actor.orchestrator, &[1]);
+    let reply = actor.bot_command(BotCommand::RequestChild {
+        request,
+        boot: parent.boot,
+    });
+    assert!(
+        matches!(reply, Ok(BotReply::ChildRequested { .. })),
+        "{reply:?}"
+    );
+    let subject = koru_delegate_core::BotRunKey {
+        owner,
+        bot: parent.bot,
+        run,
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut turns = 0;
+    let settled = loop {
+        assert!(
+            Instant::now() < deadline,
+            "the request of a Run that ended was not settled: steps {:?}",
+            child_steps(&actor.child_log)
+        );
+        actor.maintenance_tick();
+        let drain_until = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < drain_until {
+            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+                break;
+            };
+            actor.handle(command);
+        }
+        for due in actor.orchestrator.bot_budget_runs() {
+            let _ = actor.orchestrator.bot_budget_tick(due);
+        }
+        turns += 1;
+        if turns == 3 {
+            // The asking session's process ends on its own.
+            sessions.lock().unwrap().end_session(parent.fence.session);
+        }
+        let read = actor.bot_command(BotCommand::ReadChildRequests {
+            subject: subject.clone(),
+        });
+        let Ok(BotReply::ChildRequests { wait, requests }) = read else {
+            panic!("{read:?}");
+        };
+        if requests[0].state == ChildRequestState::Settled {
+            break (wait, requests);
+        }
+        assert!(turns >= 3 || requests[0].state == ChildRequestState::Open);
+    };
+    assert!(turns >= 3, "nothing was settled before the session ended");
+    assert!(!child_steps(&actor.child_log).contains(&Step::Enrolled));
+    assert_eq!(settled.1[0].settled_by, Some(ChildSettledBy::ParentStopped));
+    assert_eq!(
+        settled.0.map(|wait| wait.phase),
+        Some(BotWaitPhase::CleanupPending)
+    );
+}
+
 /// Cohort `m6_child_codes_final`, at the actor's failure mapping: every
 /// `bot_child_*` refusal reaches the wire final, except
 /// `bot_child_wait_closing`, and a refused ask answers its code.

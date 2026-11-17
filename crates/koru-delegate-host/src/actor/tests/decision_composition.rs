@@ -220,6 +220,130 @@ fn scripted_composition_drives_a_prepared_edit_decision_to_one_acknowledged_succ
     );
 }
 
+/// Cohort `m6_origin_stop`, for the decision wait: the same chain on a
+/// session host that behaves as the real one does. The real session adapter
+/// serves the decision-window stream, and the session Koru terminates for
+/// the held question reports its own end on it (`SessionEvent::Exited`).
+/// The scripted host of the test above refuses that stream. Koru's own stop
+/// is not the Run ending: the question stays open for the person, their
+/// answer is accepted, and the Run is resumed by a successor. The actor
+/// loop's budget deadline, where a retained cleanup is requested, runs too.
+///
+/// **This test does not tell the fix from its absence.** In this harness the
+/// decision producer is not connected at the moment the session is
+/// terminated, so the end frame is never read and the chain completes either
+/// way. The child wait's twin (`child_composition.rs`) does read it and
+/// fails without the fix. The rule that recognizes the stop is one function
+/// for both kinds of wait (`origin_stop_owns_end`).
+#[test]
+fn m6_origin_stop_the_stopped_sessions_own_end_does_not_close_the_question() {
+    let DecisionChain {
+        orchestrator,
+        sessions,
+        prepared,
+        ..
+    } = decision_chain();
+    let (owner, run) = (prepared.owner, prepared.run);
+    let successor = SessionId::mint();
+    let turn = AgentTurnId::mint();
+    {
+        let mut script = sessions.lock().unwrap();
+        script.report_session_ends();
+        prepared.script_resume(&mut script, successor, turn);
+    }
+    let (commands, inbox) = mpsc::channel();
+    let mut actor = Actor::new(orchestrator, commands, owner.device.to_storage());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    actor
+        .attach_decision_bridge(Box::new(bridge(&listener)))
+        .unwrap();
+    let answering = prepared.clone();
+    let server = std::thread::spawn(move || {
+        let mut stream = accept_within(&listener, Duration::from_secs(30));
+        reply(&mut stream, |request: &EnrollBotWaitCleanup| {
+            answering.enrolled_reply(request)
+        });
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut allowed = false;
+    // Turns after the origin stop before the person answers: long enough for
+    // the stopped session's end to be read and acted on.
+    let mut held = 0;
+    loop {
+        assert!(
+            Instant::now() < deadline,
+            "the chain did not reach the acknowledged successor: steps {:?}",
+            steps(&actor.resume_log)
+        );
+        actor.maintenance_tick();
+        let drain_until = Instant::now() + Duration::from_millis(50);
+        while Instant::now() < drain_until {
+            let Ok(command) = inbox.recv_timeout(Duration::from_millis(5)) else {
+                break;
+            };
+            actor.handle(command);
+        }
+        for due in actor.orchestrator.bot_budget_runs() {
+            let _ = actor.orchestrator.bot_budget_tick(due);
+        }
+        let taken = steps(&actor.resume_log);
+        if !allowed && taken.contains(&Step::OriginStopped) {
+            held += 1;
+            if held < 4 {
+                continue;
+            }
+            // The question is still open: the person's answer is accepted.
+            let answer = prepared.allow_once_answer(&mut actor.orchestrator).unwrap();
+            let reply = actor.bot_command(BotCommand::AnswerDecision {
+                answer: DecisionAnswerRequest {
+                    owner: answer.owner,
+                    run: answer.run,
+                    decision: answer.decision,
+                    expected_revision: answer.expected_revision,
+                    binding_digest: answer.binding_digest,
+                    request: answer.request,
+                    human: answer.human,
+                    choice: answer.choice,
+                    authority_digest: answer.authority_digest,
+                },
+                proof: prepared.proof.clone(),
+                boot: prepared.boot,
+            });
+            assert!(
+                matches!(reply, Ok(BotReply::Decision { .. })),
+                "Koru's own stop of the asking session closed the question: {reply:?}"
+            );
+            allowed = true;
+        }
+        if taken.last() == Some(&Step::InputAcknowledged) {
+            break;
+        }
+    }
+    server.join().unwrap();
+    assert_eq!(
+        steps(&actor.resume_log),
+        vec![
+            Step::EnrollmentRequested,
+            Step::Enrolled,
+            Step::OriginStopped,
+            Step::SuccessorReserved,
+            Step::SuccessorBound,
+            Step::SuccessorInstalled,
+            Step::InputAcknowledged,
+        ]
+    );
+    let keys = prepared
+        .successor_keys(&mut actor.orchestrator)
+        .unwrap()
+        .unwrap();
+    assert_eq!(keys.session, Some(successor));
+    let script = sessions.lock().unwrap();
+    assert!(script.attached(successor));
+    assert_eq!(script.acknowledged_turn(keys.input), Some(turn));
+    let _ = run;
+}
+
 /// A Run whose publication the document keeps refusing is started once and
 /// then waits one ordinary TICK, instead of restarting on every worker wake
 /// (which spun the actor and kept the handle out). Meanwhile the handle is
