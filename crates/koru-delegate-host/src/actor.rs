@@ -725,6 +725,8 @@ impl Actor {
                     command,
                     koru_delegate_api::bots::BotCommand::Submit { .. }
                         | koru_delegate_api::bots::BotCommand::Barrier { .. }
+                        // A team value may have opened every queued task.
+                        | koru_delegate_api::bots::BotCommand::TeamBarrier { .. }
                         | koru_delegate_api::bots::BotCommand::Stop { .. }
                         | koru_delegate_api::bots::BotCommand::Interrupt { .. }
                         // An admitted ask queued up to three child Runs.

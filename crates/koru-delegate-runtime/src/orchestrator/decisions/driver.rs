@@ -174,6 +174,14 @@ impl Orchestrator {
                 Ok(Step::Waiting("bot_answer_pending"))
             }
             (Authorization::Granted, Phase::Held, BotWaitPhase::Retired) => {
+                // M8 (D2): under a pause, of the Bot or of its team, no
+                // successor is reserved for an answer. Nothing is stored and
+                // no clock stops: the deadline above keeps running and ends
+                // the decision at its usual time. The same for a private
+                // operation's decision, which resumes by successor too.
+                if let Some(code) = self.decision_bot_held(owner, run)? {
+                    return Ok(Step::Waiting(code));
+                }
                 if let Some(code) = self.decision_successor_unsupported(run)? {
                     return Ok(Step::Unsupported(code));
                 }
@@ -186,6 +194,23 @@ impl Orchestrator {
             }
             _ => Ok(Step::Waiting("bot_cleanup_owned")),
         }
+    }
+
+    /// What holds this Run's Bot from new work, if anything does: the gate's
+    /// answer for the Bot the Run was admitted for.
+    fn decision_bot_held(
+        &mut self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<&'static str>, RunError> {
+        let bot = self
+            .bot_ledger()?
+            .bot_admission(run)?
+            .ok_or(RunError::UnknownRun)?
+            .submission
+            .provenance
+            .bot;
+        Ok(self.bot_held(owner, bot)?.waiting_code())
     }
 
     /// Why the existing delegated launch cannot serve a successor for this
@@ -280,3 +305,6 @@ impl Orchestrator {
         }
     }
 }
+
+#[cfg(test)]
+mod pause_tests;

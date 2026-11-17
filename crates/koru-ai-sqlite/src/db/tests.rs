@@ -11,6 +11,7 @@ mod library;
 mod memory_identity;
 mod routine_controls;
 mod routines;
+mod team_pause;
 
 #[test]
 fn fresh_database_applies_all_numbered_ai_migrations() {

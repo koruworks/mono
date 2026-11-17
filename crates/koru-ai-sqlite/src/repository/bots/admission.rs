@@ -338,13 +338,17 @@ pub(crate) const BOT_PENDING_CHANGE_SQL: &str = "SELECT request_id,command_kind,
  WHERE bot_id=?1 AND command_kind IN ('pause','resume','update_access') AND stage='prepared'
  ORDER BY created_at_ms,request_id LIMIT 1";
 /// Whether the AI side would let work of this Bot reach its owner now: the
-/// Bot is active and not paused, and no pause or resume of it is still
-/// waiting for its owner. Nothing is ever submitted for a Bot otherwise.
+/// Bot is active and not paused, no pause or resume of it is still waiting
+/// for its owner, and its team is not paused (M8). Nothing is ever submitted
+/// for a Bot otherwise.
 pub(super) fn bot_admitting_on(conn: &Connection, bot: BotId) -> Result<bool, BotError> {
     conn.query_row(
         "SELECT EXISTS(SELECT 1 FROM bots WHERE bot_id=?1 AND lifecycle='active' AND paused=0)
             AND NOT EXISTS(SELECT 1 FROM bot_command_receipts INDEXED BY bot_command_guard
-                            WHERE bot_id=?1 AND command_kind IN ('pause','resume') AND stage='prepared')",
+                            WHERE bot_id=?1 AND command_kind IN ('pause','resume') AND stage='prepared')
+            AND NOT EXISTS(SELECT 1 FROM bots b JOIN bot_team_pause t
+                             ON t.user_scope_id=b.user_scope_id AND t.owner_device_id=b.owner_device_id
+                            WHERE b.bot_id=?1 AND t.paused=1)",
         [bot.to_storage()],
         |r| r.get(0),
     )
@@ -477,6 +481,12 @@ pub(crate) fn prepare_bot_submission_tx(
     }
     if g.paused {
         return Err(BotError::Forbidden);
+    }
+    // M8: the team pause refuses new work from the commit of its row. A
+    // Bot's own pause is named first, above; nothing was written yet, so no
+    // receipt exists for a refused submission.
+    if super::team_pause::team_paused_on(tx, owner)? {
+        return Err(BotError::TeamPaused);
     }
     if s.workspace != g.home || s.policy.destination != g.home {
         return Err(BotError::Forbidden);

@@ -90,6 +90,21 @@ impl Orchestrator {
         if !submission.valid() {
             return Err(refused("bot_invalid"));
         }
+        // The team alone holding the Bot refuses a new submission here; the
+        // Bot's own pause stays the ledger's refusal. An exact replay of a
+        // submission the ledger already holds is answered from it, as under
+        // a Bot's own pause. Not told: admitted and queued, never dispatched.
+        let provenance = &submission.provenance;
+        if self.bot_held(provenance.owner, provenance.bot)? == super::Held::Team {
+            let key = BotSubmissionKey {
+                owner: provenance.owner,
+                bot: provenance.bot,
+                request: provenance.submission,
+            };
+            if self.bot_ledger()?.reconcile_bot_execution(&key)?.is_none() {
+                return Err(refused("bot_team_paused"));
+            }
+        }
         let record = self.bot_ledger()?.admit_bot(&submission)?;
         self.invalidate_boot_for_submission(&submission);
         if self
@@ -360,11 +375,7 @@ impl Orchestrator {
         )? {
             return Ok(None);
         }
-        if self
-            .bot_ledger()?
-            .bot_barrier(key.owner, key.bot)?
-            .is_some_and(|barrier| barrier.paused)
-        {
+        if self.bot_held(key.owner, key.bot)?.is_held() {
             return Ok(None);
         }
         let active = self.bot_ledger()?.bot_execution_inventory(device)?;
@@ -423,11 +434,7 @@ impl Orchestrator {
         }
         // The actor serializes barriers and dispatch. Retain the reservation if
         // an injected owner nevertheless reports a pause at this last boundary.
-        if self
-            .bot_ledger()?
-            .bot_barrier(key.owner, key.bot)?
-            .is_some_and(|barrier| barrier.paused)
-        {
+        if self.bot_held(key.owner, key.bot)?.is_held() {
             return Ok(None);
         }
         let intent = self

@@ -42,7 +42,20 @@ impl Actor {
             }
             self.orchestrator
                 .routine_policy_for_prepared(&prepared, &admission, &proof)
-                .map_err(|_| refused("routine_policy_stale"))?;
+                .map_err(|error| {
+                    // M8: the team alone holding the Bot keeps its own code
+                    // (paused, or this delegate run not yet told); every
+                    // other refusal stays the one existing code.
+                    refused(match &error {
+                        RunError::Port(error) if error.code == "bot_team_paused" => {
+                            "bot_team_paused"
+                        }
+                        RunError::Port(error) if error.code == "bot_boot_pending" => {
+                            "bot_boot_pending"
+                        }
+                        _ => "routine_policy_stale",
+                    })
+                })?;
             if cancelled.load(Ordering::Acquire) || Instant::now() >= deadline {
                 return Err(refused("routine_begin_expired"));
             }

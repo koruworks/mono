@@ -8,6 +8,7 @@ mod native_results;
 mod private;
 mod publication;
 mod routines;
+mod team_pause;
 
 use super::*;
 use koru_delegate_core::decisions::*;

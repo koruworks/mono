@@ -311,7 +311,7 @@ fn decision_commands_need_the_private_capability_device_and_the_current_frame() 
 fn ipc15_frames_are_refused_before_decoding_and_dropped_unanswered_so_the_peer_sees_delegate_unavailable()
  {
     use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
-    assert_eq!(WIRE_VERSION, 19);
+    assert_eq!(WIRE_VERSION, 20);
     let previous = WIRE_VERSION - 1;
     let owner: koru_delegate_core::BotOwner = serde_json::from_value(
         serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":uuid::Uuid::new_v4()}),
@@ -378,7 +378,7 @@ fn routine_control_route(
 #[test]
 fn routine_control_frames_need_the_private_capability_this_device_and_ipc17() {
     use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority, RoutineControlAction};
-    assert_eq!(WIRE_VERSION, 19);
+    assert_eq!(WIRE_VERSION, 20);
     let capability =
         BotDelegateAuthority::new("routine-control-private-capability-0123456789012345".into())
             .unwrap();
@@ -553,7 +553,7 @@ fn m5_ipc18_frame_version_an_ipc17_peer_is_refused_cleanly_and_an_oversized_priv
         BotCommand, BotDelegateAuthority, PRIVATE_FRAME_LIMIT, PrivateDispatcherId,
         PrivateEffectKey, PrivateEffectTransition,
     };
-    assert_eq!(WIRE_VERSION, 19);
+    assert_eq!(WIRE_VERSION, 20);
     let capability =
         BotDelegateAuthority::new("private-operation-capability-01234567890123456".into()).unwrap();
     let device = koru_delegate_core::DeviceId::new();
@@ -647,4 +647,75 @@ fn m5_ipc18_frame_version_an_ipc17_peer_is_refused_cleanly_and_an_oversized_priv
             .unwrap()
             .is_none()
     );
+}
+
+/// IPC 20. The team barrier needs the private Bot capability and this
+/// device, like every Bot command. A peer still on IPC 19 is refused by its
+/// version before the body is decoded and is dropped unanswered, so it never
+/// reaches the actor: it sees `delegate_unavailable`, and nothing of a Bot
+/// starts through it.
+#[test]
+fn m8_ipc_team_frame_version_an_ipc19_peer_is_dropped_before_the_team_barrier_is_decoded() {
+    use koru_delegate_api::bots::{BotCommand, BotDelegateAuthority};
+    use koru_delegate_core::{BotOwner, BotRequestId, BotTeamBarrier};
+    assert_eq!(WIRE_VERSION, 20);
+    let capability =
+        BotDelegateAuthority::new("team-barrier-private-capability-01234567890123456789".into())
+            .unwrap();
+    let device = koru_delegate_core::DeviceId::new();
+    let mut identity = Identity {
+        launch_id: "fixture".into(),
+        authority: "ordinary-stop".into(),
+        device_id: device.to_storage(),
+        bot_authority: Some(capability.clone()),
+        run_authorities: Default::default(),
+    };
+    let owner: BotOwner = serde_json::from_value(
+        serde_json::json!({"user_scope":uuid::Uuid::new_v4(),"device":device}),
+    )
+    .unwrap();
+    for barrier in [
+        BotTeamBarrier::never_paused(owner),
+        BotTeamBarrier {
+            owner,
+            epoch: 1,
+            paused: true,
+            request: Some(BotRequestId::mint()),
+        },
+    ] {
+        let command = BotCommand::TeamBarrier { barrier };
+        assert!(admits_bot_command(&identity, &capability, &command));
+        let other =
+            BotDelegateAuthority::new("ordinary-scope-label-01234567890123456789".into()).unwrap();
+        assert!(!admits_bot_command(&identity, &other, &command));
+        // Another device's team is not this worker's to hold.
+        identity.device_id = koru_delegate_core::DeviceId::new().to_storage();
+        assert!(!admits_bot_command(&identity, &capability, &command));
+        identity.device_id = device.to_storage();
+        let request = Request::Bot {
+            authority: capability.clone(),
+            command,
+        };
+        for older in 1..WIRE_VERSION {
+            assert!(
+                read_current_request(&mut frame::encode(older, &request).unwrap().as_slice())
+                    .unwrap()
+                    .is_none(),
+                "an IPC {older} frame never becomes a team barrier"
+            );
+        }
+        // The same for a body an IPC 19 peer could have written: refused by
+        // its stamp, never decoded.
+        let from_19 = frame::encode(19, &serde_json::json!({"old": true})).unwrap();
+        assert!(
+            read_current_request(&mut from_19.as_slice())
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            read_current_request(&mut frame::encode(WIRE_VERSION, &request).unwrap().as_slice())
+                .unwrap(),
+            Some(request)
+        );
+    }
 }

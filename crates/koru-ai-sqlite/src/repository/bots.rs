@@ -27,10 +27,12 @@ pub use decisions::{
     BotNativeDecisionLink,
 };
 mod routines;
+pub(crate) mod team_pause;
 pub use routines::{
     RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
     RoutineReadSubject, RoutineToolSubject,
 };
+pub use team_pause::{BotTeamPauseRow, TeamPauseChange};
 
 fn bad(_: impl std::fmt::Display) -> BotError {
     BotError::Storage

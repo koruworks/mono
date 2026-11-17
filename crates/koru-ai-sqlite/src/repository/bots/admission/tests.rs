@@ -3,6 +3,7 @@ use super::*;
 use koru_delegate_core as d;
 const HASH: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 mod routines;
+mod team_pause;
 
 #[test]
 fn readable_submission_for_run_retains_archived_receipt_and_refuses_trash_and_foreign_owner() {

@@ -208,11 +208,13 @@ impl Orchestrator {
                     bot.bot,
                     bot.config_revision,
                     bot.policy_revision,
-                )? || self
-                    .bot_ledger()?
-                    .bot_barrier(bot.owner, bot.bot)?
-                    .is_none_or(|barrier| barrier.paused)
-                {
+                )? {
+                    return Err(super::bots::refused("bot_boot_pending"));
+                }
+                // No barrier at all, the Bot's own pause, a paused team and
+                // a team this delegate run was not told about all refuse.
+                let (barrier, held) = self.bot_gate(bot.owner, bot.bot)?;
+                if barrier.is_none() || held.is_held() {
                     return Err(super::bots::refused("bot_boot_pending"));
                 }
             }

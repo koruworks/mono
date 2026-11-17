@@ -50,7 +50,10 @@ use koru_delegate_core::ArtifactDisposition;
 // Version 19 adds child requests: the ask, its read, the wait's cleanup read,
 // the child wait classification, parent provenance and the version id of a
 // saved result.
-pub const WIRE_VERSION: u8 = 19;
+// Version 20 adds the team pause: the `TeamBarrier` command and its reply,
+// and the refusals `bot_team_paused`, `bot_team_stale` and
+// `bot_team_conflict`.
+pub const WIRE_VERSION: u8 = 20;
 
 /// The product a caller names on its frames; a log line names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

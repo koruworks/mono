@@ -27,6 +27,7 @@ mod children;
 mod decisions;
 mod private;
 mod routine_control;
+mod team;
 pub use children::{
     BOT_CHILD_RESUME_FLOOR_MS, BOT_CHILD_WAIT_MS, BotChildWaitCleanupIntentV1,
     BotChildWaitEnrollmentKey, BotChildWaitEnrollmentReply, BotChildWaitObservation,
@@ -52,6 +53,7 @@ pub use private::{
 pub use routine_control::{
     ROUTINE_CONTROL_FRAME_LIMIT, RoutineControlAction, routine_control_frame_oversized,
 };
+pub use team::{TEAM_HELD_EPOCH, team_failure, team_held_epoch, team_stale};
 
 /// Per-Agent-run secret passed only through trusted bootstrap. Not an owner
 /// identity and not persisted with an operation or Run. Same-account process
@@ -155,6 +157,12 @@ pub enum BotCommand {
     },
     Barrier {
         barrier: BotAdmissionBarrier,
+    },
+    /// IPC 20: the team pause of this owner, as the AI owner holds it. The
+    /// delegate keeps it in memory for this run only; until it is told, no
+    /// work of a Bot is dispatched or started.
+    TeamBarrier {
+        barrier: koru_delegate_core::BotTeamBarrier,
     },
     /// IPC 15: independent current admission metadata, including positive absence.
     ReadAdmissionBarrier {
@@ -516,6 +524,7 @@ impl BotCommand {
             Self::Barrier { barrier } | Self::SynchronizeBootBot { barrier, .. } => {
                 Some(&barrier.owner)
             }
+            Self::TeamBarrier { barrier } => Some(&barrier.owner),
             Self::Read { key, .. }
             | Self::Trash { key, .. }
             | Self::Restore { key, .. }
@@ -608,6 +617,10 @@ pub enum BotReply {
     Missing,
     Barrier {
         barrier: BotAdmissionBarrier,
+    },
+    /// IPC 20: the team value the delegate now holds.
+    TeamBarrier {
+        barrier: koru_delegate_core::BotTeamBarrier,
     },
     AdmissionBarrier {
         owner: koru_delegate_core::BotOwner,

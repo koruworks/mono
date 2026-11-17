@@ -152,6 +152,11 @@ impl Orchestrator {
         {
             return Err(refused("bot_policy_stale"));
         }
+        // The team first: paused, or not yet told in this delegate run. A
+        // Bot that is itself paused keeps the refusal below.
+        if let Some(code) = self.bot_held(p.owner, p.bot)?.team_refusal() {
+            return Err(refused(code));
+        }
         if self.bot_ledger()?.bot_barrier(p.owner, p.bot)?.as_ref() != Some(admission) {
             return Err(refused("bot_admission_stale"));
         }

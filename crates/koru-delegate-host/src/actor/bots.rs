@@ -38,6 +38,12 @@ pub(super) fn bot_failure(error: RunError) -> Failure {
         RunError::Port(error) if koru_delegate_api::bots::child_failure(&error.code).is_some() => {
             koru_delegate_api::bots::child_failure(&error.code).expect("checked above")
         }
+        // IPC 20: each team refusal has its one fixed text. None is
+        // retryable. (`bot_team_stale` is answered with its held epoch by
+        // the command arm; this is the same code without it.)
+        RunError::Port(error) if koru_delegate_api::bots::team_failure(&error.code).is_some() => {
+            koru_delegate_api::bots::team_failure(&error.code).expect("checked above")
+        }
         RunError::Port(error) if error.code.starts_with("bot_") => {
             Failure::new(error.code, "The Bot operation was refused.", false)
         }
@@ -343,6 +349,22 @@ impl Actor {
                     .bot_barrier(&barrier, device)
                     .map_err(bot_failure)?,
             },
+            // IPC 20: the team value, kept in memory for this run. A stale
+            // epoch answers with the epoch this run holds, so the AI owner
+            // can write past it (contract 3.6).
+            BotCommand::TeamBarrier { barrier } => {
+                match self.orchestrator.bot_team_barrier(&barrier, device) {
+                    Ok(barrier) => BotReply::TeamBarrier { barrier },
+                    Err(RunError::Port(error)) if error.code == "bot_team_stale" => {
+                        let held = self
+                            .orchestrator
+                            .bot_team_value(barrier.owner)
+                            .map_or(0, |held| held.epoch);
+                        return Err(koru_delegate_api::bots::team_stale(held));
+                    }
+                    Err(error) => return Err(bot_failure(error)),
+                }
+            }
             BotCommand::ReadAdmissionBarrier { owner, bot } => BotReply::AdmissionBarrier {
                 owner,
                 bot,

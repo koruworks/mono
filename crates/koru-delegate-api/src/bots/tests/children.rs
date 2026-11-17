@@ -256,7 +256,7 @@ fn replies(request: &ChildRequest) -> Vec<(BotReply, &'static str)> {
 
 #[test]
 fn m6_ipc19_codec_commands_round_trip_bind_their_owner_and_refuse_unknown_fields() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 19);
+    assert_eq!(crate::ipc::WIRE_VERSION, 20);
     let request = ask(3);
     for (command, tag) in commands(&request) {
         assert_eq!(command.owner(), Some(&request.parent.owner), "{tag}");
@@ -527,7 +527,7 @@ fn m6_ipc19_codec_a_malformed_reply_never_reaches_the_caller() {
 /// worker's own version check is tested with the host.
 #[test]
 fn m6_ipc19_frame_version_a_frame_stamped_18_is_refused_by_the_19_reader() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 19);
+    assert_eq!(crate::ipc::WIRE_VERSION, 20);
     let request = ask(1);
     for (command, tag) in commands(&request) {
         let reply = crate::ipc::Response::Bot(BotReply::Missing);

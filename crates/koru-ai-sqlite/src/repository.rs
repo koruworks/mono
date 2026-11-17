@@ -36,10 +36,10 @@ pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
     BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotChildReplayRollover, BotCreationScan,
     BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover, BotHold, BotNativeDecisionLink,
-    HistoricalBotRun, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
-    LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner, RoutineAccessRecoveryPage,
-    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
-    RoutineToolSubject,
+    BotTeamPauseRow, HistoricalBotRun, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
+    LifecycleOperation, LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner,
+    RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
+    RoutineReadSubject, RoutineToolSubject, TeamPauseChange,
 };
 
 pub struct Repository {

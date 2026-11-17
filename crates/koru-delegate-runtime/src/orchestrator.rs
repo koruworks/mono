@@ -17,6 +17,7 @@ mod create;
 mod decisions;
 mod deletion;
 mod events;
+mod gate;
 mod native_results;
 pub(crate) mod publication;
 mod record;
@@ -24,6 +25,7 @@ mod restart;
 mod resume;
 mod start;
 mod state;
+mod team;
 mod usage;
 
 use std::{collections::HashMap, fmt, time::Duration};
@@ -45,8 +47,10 @@ pub use create::CreateIntentStatus;
 pub use decisions::{DecisionEditRequest, DecisionEnrollmentBridge, DecisionResumeStep};
 pub use deletion::{Purged, RunPlace};
 pub use events::TOOL_STEP_BOUND;
+pub use gate::Held;
 pub use publication::source::{SourceProducer, SourceProgress};
 pub use state::RunState;
+pub use team::TEAM_VALUE_REQUIRED;
 
 /// How the orchestrator behaves at its edges. Everything a host may want
 /// to turn, and nothing a run's meaning depends on.
@@ -382,6 +386,8 @@ pub struct Orchestrator {
     private_settled: std::collections::BTreeSet<(RunId, uuid::Uuid)>,
     /// Working memory of the child waits this process drives (M6).
     children: children::ChildState,
+    /// The team pause as this run was told it (M8). Memory only.
+    team: team::TeamState,
 }
 
 impl Orchestrator {
@@ -401,6 +407,7 @@ impl Orchestrator {
             decision_authority_seeded: false,
             private_settled: std::collections::BTreeSet::new(),
             children: children::ChildState::default(),
+            team: team::TeamState::default(),
         }
     }
 

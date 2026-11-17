@@ -391,6 +391,14 @@ fn execute_bot_command(
         | BotCommand::ListChildRequests { .. }
         | BotCommand::ReadChildOrigin { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
+        // The team pause (M8, P8.1). Nothing here answers these: the worker's
+        // team coordination (piece W) routes them before this executor, and
+        // until it exists they are refused and nothing is written. Writing
+        // the row here would refuse new work while the delegate, which is
+        // never told, kept dispatching what it had queued.
+        BotCommand::PauseTeam { .. }
+        | BotCommand::ResumeTeam { .. }
+        | BotCommand::ReadTeamPause {} => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
             config,

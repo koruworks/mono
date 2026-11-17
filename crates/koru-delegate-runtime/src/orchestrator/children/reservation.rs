@@ -82,6 +82,22 @@ impl Orchestrator {
         .map(Some)
     }
 
+    /// What only the team holds this parent's resume with, if it does.
+    fn child_parent_held(
+        &mut self,
+        owner: BotOwner,
+        run: RunId,
+    ) -> Result<Option<&'static str>, RunError> {
+        let bot = self
+            .bot_ledger()?
+            .bot_admission(run)?
+            .ok_or(RunError::UnknownRun)?
+            .submission
+            .provenance
+            .bot;
+        Ok(self.bot_held(owner, bot)?.team_refusal())
+    }
+
     fn child_reserve_verdict(
         &mut self,
         owner: BotOwner,
@@ -91,6 +107,14 @@ impl Orchestrator {
         match self.child_successor_unsupported(run) {
             Ok(None) => {}
             Ok(Some(code)) => return Verdict::Definitive(code),
+            Err(error) => return Verdict::Error(error),
+        }
+        // The gate (M8): a paused team, or a team this delegate run was not
+        // told about, holds the parent's resume exactly as its own pause
+        // does. The Bot's own pause stays the ledger's `Paused` below.
+        match self.child_parent_held(owner, run) {
+            Ok(Some(code)) => return Verdict::Step(ChildResumeStep::Waiting(code)),
+            Ok(None) => {}
             Err(error) => return Verdict::Error(error),
         }
         let host = match self.ports.sessions.host_instance() {

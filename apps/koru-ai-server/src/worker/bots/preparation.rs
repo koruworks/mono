@@ -514,7 +514,11 @@ impl WorkerState {
                     | BotCommand::SetRoutineLifecycle { .. }
                     | BotCommand::TestRoutine { .. }
                     | BotCommand::EditRoutine { .. }
-                    | BotCommand::UpdateRoutineAccess { .. } => {}
+                    | BotCommand::UpdateRoutineAccess { .. }
+                    // The team pause (M8) names no Bot, page or workspace.
+                    | BotCommand::PauseTeam { .. }
+                    | BotCommand::ResumeTeam { .. }
+                    | BotCommand::ReadTeamPause {} => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -820,6 +824,10 @@ pub(super) fn bot_targets(
             | BotCommand::ListBotCreations { .. }
             | BotCommand::RetryBotCreation { .. }
             | BotCommand::AbandonBotCreation { .. } => return Ok(Some(Vec::new())),
+            // The team pause (M8) names no Bot; its owner is proved.
+            BotCommand::PauseTeam { .. }
+            | BotCommand::ResumeTeam { .. }
+            | BotCommand::ReadTeamPause {} => return Ok(Some(Vec::new())),
         };
         match super::lifecycle::provable_bot(repository, id, command) {
             Ok(Some(bot)) => {

@@ -33,10 +33,24 @@ const NEW_TABLES: [&str; 3] = [
     "bot_child_replay_rollovers",
 ];
 
+/// This step and no later one: ai.db 27 exists now, so the real opener goes
+/// further than the step under test.
+pub(super) fn ai26() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 26,
+        migrations: &MIGRATIONS[..26],
+    }
+}
+fn prepare_ai26(c: &mut Connection) -> Result<(), OpenError> {
+    koru_sqlite::prepare_with_preflight(&ai26(), c, refuse_superseded_18)?;
+    refuse_superseded_18(c)
+}
+
 /// The populated fixture every earlier step is tested with, migrated to ai25
 /// and no further, with rows in the ai25 tables and a second Bot, so `bots`
 /// holds more than one row and the M5 tables are not empty.
-fn populated_ai25() -> Connection {
+pub(super) fn populated_ai25() -> Connection {
     let mut c = populated_ai24();
     koru_sqlite::prepare_with_preflight(&ai25(), &mut c, refuse_superseded_18).unwrap();
     assert_eq!(user_version(&c).unwrap(), 25);
@@ -99,8 +113,7 @@ fn m6_ai26_migration_keeps_every_populated_ai25_row_and_gives_every_bot_may_ask(
     assert!(!before["connections"].1.is_empty());
     assert!(!before["bot_connection_grants"].1.is_empty());
 
-    prepare(&mut c).unwrap();
-    assert_eq!(SCHEMA_VERSION, 26);
+    prepare_ai26(&mut c).unwrap();
     assert_eq!(user_version(&c).unwrap(), 26);
     let after = snapshot(&c);
 
@@ -173,7 +186,7 @@ fn m6_ai26_migration_keeps_every_populated_ai25_row_and_gives_every_bot_may_ask(
     );
 
     // Reopened, it is already current and nothing runs again.
-    prepare(&mut c).unwrap();
+    prepare_ai26(&mut c).unwrap();
     assert_eq!(snapshot(&c), after);
 }
 
@@ -182,11 +195,11 @@ fn m6_ai26_migration_empty_and_fresh_databases_reach_26_with_no_content_column()
     // An empty ai25 database, as a build that never made a Bot left it.
     let mut empty = koru_sqlite::open_in_memory(&ai25()).unwrap();
     assert_eq!(user_version(&empty).unwrap(), 25);
-    prepare(&mut empty).unwrap();
+    prepare_ai26(&mut empty).unwrap();
     assert_eq!(user_version(&empty).unwrap(), 26);
     // A fresh database.
-    let fresh = open_in_memory().unwrap();
-    assert_eq!(MIGRATIONS.len(), 26);
+    let fresh = koru_sqlite::open_in_memory(&ai26()).unwrap();
+    assert!(MIGRATIONS.len() >= 26);
     assert_eq!(MIGRATIONS[25].to, 26);
     assert_eq!(MIGRATIONS[25].name, "026_ai_bot_children.sql");
     assert_eq!(user_version(&fresh).unwrap(), 26);
@@ -324,7 +337,7 @@ fn m6_ai26_migration_failure_at_any_point_leaves_25_and_every_row() {
         assert!(!columns(&c, "bots").contains(&"may_ask".to_owned()));
         foreign_keys_held(&c);
         // The real step still applies to what the failure left.
-        prepare(&mut c).unwrap();
+        prepare_ai26(&mut c).unwrap();
         assert_eq!(user_version(&c).unwrap(), 26);
     }
 }
@@ -340,7 +353,7 @@ fn m6_ai26_migration_rollback_on_a_failing_guard() {
     )
     .unwrap();
     let before = snapshot(&c);
-    let error = prepare(&mut c).unwrap_err();
+    let error = prepare_ai26(&mut c).unwrap_err();
     assert!(
         error.to_string().contains("CHECK constraint failed"),
         "{error}"
@@ -353,14 +366,14 @@ fn m6_ai26_migration_rollback_on_a_failing_guard() {
         "PRAGMA foreign_keys=OFF; DELETE FROM bot_chats WHERE chat_id='orphan-chat'; PRAGMA foreign_keys=ON;",
     )
     .unwrap();
-    prepare(&mut c).unwrap();
+    prepare_ai26(&mut c).unwrap();
     assert_eq!(user_version(&c).unwrap(), 26);
 }
 
 #[test]
 fn m6_ai26_migration_an_ai25_build_refuses_26_before_preflight_or_configuration() {
     let mut c = populated_ai25();
-    prepare(&mut c).unwrap();
+    prepare_ai26(&mut c).unwrap();
     let before = snapshot(&c);
     c.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF")
         .unwrap();
@@ -380,7 +393,7 @@ fn m6_ai26_migration_an_ai25_build_refuses_26_before_preflight_or_configuration(
     // This build refuses a later one the same way.
     c.execute_batch("PRAGMA user_version=27").unwrap();
     assert!(matches!(
-        prepare(&mut c).unwrap_err(),
+        prepare_ai26(&mut c).unwrap_err(),
         OpenError::SchemaTooNew {
             discovered: 27,
             supported: 26,
@@ -410,7 +423,7 @@ fn m6_ai26_migration_through_the_real_open_of_a_populated_ai25_file() {
     let mut first = None;
     for _ in 0..2 {
         let c = open(&path).unwrap();
-        assert_eq!(user_version(&c).unwrap(), 26);
+        assert_eq!(user_version(&c).unwrap(), SCHEMA_VERSION);
         let after = snapshot(&c);
         for (name, (sql, rows)) in &before {
             if name == "bots" {
@@ -452,7 +465,7 @@ fn m6_ai26_migration_through_the_real_open_of_a_populated_ai25_file() {
 /// and a `start` receipt whose id is a full-length request id.
 fn with_child_fixture() -> Connection {
     let mut c = populated_ai25();
-    prepare(&mut c).unwrap();
+    prepare_ai26(&mut c).unwrap();
     for n in ["1", "2", "3", "4"] {
         c.execute_batch(&format!(
             "INSERT INTO chats(id,title,current_provider,current_model,created_at_ms,updated_at_ms) VALUES('child-chat-{n}','child','agent-codex','default',5,5);

@@ -3986,6 +3986,74 @@
           },
           {
             "additionalProperties": false,
+            "description": "Pause every Bot of this person on this computer (M8): new work is\nrefused from the commit of the change, running work continues, and\nno Bot's revision moves. `expected_team_revision` is the revision\n`read_team_pause` last answered (0 for a team never paused); another\nvalue is `team_revision_conflict`. Pausing a team that is already\npaused answers the current state and changes nothing. Answered\n`team_pause`.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "pause_team"
+                ],
+                "type": "string"
+              },
+              "expected_team_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "expected_team_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "End the team pause (M8). Each Bot returns to its own pause state.\nThe same rules as `pause_team`. Answered `team_pause`.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "resume_team"
+                ],
+                "type": "string"
+              },
+              "expected_team_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/BotRequestId"
+              }
+            },
+            "required": [
+              "command",
+              "request_id",
+              "expected_team_revision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The team pause of this person on this computer (M8). Answered\n`team_pause`.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "read_team_pause"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "properties": {
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -7040,6 +7108,25 @@
             "required": [
               "result",
               "stop"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "M8: the team pause after `pause_team`, `resume_team` or\n`read_team_pause`.",
+            "properties": {
+              "result": {
+                "enum": [
+                  "team_pause"
+                ],
+                "type": "string"
+              },
+              "team": {
+                "$ref": "#/components/schemas/TeamPauseView"
+              }
+            },
+            "required": [
+              "result",
+              "team"
             ],
             "type": "object"
           }
@@ -22223,6 +22310,48 @@
           "manual"
         ],
         "type": "string"
+      },
+      "TeamPauseStage": {
+        "description": "Whether what runs the Bots has confirmed the team's current state. While\n`pending`, new work is already refused here; a task that was already\nqueued there may still start until the change is confirmed.",
+        "enum": [
+          "pending",
+          "acknowledged"
+        ],
+        "type": "string"
+      },
+      "TeamPauseView": {
+        "description": "The team pause of one person on one computer (M8). A team that was never\npaused reads as revision 0, not paused, `acknowledged`.",
+        "properties": {
+          "owner_device": {
+            "description": "The computer whose Bots this pause holds.",
+            "type": "string"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "pending_since_ms": {
+            "description": "When the change that is still `pending` was made; absent once what\nruns the Bots has confirmed it.",
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "revision": {
+            "description": "Moves by one with every change. The `expected_team_revision` of the\nnext `pause_team` or `resume_team`.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stage": {
+            "$ref": "#/components/schemas/TeamPauseStage"
+          }
+        },
+        "required": [
+          "owner_device",
+          "paused",
+          "revision",
+          "stage"
+        ],
+        "type": "object"
       },
       "TemporalValue": {
         "oneOf": [

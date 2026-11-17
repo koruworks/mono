@@ -172,7 +172,7 @@ fn view(stage: PrivateEffectStage) -> PrivateEffectView {
 
 #[test]
 fn m5_ipc18_codec_commands_roundtrip_strictly_and_bind_their_owner() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 19);
+    assert_eq!(crate::ipc::WIRE_VERSION, 20);
     for (command, tag, owner) in commands() {
         assert_eq!(command.owner(), owner.as_ref(), "{tag}");
         assert_eq!(command.private_valid(), Some(true), "{tag}");
@@ -523,7 +523,7 @@ fn m5_ipc18_codec_the_new_failures_are_fixed_text_and_never_retryable() {
 /// decoded) is pinned in `koru-delegate-host`'s server tests.
 #[test]
 fn m5_ipc18_frame_version_a_frame_stamped_17_is_refused_by_the_18_reader() {
-    assert_eq!(crate::ipc::WIRE_VERSION, 19);
+    assert_eq!(crate::ipc::WIRE_VERSION, 20);
     for (command, tag, _) in commands() {
         let reply = crate::ipc::Response::Bot(BotReply::Missing);
         // A reply stamped 17 never becomes an answer to a private command.

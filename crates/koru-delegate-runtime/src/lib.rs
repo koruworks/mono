@@ -76,9 +76,10 @@ pub use orchestrator::{
     CHILD_STALL_LIMIT_MS, ChildClockSample, ChildClockTick, ChildEnrollmentBridge,
     ChildResumeStep, CreateError, CreateIntentStatus, Created, DecisionEditRequest,
     DecisionEnrollmentBridge,
-    DecisionResumeStep, HandleOutcome, Options, Orchestrator, Purged,
+    DecisionResumeStep, HandleOutcome, Held, Options, Orchestrator, Purged,
     RestartReport, RunError, RunPlace, RunView, ScheduledScopeReservation,
-    ScopeReservationResolution, SourceProducer, SourceProgress, Started, TOOL_STEP_BOUND,
+    ScopeReservationResolution, SourceProducer, SourceProgress, Started,
+    TEAM_VALUE_REQUIRED, TOOL_STEP_BOUND,
     TimelineWindow, WindowItem,
 };
 pub use ports::{

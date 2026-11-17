@@ -30,6 +30,7 @@ mod native_lookup;
 mod private;
 pub(crate) mod routine;
 mod routine_route;
+mod team_pause;
 
 struct NeverDocuments;
 impl RunDocuments for NeverDocuments {

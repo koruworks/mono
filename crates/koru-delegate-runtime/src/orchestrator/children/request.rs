@@ -127,6 +127,16 @@ impl Orchestrator {
         if self.child_successor_unsupported(run)?.is_some() {
             return Ok(refusal(ChildRefusal::Capacity, None));
         }
+        // The gate (M8): under a paused team every recipient is held, so the
+        // ask is refused whole with the refusal a paused recipient already
+        // has. A recipient that is itself paused is the ledger's to name.
+        // Not told: admitted and queued, as a submission is.
+        for (index, item) in request.requests.iter().enumerate() {
+            let recipient = &item.submission.provenance;
+            if self.bot_held(recipient.owner, recipient.bot)? == crate::orchestrator::Held::Team {
+                return Ok(refusal(ChildRefusal::RecipientPaused, Some(index)));
+            }
+        }
         let base = self.child_base(owner, run)?;
         let outcome = self.bot_ledger()?.request_child(request, boot, &base)?;
         if let ChildRequestOutcome::Created(requested) = &outcome {

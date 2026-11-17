@@ -57,7 +57,7 @@ fn ipc15_routine_route_is_closed_owner_bound_and_rejects_ipc14_reply() {
         identity: identity.clone(),
     };
     assert_eq!(command.owner(), Some(&identity.owner));
-    assert_eq!(crate::ipc::WIRE_VERSION, 19);
+    assert_eq!(crate::ipc::WIRE_VERSION, 20);
     let bytes = koru_ipc::frame::encode(crate::ipc::WIRE_VERSION, &command).unwrap();
     let (_, decoded): (u8, BotCommand) =
         koru_ipc::frame::read_frame(&mut bytes.as_slice()).unwrap();

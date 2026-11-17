@@ -150,6 +150,23 @@ pub mod bot_creation_codes {
     pub const FOLDER_RESERVED: &str = "folder_reserved";
 }
 
+/// Refusals of the team pause (M8, P8.1). A client shows its own localized
+/// sentence for a code and never the message. Additive: the codes of every
+/// other Bot command are unchanged, and the AI wire version is not moved by
+/// them.
+pub mod bot_team_codes {
+    /// The team is paused. New work is refused: a message to an idle Bot, a
+    /// retry, a start or continue, turning a Routine on, a Routine test, and
+    /// one Bot's ask to another. Reading, Stop, a message to a Bot that is
+    /// working, answering a question, and every edit are not refused.
+    pub const TEAM_PAUSED: &str = "team_paused";
+    /// `expected_team_revision` is not the team's current revision. Read
+    /// the team pause again.
+    pub const TEAM_REVISION_CONFLICT: &str = "team_revision_conflict";
+    /// Every code of this module.
+    pub const ALL: [&str; 2] = [TEAM_PAUSED, TEAM_REVISION_CONFLICT];
+}
+
 /// Refusals of one Bot asking another, and of reading what it was handed
 /// back (M6). Each is answered with nothing written unless it says otherwise.
 /// A client shows its own localized sentence for a code and never the message.
@@ -1337,6 +1354,37 @@ pub struct CancelModelPullResponse {
 #[cfg(test)]
 mod tests {
     /// Cohort `m6_child_codes`: the stable codes of one Bot asking another.
+    /// M8: the team pause codes are the owner's, are stable literals, and
+    /// do not move the wire version. Neither is retryable by itself: a
+    /// paused team stays paused until a person resumes it, and a revision
+    /// conflict needs a fresh read first.
+    #[test]
+    fn m8_team_codes_are_distinct_stable_and_match_the_owners_refusals() {
+        use koru_ai_core::bots::BotError;
+        assert_eq!(crate::AI_WIRE_VERSION, 1);
+        assert_eq!(
+            crate::bot_team_codes::ALL,
+            ["team_paused", "team_revision_conflict"]
+        );
+        assert_eq!(
+            BotError::TeamPaused.code(),
+            crate::bot_team_codes::TEAM_PAUSED
+        );
+        assert_eq!(
+            BotError::TeamRevisionConflict.code(),
+            crate::bot_team_codes::TEAM_REVISION_CONFLICT
+        );
+        // Not the code a paused Bot's own refusal carries today.
+        assert_ne!(BotError::TeamPaused.code(), BotError::Forbidden.code());
+        for code in crate::bot_team_codes::ALL {
+            assert!(
+                code.len() <= 64 && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "{code}"
+            );
+            assert!(!crate::bot_child_codes::ALL.contains(&code), "{code}");
+        }
+    }
+
     /// Additive: no existing code moved and the wire version is unchanged.
     #[test]
     fn m6_child_codes_are_distinct_stable_and_match_the_owners_refusals() {

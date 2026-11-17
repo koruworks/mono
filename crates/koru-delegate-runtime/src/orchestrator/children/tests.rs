@@ -28,6 +28,7 @@ mod delivery;
 mod denial;
 mod restart;
 mod routine;
+mod team_pause;
 
 /// The parent's device.
 fn device(chain: &ChildChain) -> koru_delegate_core::DeviceId {

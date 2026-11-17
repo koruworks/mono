@@ -567,6 +567,26 @@ pub enum BotCommand {
         bot_id: BotId,
         expected_revision: u64,
     },
+    /// Pause every Bot of this person on this computer (M8): new work is
+    /// refused from the commit of the change, running work continues, and
+    /// no Bot's revision moves. `expected_team_revision` is the revision
+    /// `read_team_pause` last answered (0 for a team never paused); another
+    /// value is `team_revision_conflict`. Pausing a team that is already
+    /// paused answers the current state and changes nothing. Answered
+    /// `team_pause`.
+    PauseTeam {
+        request_id: BotRequestId,
+        expected_team_revision: u64,
+    },
+    /// End the team pause (M8). Each Bot returns to its own pause state.
+    /// The same rules as `pause_team`. Answered `team_pause`.
+    ResumeTeam {
+        request_id: BotRequestId,
+        expected_team_revision: u64,
+    },
+    /// The team pause of this person on this computer (M8). Answered
+    /// `team_pause`.
+    ReadTeamPause {},
     ReadOperation {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -933,6 +953,71 @@ pub enum BotResponse {
     TaskStop {
         stop: BotTaskStop,
     },
+    /// M8: the team pause after `pause_team`, `resume_team` or
+    /// `read_team_pause`.
+    TeamPause {
+        team: TeamPauseView,
+    },
+}
+
+/// The team pause of one person on one computer (M8). A team that was never
+/// paused reads as revision 0, not paused, `acknowledged`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct TeamPauseView {
+    /// The computer whose Bots this pause holds.
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
+    pub owner_device: DeviceId,
+    pub paused: bool,
+    /// Moves by one with every change. The `expected_team_revision` of the
+    /// next `pause_team` or `resume_team`.
+    pub revision: u64,
+    pub stage: TeamPauseStage,
+    /// When the change that is still `pending` was made; absent once what
+    /// runs the Bots has confirmed it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_since_ms: Option<i64>,
+}
+
+impl TeamPauseView {
+    /// A team that was never paused.
+    pub fn never_paused(owner_device: DeviceId) -> Self {
+        Self {
+            owner_device,
+            paused: false,
+            revision: 0,
+            stage: TeamPauseStage::Acknowledged,
+            pending_since_ms: None,
+        }
+    }
+}
+
+/// Whether what runs the Bots has confirmed the team's current state. While
+/// `pending`, new work is already refused here; a task that was already
+/// queued there may still start until the change is confirmed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum TeamPauseStage {
+    Pending,
+    Acknowledged,
+}
+
+impl TeamPauseStage {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Acknowledged => "acknowledged",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "pending" => Some(Self::Pending),
+            "acknowledged" => Some(Self::Acknowledged),
+            _ => None,
+        }
+    }
 }
 
 /// Internal owner projection. Run identity is for the facade's authorized
@@ -1249,6 +1334,12 @@ pub enum BotError {
     /// A connection grant names a connection that is not this person's on
     /// this computer, or is not connected (M5).
     ConnectionUnavailable,
+    /// The team is paused (M8): new work is refused. Reading, Stop, a
+    /// message to a Bot that is working, and every edit stay allowed.
+    TeamPaused,
+    /// `expected_team_revision` is not the team's current revision (M8):
+    /// read the team pause again.
+    TeamRevisionConflict,
 }
 impl BotError {
     pub const fn code(self) -> &'static str {
@@ -1265,6 +1356,8 @@ impl BotError {
             Self::Settling => "bot_operation_pending",
             Self::RoutineRetryUnsupported => "routine_retry_unsupported",
             Self::ConnectionUnavailable => "connection_unavailable",
+            Self::TeamPaused => "team_paused",
+            Self::TeamRevisionConflict => "team_revision_conflict",
         }
     }
 }

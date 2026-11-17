@@ -183,6 +183,42 @@ pub struct BotAdmissionBarrier {
     pub paused: bool,
 }
 
+/// The team pause of one owner on this device, as the AI owner holds it
+/// durably and the execution owner holds it in memory for one run (M8).
+///
+/// `epoch` orders the values and never decreases. Epoch 0 is "never
+/// paused": not paused, and no request produced it. Every later epoch names
+/// the request that produced it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotTeamBarrier {
+    pub owner: BotOwner,
+    pub epoch: u64,
+    pub paused: bool,
+    pub request: Option<BotRequestId>,
+}
+
+impl BotTeamBarrier {
+    /// The value of a team that was never paused.
+    pub fn never_paused(owner: BotOwner) -> Self {
+        Self {
+            owner,
+            epoch: 0,
+            paused: false,
+            request: None,
+        }
+    }
+
+    /// Shape only: epoch 0 is exactly "never paused", a later epoch names
+    /// its request, and the epoch fits a stored integer.
+    pub fn valid(&self) -> bool {
+        match self.epoch {
+            0 => !self.paused && self.request.is_none(),
+            epoch => epoch <= i64::MAX as u64 && self.request.is_some(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BotRunKey {
