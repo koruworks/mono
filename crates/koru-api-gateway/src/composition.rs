@@ -35,6 +35,11 @@ use koru_network_edge::TransportSession;
 use crate::bot_ingress::BotIngress;
 use crate::lifecycle::GatewayConfig;
 
+/// Whether a linked device may read and steer this computer's Bots (M8,
+/// P8.3). `false` until the exposure review with a person: the owner server
+/// is built and tested, and is not installed.
+pub(crate) const LINKED_BOT_CONTROL_AVAILABLE: bool = false;
+
 /// The composed runtime, and the two tasks that pump the Agent's network edge.
 pub(crate) struct Composition {
     pub(crate) state: Arc<GatewayState>,
@@ -43,9 +48,9 @@ pub(crate) struct Composition {
     pub(crate) bridge_forwarders:
         Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>,
     /// Where a linked device's Bot streams arrive (M8), when there is a
-    /// device network at all. The engine that serves them (piece H2) is
-    /// installed here with [`BotIngress::set_owner_server`]; until it is,
-    /// the adapter refuses every stream.
+    /// device network at all. [`open`] installs the AI worker's owner server
+    /// in it when that worker serves Bots; otherwise the adapter refuses
+    /// every stream.
     #[allow(dead_code)]
     pub(crate) bot_ingress: Option<BotIngress>,
 }
@@ -232,10 +237,18 @@ pub(crate) fn open(
                 as Arc<dyn koru_delegate_api::bots::BotDelegatePort>)
         });
     let native_mutations = Arc::new(koru_ai_server::NativeMutationGate::closed());
+    // The admission port the Bot ingress adapter reads is the one the AI
+    // worker's owner server reads again for every message of a linked
+    // device (M8). With no device network there is neither.
+    let bot_peers = bot_ingress.as_ref().map(BotIngress::peers);
     let ai_config = ai_config.map(|ai_config| {
         let ai_config = ai_config
             .with_native_effect_recovery(store_client.clone(), native_mutations.clone())
             .with_store_root(store_root.to_path_buf());
+        let ai_config = match bot_peers {
+            Some(peers) => ai_config.with_bot_peers(peers),
+            None => ai_config,
+        };
         match config.bootstrap.as_ref().and_then(|b| {
             koru_ai_server::BotAuthorityAdapter::from_device(
                 store_client.clone(),
@@ -263,13 +276,29 @@ pub(crate) fn open(
             .spawn()
             .map_err(|error| error.to_string())
     }) {
-        Ok(ai_worker) => GatewayState::with_ai_events_and_services(
-            segment.to_owned(),
-            worker,
-            ai_worker,
-            events,
-            sessions,
-        ),
+        Ok(ai_worker) => {
+            // The engine behind the Bot ingress (M8): a linked device's
+            // stream is served by this AI worker from here on. A worker
+            // with no Bot authority has none, and the adapter keeps
+            // answering `bots_unavailable`.
+            // Closed until the exposure review with a person (P8.4): while
+            // the constant is `false` no owner server is installed and the
+            // adapter answers every linked device `bots_unavailable`.
+            if !LINKED_BOT_CONTROL_AVAILABLE {
+                // Nothing to install.
+            } else if let (Some(ingress), Some(server)) =
+                (&bot_ingress, ai_worker.bot_owner_server())
+            {
+                ingress.set_owner_server(Arc::new(crate::bot_ingress::AiOwnerServer(server)));
+            }
+            GatewayState::with_ai_events_and_services(
+                segment.to_owned(),
+                worker,
+                ai_worker,
+                events,
+                sessions,
+            )
+        }
         Err(error) => {
             tracing::error!(%error, "Koru AI worker unavailable; Store remains ready");
             GatewayState::new_with_services(segment.to_owned(), worker, events, sessions)

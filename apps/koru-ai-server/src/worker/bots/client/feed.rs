@@ -71,6 +71,12 @@ impl HomeCopies {
         self.copied.contains(&home)
     }
 
+    /// Add the answers of another ask.
+    pub(crate) fn merge(&mut self, other: Self) {
+        self.asked.extend(other.asked);
+        self.copied.extend(other.copied);
+    }
+
     fn knows(&self, home: WorkspaceId) -> bool {
         self.asked.contains(&home)
     }
@@ -144,6 +150,9 @@ impl OwnerFeed {
     /// Record this start of the worker and reconcile every Bot's marker with
     /// the Store. The migration could not ask the Store, so it marked no Bot
     /// withheld; this pass does, and it finishes before the feed exists.
+    // The owner server takes the split form, so that the Store is asked off
+    // the writer; this one is what the feed's own tests drive.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn start(
         repository: &mut Repository,
         authority: &dyn BotAuthority,
@@ -162,6 +171,33 @@ impl OwnerFeed {
         Ok(feed)
     }
 
+    /// The first half of a start whose Store reads run off the writer: the
+    /// feed of a start the worker already recorded (`boot_id` is the newest
+    /// row of `bot_client_feed_boots`), and every Bot that has a marker.
+    /// The caller asks the Store about the homes of the local ones and
+    /// hands the answers to [`PendingFeed::reconciled`]. `owner` is what the
+    /// authority answered, asked off the writer too.
+    ///
+    /// What comes back is not a feed: no page can be built from it until
+    /// that first reconcile has run.
+    pub(crate) fn resume(
+        repository: &Repository,
+        owner: BotOwner,
+        boot_id: String,
+    ) -> Result<(PendingFeed, Vec<FeedBotHome>), FeedRefusal> {
+        if repository.feed_current_start()?.as_deref() != Some(boot_id.as_str()) {
+            return Err(FeedRefusal::Unavailable);
+        }
+        let feed = Self {
+            owner,
+            feed_id: repository.feed_id()?,
+            boot_id,
+            withheld_bots: 0,
+        };
+        let homes = feed.reconcile_homes(repository)?;
+        Ok((PendingFeed(feed), homes))
+    }
+
     pub(crate) fn owner(&self) -> BotOwner {
         self.owner
     }
@@ -172,10 +208,12 @@ impl OwnerFeed {
         &self.boot_id
     }
     /// The feed's newest `seq`, for the hello.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn head(&self, repository: &Repository) -> Result<u64, FeedRefusal> {
         Ok(repository.feed_head()?)
     }
     /// This person's Bots on this computer that the last reconcile withheld.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn withheld_bots(&self) -> u32 {
         self.withheld_bots
     }
@@ -215,6 +253,9 @@ impl OwnerFeed {
     }
 
     /// [`Self::reconcile`] with the Store asked on this thread.
+    // The owner server takes the split form, so that the Store is asked off
+    // the writer; this one is what the feed's own tests drive.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn reconcile_with(
         &mut self,
         repository: &mut Repository,
@@ -350,6 +391,9 @@ impl OwnerFeed {
 
     /// [`Self::page`] with the Store asked, and the markers reconciled when
     /// the page finds a difference, on this thread.
+    // The owner server takes the split form, so that the Store is asked off
+    // the writer; this one is what the feed's own tests drive.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn page_with(
         &mut self,
         repository: &mut Repository,
@@ -364,9 +408,7 @@ impl OwnerFeed {
             match self.page(repository, cursor, reset, &copies)? {
                 PageOutcome::Page(page) => return Ok(page),
                 PageOutcome::Ask(homes) => {
-                    let asked = HomeCopies::ask(authority, homes);
-                    copies.asked.extend(asked.asked);
-                    copies.copied.extend(asked.copied);
+                    copies.merge(HomeCopies::ask(authority, homes));
                 }
                 PageOutcome::Reconcile => {
                     self.reconcile_with(repository, authority)?;
@@ -380,22 +422,69 @@ impl OwnerFeed {
     /// person's on this computer and is not withheld. Anything else is
     /// `NotFound`, the answer for a Bot that does not exist, so a withheld
     /// Bot cannot be told from an absent one.
+    // The owner server takes the split form, so that the Store is asked off
+    // the writer; this one is what the feed's own tests drive.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn command_target(
         &self,
         repository: &Repository,
         authority: &dyn BotAuthority,
         bot: BotId,
     ) -> Result<(), BotError> {
+        let home = self.command_home(repository, bot)?;
+        command_home_copied(authority, home)
+    }
+
+    /// The first half of [`Self::command_target`], on the writer: the home
+    /// workspace of a Bot that is this person's on this computer. The Store
+    /// is then asked about that home off the writer
+    /// ([`command_home_copied`]).
+    pub(crate) fn command_home(
+        &self,
+        repository: &Repository,
+        bot: BotId,
+    ) -> Result<WorkspaceId, BotError> {
         let Some((bot, _)) = repository.bot_any_lifecycle(bot)? else {
             return Err(BotError::NotFound);
         };
         if bot.user_scope != self.owner.user_scope || bot.owner_device != self.owner.device {
             return Err(BotError::NotFound);
         }
-        match authority.home_copy(bot.home_workspace) {
-            Ok(HomeCopy::Copied) => Ok(()),
-            Ok(HomeCopy::LocalOnly) | Err(_) => Err(BotError::NotFound),
-        }
+        Ok(bot.home_workspace)
+    }
+}
+
+/// The second half of [`OwnerFeed::command_target`]: whether Bots whose home
+/// is `home` are copied. A home kept on this computer, and a Store that does
+/// not answer, are both `NotFound`. Reads nothing of `ai.db`.
+pub(crate) fn command_home_copied(
+    authority: &dyn BotAuthority,
+    home: WorkspaceId,
+) -> Result<(), BotError> {
+    match authority.home_copy(home) {
+        Ok(HomeCopy::Copied) => Ok(()),
+        Ok(HomeCopy::LocalOnly) | Err(_) => Err(BotError::NotFound),
+    }
+}
+
+/// A feed whose start is recorded and whose first reconcile has not run
+/// ([`OwnerFeed::resume`]). It serves nothing.
+#[derive(Debug)]
+pub(crate) struct PendingFeed(OwnerFeed);
+
+impl PendingFeed {
+    /// Run the first reconcile with the Store's answers and hand the feed
+    /// over. A marker and the Store may still disagree for a Bot created in
+    /// between; a page build finds that and asks for another reconcile.
+    pub(crate) fn reconciled(
+        self,
+        repository: &mut Repository,
+        homes: &[FeedBotHome],
+        copies: &HomeCopies,
+    ) -> Result<OwnerFeed, FeedRefusal> {
+        let mut feed = self.0;
+        feed.reconcile(repository, homes, copies)?;
+        Ok(feed)
     }
 }
 
@@ -452,6 +541,17 @@ fn entry_of(item: FeedItem) -> Entry {
     entry
 }
 
+/// A tool call as a linked desktop is sent it, in a copied message, in a
+/// live event and in a command's answer alike: its name, its state and the
+/// question a permission request asks, and never its arguments, its results,
+/// the path it shows or its live wording.
+pub(crate) fn public_tool_activity(activity: &mut koru_ai_core::ToolActivity) {
+    activity.agent_input = None;
+    activity.agent_output = None;
+    activity.display_target = None;
+    activity.live = None;
+}
+
 /// A message's record. Its tool activity carries no arguments and no
 /// results: the repository did not read them, and they are cleared here
 /// again so that no other source of a [`FeedMessage`] can put them in.
@@ -468,10 +568,7 @@ fn message_record(message: FeedMessage) -> MessageRecord {
         attachment_count,
     } = message;
     for activity in &mut tool_activities {
-        activity.agent_input = None;
-        activity.agent_output = None;
-        activity.display_target = None;
-        activity.live = None;
+        public_tool_activity(activity);
     }
     let mut usage = attempt
         .and_then(crate::worker::attempt_usage)
@@ -523,6 +620,7 @@ impl FeedBudget {
 
     /// Whether a page may be built at `now`, with `queued_commands` waiting
     /// for the writer.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn may_build(&self, now: Instant, queued_commands: usize, reset: bool) -> bool {
         self.wait(now, queued_commands, reset).is_none()
     }

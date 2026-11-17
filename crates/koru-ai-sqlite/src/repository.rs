@@ -36,12 +36,13 @@ pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
     BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotChildReplayRollover, BotCreationScan,
     BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover, BotHold, BotNativeDecisionLink,
-    BotTeamPauseRow, FEED_RECORD_TABLES, FEED_STARTS_KEPT, FeedBody, FeedBotHome, FeedChat,
-    FeedCounts, FeedItem, FeedKind, FeedMarker, FeedMessage, FeedScan, HistoricalBotRun,
-    LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
-    LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner, RoutineAccessRecoveryPage,
-    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
-    RoutineToolSubject, TeamPauseChange,
+    BotTeamPauseRow, CLIENT_RECEIPT_KEEP_MS, CLIENT_RECEIPT_PRUNE_BATCH, ClientBotRequest,
+    ClientOutcome, ClientReceipt, ClientReceiptBegin, FEED_RECORD_TABLES, FEED_STARTS_KEPT,
+    FeedBody, FeedBotHome, FeedChat, FeedCounts, FeedItem, FeedKind, FeedMarker, FeedMessage,
+    FeedScan, HistoricalBotRun, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
+    LifecycleOperation, LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner,
+    RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
+    RoutineReadSubject, RoutineToolSubject, TeamPauseChange,
 };
 
 /// The connection a repository holds. In a test build it also remembers where

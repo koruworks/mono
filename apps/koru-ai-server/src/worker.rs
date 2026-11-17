@@ -103,6 +103,13 @@ pub struct WorkerConfig {
     connections: Option<connections::ConnectionsSetup>,
     /// The composed service, handed from `spawn` to the writer thread.
     connections_hosted: Option<connections::Hosted>,
+    /// Which linked devices are clients of this computer's Bots (M8): the
+    /// admission port. Without it, or without a Bot authority, this worker
+    /// serves no linked desktop ([`WorkerHandle::bot_owner_server`]).
+    pub(crate) bot_admission: Option<Arc<dyn bots::client::owner::ClientAdmission>>,
+    /// The writer's half of what it publishes for linked devices' streams,
+    /// handed from `spawn` to the writer thread.
+    bot_client_hint: Option<bots::client::owner::WriterHint>,
     root: PathBuf,
     channel: String,
     providers: ProviderRegistry,
@@ -190,6 +197,13 @@ impl WorkerConfig {
         self.connections = Some(setup);
         self
     }
+    /// Serve this computer's Bots to the linked devices the admission port
+    /// names as clients (M8). The port is read again for every message a
+    /// linked device sends, so a device it stops naming is refused at once.
+    pub fn with_bot_peers(mut self, peers: koru_store_server::BotPeers) -> Self {
+        self.bot_admission = Some(Arc::new(peers));
+        self
+    }
     /// The Store's data root, so a Bot's selected folder is never it.
     pub fn with_store_root(mut self, store_root: PathBuf) -> Self {
         self.store_root = Some(store_root);
@@ -207,6 +221,8 @@ impl WorkerConfig {
             store_root: None,
             connections: None,
             connections_hosted: None,
+            bot_admission: None,
+            bot_client_hint: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -246,6 +262,8 @@ impl WorkerConfig {
             store_root: None,
             connections: None,
             connections_hosted: None,
+            bot_admission: None,
+            bot_client_hint: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -290,6 +308,8 @@ impl WorkerConfig {
             store_root: None,
             connections: None,
             connections_hosted: None,
+            bot_admission: None,
+            bot_client_hint: None,
             bot_delegate: None,
             native_recovery: None,
             tool_executor: None,
@@ -451,6 +471,22 @@ impl AiWorker {
             WorkerError::Startup(error)
         })?;
         self.config.connections_hosted = hosted.clone();
+        // Linked desktops (M8): what the writer publishes for their streams,
+        // and what an owner server is built from when this worker has a Bot
+        // authority and an admission port.
+        let (hint, head, feed_streams) = bots::client::owner::WriterHint::pair();
+        self.config.bot_client_hint = Some(hint);
+        let bot_owner = match (&self.config.bot_authority, &self.config.bot_admission) {
+            (Some(authority), Some(admission)) => Some(bots::client::owner::Parts {
+                sender: sender.clone(),
+                shutdown: Arc::clone(&shutdown),
+                authority: Arc::clone(authority),
+                admission: Arc::clone(admission),
+                head,
+                feed_streams,
+            }),
+            _ => None,
+        };
         let thread_shutdown = Arc::clone(&shutdown);
         let status = Arc::new(Mutex::new(WorkerStatus::Starting));
         let thread_status = Arc::clone(&status);
@@ -503,6 +539,8 @@ impl AiWorker {
                     native_mutations,
                     routine_calls,
                     connections: hosted,
+                    bot_owner,
+                    bot_owner_server: std::sync::OnceLock::new(),
                     shutdown,
                     status,
                     join: Some(join),
@@ -531,6 +569,10 @@ impl AiWorker {
 }
 
 pub struct WorkerHandle {
+    /// What the owner server of linked desktops is built from (M8), when
+    /// this worker has a Bot authority and an admission port.
+    pub(crate) bot_owner: Option<bots::client::owner::Parts>,
+    bot_owner_server: std::sync::OnceLock<bots::client::owner::BotOwnerServer>,
     connections: Option<connections::Hosted>,
     routine_calls: routine_call::RoutineCallGates,
     native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
@@ -560,6 +602,26 @@ impl WorkerHandle {
             routine_calls: self.routine_calls.clone(),
             connections: self.connections.clone(),
         }
+    }
+
+    /// The engine that serves this computer's Bots to linked devices (M8),
+    /// or `None` when this worker has no Bot authority or was given no
+    /// admission port. One server for the life of the worker: its limits
+    /// count every stream. It runs a linked device's commands through this
+    /// worker's own client, the port a window's request goes through.
+    pub fn bot_owner_server(&self) -> Option<bots::client::owner::BotOwnerServer> {
+        let parts = self.bot_owner.as_ref()?;
+        Some(
+            self.bot_owner_server
+                .get_or_init(|| {
+                    bots::client::owner::BotOwnerServer::new(
+                        parts.clone(),
+                        Arc::new(self.client()),
+                        bots::client::owner::Timing::default(),
+                    )
+                })
+                .clone(),
+        )
     }
 
     pub fn status(&self) -> WorkerStatus {
@@ -1383,6 +1445,9 @@ enum Envelope {
     /// One transaction on ai.db's connection rows, asked for by the
     /// connection service from its own thread (M5).
     Connections(connections::StoreCall),
+    /// One short piece of work on the writer, asked for by the stream of a
+    /// linked device (M8): a feed read, a receipt, a watch.
+    BotClient(bots::client::owner::WriterCall),
     /// The plan of one private read, or a Run's setup reason (M5).
     PrivatePlan(connections::plan::Incoming),
     NativePolicy {
@@ -1805,6 +1870,9 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    /// What the writer keeps for linked desktops (M8): this start, the
+    /// feed, the pages waiting for its budget, and the live watches.
+    bot_clients: bots::client::owner::Writer,
     /// The private connections this worker hosts (M5), if any.
     connections: Option<connections::Hosted>,
     /// Attempts whose turn planned a private read: no tool input and no tool
@@ -1944,6 +2012,11 @@ fn run_worker(
         Repository::open(&database).map_err(|error| error.to_string())?,
         true,
     );
+    // This start is recorded before anything of this run writes a feed
+    // marker, the restart sweep below included: it is what lets a linked
+    // desktop's cursor from a history this database lost be refused.
+    let mut bot_clients = bots::client::owner::Writer::new(config.bot_client_hint.take());
+    bot_clients.started(&mut repository);
     let recovery = repository
         .recover_interrupted(Timestamp::now())
         .map_err(|error| error.public_message)?;
@@ -2104,6 +2177,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        bot_clients,
         connections: config.connections_hosted.take(),
         private_attempts: HashSet::new(),
         private_setup: HashMap::new(),
@@ -2214,7 +2288,7 @@ fn run_worker(
         state.schedule_routine_access_recovery();
         state.schedule_creation_lanes();
         state.schedule_occurrence_recovery();
-        match receiver.recv_timeout(LOOP_INTERVAL) {
+        match state.next_envelope(&receiver) {
             Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
             Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
             Ok(Envelope::Command(command)) => {
@@ -2302,6 +2376,16 @@ fn run_worker(
                     tracing::error!(
                         target: "koru_ai::connections",
                         "a connection row transaction panicked; worker remains available"
+                    );
+                }
+            }
+            Ok(Envelope::BotClient(call)) => {
+                // A linked device's stream waits for this answer; a panic in
+                // one call leaves the writer serving the next.
+                if catch_unwind(AssertUnwindSafe(|| call(&mut state))).is_err() {
+                    tracing::error!(
+                        target: "koru_ai::bot_clients",
+                        "a linked device's call panicked; worker remains available"
                     );
                 }
             }
@@ -6021,6 +6105,18 @@ impl WorkerState {
         let attempt_id = event.attempt_id();
         let terminal = event.is_terminal();
         let mut remove = terminal;
+        // The live role (M8): a linked desktop that watches this reply's
+        // conversation is handed the event too. Nothing is read or cloned
+        // unless somebody watches.
+        if self.bot_clients.live.any() {
+            let local = self
+                .streams
+                .get(&attempt_id)
+                .map(|stream| stream.next_sequence);
+            self.bot_clients
+                .live
+                .forward(&self.repository, attempt_id, local, &event, terminal);
+        }
         if let Some(stream) = self.streams.get_mut(&attempt_id) {
             let public = StreamEvent {
                 version: AI_STREAM_VERSION,

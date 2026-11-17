@@ -22,6 +22,11 @@ pub use client_feed::{
     FEED_RECORD_TABLES, FEED_STARTS_KEPT, FeedBody, FeedBotHome, FeedChat, FeedCounts, FeedItem,
     FeedKind, FeedMarker, FeedMessage, FeedScan,
 };
+mod client_receipts;
+pub use client_receipts::{
+    CLIENT_RECEIPT_KEEP_MS, CLIENT_RECEIPT_PRUNE_BATCH, ClientBotRequest, ClientOutcome,
+    ClientReceipt, ClientReceiptBegin,
+};
 mod creation;
 pub use creation::BotCreationScan;
 mod decisions;

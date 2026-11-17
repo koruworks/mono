@@ -16,11 +16,13 @@ mod refusal;
 pub(in crate::worker::bots) mod routines;
 mod team_pause;
 
+// Lent to the owner server's tests (`client/owner/tests.rs`), which drive
+// the same scripted owner through a linked device's commands.
 #[derive(Default)]
-struct Native {
-    fail_first: bool,
+pub(in crate::worker::bots) struct Native {
+    pub(in crate::worker::bots) fail_first: bool,
     allow_answer_tasks: bool,
-    state: Mutex<NativeState>,
+    pub(in crate::worker::bots) state: Mutex<NativeState>,
     submit_gate: Mutex<Option<(SyncSender<()>, Receiver<()>)>>,
     stop_reports: Mutex<Option<SyncSender<()>>>,
     settled_reports: Mutex<Option<SyncSender<()>>>,
@@ -31,26 +33,26 @@ struct Native {
     hold_interrupt: AtomicBool,
     hold_stop: bool,
     replay_failure: bool,
-    hold_observation: bool,
+    pub(in crate::worker::bots) hold_observation: bool,
     native_cancel: Option<s::CancelReason>,
     /// Answers for the next Begins, in order; a Begin past them succeeds.
     begin_failures: Mutex<std::collections::VecDeque<koru_delegate_api::Failure>>,
 }
 #[derive(Default)]
-struct NativeState {
+pub(in crate::worker::bots) struct NativeState {
     boot: Option<d::DelegateBootId>,
     barrier: Option<d::BotAdmissionBarrier>,
     policy: Option<d::BotPolicyBarrier>,
     submission: Option<d::BotSubmission>,
     fence: Option<d::BotExecutionFence>,
-    begin: usize,
+    pub(in crate::worker::bots) begin: usize,
     observed_before_begin: bool,
     delivered: bool,
     delivery: Option<d::BotDeliveryReceipt>,
     input: Option<s::PendingInput>,
     stopped: bool,
     stop_calls: usize,
-    interrupt_calls: usize,
+    pub(in crate::worker::bots) interrupt_calls: usize,
     interrupt_settled: bool,
     stop_unconfirmed: bool,
     begin_at: Vec<Instant>,

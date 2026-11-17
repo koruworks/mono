@@ -18,11 +18,14 @@
 //!    a linked-device principal to the owner server, which answers the hello
 //!    and serves the stream.
 //!
-//! **Until the owner server exists (piece H2) there is nothing to serve.**
-//! Every admitted stream is then answered with one clear refusal and closed:
-//! the refusal the hello itself earns (`unsupported_version`,
-//! `principal_mismatch`, …), and otherwise `bots_unavailable`, "not ready,
-//! retry later". Nothing is left open and nothing waits.
+//! **The owner server is the AI worker's** ([`AiOwnerServer`]), installed by
+//! the composition when this gateway has an AI worker that serves Bots.
+//! Where there is none (the AI worker did not start, or it has no Bot
+//! authority) there is nothing to serve: every admitted stream is answered
+//! with one clear refusal and closed, the refusal the hello itself earns
+//! (`unsupported_version`, `principal_mismatch`, …), and otherwise
+//! `bots_unavailable`, "not ready, retry later". Nothing is left open and
+//! nothing waits.
 //!
 //! No frame, device name, hello or scope is logged here.
 
@@ -39,7 +42,7 @@ use koru_network_edge::{DevicePrincipal, TransportSession};
 use koru_store_server::BotPeers;
 
 /// The engine that serves a linked device's Bot streams on the computer
-/// that runs the Bots. Piece H2 supplies it; until then none is installed.
+/// that runs the Bots: in production the AI worker's ([`AiOwnerServer`]).
 pub(crate) trait BotOwnerServer: Send + Sync + 'static {
     /// Take over one admitted stream. The server answers the hello (with
     /// `stream.scopes` as the hello's scopes) and owns the stream from here.
@@ -48,10 +51,7 @@ pub(crate) trait BotOwnerServer: Send + Sync + 'static {
 }
 
 /// One Bot stream the admission port let in, before its hello is answered.
-///
-/// Nothing but the tests reads its fields until an owner server exists
-/// (piece H2), which is the only thing that is ever handed one.
-#[cfg_attr(not(test), allow(dead_code))]
+/// An owner server is the only thing that is ever handed one.
 pub(crate) struct AdmittedBotStream {
     /// The stream's first frame.
     pub(crate) hello: ClientHello,
@@ -61,8 +61,11 @@ pub(crate) struct AdmittedBotStream {
     /// The admission port's scopes for that device, to send in the hello
     /// and to hold the stream to.
     pub(crate) scopes: BTreeSet<String>,
-    /// The caller the local commands see: a linked device, holding the
-    /// gateway scopes those port scopes stand for.
+    /// The linked device as a gateway caller: exactly the linked-device
+    /// scopes those port scopes stand for, and never `bots.manage`. The AI
+    /// worker's owner server does not take it: it holds the stream to the
+    /// port's own scopes, read again for every message.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) principal: GatewayPrincipal,
     pub(crate) session: TransportSession,
     /// The decoder that read the hello. Any bytes the client sent after it
@@ -107,9 +110,15 @@ impl BotIngress {
         }
     }
 
-    /// Install the engine that serves admitted streams. Called by piece H2's
-    /// composition; nothing calls it yet, so every stream is refused.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The admission port this adapter reads, for the engine that reads it
+    /// again for every message of an admitted stream.
+    pub(crate) fn peers(&self) -> BotPeers {
+        self.inner.peers.clone()
+    }
+
+    /// Install the engine that serves admitted streams. Called once by the
+    /// composition, when the AI worker serves Bots; without it every stream
+    /// is refused.
     pub(crate) fn set_owner_server(&self, server: Arc<dyn BotOwnerServer>) {
         *self
             .inner
@@ -191,6 +200,32 @@ impl BotIngress {
                 refuse(session, refusal).await;
             }
         }
+    }
+}
+
+/// The AI worker's owner server behind this adapter. It is handed the
+/// stream as the adapter admitted it: the hello unanswered, the device the
+/// carrier authenticated, the port's scopes, the session and the decoder.
+pub(crate) struct AiOwnerServer(pub(crate) koru_ai_server::BotOwnerServer);
+
+impl BotOwnerServer for AiOwnerServer {
+    fn serve(&self, stream: AdmittedBotStream) {
+        let AdmittedBotStream {
+            hello,
+            device,
+            scopes,
+            principal: _,
+            session,
+            decoder,
+        } = stream;
+        // Returns at once: the stream is served on its own task.
+        self.0.serve(koru_ai_server::BotClientStream {
+            hello,
+            device: device.device_id,
+            scopes,
+            session,
+            decoder,
+        });
     }
 }
 

@@ -590,3 +590,137 @@ async fn m8_bot_ingress_a_stream_that_says_nothing_is_closed() {
     bots.admit(gateway_half);
     tokio::time::sleep(Duration::from_millis(50)).await;
 }
+
+// ----------------------------------------------------------------------
+// m8_owner_wiring: the adapter in front of the AI worker's owner server
+// ----------------------------------------------------------------------
+
+/// An AI worker as the composition builds one for these cases: the mock
+/// provider, an `ai.db` in a temporary folder, and the admission port.
+fn ai_worker(
+    root: &std::path::Path,
+    peers: BotPeers,
+    authority: Option<koru_ai_server::BotAuthorityAdapter>,
+) -> koru_ai_server::WorkerHandle {
+    let config =
+        koru_ai_server::WorkerConfig::deterministic_mock(root.to_owned(), "internal-debug")
+            .with_bot_peers(peers);
+    let config = match authority {
+        Some(authority) => config.with_bot_authority(Arc::new(authority)),
+        None => config,
+    };
+    koru_ai_server::AiWorker::new(config).spawn().unwrap()
+}
+
+/// The wiring the composition does: the AI worker's owner server behind the
+/// adapter. A stream the adapter admits is answered by the engine, under
+/// this computer's own device and the port's scopes, and its feed is served;
+/// a device the port does not name never reaches the engine.
+#[tokio::test]
+async fn m8_owner_wiring_an_admitted_stream_is_served_by_the_ai_workers_owner_server() {
+    let memory = koru_store_server::memory::MemoryStore::open("bot-ingress-owner-server").unwrap();
+    let this_computer = DeviceId::new();
+    let authority = koru_ai_server::BotAuthorityAdapter::from_device(
+        memory.client(),
+        &this_computer.to_string(),
+    )
+    .expect("a device id is a trusted device");
+    let (client, stranger) = (DeviceId::new(), DeviceId::new());
+    let peers = port(vec![authorized(client, true), authorized(stranger, false)]);
+    let root = tempfile::tempdir().unwrap();
+    let worker = ai_worker(root.path(), peers.clone(), Some(authority));
+
+    let bots = BotIngress::new(peers);
+    let server = worker
+        .bot_owner_server()
+        .expect("a worker with a Bot authority and the port serves Bots");
+    bots.set_owner_server(Arc::new(AiOwnerServer(server)));
+
+    let (mut client_half, gateway_half) = stream(client, bots_token());
+    send(
+        &client_half,
+        WireMessage::ClientHello(hello(client, Role::Feed)),
+    )
+    .await;
+    bots.admit(gateway_half);
+    let answer = owner_hello_of(&mut client_half).await;
+    assert_eq!(answer.owner_device, this_computer);
+    assert_eq!(answer.version, 1);
+    assert_eq!(answer.scopes, ["read", "control", "configure"]);
+    assert_eq!(answer.limits, Limits::this_build());
+    assert_eq!(answer.head, 0);
+
+    // The feed of a computer with no Bot: one gap, then one page that says
+    // the copy is up to date and holds nothing.
+    send(
+        &client_half,
+        WireMessage::Subscribe(Subscribe::fresh(this_computer)),
+    )
+    .await;
+    let mut decoder = FrameDecoder::new();
+    let mut read = Vec::new();
+    while read.len() < 2 {
+        let bytes = tokio::time::timeout(Duration::from_secs(10), client_half.receive.recv())
+            .await
+            .expect("the owner server answers the subscribe")
+            .expect("the stream is open")
+            .expect("the stream has not ended");
+        decoder.push(&bytes).unwrap();
+        while let Some(message) = decoder.next().unwrap() {
+            read.push(message);
+        }
+    }
+    assert!(matches!(&read[0], WireMessage::Gap(gap) if gap.owner_device == this_computer));
+    match &read[1] {
+        WireMessage::Changes(page) => {
+            assert!(page.reset && page.caught_up && page.entries.is_empty());
+            assert_eq!(page.owner_device, this_computer);
+            assert_eq!(page.withheld_bots, Some(0));
+        }
+        other => panic!("answered {}", other.type_name()),
+    }
+    send(&client_half, WireMessage::Ack(Ack { cursor: 0 })).await;
+
+    // A device the port does not name a client is refused by the adapter.
+    let (mut other_half, gateway_half) = stream(stranger, bots_token());
+    send(
+        &other_half,
+        WireMessage::ClientHello(hello(stranger, Role::Feed)),
+    )
+    .await;
+    bots.admit(gateway_half);
+    assert_eq!(
+        refusal_of(&mut other_half).await.reason,
+        refusal::NOT_OWN_DEVICE
+    );
+
+    drop(client_half);
+    worker.shutdown();
+    let _ = worker.join();
+}
+
+/// A worker that runs no Bots has no owner server, so the composition
+/// installs none and the adapter keeps answering `bots_unavailable`.
+#[tokio::test]
+async fn m8_owner_wiring_a_worker_with_no_bot_authority_serves_no_linked_device() {
+    let client = DeviceId::new();
+    let peers = port(vec![authorized(client, true)]);
+    let root = tempfile::tempdir().unwrap();
+    let worker = ai_worker(root.path(), peers.clone(), None);
+    assert!(worker.bot_owner_server().is_none());
+
+    let bots = BotIngress::new(peers);
+    let (mut client_half, gateway_half) = stream(client, bots_token());
+    send(
+        &client_half,
+        WireMessage::ClientHello(hello(client, Role::Command)),
+    )
+    .await;
+    bots.admit(gateway_half);
+    assert_eq!(
+        refusal_of(&mut client_half).await.reason,
+        refusal::BOTS_UNAVAILABLE
+    );
+    worker.shutdown();
+    let _ = worker.join();
+}

@@ -42,6 +42,9 @@ koru-export = { path = "../../crates/koru-export" }
 koru-export-markdown = { path = "../../crates/koru-export-markdown" }
 koru-link = { path = "../../crates/koru-link" }
 koru-mcp-server = { path = "../../crates/koru-mcp-server" }
+# `TransportSession`: one stream of a linked device, as the gateway's Bot
+# ingress hands it to the owner server (`src/worker/bots/client/owner.rs`).
+koru-network-edge = { path = "../../crates/koru-network-edge" }
 koru-env = { path = "../../crates/koru-env" }
 koru-ipc = { path = "../../crates/koru-ipc" }
 koru-session-protocol = { path = "../../crates/koru-session-protocol" }
@@ -49,6 +52,10 @@ koru-import-markdown = { path = "../../crates/koru-import-markdown" }
 koru-store-core = { path = "../../crates/koru-store-core" }
 koru-store-server = { path = "../koru-store-server" }
 koru-store-wire = { path = "../../crates/koru-store-wire" }
+# The streams of linked devices are tasks on the runtime that admitted them,
+# the gateway's. The worker itself stays a thread; nothing of its writer runs
+# on a runtime.
+tokio.workspace = true
 tracing.workspace = true
 serde_json.workspace = true
 serde.workspace = true
@@ -64,4 +71,6 @@ koru-connections = { path = "../../crates/koru-connections", features = ["test-s
 # Reading every change's commit message, for the attribution sweep.
 loro.workspace = true
 koru-log = { path = "../../crates/koru-log" }
+# The device principal of a paired test stream (`TransportSession::pair`).
+koru-device = { path = "../../crates/koru-device" }
 tempfile.workspace = true
