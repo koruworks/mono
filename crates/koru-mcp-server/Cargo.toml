@@ -7,6 +7,14 @@ license.workspace = true
 publish = false
 description = "Transport-neutral MCP tools for Koru."
 
+[features]
+# Off in every product build. Exports `test_support::MemoryStore`, the
+# in-memory Store this crate's own tests run the tools over, so another
+# crate's tests can run the same tools without a Store process (first user:
+# `koru-mcp-client`'s fake). It adds no dependency and changes nothing else:
+# without it the module is compiled only under this crate's `cfg(test)`.
+test-support = []
+
 [dependencies]
 rmcp = { version = "=3.9.0", features = ["transport-io"] }
 tokio.workspace = true

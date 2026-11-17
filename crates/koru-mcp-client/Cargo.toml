@@ -1,0 +1,41 @@
+[package]
+rust-version.workspace = true
+name = "koru-mcp-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Client of a remote Koru MCP server: tool calls over a transport port, with every write classified as saved, not saved, partially saved or unknown."
+
+[features]
+# Off in every product build. Exports `fake`: a hosted MCP server in memory,
+# scripted from the two published documents, for the tests of the crates that
+# will sit on this client (the server's Bot authority, the forwarding backend).
+# It links `koru-mcp-server` and its in-memory Store; a normal build of this
+# crate links neither.
+test-support = [
+    "dep:koru-mcp-server",
+    "dep:koru-store-core",
+    "dep:koru-store-wire",
+    "dep:rmcp",
+]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+# The fake only (`test-support`).
+koru-mcp-server = { path = "../koru-mcp-server", features = ["test-support"], optional = true }
+koru-store-core = { path = "../koru-store-core", optional = true }
+koru-store-wire = { path = "../koru-store-wire", optional = true }
+# The fake answers with the result and error types the server itself builds
+# its answers from, so its wire bodies are that library's, not hand-written.
+rmcp = { version = "=3.9.0", optional = true }
+
+[dev-dependencies]
+# This crate's own tests drive the client with the fake. A dependency is never
+# compiled with `cfg(test)`, so the fake's dependencies are named again here.
+koru-mcp-server = { path = "../koru-mcp-server", features = ["test-support"] }
+koru-store-core = { path = "../koru-store-core" }
+koru-store-wire = { path = "../koru-store-wire" }
+rmcp = { version = "=3.9.0" }

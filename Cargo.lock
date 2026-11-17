@@ -6416,6 +6416,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-mcp-client"
+version = "0.0.3"
+dependencies = [
+ "koru-mcp-server",
+ "koru-store-core",
+ "koru-store-wire",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "koru-mcp-server"
 version = "0.0.3"
 dependencies = [
