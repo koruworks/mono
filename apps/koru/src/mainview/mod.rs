@@ -6120,6 +6120,12 @@ impl MainView {
         for request in self.explore.bots_mut().take_creations_moved() {
             changed |= self.creation_moved_elsewhere(request);
         }
+        // Another computer's Bots are listed (M8): their headings name the
+        // computer as the Agent's device list does, asked for once per
+        // connection. Nothing is asked while no copy lists one.
+        if !self.explore.bots().linked().is_empty() {
+            self.request_device_names_if_needed();
+        }
         // **The roster asks; this window opens** — the Bot's tab, or the one
         // already on its conversation (Bots P1.8 S4).
         let opened = match self.explore.bots_mut().take_wants_open() {
@@ -7227,6 +7233,15 @@ impl MainView {
                     .map(|id| (id, device.display_name.clone()))
             })
             .collect();
+        // The Bots roster names the person's other computers from this
+        // same list (M8): the copy of their Bots carries no name.
+        self.explore
+            .bots_mut()
+            .set_computer_names(crate::bots::linked::Names::new(
+                self.device_names
+                    .iter()
+                    .map(|(id, name)| (*id, name.clone())),
+            ));
         self.linked_devices.set_linked(this_device, devices, relay);
         self.push_linked_devices();
         // A name that has just arrived changes what a pill says.
@@ -15347,6 +15362,10 @@ impl View for MainView {
             // a roster that is showing.
             (self.explore.showing_bots() && self.explore.bots_awaiting())
                 .then(|| Instant::now() + std::time::Duration::from_millis(50)),
+            // **One wake every few seconds while the roster lists another
+            // computer's Bots** (M8): how current each copy is, read again.
+            // `None` for a roster that lists none, or is hidden.
+            self.explore.bots().linked_deadline(),
             // And while the window waits to learn whose a conversation it
             // was asked to open is (Bots P1.8, B1).
             self.bot_labels

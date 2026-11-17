@@ -101,6 +101,7 @@ pub(crate) mod context_library;
 pub(crate) mod context_routines;
 pub(crate) mod controls;
 pub(crate) mod conversations;
+pub(crate) mod copy;
 pub(crate) mod create;
 mod library;
 pub(crate) mod list;
@@ -201,11 +202,16 @@ pub(crate) struct BotFacts {
     /// The face the Bot wears (QUESTIONS O155): its stored choice, else the
     /// default one (`Bot::avatar`).
     pub avatar: u8,
+    /// **The other computer that runs the Bot** (M8, P8.3), when the tab
+    /// knows it is one: the tab is then a saved copy's ([`copy`]). `None`
+    /// for a Bot this computer runs, and until the tab knows.
+    pub owner: Option<koru_ai_core::bots::DeviceId>,
 }
 
 impl From<&RosterBot> for BotFacts {
     fn from(bot: &RosterBot) -> Self {
         Self {
+            owner: bot.owner,
             avatar: bot.avatar,
             id: bot.id,
             name: bot.name.clone(),
@@ -224,6 +230,9 @@ impl From<&RosterBot> for BotFacts {
 impl From<Bot> for BotFacts {
     fn from(bot: Bot) -> Self {
         Self {
+            // A Bot alone does not say which device this is: the tab
+            // keeps what it knew, or works it out ([`BotView::know`]).
+            owner: None,
             avatar: bot.avatar(),
             id: bot.id,
             name: bot.config.name,
@@ -472,6 +481,12 @@ pub(crate) struct BotView {
     /// A conversation a request card or the origin line asked to open: the
     /// window opens it in that Bot's tab. Taken once.
     open_request: Option<crate::bots::children::OpenRequest>,
+    // ------------------------------- another computer's Bot (M8)
+    /// **What the tab holds while another computer runs its Bot** ([`copy`]):
+    /// that computer, its copy's state and what the last command came to.
+    /// Empty for a Bot this computer runs. Boxed for the reason the
+    /// settings are.
+    copy: Box<copy::Copy>,
 }
 
 impl BotView {
@@ -557,6 +572,7 @@ impl BotView {
             card: Box::default(),
             children: Box::default(),
             open_request: None,
+            copy: Box::default(),
         }
     }
 
@@ -876,6 +892,7 @@ impl BotView {
         self.bot_read_next = None;
         self.bot_read_backoff = BOT_READ_FIRST;
         self.vouching.reset();
+        self.copy_hidden();
     }
 
     /// **Shown again after a read of whose the conversation is failed**:
@@ -969,6 +986,14 @@ impl BotView {
     /// Take `facts` as what the tab knows, and bind the conversation to the
     /// Bot's — the main one, unless this tab is on another of its chats.
     fn know(&mut self, facts: BotFacts) {
+        // **Which computer runs the Bot stays what the tab knew** (M8): a
+        // read or a row that does not say keeps it, as it keeps whether the
+        // Bot is archived.
+        let mut facts = facts;
+        if facts.owner.is_none() {
+            facts.owner = self.facts.as_ref().and_then(|known| known.owner);
+        }
+        self.set_copy_owner(facts.owner);
         self.conversations.set_bot(facts.id);
         self.lifecycle.set_bot(facts.id);
         self.lifecycle_awaits_read = false;
@@ -1008,6 +1033,8 @@ impl BotView {
         }
         self.facts = Some(facts);
         self.load = Load::Ready;
+        // A conversation just made is told what its copy lets it do.
+        self.push_saved_copy();
     }
 
     /// **A trashed Bot's conversation is let go, and its draft kept**: the
@@ -1090,7 +1117,10 @@ impl BotView {
         let routines = self.routines_pass();
         // Whether the tab draws the conversation's empty transcript (O155).
         let setup = self.setup_pass();
+        // Another computer's Bot (M8): its copy's state, on this link.
+        let copy = self.copy_pass();
         asked
+            || copy
             || setup
             || answered
             || polled
@@ -1338,7 +1368,22 @@ impl BotView {
                     bot,
                     request,
                     result,
-                } if Some(bot) == self.bot => changed |= self.take_written(request, result, now),
+                } if Some(bot) == self.bot => {
+                    // What a command for another computer came to (M8),
+                    // beside whatever the write's own surface says.
+                    changed |= self.copy_wrote(request, &result);
+                    changed |= self.take_written(request, result, now);
+                }
+                // Another computer's Bot (M8): its copy's state, and how
+                // far a refused command got on its way there.
+                Answer::LinkedOwner { seq, bot, result } => {
+                    changed |= self.copy_answer(seq, bot, result);
+                }
+                Answer::Delivery {
+                    bot,
+                    request,
+                    delivery,
+                } => self.copy_delivery(bot, request, delivery),
                 Answer::Lifecycle {
                     seq,
                     lifecycle: BotLifecycle::Trashed,
@@ -1448,7 +1493,12 @@ impl BotView {
                 // operation**: `know` gives it the Bot, so the first read of
                 // a tab restored at startup or opened from a link adopts a
                 // parked or moving operation rather than finding no Bot.
-                self.know(BotFacts::from(bot.clone()));
+                // Another device's Bot is that computer's (M8): the tab is
+                // a saved copy's from here on.
+                let owner = self.remote_owner(&bot);
+                let mut facts = BotFacts::from(bot.clone());
+                facts.owner = owner;
+                self.know(facts);
                 self.lifecycle.know(&bot);
                 // A read may finish the operation followed — one the owner
                 // completed by itself — which the tab acts on as on an
@@ -1666,6 +1716,28 @@ impl BotView {
             );
             if let Some(block) = self.lifecycle_block(engine) {
                 header = header.child(block);
+            }
+            // Another computer's Bot (M8): that this is a saved copy and
+            // as of when, and what the last command came to.
+            if let Some(banner) = self.copy_banner() {
+                header = header.child(
+                    text(banner)
+                        .named("Bot saved copy")
+                        .id(copy::COPY_BANNER)
+                        .role(roles::META)
+                        .ink(Ink::Secondary)
+                        .wrap(),
+                );
+            }
+            if let Some(line) = self.copy_line() {
+                header = header.child(
+                    text(line)
+                        .named("Bot copy command")
+                        .id(copy::COPY_LINE)
+                        .role(roles::META)
+                        .ink(Ink::Hint)
+                        .wrap(),
+                );
             }
         } else if let Some(label) = self.create_label() {
             // A Bot being created (S8): its name so far, where its results
@@ -1894,6 +1966,9 @@ impl BotView {
                 self.lifecycle_said()
                     .map(|said| t(self.lang, said.words).to_owned()),
             );
+            // Another computer's Bot (M8).
+            line(copy::COPY_BANNER, self.copy_banner());
+            line(copy::COPY_LINE, self.copy_line());
             out
         })
     }
@@ -1926,6 +2001,9 @@ impl BotView {
         rev.str(self.home_name.as_deref().unwrap_or(""))
             .f32(self.size.0)
             .f32(self.size.1);
+        // Another computer's Bot (M8): the header's two lines.
+        rev.str(self.copy_banner().as_deref().unwrap_or(""))
+            .str(self.copy_line().as_deref().unwrap_or(""));
         // A create tab's name so far (S8); its fields, lines and controls
         // are folded with the controls below.
         rev.str(self.create_label().as_deref().unwrap_or(""));
@@ -2532,6 +2610,8 @@ impl View for BotView {
             creating,
             reread,
             checking,
+            // Another computer's copy state, read again while shown (M8).
+            (!self.stale).then(|| self.copy_deadline(now)).flatten(),
         ]
         .into_iter()
         .flatten()

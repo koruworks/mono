@@ -153,8 +153,8 @@ pub use dictation::{DictationPress, DictationShown};
 pub use microphone::{MicrophoneAsk, MicrophoneDevice, Microphones};
 pub use model_picker::FavoriteModel;
 pub use owned::{
-    HostPaint as EmptyTranscriptPaint, OwnedConversation, OwnedOffers, Refusals as OwnedRefusals,
-    Unavailable as ConversationUnavailable,
+    CopyDraft, CopyNote, CopyOutcome, HostPaint as EmptyTranscriptPaint, OwnedConversation,
+    OwnedOffers, Refusals as OwnedRefusals, SavedCopy, Unavailable as ConversationUnavailable,
 };
 
 use agents::{AgentStatus, agent_chip_label, agent_row_body, agent_row_title, is_agent_row};
@@ -794,6 +794,10 @@ pub struct ChatSurface {
     /// own content holds the keyboard. All off for every surface whose host
     /// never asks, which then behaves exactly as it did.
     hosted_empty: owned::HostedEmpty,
+    /// **The conversation is shown from a saved copy** ([`owned`], *A saved
+    /// copy*): what its host said about it. `None` for every surface whose
+    /// host never says, which then behaves exactly as it did.
+    saved_copy: Option<owned::CopyState>,
     /// How this surface's threads connect: ordinary, or first-party with
     /// `bots.manage` for an owned surface ([`Self::new_owned_at`]).
     scopes: reader::Scopes,
@@ -1202,6 +1206,7 @@ impl ChatSurface {
             owned: None,
             unavailable: None,
             hosted_empty: owned::HostedEmpty::default(),
+            saved_copy: None,
             scopes: reader::Scopes::Ordinary,
             highlight: None,
             confirm: None,
@@ -2258,6 +2263,8 @@ impl ChatSurface {
         }
         self.shown_chat_id()
             .and_then(|chat| self.queues.pause_reason(chat))
+            // A message on its way to the computer a saved copy came from.
+            .or(self.copy_line())
             .or(self.status.as_deref())
     }
 
@@ -4617,7 +4624,10 @@ impl ChatSurface {
                     code = failure.code,
                     "AI UI send was not accepted; the message is back in the composer"
                 );
-                if self.chat_unmade() {
+                if self.copy_send_failed(&failure) {
+                    // A saved copy's host names this refusal ([`owned`]):
+                    // whether the draft comes back is the outcome's to say.
+                } else if self.chat_unmade() {
                     // The create failed and said why; the send only follows.
                     self.give_back_sent(None);
                 } else {
@@ -5258,6 +5268,11 @@ impl ChatSurface {
     }
 
     fn send_composer(&mut self) -> bool {
+        // **A saved copy whose computer is not reachable sends nothing**
+        // ([`owned`]): the draft stays in the composer, which says why.
+        if self.copy_holds_send() {
+            return true;
+        }
         // **A reply is running: the message is queued** ([`queue`]), and
         // sent when the reply completes.
         if self.reply_busy() {
@@ -7179,7 +7194,11 @@ impl ChatSurface {
         // One caret at a time: none here while the host's own content in
         // the empty transcript holds the keyboard.
         let focused = self.focus == Focus::Composer && !self.host_holds_keyboard();
-        let placeholder = koru_i18n::t(self.lang, self.composer_placeholder_key());
+        // A held saved copy says why nothing can be sent ([`owned`]).
+        let held = self.copy_placeholder().map(str::to_owned);
+        let placeholder = held
+            .as_deref()
+            .unwrap_or_else(|| koru_i18n::t(self.lang, self.composer_placeholder_key()));
         self.composer.set_focused(focused);
         self.composer
             .draw(canvas, root, focused, self.pointer, placeholder);
@@ -7388,7 +7407,9 @@ impl ChatSurface {
         let enabled = match mode {
             queue::SendMode::Stop => true,
             queue::SendMode::Queue => self.composer_has_content(),
-            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+            queue::SendMode::Send => {
+                !self.awaiting_model() && self.composer_has_content() && !self.copy_holds_send()
+            }
         };
         draw_composer_action(
             canvas,
@@ -7409,7 +7430,9 @@ impl ChatSurface {
         let enabled = match mode {
             queue::SendMode::Stop => true,
             queue::SendMode::Queue => self.composer_has_content(),
-            queue::SendMode::Send => !self.awaiting_model() && self.composer_has_content(),
+            queue::SendMode::Send => {
+                !self.awaiting_model() && self.composer_has_content() && !self.copy_holds_send()
+            }
         };
         let mut button = SplitButton {
             rect,
@@ -7762,13 +7785,23 @@ impl ChatSurface {
                         .and_then(|usage| usage_line(usage, self.lang));
                     // Refused pictures: from the live event while this surface
                     // lives, and from the reloaded transcript's stop code (O36).
-                    let display = if message.markdown.is_empty()
+                    let display = if let Some(instead) = self
+                        .saved_copy
+                        .as_ref()
+                        .and_then(|copy| copy.shown_instead(message.id, &message.markdown))
+                    {
+                        // What a saved copy's host says of this message
+                        // ([`owned`]): its text was not copied, or part of
+                        // it stayed on the other computer.
+                        instead
+                    } else if message.markdown.is_empty()
                         && message.state == MessageState::Failed
                         && (self.refused_pictures.contains(&message.id)
                             || transcript.usage.iter().any(|entry| {
                                 entry.message_id == message.id
                                     && refused_pictures(entry.stop_code.as_deref())
-                            })) {
+                            }))
+                    {
                         koru_i18n::t(self.lang, koru_i18n::Key::BotsPicturesRefused).to_owned()
                     } else if message.markdown.is_empty() && message.state == MessageState::Failed {
                         failure_label(message.error_class, self.lang)

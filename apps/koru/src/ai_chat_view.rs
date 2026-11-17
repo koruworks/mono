@@ -330,6 +330,20 @@ impl AiChatView {
         self.surface.owned()
     }
 
+    /// **The conversation is shown from a saved copy** (`koru_ai_ui::owned`,
+    /// *A saved copy*): another computer runs it, and this is what its host
+    /// says it may send and what a refusal reads as. `None` for a
+    /// conversation this computer runs. `true` when what is drawn changed.
+    pub fn set_saved_copy(&mut self, copy: Option<koru_ai_ui::SavedCopy>) -> bool {
+        self.surface.set_saved_copy(copy)
+    }
+
+    /// What the conversation was told of its saved copy, for a test to read.
+    #[cfg(test)]
+    pub fn saved_copy(&self) -> Option<&koru_ai_ui::SavedCopy> {
+        self.surface.saved_copy()
+    }
+
     // ---- A host-drawn empty transcript (`koru_ai_ui::owned`): a Bot tab
     // draws its Bot's quick setup where an empty chat's greeting would be.
 

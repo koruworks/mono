@@ -4251,13 +4251,69 @@ pub enum Key {
     BotsTeamPausedShort,
     /// Under the roster's header when pausing or resuming every Bot could not be sent.
     BotsTeamChangeFailed,
+    /// M8, linked desktops (contract 6.3). The roster's heading over another computer's Bots; `{}` is that computer's name.
+    BotsLinkedOn,
+    /// That heading's state: the copy is up to date and commands can be sent.
+    BotsLinkedConnected,
+    /// That heading's state while the computer is not reachable; `{}` is when the copy was last up to date.
+    BotsLinkedLastUpdated,
+    /// That heading's state: not reachable, and no time is known.
+    BotsLinkedNotReachable,
+    /// That heading's state: the two computers share no version.
+    BotsLinkedNeedsUpdate,
+    /// That heading's state: nothing was received from that computer yet.
+    BotsLinkedNothingYet,
+    /// The heading's action: ask that computer to send its Bots again.
+    BotsLinkedRefresh,
+    /// That action's accessible name; `{}` is the computer's name.
+    BotsLinkedRefreshNamed,
+    /// Under the heading: Bots that computer does not copy. `{}` is how many, then the computer's name.
+    BotsLinkedWithheld,
+    /// The same line for exactly one Bot; `{}` is the computer's name.
+    BotsLinkedWithheldOne,
+    /// Over a remote Bot's page while its computer is not connected. `{}` is the computer, when the copy was last up to date, the computer again.
+    BotsLinkedCopyBanner,
+    /// The same sentence when no time is known; `{}` is the computer, twice.
+    BotsLinkedCopyBannerNoTime,
+    /// The composer's placeholder on a remote Bot's page while its computer is not connected; `{}` is the computer.
+    BotsLinkedComposerHeld,
+    /// A setting of a remote Bot changed while its computer is not connected; `{}` is the computer.
+    BotsLinkedNotSaved,
+    /// While a message to a remote Bot is on its way to its computer.
+    BotsLinkedSending,
+    /// A command was sent to the other computer and no answer came; `{}` is the computer.
+    BotsLinkedNotConfirmed,
+    /// The other computer cannot say whether a command took effect, and it is never sent again.
+    BotsLinkedNotConfirmedFinal,
+    /// A change only the computer that runs the Bot can make; `{}` is the computer.
+    BotsLinkedChangeOn,
+    /// The Routines pane of a remote Bot; `{}` is the computer.
+    BotsLinkedRoutinesOn,
+    /// A page link in a remote Bot's conversation whose workspace is not on this computer.
+    BotsLinkedPageNotHere,
+    /// In place of a message that was too large to copy; `{}` is the computer.
+    BotsLinkedTooLarge,
+    /// Under a copied message whose attachments were not copied. `{}` is how many, then the computer.
+    BotsLinkedAttachments,
+    /// The same line for exactly one attachment; `{}` is the computer.
+    BotsLinkedAttachmentsOne,
+    /// The other computer's Koru and this one share no version; `{}` is the computer.
+    BotsLinkedUnsupported,
+    /// A remote Bot row's description for an assistive technology; `{}` is the computer.
+    BotsLinkedRunsOn,
+    /// What a linked computer is called while this one does not know its name.
+    BotsLinkedAnotherComputer,
+    /// Contract 6.5 (D22): where linking is explained and in the Bots view's first-use text.
+    BotsLinkedDisclosure,
+    /// Contract 6.5 (D22): where unlinking is explained.
+    BotsLinkedUnlinkDisclosure,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2830] = [
+    pub const ALL: [Key; 2858] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7088,6 +7144,34 @@ impl Key {
         Key::BotsTeamPausedSend,
         Key::BotsTeamPausedShort,
         Key::BotsTeamChangeFailed,
+        Key::BotsLinkedOn,
+        Key::BotsLinkedConnected,
+        Key::BotsLinkedLastUpdated,
+        Key::BotsLinkedNotReachable,
+        Key::BotsLinkedNeedsUpdate,
+        Key::BotsLinkedNothingYet,
+        Key::BotsLinkedRefresh,
+        Key::BotsLinkedRefreshNamed,
+        Key::BotsLinkedWithheld,
+        Key::BotsLinkedWithheldOne,
+        Key::BotsLinkedCopyBanner,
+        Key::BotsLinkedCopyBannerNoTime,
+        Key::BotsLinkedComposerHeld,
+        Key::BotsLinkedNotSaved,
+        Key::BotsLinkedSending,
+        Key::BotsLinkedNotConfirmed,
+        Key::BotsLinkedNotConfirmedFinal,
+        Key::BotsLinkedChangeOn,
+        Key::BotsLinkedRoutinesOn,
+        Key::BotsLinkedPageNotHere,
+        Key::BotsLinkedTooLarge,
+        Key::BotsLinkedAttachments,
+        Key::BotsLinkedAttachmentsOne,
+        Key::BotsLinkedUnsupported,
+        Key::BotsLinkedRunsOn,
+        Key::BotsLinkedAnotherComputer,
+        Key::BotsLinkedDisclosure,
+        Key::BotsLinkedUnlinkDisclosure,
     ];
 }
 
@@ -21326,4 +21410,32 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::BotsTeamPausedSend, en: "All Bots are paused. Resume them to send this.", es: "Todos los bots están en pausa. Reanúdalos para enviar esto.", pt_br: "Todos os bots estão pausados. Retome-os para enviar isto.", de: "Alle Bots sind pausiert. Setze sie fort, um das zu senden.", fr: "Tous les bots sont en pause. Reprenez-les pour envoyer ceci.", ar: "كل البوتات متوقفة مؤقتًا. استأنفها لإرسال هذا.", zh_hans: "所有机器人已暂停。恢复后才能发送。", ja: "すべてのボットが一時停止中です。送信するには再開してください。" },
     Row { key: Key::BotsTeamPausedShort, en: "All Bots are paused.", es: "Todos los bots están en pausa.", pt_br: "Todos os bots estão pausados.", de: "Alle Bots sind pausiert.", fr: "Tous les bots sont en pause.", ar: "كل البوتات متوقفة مؤقتًا.", zh_hans: "所有机器人已暂停。", ja: "すべてのボットが一時停止中です。" },
     Row { key: Key::BotsTeamChangeFailed, en: "Couldn't change this just now. Try again.", es: "No se pudo cambiar esto ahora. Inténtalo de nuevo.", pt_br: "Não foi possível alterar isto agora. Tente novamente.", de: "Das ließ sich gerade nicht ändern. Versuch es noch einmal.", fr: "Impossible de modifier cela pour l’instant. Réessayez.", ar: "تعذّر تغيير هذا الآن. حاول مجددًا.", zh_hans: "暂时无法更改。请重试。", ja: "今は変更できませんでした。もう一度お試しください。" },
+    Row { key: Key::BotsLinkedOn, en: "On {}", es: "En {}", pt_br: "Em {}", de: "Auf {}", fr: "Sur {}", ar: "على {}", zh_hans: "在 {} 上", ja: "{} 上" },
+    Row { key: Key::BotsLinkedConnected, en: "Connected", es: "Conectado", pt_br: "Conectado", de: "Verbunden", fr: "Connecté", ar: "متصل", zh_hans: "已连接", ja: "接続済み" },
+    Row { key: Key::BotsLinkedLastUpdated, en: "Last updated {}", es: "Última actualización: {}", pt_br: "Última atualização: {}", de: "Zuletzt aktualisiert: {}", fr: "Dernière mise à jour : {}", ar: "آخر تحديث: {}", zh_hans: "上次更新：{}", ja: "最終更新：{}" },
+    Row { key: Key::BotsLinkedNotReachable, en: "Not reachable", es: "No accesible", pt_br: "Inacessível", de: "Nicht erreichbar", fr: "Injoignable", ar: "تعذّر الوصول", zh_hans: "无法连接", ja: "接続できません" },
+    Row { key: Key::BotsLinkedNeedsUpdate, en: "Needs an update", es: "Necesita una actualización", pt_br: "Precisa de uma atualização", de: "Benötigt ein Update", fr: "Mise à jour requise", ar: "يحتاج إلى تحديث", zh_hans: "需要更新", ja: "アップデートが必要です" },
+    Row { key: Key::BotsLinkedNothingYet, en: "Nothing received yet", es: "Aún no se ha recibido nada", pt_br: "Nada recebido ainda", de: "Noch nichts empfangen", fr: "Rien reçu pour l’instant", ar: "لم يُستلم شيء بعد", zh_hans: "尚未收到任何内容", ja: "まだ何も受信していません" },
+    Row { key: Key::BotsLinkedRefresh, en: "Refresh this copy", es: "Actualizar esta copia", pt_br: "Atualizar esta cópia", de: "Diese Kopie aktualisieren", fr: "Actualiser cette copie", ar: "تحديث هذه النسخة", zh_hans: "刷新此副本", ja: "このコピーを更新" },
+    Row { key: Key::BotsLinkedRefreshNamed, en: "Refresh the copy from {}", es: "Actualizar la copia de {}", pt_br: "Atualizar a cópia de {}", de: "Kopie von {} aktualisieren", fr: "Actualiser la copie de {}", ar: "تحديث النسخة من {}", zh_hans: "刷新来自 {} 的副本", ja: "{} からのコピーを更新" },
+    Row { key: Key::BotsLinkedWithheld, en: "{} Bots on {} are in a workspace kept on that computer only. Their history is not available here.", es: "{} bots de {} están en un espacio de trabajo que se guarda solo en ese equipo. Su historial no está disponible aquí.", pt_br: "{} bots em {} estão em um espaço de trabalho mantido apenas nesse computador. O histórico deles não está disponível aqui.", de: "{} Bots auf {} liegen in einem Arbeitsbereich, der nur auf diesem Computer bleibt. Ihr Verlauf ist hier nicht verfügbar.", fr: "{} bots sur {} se trouvent dans un espace de travail conservé uniquement sur cet ordinateur. Leur historique n’est pas disponible ici.", ar: "{} من البوتات على {} في مساحة عمل محفوظة على ذلك الكمبيوتر فقط. سجلّها غير متاح هنا.", zh_hans: "{} 个机器人位于 {} 上仅保存在该电脑的工作区中。此处无法查看其历史记录。", ja: "{} 個のボットは {} だけに保存されるワークスペースにあります。その履歴はここでは利用できません。" },
+    Row { key: Key::BotsLinkedWithheldOne, en: "1 Bot on {} is in a workspace kept on that computer only. Its history is not available here.", es: "1 bot de {} está en un espacio de trabajo que se guarda solo en ese equipo. Su historial no está disponible aquí.", pt_br: "1 bot em {} está em um espaço de trabalho mantido apenas nesse computador. O histórico dele não está disponível aqui.", de: "1 Bot auf {} liegt in einem Arbeitsbereich, der nur auf diesem Computer bleibt. Sein Verlauf ist hier nicht verfügbar.", fr: "1 bot sur {} se trouve dans un espace de travail conservé uniquement sur cet ordinateur. Son historique n’est pas disponible ici.", ar: "بوت واحد على {} في مساحة عمل محفوظة على ذلك الكمبيوتر فقط. سجلّه غير متاح هنا.", zh_hans: "1 个机器人位于 {} 上仅保存在该电脑的工作区中。此处无法查看其历史记录。", ja: "1 個のボットは {} だけに保存されるワークスペースにあります。その履歴はここでは利用できません。" },
+    Row { key: Key::BotsLinkedCopyBanner, en: "This is a saved copy from {}, last updated {}. You can read it. To change anything, {} must be on and reachable.", es: "Esta es una copia guardada de {} (última actualización: {}). Puedes leerla. Para cambiar algo, {} debe estar encendido y accesible.", pt_br: "Esta é uma cópia salva de {} (última atualização: {}). Você pode lê-la. Para alterar algo, {} precisa estar ligado e acessível.", de: "Dies ist eine gespeicherte Kopie von {} (zuletzt aktualisiert: {}). Du kannst sie lesen. Um etwas zu ändern, muss {} eingeschaltet und erreichbar sein.", fr: "Ceci est une copie enregistrée de {} (dernière mise à jour : {}). Vous pouvez la lire. Pour modifier quoi que ce soit, {} doit être allumé et joignable.", ar: "هذه نسخة محفوظة من {} (آخر تحديث: {}). يمكنك قراءتها. لتغيير أي شيء، يجب أن يكون {} قيد التشغيل ويمكن الوصول إليه.", zh_hans: "这是来自 {} 的已保存副本（上次更新：{}）。你可以阅读。要进行任何更改，{} 必须开机且可连接。", ja: "これは {} から保存されたコピーです（最終更新：{}）。読むことはできます。変更するには、{} の電源が入っていて接続できる必要があります。" },
+    Row { key: Key::BotsLinkedCopyBannerNoTime, en: "This is a saved copy from {}. You can read it. To change anything, {} must be on and reachable.", es: "Esta es una copia guardada de {}. Puedes leerla. Para cambiar algo, {} debe estar encendido y accesible.", pt_br: "Esta é uma cópia salva de {}. Você pode lê-la. Para alterar algo, {} precisa estar ligado e acessível.", de: "Dies ist eine gespeicherte Kopie von {}. Du kannst sie lesen. Um etwas zu ändern, muss {} eingeschaltet und erreichbar sein.", fr: "Ceci est une copie enregistrée de {}. Vous pouvez la lire. Pour modifier quoi que ce soit, {} doit être allumé et joignable.", ar: "هذه نسخة محفوظة من {}. يمكنك قراءتها. لتغيير أي شيء، يجب أن يكون {} قيد التشغيل ويمكن الوصول إليه.", zh_hans: "这是来自 {} 的已保存副本。你可以阅读。要进行任何更改，{} 必须开机且可连接。", ja: "これは {} から保存されたコピーです。読むことはできます。変更するには、{} の電源が入っていて接続できる必要があります。" },
+    Row { key: Key::BotsLinkedComposerHeld, en: "{} is not reachable. Your draft is kept here.", es: "{} no está accesible. Tu borrador se guarda aquí.", pt_br: "{} não está acessível. Seu rascunho fica guardado aqui.", de: "{} ist nicht erreichbar. Dein Entwurf bleibt hier erhalten.", fr: "{} est injoignable. Votre brouillon est conservé ici.", ar: "تعذّر الوصول إلى {}. مسودتك محفوظة هنا.", zh_hans: "无法连接 {}。你的草稿保留在这里。", ja: "{} に接続できません。下書きはここに保存されています。" },
+    Row { key: Key::BotsLinkedNotSaved, en: "Not saved. {} is not reachable.", es: "No guardado. {} no está accesible.", pt_br: "Não salvo. {} não está acessível.", de: "Nicht gespeichert. {} ist nicht erreichbar.", fr: "Non enregistré. {} est injoignable.", ar: "لم يُحفظ. تعذّر الوصول إلى {}.", zh_hans: "未保存。无法连接 {}。", ja: "保存されていません。{} に接続できません。" },
+    Row { key: Key::BotsLinkedSending, en: "Sending…", es: "Enviando…", pt_br: "Enviando…", de: "Wird gesendet…", fr: "Envoi…", ar: "جارٍ الإرسال…", zh_hans: "正在发送…", ja: "送信中…" },
+    Row { key: Key::BotsLinkedNotConfirmed, en: "Not confirmed. Koru will check when {} is reachable.", es: "Sin confirmar. Koru lo comprobará cuando {} esté accesible.", pt_br: "Não confirmado. O Koru vai verificar quando {} estiver acessível.", de: "Nicht bestätigt. Koru prüft es, sobald {} erreichbar ist.", fr: "Non confirmé. Koru vérifiera quand {} sera joignable.", ar: "غير مؤكَّد. سيتحقق Koru عندما يمكن الوصول إلى {}.", zh_hans: "未确认。{} 可连接时 Koru 会检查。", ja: "未確認です。{} に接続できるようになったら Koru が確認します。" },
+    Row { key: Key::BotsLinkedNotConfirmedFinal, en: "Not confirmed. Check the conversation.", es: "Sin confirmar. Revisa la conversación.", pt_br: "Não confirmado. Confira a conversa.", de: "Nicht bestätigt. Sieh in der Unterhaltung nach.", fr: "Non confirmé. Vérifiez la conversation.", ar: "غير مؤكَّد. تحقّق من المحادثة.", zh_hans: "未确认。请查看对话。", ja: "未確認です。会話を確認してください。" },
+    Row { key: Key::BotsLinkedChangeOn, en: "Change this on {}.", es: "Cambia esto en {}.", pt_br: "Altere isto em {}.", de: "Ändere das auf {}.", fr: "Modifiez ceci sur {}.", ar: "غيّر هذا على {}.", zh_hans: "请在 {} 上更改。", ja: "これは {} で変更してください。" },
+    Row { key: Key::BotsLinkedRoutinesOn, en: "Routines are shown on {}.", es: "Las rutinas se muestran en {}.", pt_br: "As rotinas são mostradas em {}.", de: "Routinen werden auf {} angezeigt.", fr: "Les routines sont affichées sur {}.", ar: "تُعرض المهام الدورية على {}.", zh_hans: "例行任务显示在 {} 上。", ja: "ルーティンは {} で表示されます。" },
+    Row { key: Key::BotsLinkedPageNotHere, en: "This page is not on this computer.", es: "Esta página no está en este equipo.", pt_br: "Esta página não está neste computador.", de: "Diese Seite ist nicht auf diesem Computer.", fr: "Cette page n’est pas sur cet ordinateur.", ar: "هذه الصفحة ليست على هذا الكمبيوتر.", zh_hans: "此页面不在这台电脑上。", ja: "このページはこのコンピューターにありません。" },
+    Row { key: Key::BotsLinkedTooLarge, en: "This message is too large to copy. Open it on {}.", es: "Este mensaje es demasiado grande para copiarlo. Ábrelo en {}.", pt_br: "Esta mensagem é grande demais para copiar. Abra-a em {}.", de: "Diese Nachricht ist zu groß zum Kopieren. Öffne sie auf {}.", fr: "Ce message est trop volumineux pour être copié. Ouvrez-le sur {}.", ar: "هذه الرسالة أكبر من أن تُنسخ. افتحها على {}.", zh_hans: "此消息太大，无法复制。请在 {} 上打开。", ja: "このメッセージは大きすぎてコピーできません。{} で開いてください。" },
+    Row { key: Key::BotsLinkedAttachments, en: "{} attachments are on {}.", es: "{} archivos adjuntos están en {}.", pt_br: "{} anexos estão em {}.", de: "{} Anhänge liegen auf {}.", fr: "{} pièces jointes se trouvent sur {}.", ar: "{} من المرفقات على {}.", zh_hans: "{} 个附件在 {} 上。", ja: "{} 件の添付ファイルは {} にあります。" },
+    Row { key: Key::BotsLinkedAttachmentsOne, en: "1 attachment is on {}.", es: "1 archivo adjunto está en {}.", pt_br: "1 anexo está em {}.", de: "1 Anhang liegt auf {}.", fr: "1 pièce jointe se trouve sur {}.", ar: "مرفق واحد على {}.", zh_hans: "1 个附件在 {} 上。", ja: "1 件の添付ファイルは {} にあります。" },
+    Row { key: Key::BotsLinkedUnsupported, en: "Koru on {} needs an update to show its Bots here.", es: "Koru en {} necesita una actualización para mostrar sus bots aquí.", pt_br: "O Koru em {} precisa de uma atualização para mostrar os bots dele aqui.", de: "Koru auf {} benötigt ein Update, um seine Bots hier anzuzeigen.", fr: "Koru sur {} a besoin d’une mise à jour pour afficher ses bots ici.", ar: "يحتاج Koru على {} إلى تحديث لعرض بوتاته هنا.", zh_hans: "{} 上的 Koru 需要更新才能在此显示其机器人。", ja: "{} の Koru は、ボットをここに表示するためにアップデートが必要です。" },
+    Row { key: Key::BotsLinkedRunsOn, en: "Runs on {}", es: "Se ejecuta en {}", pt_br: "É executado em {}", de: "Läuft auf {}", fr: "S’exécute sur {}", ar: "يعمل على {}", zh_hans: "在 {} 上运行", ja: "{} で実行" },
+    Row { key: Key::BotsLinkedAnotherComputer, en: "another computer", es: "otro equipo", pt_br: "outro computador", de: "ein anderer Computer", fr: "un autre ordinateur", ar: "كمبيوتر آخر", zh_hans: "另一台电脑", ja: "別のコンピューター" },
+    Row { key: Key::BotsLinkedDisclosure, en: "Bot chats and results are copied to your linked desktops.", es: "Los chats y resultados de los bots se copian a tus equipos vinculados.", pt_br: "As conversas e os resultados dos bots são copiados para seus computadores vinculados.", de: "Bot-Chats und -Ergebnisse werden auf deine verknüpften Desktops kopiert.", fr: "Les discussions et les résultats des bots sont copiés sur vos ordinateurs associés.", ar: "تُنسخ محادثات البوتات ونتائجها إلى أجهزة الكمبيوتر المرتبطة لديك.", zh_hans: "机器人的聊天和结果会复制到你已关联的电脑。", ja: "ボットのチャットと結果は、リンクしたデスクトップにコピーされます。" },
+    Row { key: Key::BotsLinkedUnlinkDisclosure, en: "Unlinking removes the copy the next time that computer is on.", es: "Al desvincular, la copia se elimina la próxima vez que ese equipo esté encendido.", pt_br: "Desvincular remove a cópia na próxima vez que esse computador estiver ligado.", de: "Beim Trennen wird die Kopie entfernt, sobald dieser Computer das nächste Mal eingeschaltet ist.", fr: "La dissociation supprime la copie la prochaine fois que cet ordinateur est allumé.", ar: "إلغاء الربط يزيل النسخة في المرة التالية التي يكون فيها ذلك الكمبيوتر قيد التشغيل.", zh_hans: "取消关联后，该电脑下次开机时会移除副本。", ja: "リンクを解除すると、そのコンピューターが次に起動したときにコピーが削除されます。" },
 ];

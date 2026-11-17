@@ -105,6 +105,16 @@ impl Fixture {
                 result: creations,
             })
             .expect("the roster's end is open");
+        // And its third (M8): the person's other computers, none — what a
+        // Koru that keeps no copy answers.
+        self.answers
+            .send(Answer::Linked {
+                seq: 0,
+                listing: Some(seq),
+                workspace: self.home,
+                result: Ok(Vec::new()),
+            })
+            .expect("the roster's end is open");
         let changed = self.roster.maintain();
         let _ = frame_of(&self.roster);
         changed
@@ -2288,4 +2298,594 @@ fn m8_ui_team_pause_a_hidden_roster_reads_nothing() {
     assert!(frame_of(&f.roster).node(TEAM_CONTROL).is_some());
     assert!(published(&f.roster).contains(&"Resume all Bots".to_owned()));
     assert_eq!(f.roster.keyboard_stops().first(), Some(&TEAM_CONTROL));
+}
+
+// ------------------------------- the person's other computers (M8)
+
+use crate::bots::linked::tests::computer;
+use crate::bots::linked::{Computer, Names};
+use koru_ai_core::bots::{DeviceId, LinkedOwnerState};
+
+impl Fixture {
+    /// Answer the listing's third answer — the person's other computers and
+    /// their Bots here — as the link's thread does. `true` when what the
+    /// roster draws changed.
+    fn linked(&mut self, computers: Vec<Computer>) -> bool {
+        self.answers
+            .send(Answer::Linked {
+                seq: 0,
+                listing: Some(self.roster.seq),
+                workspace: self.home,
+                result: Ok(computers),
+            })
+            .expect("the roster's end is open");
+        let changed = self.roster.maintain();
+        let _ = frame_of(&self.roster);
+        changed
+    }
+
+    /// A Bot `device` runs, whose home is the roster's workspace.
+    fn remote(&self, device: DeviceId, name: &str) -> Bot {
+        let mut bot = self.bot(name);
+        bot.owner_device = device;
+        bot
+    }
+
+    /// The read of the other computers' states the roster's clock just
+    /// sent: its sequence. Anything else in the queue is passed over.
+    fn linked_asked(&self) -> Option<u64> {
+        std::iter::from_fn(|| self.commands.try_recv().ok()).find_map(|command| match command {
+            Command::Linked { seq, workspace } => {
+                assert_eq!(workspace, self.home, "about the window's workspace");
+                Some(seq)
+            }
+            _ => None,
+        })
+    }
+
+    /// Every label the roster publishes, flattened, in order.
+    fn published(&self) -> Vec<String> {
+        fn walk(node: &koru_workspace_host::accessibility::SemanticNode, out: &mut Vec<String>) {
+            out.push(node.label.clone().unwrap_or_default());
+            for child in &node.children {
+                walk(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        for node in &crate::panes::explore::accessibility::roster_tree(&self.roster) {
+            walk(node, &mut out);
+        }
+        out
+    }
+}
+
+/// **With no linked Bots the roster is exactly today's roster** — the pin
+/// of the closed switch on this side. A Koru that keeps no copy answers the
+/// linked read with no computer (as it does while the gateway's
+/// `LINKED_BOT_CONTROL_AVAILABLE` is `false`); the roster then draws, lays
+/// out, publishes and walks precisely what it did before that answer
+/// existed, sends nothing more, and keeps no clock. The same when that read
+/// is refused or lost.
+#[test]
+fn m8_ui_linked_roster_no_linked_bots_is_todays_roster() {
+    let mut f = fixture();
+    let (scout, otter) = (f.bot("Scout"), f.bot("Otter"));
+    f.roster.set_shown(true);
+    assert!(f.roster.maintain());
+    let seq = f.asked();
+    // The listing as it was answered before M8: the Bots, then the
+    // unfinished creations. Nothing about other computers yet.
+    f.answers
+        .send(Answer::Listed {
+            seq,
+            workspace: f.home,
+            result: Ok(vec![scout.clone(), otter.clone()]),
+        })
+        .unwrap();
+    f.answers
+        .send(Answer::Creations {
+            seq,
+            workspace: f.home,
+            result: Ok(Listing::all(Vec::new())),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    while f.commands.try_recv().is_ok() {}
+
+    let picture = |roster: &BotsRoster| {
+        let frame = frame_of(roster);
+        let rects: Vec<_> = [
+            LIST,
+            ARCHIVED_TOGGLE,
+            row_key(scout.id),
+            row_key(otter.id),
+            runs_here_key(scout.id),
+        ]
+        .into_iter()
+        .map(|key| frame.node(key).map(|node| node.rect))
+        .collect();
+        (
+            crate::panes::explore::accessibility::roster_tree(roster),
+            roster.keyboard_stops(),
+            rects,
+            format!("{:?}", roster.notice()),
+        )
+    };
+    let before = picture(&f.roster);
+    let asked_before = f.roster.work().commands;
+
+    for answer in [
+        Ok(Vec::new()),
+        Err(Failure::lost()),
+        Err(Failure::Refused("forbidden".into())),
+    ] {
+        f.answers
+            .send(Answer::Linked {
+                seq: 0,
+                listing: Some(seq),
+                workspace: f.home,
+                result: answer,
+            })
+            .unwrap();
+        assert!(!f.roster.maintain(), "nothing to draw again");
+        assert!(f.roster.linked().is_empty());
+        assert_eq!(picture(&f.roster), before, "today's roster, to the pixel");
+        assert_eq!(f.roster.work().commands, asked_before, "nothing more asked");
+        assert!(
+            f.commands.try_recv().is_err(),
+            "and no read of other computers is sent"
+        );
+    }
+    // No clock of its own: only what the roster already owed (its activity
+    // read) keeps the window awake, and once that answers, nothing does.
+    assert!(!f.roster.linked().awaiting());
+    assert_eq!(f.roster.linked_deadline(), None, "never a reason to wake");
+    assert!(!f.roster.linked.due_for_test(), "no clock to come due");
+    // No group, no heading, no sentence of another computer's anywhere.
+    let frame = frame_of(&f.roster);
+    assert!(
+        format!("{:?}", f.published())
+            .to_lowercase()
+            .find("on another computer")
+            .is_none()
+    );
+    assert_eq!(f.roster.rows().count(), 2);
+    assert!(f.roster.bots().iter().all(|bot| bot.owner.is_none()));
+    assert!(frame.node(runs_here_key(otter.id)).is_some());
+}
+
+/// **The roster groups Bots by computer** (contract 6.3): this computer's
+/// first, as always, then one group per other computer — *On {computer}*
+/// and how current its copy is — with that computer's Bots under it and the
+/// count of those it does not copy. A remote row opens its Bot's tab like
+/// any row and names the computer that runs it.
+#[test]
+fn m8_ui_linked_roster_groups_bots_by_computer() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    let (desk, laptop) = (DeviceId::new(), DeviceId::new());
+    assert!(
+        !f.roster
+            .set_computer_names(Names::new([(desk, "Desk".to_owned())])),
+        "no group yet: nothing to draw again"
+    );
+    let (otter, wren, finch) = (
+        f.remote(desk, "Otter"),
+        f.remote(desk, "Wren"),
+        f.remote(laptop, "Finch"),
+    );
+    let mut far = computer(
+        laptop,
+        LinkedOwnerState::Stale,
+        Some(1_000),
+        vec![finch.clone()],
+    );
+    far.withheld = 3;
+    assert!(f.linked(vec![
+        computer(
+            desk,
+            LinkedOwnerState::Current,
+            Some(5),
+            vec![otter.clone(), wren.clone()],
+        ),
+        far,
+    ]));
+    assert_eq!(f.roster.linked().computers().count(), 2);
+
+    // What each heading says.
+    let groups: Vec<String> = f
+        .roster
+        .linked()
+        .computers()
+        .map(|computer| f.roster.linked_group_name(computer))
+        .collect();
+    assert_eq!(groups[0], "On Desk, Connected");
+    assert!(
+        groups[1].starts_with("On another computer, Last updated "),
+        "a computer the window cannot name: {}",
+        groups[1]
+    );
+
+    // Where everything stands: this computer's Bot, then each group's
+    // heading over its own Bots, then the Archived filter.
+    let frame = frame_of(&f.roster);
+    let y = |key: Key| {
+        frame
+            .node(key)
+            .unwrap_or_else(|| panic!("{key:?} is drawn"))
+            .rect
+            .y
+    };
+    let order = [
+        row_key(scout.id),
+        linked_key(desk, LINKED_HEADING_PART),
+        row_key(otter.id),
+        row_key(wren.id),
+        linked_key(laptop, LINKED_HEADING_PART),
+        linked_key(laptop, LINKED_WITHHELD_PART),
+        row_key(finch.id),
+        ARCHIVED_TOGGLE,
+    ];
+    for pair in order.windows(2) {
+        assert!(y(pair[0]) < y(pair[1]), "{:?} above {:?}", pair[0], pair[1]);
+    }
+    assert!(frame.node(linked_key(desk, LINKED_STATE_PART)).is_some());
+    assert!(
+        frame.node(linked_key(desk, LINKED_WITHHELD_PART)).is_none(),
+        "Desk copies all its Bots"
+    );
+    assert!(
+        frame.node(linked_key(desk, LINKED_UPDATE_PART)).is_none(),
+        "and needs no update"
+    );
+    assert!(
+        frame.node(linked_key(desk, LINKED_REFRESH_PART)).is_none(),
+        "no refresh the host did not offer"
+    );
+    // *Runs on this computer* is this computer's Bots' mark only.
+    assert!(frame.node(runs_here_key(scout.id)).is_some());
+    assert!(frame.node(runs_here_key(otter.id)).is_none());
+
+    // As an assistive technology hears it.
+    let published = f.published();
+    for words in [
+        "Scout",
+        "On Desk, Connected",
+        "Otter",
+        "Wren",
+        "Finch",
+        "3 Bots on another computer are in a workspace kept on that computer only. Their \
+         history is not available here.",
+    ] {
+        assert!(
+            published.iter().any(|label| label == words),
+            "{words}: {published:?}"
+        );
+    }
+
+    // A name the window learns later is the heading's at once.
+    assert!(f.roster.set_computer_names(Names::new([
+        (desk, "Desk".to_owned()),
+        (laptop, "Laptop".to_owned()),
+    ])));
+    let _ = frame_of(&f.roster);
+    assert!(
+        f.published()
+            .iter()
+            .any(|label| { label.starts_with("On Laptop, Last updated ") })
+    );
+
+    // A press on a remote row asks for its tab, as any row's does.
+    let rect = frame_of(&f.roster)
+        .node(row_key(otter.id))
+        .expect("Otter's row")
+        .rect;
+    assert!(
+        f.roster
+            .mouse_down(area(), top(), rect.x + rect.w * 0.5, rect.y + rect.h * 0.5)
+    );
+    let opened = f.roster.take_wants_open().expect("its tab is asked for");
+    assert_eq!(opened.id, otter.id);
+    assert_eq!(opened.owner, Some(desk), "the tab is a saved copy's");
+    assert_eq!(f.roster.selected(), Some(otter.id));
+    assert_eq!(
+        f.roster.bot_for_chat(otter.main_chat).map(|bot| bot.id),
+        Some(otter.id),
+        "and a link to its conversation finds its Bot"
+    );
+
+    // This computer's own rows are what they were.
+    assert_eq!(f.ids(), [scout.id]);
+    assert!(f.roster.bots().iter().all(|bot| bot.owner.is_none()));
+
+    // *New bot* on a linked desktop is today's *New bot* (contract 6.4):
+    // the same one request to the window, which creates on this computer.
+    // No group offers a create of its own, and none is asked for another
+    // computer.
+    assert!(!f.roster.take_wants_create());
+    assert!(f.roster.ask_create());
+    assert!(f.roster.take_wants_create());
+    assert!(!f.roster.take_wants_create(), "asked once");
+    assert!(
+        !f.published()
+            .iter()
+            .any(|label| label == t(Lang::En, Words::BotsCreate)),
+        "no second create under another computer's heading"
+    );
+}
+
+/// **A computer's Bots it does not copy are said under its heading, with
+/// or without Bots of its own here** (contract 6.3, D22), and so is a Koru
+/// that needs an update or from which nothing came yet. A computer with
+/// nothing to say in this workspace has no group at all.
+#[test]
+fn m8_ui_withheld_bots_and_what_cannot_be_shown_stand_under_the_heading() {
+    let mut f = fixture();
+    f.shown_with(Vec::new());
+    assert!(frame_of(&f.roster).node(EMPTY).is_some(), "no Bot anywhere");
+    let (kept, old, fresh, quiet) = (
+        DeviceId::new(),
+        DeviceId::new(),
+        DeviceId::new(),
+        DeviceId::new(),
+    );
+    f.roster.set_computer_names(Names::new([
+        (kept, "Desk".to_owned()),
+        (old, "Attic".to_owned()),
+        (fresh, "Den".to_owned()),
+        (quiet, "Shed".to_owned()),
+    ]));
+    let mut withholding = computer(kept, LinkedOwnerState::Current, None, Vec::new());
+    withholding.withheld = 1;
+    assert!(f.linked(vec![
+        withholding,
+        computer(old, LinkedOwnerState::Unsupported, Some(4), Vec::new()),
+        computer(fresh, LinkedOwnerState::Never, None, Vec::new()),
+        // Connected, and all its Bots live in other workspaces.
+        computer(quiet, LinkedOwnerState::Current, None, Vec::new()),
+    ]));
+    let frame = frame_of(&f.roster);
+    assert!(
+        frame.node(EMPTY).is_none(),
+        "*No bots yet* is not said over another computer's groups"
+    );
+    assert!(frame.node(linked_key(kept, LINKED_WITHHELD_PART)).is_some());
+    assert!(frame.node(linked_key(old, LINKED_UPDATE_PART)).is_some());
+    assert!(frame.node(linked_key(fresh, LINKED_HEADING_PART)).is_some());
+    assert!(
+        frame.node(linked_key(quiet, LINKED_HEADING_PART)).is_none(),
+        "nothing to say here: no group"
+    );
+    let published = f.published();
+    for words in [
+        "On Desk, Connected",
+        "1 Bot on Desk is in a workspace kept on that computer only. Its history is not \
+         available here.",
+        "On Attic, Needs an update",
+        "Koru on Attic needs an update to show its Bots here.",
+        "On Den, Nothing received yet",
+    ] {
+        assert!(
+            published.iter().any(|label| label == words),
+            "{words}: {published:?}"
+        );
+    }
+    assert!(!published.iter().any(|label| label.contains("Shed")));
+    // No name of a withheld Bot exists to say: only the count.
+    assert_eq!(f.roster.rows().count(), 0);
+}
+
+/// ***Paused with the team* on a remote row is that computer's own pause**,
+/// as it last sent it — never this computer's, and never the other way
+/// round. A Bot paused on its own says *Paused*.
+#[test]
+fn m8_ui_linked_roster_a_remote_row_says_its_own_computers_team_pause() {
+    use koru_ai_core::bots::{TeamPauseStage, TeamPauseView};
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    let desk = DeviceId::new();
+    let otter = f.remote(desk, "Otter");
+    let mut napping = f.remote(desk, "Wren");
+    napping.paused = true;
+    let mut paused = computer(
+        desk,
+        LinkedOwnerState::Current,
+        None,
+        vec![otter.clone(), napping.clone()],
+    );
+    paused.team = Some(TeamPauseView {
+        owner_device: desk,
+        paused: true,
+        revision: 2,
+        stage: TeamPauseStage::Acknowledged,
+        pending_since_ms: None,
+    });
+    assert!(f.linked(vec![paused]));
+    let name = |id| {
+        let row = f.roster.row(id).expect("listed").clone();
+        f.roster.accessible_name(&row)
+    };
+    assert_eq!(name(otter.id), "Otter, paused with the team");
+    assert_eq!(name(napping.id), "Wren, paused");
+    assert_eq!(
+        name(scout.id),
+        "Scout",
+        "this computer's team is not paused"
+    );
+    assert!(!f.roster.team().holds_bots());
+}
+
+/// **The keyboard walks another computer's rows as it walks this
+/// computer's** (contract 9.3: tab order and focus return): Down from the
+/// last local Bot reaches the first remote one, Enter opens it, and
+/// *Refresh this copy* is a stop of its own only while the host offers it
+/// and its computer is connected. When what the keyboard was on leaves —
+/// the refresh a computer out of reach no longer offers, a Bot a copy no
+/// longer lists — the keyboard stays in the roster, on its first control.
+#[test]
+fn m8_ui_linked_keyboard_walks_remote_rows_and_stays_in_the_roster() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout.clone()]);
+    let desk = DeviceId::new();
+    let (otter, wren) = (f.remote(desk, "Otter"), f.remote(desk, "Wren"));
+    let group = |state| computer(desk, state, Some(1), vec![otter.clone(), wren.clone()]);
+    assert!(f.linked(vec![group(LinkedOwnerState::Current)]));
+    assert_eq!(
+        f.roster.keyboard_stops(),
+        [
+            row_key(scout.id),
+            row_key(otter.id),
+            row_key(wren.id),
+            ARCHIVED_TOGGLE,
+        ],
+        "in the order they are drawn"
+    );
+
+    assert!(f.roster.focus_first());
+    assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(row_key(otter.id)));
+    assert!(f.roster.key(Press::Open));
+    let opened = f.roster.take_wants_open().expect("Enter opens it");
+    assert_eq!((opened.id, opened.owner), (otter.id, Some(desk)));
+    assert!(f.roster.key(Press::Down));
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(ARCHIVED_TOGGLE));
+    assert!(f.roster.key(Press::Up));
+    assert_eq!(f.roster.focus(), Some(row_key(wren.id)));
+
+    // The host offers a refresh: a stop of its own, before the group's Bots.
+    let refresh = linked_key(desk, LINKED_REFRESH_PART);
+    assert!(f.roster.offer_linked_refresh(true));
+    let _ = frame_of(&f.roster);
+    assert_eq!(
+        f.roster.keyboard_stops(),
+        [
+            row_key(scout.id),
+            refresh,
+            row_key(otter.id),
+            row_key(wren.id),
+            ARCHIVED_TOGGLE,
+        ]
+    );
+    assert!(f.roster.key(Press::Up));
+    assert!(f.roster.key(Press::Up));
+    assert_eq!(f.roster.focus(), Some(refresh));
+    assert!(f.roster.key(Press::Open));
+    assert_eq!(f.roster.take_linked_refresh(), Some(desk));
+    assert_eq!(f.roster.take_linked_refresh(), None, "asked once");
+    assert_eq!(f.roster.focus(), Some(refresh), "the keyboard stays on it");
+
+    // Out of reach: the refresh is drawn and cannot be pressed, and the
+    // keyboard is no longer on it.
+    assert!(f.linked(vec![group(LinkedOwnerState::Stale)]));
+    let frame = frame_of(&f.roster);
+    assert!(frame.node(refresh).is_some(), "still said");
+    assert!(!f.roster.keyboard_stops().contains(&refresh));
+    assert_eq!(
+        f.roster.focus(),
+        Some(row_key(scout.id)),
+        "back on the roster's first control, not lost"
+    );
+    assert!(!f.roster.press_linked(refresh));
+    assert_eq!(f.roster.take_linked_refresh(), None);
+
+    // The copy no longer lists the Bot the keyboard was on.
+    assert!(f.roster.key(Press::Down));
+    assert_eq!(f.roster.focus(), Some(row_key(otter.id)));
+    assert!(f.roster.ask_open(otter.id));
+    let _ = f.roster.take_wants_open();
+    assert!(f.linked(Vec::new()));
+    assert_eq!(f.roster.focus(), Some(row_key(scout.id)));
+    assert_eq!(
+        f.roster.selected(),
+        None,
+        "a Bot that left lets go of the card"
+    );
+    assert!(f.roster.has_keyboard());
+    assert!(f.roster.key(Press::Escape));
+    assert!(!f.roster.has_keyboard());
+}
+
+/// **The other computers' states are read again while one is listed and
+/// the roster is shown** — a computer that goes out of reach stops saying
+/// *Connected* by itself — and never otherwise: not with no computer
+/// listed, not while hidden.
+#[test]
+fn m8_ui_linked_roster_reads_states_again_only_while_shown_and_listed() {
+    let mut f = fixture();
+    let scout = f.bot("Scout");
+    f.shown_with(vec![scout]);
+    while f.commands.try_recv().is_ok() {}
+    assert!(!f.roster.linked.due_for_test(), "no computer: no clock");
+
+    let desk = DeviceId::new();
+    let otter = f.remote(desk, "Otter");
+    let group = |state, last| computer(desk, state, last, vec![otter.clone()]);
+    assert!(f.linked(vec![group(LinkedOwnerState::Current, Some(1))]));
+    while f.commands.try_recv().is_ok() {}
+    assert!(!f.roster.maintain(), "not before its time");
+    assert_eq!(f.linked_asked(), None);
+    assert!(
+        f.roster.linked_deadline().is_some(),
+        "one wake at its clock"
+    );
+    assert!(
+        !f.roster.linked().awaiting(),
+        "and no waking until then for its sake"
+    );
+
+    assert!(f.roster.linked.due_for_test());
+    assert!(f.roster.maintain());
+    let seq = f.linked_asked().expect("read again");
+    assert!(!f.roster.maintain(), "one read at a time");
+    assert_eq!(f.linked_asked(), None);
+    f.answers
+        .send(Answer::Linked {
+            seq,
+            listing: None,
+            workspace: f.home,
+            result: Ok(vec![group(LinkedOwnerState::Stale, Some(1))]),
+        })
+        .unwrap();
+    assert!(f.roster.maintain());
+    let said = f
+        .roster
+        .linked()
+        .computers()
+        .map(|computer| f.roster.linked_state_words(computer))
+        .next()
+        .expect("still listed");
+    assert!(said.starts_with("Last updated "), "{said}");
+
+    // An answer for another workspace is not this roster's.
+    assert!(f.roster.linked.due_for_test());
+    assert!(f.roster.maintain());
+    let seq = f.linked_asked().expect("read again");
+    f.answers
+        .send(Answer::Linked {
+            seq,
+            listing: None,
+            workspace: WorkspaceId::new(),
+            result: Ok(Vec::new()),
+        })
+        .unwrap();
+    assert!(!f.roster.maintain());
+    assert_eq!(f.roster.linked().computers().count(), 1);
+
+    // Hidden: no clock, no read; what is listed stays for the next showing.
+    f.roster.set_shown(false);
+    assert!(!f.roster.linked.due_for_test());
+    assert!(!f.roster.maintain());
+    assert_eq!(f.linked_asked(), None);
+    assert!(!f.roster.awaiting());
+    assert_eq!(f.roster.linked_deadline(), None, "no wake while hidden");
+    assert_eq!(f.roster.linked().computers().count(), 1);
+
+    // Another workspace: its groups are not this one's.
+    f.roster.set_workspace(Some(WorkspaceId::new()));
+    assert!(f.roster.linked().is_empty());
 }

@@ -38,6 +38,20 @@
 //! abandoned one's answer names what it left: its role page, with *Open role
 //! page*, and its folder.
 //!
+//! ## The person's other computers (M8, P8.3)
+//!
+//! Under the Bots this computer runs, **one group per other computer whose
+//! Bots this one keeps a copy of** (`bots::linked`): *On {computer}*, how
+//! current the copy is (*Connected*, *Last updated {time}*, *Not
+//! reachable*, *Needs an update*, *Nothing received yet*), how many Bots
+//! that computer does not copy, and its Bots whose home is the window's
+//! workspace, each opening its tab as any Bot does. The first read rides
+//! every listing as its third answer; while a computer is listed the states
+//! are read again every few seconds, only while shown. **A Koru that keeps
+//! no copy answers no computer, and the roster then draws exactly what it
+//! drew before.** A remote Bot's row never claims anything about its work:
+//! no read answers whether a copied conversation is running.
+//!
 //! ## How it is built
 //!
 //! An element tree (`docs/features/koruui/ELEMENTS-GUIDE.md`): one layout makes
@@ -243,6 +257,22 @@ pub(crate) fn row_key(bot: BotId) -> Key {
     Key::model(bot.as_uuid().as_u128(), ROW_PART)
 }
 
+/// **Another computer's group** (M8, P8.3): its heading's name and state,
+/// the sentence saying its Koru needs an update, the one saying how many
+/// Bots it does not copy, and *Refresh this copy* — each under the
+/// computer's own id.
+pub(crate) const LINKED_GROUP_PART: &str = "bots-linked";
+pub(crate) const LINKED_HEADING_PART: &str = "bots-linked-heading";
+pub(crate) const LINKED_STATE_PART: &str = "bots-linked-state";
+pub(crate) const LINKED_UPDATE_PART: &str = "bots-linked-update";
+pub(crate) const LINKED_WITHHELD_PART: &str = "bots-linked-withheld";
+pub(crate) const LINKED_REFRESH_PART: &str = "bots-linked-refresh";
+
+/// One of a computer's group keys.
+pub(crate) fn linked_key(device: koru_ai_core::bots::DeviceId, part: &'static str) -> Key {
+    Key::model(device.as_uuid().as_u128(), part)
+}
+
 /// A row's *Runs on this computer* mark (QUESTIONS O155), under the Bot's
 /// own id.
 pub(crate) const RUNS_HERE_PART: &str = "bot-runs-here";
@@ -308,11 +338,18 @@ pub(crate) struct RosterBot {
     /// picked, else the default one, as the Bot itself says
     /// (`Bot::avatar`). An index into `koru_draw::face::ROWS`.
     pub avatar: u8,
+    /// **The other computer that runs the Bot** (M8, P8.3), on a row of
+    /// that computer's group: its tab is a saved copy's. `None` on every
+    /// row of this computer's own Bots.
+    pub owner: Option<koru_ai_core::bots::DeviceId>,
 }
 
 impl From<Bot> for RosterBot {
     fn from(bot: Bot) -> Self {
         Self {
+            // A listing of this computer's Bots: `bots::linked` says
+            // otherwise for the rows it makes.
+            owner: None,
             avatar: bot.avatar(),
             id: bot.id,
             name: bot.config.name,
@@ -500,6 +537,14 @@ pub(crate) struct BotsRoster {
     team: super::team_pause::TeamPause,
     /// *Pause all Bots* was pressed: the window asks first. Taken once.
     wants_team_pause: bool,
+    // ------------------------------- the person's other computers (M8)
+    /// **The other computers whose Bots this one keeps a copy of**, with
+    /// their Bots in this workspace (`bots::linked`). Empty for a Koru that
+    /// keeps no copy, which then draws no group.
+    linked: super::linked::Linked,
+    /// The sequence the linked read that rides the listing on its way was
+    /// given.
+    linked_listing: u64,
 }
 
 impl BotsRoster {
@@ -638,6 +683,8 @@ impl BotsRoster {
         self.list_next = None;
         self.list_backoff = LIST_FIRST;
         self.vouching.reset();
+        // Another workspace's remote Bots are not this one's either.
+        self.linked.clear();
         true
     }
 
@@ -675,6 +722,7 @@ impl BotsRoster {
             // Shown again, an unvouched window has the whole while again.
             self.vouching.reset();
             self.team.hidden();
+            self.linked.hidden();
         }
         true
     }
@@ -706,7 +754,230 @@ impl BotsRoster {
         let answered = self.poll();
         let activity = self.ask_activity();
         let team = self.ask_team();
-        asked || answered || activity || archived || team
+        let linked = self.ask_linked();
+        asked || answered || activity || archived || team || linked
+    }
+
+    // ------------------------------- the person's other computers (M8)
+
+    /// The other computers whose Bots this one keeps a copy of.
+    pub(crate) fn linked(&self) -> &super::linked::Linked {
+        &self.linked
+    }
+
+    /// **The names the window knows its linked devices by**, for the
+    /// groups' headings. `true` when a heading's words may have moved.
+    pub(crate) fn set_computer_names(&mut self, names: super::linked::Names) -> bool {
+        self.linked.set_names(names) && !self.linked.is_empty()
+    }
+
+    /// The host can ask a computer to send its Bots again, or cannot: only
+    /// then is *Refresh this copy* drawn.
+    // No product path reaches this yet: no command of the Bot contract
+    // asks a computer for a reset (M8.LINKED-UI notes, "Not wired").
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn offer_linked_refresh(&mut self, offered: bool) -> bool {
+        self.linked.offer_refresh(offered)
+    }
+
+    /// The computer whose *Refresh this copy* was pressed. Taken once.
+    // No product path reaches this yet: no command of the Bot contract
+    // asks a computer for a reset (M8.LINKED-UI notes, "Not wired").
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn take_linked_refresh(&mut self) -> Option<koru_ai_core::bots::DeviceId> {
+        self.linked.take_refresh()
+    }
+
+    /// **When the other computers' states are read again**: the one wake
+    /// the window owes a shown roster that lists one, every few seconds.
+    /// `None` for a hidden roster and for one that lists no other computer,
+    /// which is then never a reason to wake.
+    pub(crate) fn linked_deadline(&self) -> Option<std::time::Instant> {
+        self.linked.deadline().filter(|_| self.shown)
+    }
+
+    /// **Read the other computers' states again**, when their clock came
+    /// due: only while one is listed. The first read of a showing rides the
+    /// listing ([`Self::refresh`]).
+    fn ask_linked(&mut self) -> bool {
+        let now = std::time::Instant::now();
+        if !self.linked.read_due(now) {
+            return false;
+        }
+        let (Some(workspace), Some(link)) = (self.workspace, &self.link) else {
+            return false;
+        };
+        let seq = self.linked.reading();
+        // A full queue leaves the read owed: asked again on the clock.
+        if !link.send(Command::Linked { seq, workspace }) {
+            self.linked.unsent(now);
+        }
+        true
+    }
+
+    /// Every Bot a row stands for: this computer's, then each other
+    /// computer's, in the order the roster draws them.
+    fn rows(&self) -> impl Iterator<Item = &RosterBot> + '_ {
+        self.bots.iter().chain(self.linked.bots())
+    }
+
+    /// The Bot a row stands for, by its id: one of this computer's or one
+    /// another computer runs.
+    pub(crate) fn row(&self, bot: BotId) -> Option<&RosterBot> {
+        self.rows().find(|row| row.id == bot)
+    }
+
+    /// **Whether `bot`'s row says *Paused with the team***: this computer's
+    /// team pause for its own Bots, and the other computer's, as last
+    /// received, for a Bot it runs.
+    fn held_with_team(&self, bot: &RosterBot) -> bool {
+        match bot.owner {
+            None => self.team.holds_bots(),
+            Some(_) => self
+                .linked
+                .computer_of(bot.id)
+                .is_some_and(|computer| computer.team_holds()),
+        }
+    }
+
+    /// The state a computer's heading says, in words.
+    pub(crate) fn linked_state_words(&self, computer: &super::linked::Computer) -> String {
+        computer
+            .heading()
+            .map(|heading| {
+                super::linked::heading_words(self.lang, heading, |at| {
+                    crate::format::absolute_local(self.lang, at)
+                })
+            })
+            .unwrap_or_default()
+    }
+
+    /// A computer's group as an assistive technology names it: *On
+    /// {computer}*, then its state.
+    pub(crate) fn linked_group_name(&self, computer: &super::linked::Computer) -> String {
+        let name = self.linked.name_of(self.lang, computer.device);
+        format!(
+            "{}, {}",
+            super::linked::title(self.lang, &name),
+            self.linked_state_words(computer)
+        )
+    }
+
+    /// The sentence under a heading whose computer's Koru needs an update.
+    pub(crate) fn linked_update_words(&self, computer: &super::linked::Computer) -> Option<String> {
+        (computer.state == koru_ai_core::bots::LinkedOwnerState::Unsupported).then(|| {
+            super::linked::unsupported_words(
+                self.lang,
+                &self.linked.name_of(self.lang, computer.device),
+            )
+        })
+    }
+
+    /// The sentence under a heading for the Bots its computer does not copy.
+    pub(crate) fn linked_withheld_words(
+        &self,
+        computer: &super::linked::Computer,
+    ) -> Option<String> {
+        super::linked::withheld_words(
+            self.lang,
+            computer.withheld,
+            &self.linked.name_of(self.lang, computer.device),
+        )
+    }
+
+    /// **One other computer's group**: its heading — *On {computer}* and
+    /// how current the copy is — *Refresh this copy* when the host offers
+    /// it, what it cannot show and why, then its Bots.
+    fn linked_group(&self, computer: &super::linked::Computer) -> El {
+        let device = computer.device;
+        let name = self.linked.name_of(self.lang, device);
+        let mut heading = row("Bots linked heading")
+            .pad_x(alias::NAV_PAD)
+            .min_h(metrics::NAV_ROW_MIN)
+            .gap(Space::S2)
+            .items_center()
+            .child(
+                text(super::linked::title(self.lang, &name))
+                    .named("Bots linked computer")
+                    .id(linked_key(device, LINKED_HEADING_PART))
+                    .role(roles::META)
+                    .ink(Ink::Secondary)
+                    .fill()
+                    .truncate(),
+            )
+            .child(
+                text(self.linked_state_words(computer))
+                    .named("Bots linked state")
+                    .id(linked_key(device, LINKED_STATE_PART))
+                    .role(roles::META)
+                    .ink(Ink::Hint),
+            );
+        if self.linked.refresh_offered() {
+            let key = linked_key(device, LINKED_REFRESH_PART);
+            let label = koru_i18n::fill(
+                t(self.lang, Words::BotsLinkedRefreshNamed),
+                &[name.as_str()],
+            );
+            heading = heading.child(if self.linked.refresh_enabled(device) {
+                self.text_button("Bots linked refresh", key, Words::BotsLinkedRefresh, label)
+                    .focusable()
+                    .action(Action::Focus)
+            } else {
+                // Not connected: named and announced as a button that
+                // cannot be pressed, and not a keyboard stop.
+                row("Bots linked refresh")
+                    .id(key)
+                    .pad_x(Space::S2)
+                    .min_h(metrics::NAV_ROW_MIN)
+                    .items_center()
+                    .semantics(Role::Button)
+                    .name_text(label)
+                    .disabled(true)
+                    .child(
+                        text(t(self.lang, Words::BotsLinkedRefresh))
+                            .named("Bots action label")
+                            .role(roles::META)
+                            .ink(Ink::Hint),
+                    )
+            });
+        }
+        let mut group = col("Bots linked group")
+            .id(linked_key(device, LINKED_GROUP_PART))
+            .pad_top(Space::S2)
+            .child(heading);
+        if let Some(words) = self.linked_update_words(computer) {
+            group = group.child(Self::sentence(
+                "Bots linked update",
+                linked_key(device, LINKED_UPDATE_PART),
+                &words,
+            ));
+        }
+        if let Some(words) = self.linked_withheld_words(computer) {
+            group = group.child(Self::sentence(
+                "Bots linked withheld",
+                linked_key(device, LINKED_WITHHELD_PART),
+                &words,
+            ));
+        }
+        group.children(computer.bots.iter().map(|bot| self.bot_row(bot)))
+    }
+
+    /// **Do what *Refresh this copy* asks** — the pointer's press, Enter and
+    /// an assistive technology's click alike. `true` when it was one that
+    /// can be pressed.
+    pub(crate) fn press_linked(&mut self, key: Key) -> bool {
+        if key.part != LINKED_REFRESH_PART {
+            return false;
+        }
+        let Some(device) = self
+            .linked
+            .computers()
+            .map(|computer| computer.device)
+            .find(|device| linked_key(*device, LINKED_REFRESH_PART) == key)
+        else {
+            return false;
+        };
+        self.linked.press_refresh(device)
     }
 
     // --------------------------------------------- pause all Bots (M8)
@@ -1246,6 +1517,8 @@ impl BotsRoster {
         self.fresh = true;
         self.in_flight = true;
         self.creations_in_flight = true;
+        // The person's other computers ride the listing, its third answer.
+        self.linked_listing = self.linked.reading();
         let mut work = self.work.get();
         work.commands += 1;
         self.work.set(work);
@@ -1361,6 +1634,39 @@ impl BotsRoster {
                     }
                     self.schedule_creations();
                     changed = true;
+                }
+                // The person's other computers (M8): the listing's third
+                // answer, or the clock's own read.
+                Answer::Linked {
+                    seq,
+                    listing,
+                    workspace,
+                    result,
+                } => {
+                    if Some(workspace) != self.workspace {
+                        continue;
+                    }
+                    let seq = match listing {
+                        Some(listing) if listing == self.seq => self.linked_listing,
+                        Some(_) => continue,
+                        None => seq,
+                    };
+                    // A remote Bot the copies no longer list lets go of the
+                    // card and the pointer, as a local one does.
+                    let remote = |id: Option<BotId>, linked: &super::linked::Linked| {
+                        id.filter(|id| linked.bot(*id).is_some())
+                    };
+                    let selected = remote(self.selected, &self.linked);
+                    let hover = remote(self.hover, &self.linked);
+                    if self.linked.take(seq, result, std::time::Instant::now()) {
+                        if selected.is_some_and(|id| !self.has(id)) {
+                            self.selected = None;
+                        }
+                        if hover.is_some_and(|id| !self.has(id)) {
+                            self.hover = None;
+                        }
+                        changed = true;
+                    }
                 }
                 _ => {}
             }
@@ -1479,7 +1785,7 @@ impl BotsRoster {
     }
 
     fn has(&self, id: BotId) -> bool {
-        self.bots.iter().any(|bot| bot.id == id)
+        self.row(id).is_some()
     }
 
     /// Whether an answer is owed — the one reason the window keeps a wake
@@ -1494,7 +1800,8 @@ impl BotsRoster {
                 || self.list_next.is_some()
                 || !self.unarchiving.is_empty()
                 || !self.creations_acting.is_empty()
-                || self.team.awaiting())
+                || self.team.awaiting()
+                || self.linked.awaiting())
     }
 
     /// The Bot a row, a key or an accessibility action asked for, taken
@@ -1502,11 +1809,7 @@ impl BotsRoster {
     /// archived row opens too: its conversations stay readable.
     pub(crate) fn take_wants_open(&mut self) -> Option<RosterBot> {
         let bot = self.wants_open.take()?;
-        self.bots
-            .iter()
-            .find(|row| row.id == bot)
-            .cloned()
-            .or_else(|| self.archived_row(bot))
+        self.row(bot).cloned().or_else(|| self.archived_row(bot))
     }
 
     /// Ask for an archived Bot's tab — its row's press.
@@ -1523,7 +1826,7 @@ impl BotsRoster {
     /// knows — the one association the window has before the engine labels
     /// a chat with its Bot. `None` is *not known*, never *not a Bot's*.
     pub(crate) fn bot_for_chat(&self, chat: koru_ai_core::ChatId) -> Option<&RosterBot> {
-        self.bots.iter().find(|bot| bot.main_chat == chat)
+        self.rows().find(|bot| bot.main_chat == chat)
     }
 
     /// Ask for `bot`: it takes the card and is recorded for the host.
@@ -1565,6 +1868,14 @@ impl BotsRoster {
                     .into_iter()
                     .map(|entry| activity_key(entry.chat_id)),
             );
+        }
+        // Each other computer's group (M8): its *Refresh this copy* while
+        // it can be pressed, then its Bots.
+        for computer in self.linked.computers() {
+            if self.linked.refresh_enabled(computer.device) {
+                stops.push(linked_key(computer.device, LINKED_REFRESH_PART));
+            }
+            stops.extend(computer.bots.iter().map(|bot| row_key(bot.id)));
         }
         if self
             .abandoned
@@ -1673,13 +1984,17 @@ impl BotsRoster {
         }
         if key.part == ROW_PART
             && let koru_draw::el::Object::Model(id) = key.object
-            && let Some(bot) = self
-                .bots
-                .iter()
-                .map(|bot| bot.id)
-                .find(|bot| bot.as_uuid().as_u128() == id)
         {
-            return self.ask_open(bot);
+            let bot = self
+                .rows()
+                .map(|bot| bot.id)
+                .find(|bot| bot.as_uuid().as_u128() == id);
+            if let Some(bot) = bot {
+                return self.ask_open(bot);
+            }
+        }
+        if key.part == LINKED_REFRESH_PART {
+            return self.press_linked(key);
         }
         // A running or Needs-you sub-row opens its conversation, as a
         // press of it does.
@@ -1709,8 +2024,13 @@ impl BotsRoster {
     /// A press in the roster's band. Always the roster's: a press on its
     /// background must not fall through to the view beside the column.
     pub(crate) fn mouse_down(&mut self, area: Rect, top: f32, x: f32, y: f32) -> bool {
-        if self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y)) == Some(TEAM_CONTROL) {
+        let hit = self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y));
+        if hit == Some(TEAM_CONTROL) {
             self.press_team();
+            return true;
+        }
+        if let Some(key) = hit.filter(|key| key.part == LINKED_REFRESH_PART) {
+            self.press_linked(key);
             return true;
         }
         if let Some(key) = self.unfinished_at(area, top, x, y) {
@@ -1810,12 +2130,11 @@ impl BotsRoster {
     }
 
     fn bot_at(&self, area: Rect, top: f32, x: f32, y: f32) -> Option<BotId> {
-        if self.bots.is_empty() {
+        if self.bots.is_empty() && self.linked.is_empty() {
             return None;
         }
         let key = self.with_input_frame(area, top, |_, frame| frame.hit_at(x, y))?;
-        self.bots
-            .iter()
+        self.rows()
             .map(|bot| bot.id)
             .find(|bot| row_key(*bot) == key)
     }
@@ -1846,7 +2165,7 @@ impl BotsRoster {
             .any(|entry| entry.bot_id == bot.id && entry.state == BotActivityState::Waiting);
         if bot.paused {
             koru_i18n::fill(t(self.lang, Words::BotsRowPaused), &[bot.name.as_str()])
-        } else if self.team.holds_bots() {
+        } else if self.held_with_team(bot) {
             // Held by the team pause alone (M8): its own pause is named
             // first, above.
             koru_i18n::fill(
@@ -1915,7 +2234,7 @@ impl BotsRoster {
                     .role(roles::META)
                     .ink(Ink::Hint),
             );
-        } else if self.team.holds_bots() {
+        } else if self.held_with_team(bot) {
             primary = primary.child(
                 text(t(self.lang, Words::BotsPausedWithTeam))
                     .named("Bot paused with the team")
@@ -1923,14 +2242,17 @@ impl BotsRoster {
                     .ink(Ink::Hint),
             );
         }
-        // Where it runs, as a mark with its own words (O155): every Bot
-        // runs on the computer that owns it, which is this one.
-        primary = primary.child(
-            icon(icons::DESKTOP, IconSize::S)
-                .alt(Words::BotsRunsOnThisComputer)
-                .id(runs_here_key(bot.id))
-                .ink(Ink::Hint),
-        );
+        // Where it runs, as a mark with its own words (O155): a Bot of
+        // this computer runs here. One another computer runs stands under
+        // that computer's heading, which says where (M8).
+        if bot.owner.is_none() {
+            primary = primary.child(
+                icon(icons::DESKTOP, IconSize::S)
+                    .alt(Words::BotsRunsOnThisComputer)
+                    .id(runs_here_key(bot.id))
+                    .ink(Ink::Hint),
+            );
+        }
         // The margins press the row's primary, so the whole band is the row.
         let mut block = col("Bot block").child(
             row("Bot row")
@@ -2016,7 +2338,9 @@ impl BotsRoster {
             root = root.child(Self::sentence("Bots notice", NOTICE, t(self.lang, notice)));
         }
         root = root.children(self.team_section());
-        if self.load == Load::Ready && self.bots.is_empty() {
+        // With no Bot of this computer's and none of another's (M8): a
+        // roster holding only another computer's Bots lists them below.
+        if self.load == Load::Ready && self.bots.is_empty() && self.linked.is_empty() {
             // No active Bot: one short line (O155: the pitch and *New bot*
             // are the main area's, and the heading keeps its `+`), what has
             // not finished, and the Archived filter (S14).
@@ -2045,6 +2369,13 @@ impl BotsRoster {
                 .semantics(Role::List)
                 .name(Words::BotsTitle)
                 .children(self.bots.iter().map(|bot| self.bot_row(bot)))
+                // The person's other computers, each under its own heading
+                // (M8): none for a Koru that keeps no copy.
+                .children(
+                    self.linked
+                        .computers()
+                        .map(|computer| self.linked_group(computer)),
+                )
                 .children(self.unfinished_section())
                 .child(self.archived_section()),
         )

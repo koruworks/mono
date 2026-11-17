@@ -24,6 +24,13 @@
 //! Abandon's answer is labels, with *Open role page* as a button when it
 //! left one.
 //!
+//! **The person's other computers** (M8, P8.3): one list per computer whose
+//! Bots this one keeps a copy of, named *On {computer}, {state}*. Its items
+//! are that computer's Bots, each described *Runs on {computer}* and
+//! offering **Open** as its click; before them, as labels, that its Koru
+//! needs an update and how many Bots it does not copy, and *Refresh the
+//! copy from {computer}* as a button when the roster offers it.
+//!
 //! **Geometry is never re-derived.** Every rect is the roster's own element
 //! frame, the one its paint and its pointer read; a row scrolled out of the
 //! band is published where it would be.
@@ -40,10 +47,11 @@ use crate::bots::BotsRoster;
 use crate::bots::roster::{
     ABANDONED_LINES, ACTIVITY_PART, ARCHIVED_HEADING, ARCHIVED_NOTICE, ARCHIVED_PART,
     ARCHIVED_TOGGLE, CREATE, CREATION_ABANDON_PART, CREATION_PART, CREATION_RETRY_PART, EMPTY,
-    LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, TEAM_CONTROL, TEAM_LINE, UNARCHIVE_PART,
-    UNFINISHED_HEADING, UNFINISHED_MORE, UNFINISHED_NOTICE, activity_key, archived_key,
-    creation_abandon_key, creation_key, creation_retry_key, creation_state_key, row_key,
-    unarchive_key,
+    LINKED_GROUP_PART, LINKED_HEADING_PART, LINKED_REFRESH_PART, LINKED_UPDATE_PART,
+    LINKED_WITHHELD_PART, LIST, MORE_WORK, NOTICE, OPEN_LEFT_PAGE, TEAM_CONTROL, TEAM_LINE,
+    UNARCHIVE_PART, UNFINISHED_HEADING, UNFINISHED_MORE, UNFINISHED_NOTICE, activity_key,
+    archived_key, creation_abandon_key, creation_key, creation_retry_key, creation_state_key,
+    linked_key, row_key, unarchive_key,
 };
 use crate::panes::Outcome;
 
@@ -77,6 +85,11 @@ const CREATION: ControlPart = ControlPart::new(CREATION_PART);
 const CREATION_STATE: ControlPart = ControlPart::new("bot-creation-state");
 const CREATION_RETRY: ControlPart = ControlPart::new(CREATION_RETRY_PART);
 const CREATION_ABANDON: ControlPart = ControlPart::new(CREATION_ABANDON_PART);
+/// Another computer's group (M8), under that computer's own id.
+const LINKED_GROUP: ControlPart = ControlPart::new(LINKED_GROUP_PART);
+const LINKED_UPDATE: ControlPart = ControlPart::new(LINKED_UPDATE_PART);
+const LINKED_WITHHELD: ControlPart = ControlPart::new(LINKED_WITHHELD_PART);
+const LINKED_REFRESH: ControlPart = ControlPart::new(LINKED_REFRESH_PART);
 
 fn bot_occurrence(cx: &Context, bot: koru_ai_core::bots::BotId) -> Occurrence {
     Occurrence::model(cx.window, cx.view, bot.as_uuid(), ControlPart::ROOT)
@@ -231,6 +244,83 @@ pub(super) fn semantics(roster: &BotsRoster, cx: &Context, top: f32) -> Vec<Sema
                 )
                 .with_label(t(cx.lang, Key::BotsTitle))
                 .with_bounds(band)
+                .with_size_of_set(total)
+                .with_children(children),
+            );
+        }
+        // **The person's other computers** (M8): one list per computer,
+        // named by where its Bots run and how current the copy is; what it
+        // cannot show as labels, then its Bots, each opening its tab.
+        for computer in roster.linked().computers() {
+            let device = computer.device;
+            let Some(heading) = rect_of(linked_key(device, LINKED_HEADING_PART)) else {
+                continue;
+            };
+            let name = roster.linked().name_of(cx.lang, device);
+            let runs_on = koru_i18n::fill(t(cx.lang, Key::BotsLinkedRunsOn), &[name.as_str()]);
+            let total = computer.bots.len();
+            let mut children: Vec<SemanticNode> = Vec::new();
+            for (key_part, part, words) in [
+                (
+                    LINKED_UPDATE_PART,
+                    LINKED_UPDATE,
+                    roster.linked_update_words(computer),
+                ),
+                (
+                    LINKED_WITHHELD_PART,
+                    LINKED_WITHHELD,
+                    roster.linked_withheld_words(computer),
+                ),
+            ] {
+                if let (Some(rect), Some(words)) = (rect_of(linked_key(device, key_part)), words) {
+                    children.push(
+                        SemanticNode::new(
+                            Occurrence::model(cx.window, cx.view, device.as_uuid(), part),
+                            Role::Label,
+                        )
+                        .with_label(words)
+                        .with_bounds(rect),
+                    );
+                }
+            }
+            if let Some(rect) = rect_of(linked_key(device, LINKED_REFRESH_PART)) {
+                let node = SemanticNode::new(
+                    Occurrence::model(cx.window, cx.view, device.as_uuid(), LINKED_REFRESH),
+                    Role::Button,
+                )
+                .with_label(koru_i18n::fill(
+                    t(cx.lang, Key::BotsLinkedRefreshNamed),
+                    &[name.as_str()],
+                ))
+                .with_bounds(rect);
+                // Not connected: named, and nothing to press.
+                children.push(if roster.linked().refresh_enabled(device) {
+                    node.with_actions([Action::Click])
+                } else {
+                    node
+                });
+            }
+            children.extend(computer.bots.iter().enumerate().filter_map(|(index, bot)| {
+                let rect = rect_of(row_key(bot.id))?;
+                Some(
+                    SemanticNode::new(bot_occurrence(cx, bot.id), Role::ListItem)
+                        .with_label(roster.accessible_name(bot))
+                        // Where it runs, in words: the heading's computer.
+                        .with_description(runs_on.clone())
+                        .with_bounds(rect)
+                        .with_selected(roster.selected() == Some(bot.id))
+                        .with_position(index)
+                        .with_size_of_set(total)
+                        .with_actions([Action::Focus, Action::Click, Action::ScrollIntoView]),
+                )
+            }));
+            out.push(
+                SemanticNode::new(
+                    Occurrence::model(cx.window, cx.view, device.as_uuid(), LINKED_GROUP),
+                    Role::List,
+                )
+                .with_label(roster.linked_group_name(computer))
+                .with_bounds(heading)
                 .with_size_of_set(total)
                 .with_children(children),
             );
@@ -482,6 +572,7 @@ pub(super) fn focus_occurrence(roster: &BotsRoster, cx: &Context) -> Option<Occu
             ARCHIVED_TOGGLE_PART,
         )),
         _ if key == TEAM_CONTROL => Some(Occurrence::surface(cx.window, cx.view, BOTS, TEAM_PART)),
+        LINKED_REFRESH_PART => model(LINKED_REFRESH),
         crate::bots::roster::ROW_PART => model(ControlPart::ROOT),
         ACTIVITY_PART => model(ACTIVITY),
         CREATION_RETRY_PART => model(CREATION_RETRY),
@@ -545,6 +636,23 @@ pub(super) fn revise(roster: &BotsRoster, rev: &mut Revision) {
     rev.bool(roster.abandoned().is_some())
         .bool(roster.creation_refused().is_some())
         .bool(roster.creations_more());
+    // The person's other computers (M8): each group's name, what it says
+    // it cannot show, whether its refresh can be pressed, and its Bots. One
+    // byte for a Koru that keeps no copy.
+    let linked = roster.linked();
+    rev.u64(linked.computers().count() as u64);
+    for computer in linked.computers() {
+        rev.uuid(computer.device.as_uuid())
+            .str(&roster.linked_group_name(computer))
+            .u64(u64::from(computer.withheld))
+            .bool(linked.refresh_offered())
+            .bool(linked.refresh_enabled(computer.device))
+            .bool(computer.team_holds())
+            .u64(computer.bots.len() as u64);
+        for bot in &computer.bots {
+            rev.uuid(bot.id.as_uuid()).str(&bot.name).bool(bot.paused);
+        }
+    }
 }
 
 /// **Do what a client asked, through the gesture it names.** `None` when the
@@ -590,6 +698,23 @@ pub(super) fn action(
             creation_abandon_key(request)
         });
         return Some(Outcome::Consumed);
+    }
+    // Another computer's *Refresh this copy* (M8): a press, as the
+    // pointer's; nothing while it cannot be pressed.
+    if let ObjectKey::Model(id) = target.object
+        && target.part == LINKED_REFRESH
+    {
+        if action != Action::Click {
+            return None;
+        }
+        let device = roster
+            .linked()
+            .computers()
+            .map(|computer| computer.device)
+            .find(|device| device.as_uuid() == id)?;
+        return roster
+            .press_linked(linked_key(device, LINKED_REFRESH_PART))
+            .then_some(Outcome::Consumed);
     }
     // *Pause all Bots* / *Resume all Bots* (M8): a press, as the pointer's.
     if target.part == TEAM_PART && matches!(target.object, ObjectKey::Surface(_)) {
@@ -641,9 +766,11 @@ pub(super) fn action(
         roster.ask_open_chat(chat);
         return Some(Outcome::Consumed);
     }
+    // A Bot of this computer's, or one another computer runs (M8): its row.
     let bot = roster
         .bots()
         .iter()
+        .chain(roster.linked().bots())
         .map(|bot| bot.id)
         .find(|bot| bot.as_uuid() == id)?;
     match action {

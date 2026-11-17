@@ -874,3 +874,324 @@ fn nothing_the_host_draws_enters_the_transcript_or_a_send() {
     assert_eq!(plain.markdown, "Find three sources");
     assert_eq!(hosted, plain, "the same turn, hosted or not");
 }
+
+// ---------------------------------------------------- a saved copy (M8)
+
+/// A refusal as the service gives it, with one detail when `detail` names
+/// one.
+fn refused(code: &str, detail: Option<(&str, &str)>) -> koru_ai_wire::Failure {
+    koru_ai_wire::Failure {
+        code: code.into(),
+        // English developer text: a saved copy's host never shows it.
+        message: "The engine's own words.".into(),
+        retryable: false,
+        details: detail
+            .into_iter()
+            .map(|(key, value)| (key.to_owned(), serde_json::Value::String(value.to_owned())))
+            .collect(),
+    }
+}
+
+const HELD: &str = "Desk is not reachable. Your draft is kept here.";
+const SENDING: &str = "Sending…";
+const NOT_CONFIRMED: &str = "Not confirmed. Koru will check when Desk is reachable.";
+const CHECK: &str = "Not confirmed. Check the conversation.";
+const CHANGE_THERE: &str = "Change this on Desk.";
+
+/// What a host says of a saved copy: the three ways a send to the other
+/// computer can fail, and a change only that computer makes. `held` is
+/// whether that computer is out of reach now.
+fn copy(held: bool) -> SavedCopy {
+    let outcome = |detail: Option<&str>, draft, words: &str| CopyOutcome {
+        code: "far_away".into(),
+        detail: detail.map(|value| ("delivery".to_owned(), value.to_owned())),
+        draft,
+        words: words.to_owned(),
+    };
+    SavedCopy {
+        held: held.then(|| HELD.to_owned()),
+        sending: SENDING.into(),
+        outcomes: vec![
+            outcome(Some("not_sent"), CopyDraft::Kept, HELD),
+            outcome(Some("not_confirmed"), CopyDraft::Sent, NOT_CONFIRMED),
+            outcome(Some("unknown"), CopyDraft::Sent, CHECK),
+            outcome(None, CopyDraft::Sent, CHECK),
+            CopyOutcome {
+                code: "only_there".into(),
+                detail: None,
+                draft: CopyDraft::Kept,
+                words: CHANGE_THERE.into(),
+            },
+        ],
+        notes: Vec::new(),
+        page_missing: "This page is not on this computer.".into(),
+    }
+}
+
+/// An owned surface on a read conversation, shown from a saved copy.
+fn copied(held: bool) -> (ChatSurface, Receiver<Command>, ChatId) {
+    let chat = ChatId::new();
+    let (mut surface, commands) = owned_surface(chat, WorkspaceId::new());
+    surface.transcript = Some(chat_on(chat, codex()));
+    assert!(surface.set_saved_copy(Some(copy(held))));
+    while commands.try_recv().is_ok() {}
+    (surface, commands, chat)
+}
+
+/// **A saved copy whose computer is out of reach sends nothing and keeps
+/// the draft** (contract 6.3, 5.6): Send does nothing, the words stay in the
+/// composer, the placeholder is the host's sentence, and no turn of any
+/// kind is queued to be sent later. Lifting the hold leaves the draft where
+/// it is, and the next Send sends it.
+#[test]
+fn m8_ui_offline_draft_a_held_copy_sends_nothing_and_keeps_what_was_typed() {
+    let (mut surface, commands, chat) = copied(true);
+    assert!(surface.copy_holds_send());
+    assert_eq!(surface.copy_placeholder(), Some(HELD));
+
+    surface.composer.set_text("Find three sources");
+    assert!(surface.send_composer(), "the key is the composer's");
+    assert_eq!(names(&drained(&commands)), [] as [&str; 0], "nothing left");
+    assert_eq!(surface.composer.text(), "Find three sources", "kept");
+    assert!(surface.pending_user.is_none(), "and not shown as sent");
+    assert!(surface.copy_line().is_none(), "nothing is on its way");
+
+    // Not through any other door either: a Retry, a steer of a reply, the
+    // answers to an agent's questions.
+    surface.perform_response_action(ResponseAction::Retry(MessageId::new()));
+    surface.send_answers(ToolInvocationId::new(), Vec::new());
+    assert!(
+        !surface.answering,
+        "the answers are not shown as on their way"
+    );
+    assert_eq!(names(&drained(&commands)), [] as [&str; 0]);
+    assert_eq!(surface.composer.text(), "Find three sources");
+
+    // Reachable again: the same words, sent by the person's own Send.
+    assert!(surface.set_saved_copy(Some(copy(false))));
+    assert!(!surface.copy_holds_send());
+    assert_eq!(surface.copy_placeholder(), None);
+    assert_eq!(surface.composer.text(), "Find three sources", "still there");
+    assert!(surface.send_composer());
+    let sent = drained(&commands);
+    let Some(Command::Send(request)) = sent.first() else {
+        panic!("the draft went: {:?}", names(&sent));
+    };
+    assert_eq!(request.chat_id, chat);
+    assert_eq!(request.markdown, "Find three sources");
+    assert_eq!(
+        surface.copy_line(),
+        Some(SENDING),
+        "on its way, and says so"
+    );
+}
+
+/// **A send that never left this computer gives the message back**
+/// (`not_sent`): the words are the person's draft again, the line is the
+/// host's sentence and never the engine's, and the host is told what it
+/// came to. Two sends carry two operation ids: a refused one is never
+/// reused for the next try.
+#[test]
+fn m8_ui_offline_draft_a_message_that_was_not_sent_comes_back() {
+    let (mut surface, commands, _chat) = copied(false);
+    surface.composer.set_text("Plan the launch");
+    assert!(surface.send_composer());
+    let first = match drained(&commands).into_iter().next() {
+        Some(Command::Send(request)) => request.operation_id,
+        _ => panic!("the message went"),
+    };
+    assert!(surface.composer.is_blank());
+
+    surface.apply_update(Update::SendFailed(refused(
+        "far_away",
+        Some(("delivery", "not_sent")),
+    )));
+    assert_eq!(surface.composer.text(), "Plan the launch", "it is back");
+    assert!(surface.pending_user.is_none());
+    assert!(!surface.waiting);
+    assert_eq!(surface.status.as_deref(), Some(HELD));
+    assert_eq!(surface.take_copy_outcome(), Some(CopyDraft::Kept));
+    assert_eq!(surface.take_copy_outcome(), None, "taken once");
+
+    assert!(surface.send_composer(), "the person sends it again");
+    let second = match drained(&commands).into_iter().next() {
+        Some(Command::Send(request)) => request.operation_id,
+        _ => panic!("the message went again"),
+    };
+    assert_ne!(first, second, "a new try is a new request");
+}
+
+/// **A message that left and was not confirmed does not come back** (`not_confirmed`,
+/// then `unknown`): nothing is typed again for the person, so a second Send
+/// cannot make a second message; nothing is sent again by the surface; the
+/// line says which of the two it is; and the words stay one Up away in the
+/// composer's history. A refusal that names no delivery is never read as
+/// not sent.
+#[test]
+fn m8_ui_not_confirmed_a_sent_message_stays_sent_and_is_not_sent_again() {
+    for (detail, words) in [
+        (Some(("delivery", "not_confirmed")), NOT_CONFIRMED),
+        (Some(("delivery", "unknown")), CHECK),
+        (None, CHECK),
+        (Some(("delivery", "a word this build does not know")), CHECK),
+    ] {
+        let (mut surface, commands, _chat) = copied(false);
+        surface.composer.set_text("Plan the launch");
+        assert!(surface.send_composer());
+        while commands.try_recv().is_ok() {}
+
+        surface.apply_update(Update::SendFailed(refused("far_away", detail)));
+        assert!(surface.composer.is_blank(), "{detail:?}: not typed again");
+        assert!(surface.pending_user.is_none(), "{detail:?}");
+        assert!(!surface.waiting, "{detail:?}");
+        assert_eq!(surface.status.as_deref(), Some(words), "{detail:?}");
+        assert_eq!(surface.take_copy_outcome(), Some(CopyDraft::Sent));
+        assert_eq!(
+            names(&drained(&commands)),
+            [] as [&str; 0],
+            "{detail:?}: nothing is sent again"
+        );
+        assert!(
+            surface
+                .sent_inputs
+                .iter()
+                .any(|input| input.markdown == "Plan the launch"),
+            "{detail:?}: the words stay in the composer's history"
+        );
+    }
+}
+
+/// **A change only the other computer makes reads as the host's sentence**
+/// wherever the surface says a refusal — a refused send gives the message
+/// back, and a refused control says the same words — and never as the
+/// engine's English text.
+#[test]
+fn m8_ui_executing_only_a_change_made_elsewhere_reads_as_the_hosts_sentence() {
+    let (mut surface, commands, _chat) = copied(false);
+    let failure = refused("only_there", None);
+    assert_eq!(surface.failure_words(&failure), CHANGE_THERE);
+
+    surface.composer.set_text("Rename this");
+    assert!(surface.send_composer());
+    while commands.try_recv().is_ok() {}
+    surface.apply_update(Update::SendFailed(failure));
+    assert_eq!(surface.status.as_deref(), Some(CHANGE_THERE));
+    assert_eq!(surface.composer.text(), "Rename this", "nothing was sent");
+
+    // A refusal the host does not name is the surface's own to read.
+    let other = refused("ai_storage", None);
+    assert!(surface.copy_outcome(&other).is_none());
+    assert_ne!(surface.failure_words(&other), CHANGE_THERE);
+}
+
+/// **What a copied message could not carry is said in its place or under
+/// it**: a text too large to copy is replaced by the host's sentence, and
+/// attachments that stayed on the other computer are named under the
+/// message's own text. A message the host says nothing of is untouched.
+#[test]
+fn m8_ui_copy_banner_a_copied_message_says_what_it_could_not_carry() {
+    let (mut surface, _commands, _chat) = copied(false);
+    let (large, attached, both, plain) = (
+        MessageId::new(),
+        MessageId::new(),
+        MessageId::new(),
+        MessageId::new(),
+    );
+    let mut said = copy(false);
+    said.notes = vec![
+        CopyNote {
+            message: large,
+            instead: Some("This message is too large to copy. Open it on Desk.".into()),
+            under: None,
+        },
+        CopyNote {
+            message: attached,
+            instead: None,
+            under: Some("2 attachments are on Desk.".into()),
+        },
+        CopyNote {
+            message: both,
+            instead: Some("This message is too large to copy. Open it on Desk.".into()),
+            under: Some("1 attachment is on Desk.".into()),
+        },
+    ];
+    surface.messages_dirty = false;
+    assert!(surface.set_saved_copy(Some(said.clone())));
+    assert!(surface.messages_dirty, "the transcript is laid out again");
+    assert!(
+        !surface.set_saved_copy(Some(said)),
+        "the same words: nothing"
+    );
+
+    let state = surface.saved_copy.as_ref().expect("a saved copy");
+    assert_eq!(
+        state.shown_instead(large, "").as_deref(),
+        Some("This message is too large to copy. Open it on Desk.")
+    );
+    assert_eq!(
+        state.shown_instead(attached, "Here they are").as_deref(),
+        Some("Here they are\n\n2 attachments are on Desk.")
+    );
+    assert_eq!(
+        state.shown_instead(attached, "").as_deref(),
+        Some("2 attachments are on Desk."),
+        "a message with attachments and no text"
+    );
+    assert_eq!(
+        state.shown_instead(both, "half a text").as_deref(),
+        Some("This message is too large to copy. Open it on Desk."),
+        "what was not copied is not shown in part"
+    );
+    assert_eq!(state.shown_instead(plain, "Hello"), None);
+
+    // A page link whose page is not on this computer: the host's sentence.
+    assert!(surface.say_page_missing());
+    assert_eq!(
+        surface.status.as_deref(),
+        Some("This page is not on this computer.")
+    );
+}
+
+/// **A surface whose host says nothing of a copy is unchanged**: it holds
+/// nothing, says nothing more, and a refused send gives the message back
+/// with the service's own words, exactly as before the seam.
+#[test]
+fn a_surface_with_no_saved_copy_is_unchanged() {
+    let chat = ChatId::new();
+    let (mut surface, commands) = owned_surface(chat, WorkspaceId::new());
+    surface.transcript = Some(chat_on(chat, codex()));
+    assert!(surface.saved_copy().is_none());
+    assert!(!surface.set_saved_copy(None), "nothing to change");
+    assert!(!surface.copy_holds_send());
+    assert_eq!(surface.copy_placeholder(), None);
+    assert!(!surface.say_page_missing());
+    assert_eq!(surface.take_copy_outcome(), None);
+
+    surface.composer.set_text("Plan the launch");
+    assert!(surface.send_composer());
+    assert_eq!(names(&drained(&commands)), ["send"]);
+    assert_eq!(surface.copy_line(), None, "no line of a copy's");
+    surface.apply_update(Update::SendFailed(refused(
+        "far_away",
+        Some(("delivery", "not_confirmed")),
+    )));
+    assert_eq!(surface.composer.text(), "Plan the launch", "given back");
+    assert_eq!(
+        surface.status.as_deref(),
+        Some("The engine's own words."),
+        "as any refused send reads"
+    );
+
+    // And a copy that is taken away again leaves the surface as it was.
+    assert!(surface.set_saved_copy(Some(copy(true))));
+    assert!(surface.copy_holds_send());
+    assert!(surface.set_saved_copy(None));
+    assert!(!surface.copy_holds_send());
+    assert_eq!(
+        surface.composer.text(),
+        "Plan the launch",
+        "the draft stays"
+    );
+    assert!(surface.send_composer());
+    assert_eq!(names(&drained(&commands)), ["send"]);
+}

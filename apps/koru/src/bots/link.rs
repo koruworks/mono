@@ -154,6 +154,24 @@ pub(crate) enum Command {
         bot: BotId,
         chat: ChatId,
     },
+    /// **The person's other computers and their Bots in `workspace`** (M8,
+    /// P8.3): `ListLinkedOwners`, then `ListLinkedBots` for each, for the
+    /// roster's groups. A Koru that keeps no copy answers none. The roster
+    /// sends it only on its clock, while a linked computer is listed; the
+    /// first read rides a [`Command::List`] as its third answer.
+    Linked {
+        seq: u64,
+        workspace: WorkspaceId,
+    },
+    /// **One computer's copy, for a remote Bot's page** (M8, P8.3):
+    /// `ListLinkedBots` for `owner` and the Bot's home, read for how
+    /// current the copy is and whether it still lists `bot`.
+    LinkedOwner {
+        seq: u64,
+        bot: BotId,
+        owner: koru_ai_core::bots::DeviceId,
+        workspace: WorkspaceId,
+    },
 }
 
 #[derive(Debug)]
@@ -279,6 +297,33 @@ pub(crate) enum Answer {
         bot: BotId,
         chat: ChatId,
         result: Result<Option<BotChildOrigin>, Failure>,
+    },
+    /// **The linked computers and their Bots** (M8, P8.3): a
+    /// [`Command::List`]'s third answer (`listing` is that listing's
+    /// sequence, and `seq` is 0), or what a [`Command::Linked`] answered
+    /// (`listing` is `None`).
+    Linked {
+        seq: u64,
+        listing: Option<u64>,
+        workspace: WorkspaceId,
+        result: Result<Vec<super::linked::Computer>, Failure>,
+    },
+    /// What a [`Command::LinkedOwner`] answered: the copy's state and when
+    /// it was last up to date, or `None` when that computer's copy does not
+    /// list the Bot.
+    LinkedOwner {
+        seq: u64,
+        bot: BotId,
+        result: Result<Option<(koru_ai_core::bots::LinkedOwnerState, Option<i64>)>, Failure>,
+    },
+    /// **How far a refused [`Command::Write`] got on its way to another
+    /// computer** (M8, P8.3): the refusal's `details.delivery`, sent just
+    /// before that write's [`Answer::Wrote`] on the same channel, as
+    /// [`Answer::Reason`] is. A surface that does not care ignores it.
+    Delivery {
+        bot: BotId,
+        request: BotRequestId,
+        delivery: String,
     },
 }
 
@@ -796,6 +841,117 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                 {
                     return;
                 }
+                // **And the person's other computers' Bots** (M8, P8.3):
+                // the same request's third answer. A Koru that keeps no
+                // copy answers none, and the roster then draws no group.
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => super::linked::read(workspace, |command| {
+                        connected
+                            .ai()
+                            .bots(&command)
+                            .map_err(|failure| said(failure.code, failure.retryable))
+                    }),
+                    None => Err(Failure::Unanswered),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "The Bots of the person's other computers could not be listed"
+                    );
+                    // A refusal is an answer: only a lost one drops the
+                    // client, so a listing that answered keeps its
+                    // connection whatever this read came to.
+                    if *failure == Failure::Unanswered {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::Linked {
+                        seq: 0,
+                        listing: Some(seq),
+                        workspace,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::Linked { seq, workspace } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => super::linked::read(workspace, |command| {
+                        connected
+                            .ai()
+                            .bots(&command)
+                            .map_err(|failure| said(failure.code, failure.retryable))
+                    }),
+                    None => Err(Failure::Unanswered),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "The Bots of the person's other computers could not be listed"
+                    );
+                    if *failure == Failure::Unanswered {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::Linked {
+                        seq,
+                        listing: None,
+                        workspace,
+                        result,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Command::LinkedOwner {
+                seq,
+                bot,
+                owner,
+                workspace,
+            } => {
+                if client.is_none() {
+                    client = connect(root.as_deref());
+                }
+                let result = match &client {
+                    Some(connected) => {
+                        super::linked::read_owner(owner, workspace, bot, |command| {
+                            connected
+                                .ai()
+                                .bots(&command)
+                                .map_err(|failure| said(failure.code, failure.retryable))
+                        })
+                    }
+                    None => Err(Failure::Unanswered),
+                };
+                if let Err(failure) = &result {
+                    tracing::info!(
+                        target: "koru::bots",
+                        failure = failure_code(failure),
+                        "The copy of another computer's Bots could not be read"
+                    );
+                    if *failure == Failure::Unanswered {
+                        client = None;
+                    }
+                }
+                if answers
+                    .send(Answer::LinkedOwner { seq, bot, result })
+                    .is_err()
+                {
+                    return;
+                }
             }
             Command::Read { seq, bot } => {
                 if client.is_none() {
@@ -855,13 +1011,28 @@ fn run(root: Option<PathBuf>, commands: Receiver<Command>, answers: SyncSender<A
                     client = connect(root.as_deref());
                 }
                 let mut reason = None;
+                let mut delivery = None;
                 let result = match &client {
                     Some(connected) => wrote(connected.ai().bots(&command).map_err(|failure| {
                         reason = refusal_reason(&failure.details);
+                        delivery = refusal_delivery(&failure.details);
                         said(failure.code, failure.retryable)
                     })),
                     None => Err(Failure::Unanswered),
                 };
+                // How far a command for another computer got (M8), before
+                // the refusal it belongs to.
+                if let (Some(delivery), Err(Failure::Refused(_))) = (delivery, &result)
+                    && answers
+                        .send(Answer::Delivery {
+                            bot,
+                            request,
+                            delivery,
+                        })
+                        .is_err()
+                {
+                    return;
+                }
                 if let (Some(reason), Err(Failure::Refused(_))) = (reason, &result)
                     && answers
                         .send(Answer::Reason {
@@ -1404,6 +1575,19 @@ pub(crate) fn refusal_reason(
         .get("reason")
         .and_then(serde_json::Value::as_str)
         .filter(|reason| !reason.is_empty())
+        .map(str::to_owned)
+}
+
+/// **A refusal's `details.delivery`**, when it carries one: how far a
+/// command for another computer got (`koru_ai_wire::bot_linked_codes`):
+/// `not_sent`, `not_confirmed` or `unknown`.
+pub(crate) fn refusal_delivery(
+    details: &std::collections::BTreeMap<String, serde_json::Value>,
+) -> Option<String> {
+    details
+        .get(super::linked::DELIVERY)
+        .and_then(serde_json::Value::as_str)
+        .filter(|delivery| !delivery.is_empty())
         .map(str::to_owned)
 }
 

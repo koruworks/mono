@@ -57,6 +57,9 @@ pub(crate) const TITLE: Key = Key::surface(SURFACE, "title");
 pub(crate) const BODY: Key = Key::surface(SURFACE, "body");
 pub(crate) const NEW_BOT: Key = Key::surface(SURFACE, "new-bot");
 pub(crate) const EXAMPLES: Key = Key::surface(SURFACE, "examples");
+/// That Bot chats and results are copied to linked desktops (M8, contract
+/// 6.5): drawn only by a build that copies them (`bots::linked::disclosure`).
+pub(crate) const COPIES: Key = Key::surface(SURFACE, "copies");
 
 /// The widest the words are set: the design's measure.
 const CONTENT_W: Metric = Metric::new("BOTS_EMPTY_W", 420.0);
@@ -224,7 +227,19 @@ impl EmptyView {
                     .wrap()
                     .semantics(Role::Group)
                     .name(Words::BotsIntroExamples),
-            );
+            )
+            // The one line that says Bot chats are copied to linked
+            // desktops (M8, D22): absent while this build copies nothing.
+            .children(crate::bots::linked::disclosure(lang).map(|words| {
+                text(words)
+                    .named("Bots empty copies")
+                    .id(COPIES)
+                    .role(roles::META)
+                    .ink(Ink::Hint)
+                    .wrap()
+                    .semantics(Role::Group)
+                    .name(Words::BotsLinkedDisclosure)
+            }));
         col("Bots empty view")
             .id(ROOT)
             .bg(Surface::Ground)

@@ -332,6 +332,18 @@ impl MainView {
     ) -> Tab {
         let mut view = BotView::opened_on(bot, chat, block);
         view.set_home_name(self.workspace_name(bot.home));
+        // Another computer's Bot (M8): the tab opens saying what the
+        // roster's row just said of its copy, and reads it itself from
+        // there on.
+        let linked = self.explore.bots().linked();
+        if let Some(computer) = linked.computer_of(bot.id) {
+            view.know_copy(
+                computer.device,
+                computer.state,
+                computer.last_confirmed_at_ms,
+            );
+            view.set_computer_names(linked.names());
+        }
         Tab::bot(view)
     }
 
@@ -991,6 +1003,10 @@ impl MainView {
             .any(|tab| matches!(tab.view, TabView::Bot(_)))
             .then(|| self.bot_agent_settings());
         let roster = self.explore.bots();
+        // Which device this is, for a tab to tell another computer's Bot
+        // from one of its own (M8).
+        let here = self.this_device;
+        let mut remote = false;
         let mut work_moved = false;
         let mut moved = false;
         let mut created = false;
@@ -1035,6 +1051,11 @@ impl MainView {
                     {
                         view.set_home_name(name.clone());
                     }
+                    // Another computer's Bot (M8): which device this is,
+                    // and the name the window knows that computer by.
+                    view.set_here(here);
+                    moved |= view.set_computer_names(roster.linked().names());
+                    remote |= view.copy().is_some();
                     // A create tab that just became its new Bot's (S8):
                     // the roster lists it.
                     created |= view.take_created();
@@ -1074,6 +1095,11 @@ impl MainView {
         }
         if work_moved {
             self.explore.bots_mut().owe_activity();
+        }
+        // A tab on another computer's Bot names that computer: the Agent's
+        // device list is asked for, once per connection.
+        if remote {
+            self.request_device_names_if_needed();
         }
         if created {
             self.explore.bots_mut().owe_lifecycle_refresh();

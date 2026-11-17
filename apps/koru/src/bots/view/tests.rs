@@ -51,7 +51,9 @@ impl Fixture {
                 | Command::Lifecycle { .. }
                 | Command::TrashedChats { .. }
                 | Command::ChildRequests { .. }
-                | Command::ChildOrigin { .. } => {
+                | Command::ChildOrigin { .. }
+                | Command::Linked { .. }
+                | Command::LinkedOwner { .. } => {
                     panic!("a Bot tab only reads its Bot here")
                 }
             }
