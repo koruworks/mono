@@ -27,6 +27,13 @@ pub use client_receipts::{
     CLIENT_RECEIPT_KEEP_MS, CLIENT_RECEIPT_PRUNE_BATCH, ClientBotRequest, ClientOutcome,
     ClientReceipt, ClientReceiptBegin,
 };
+mod mirror;
+pub use mirror::{
+    MIRROR_COMMAND_KEEP_MS, MIRROR_COMMAND_PRUNE_BATCH, MIRROR_COMMAND_UNCONFIRMED_MS,
+    MirrorApplied, MirrorChange, MirrorCommand, MirrorCommandBegin, MirrorCommandState,
+    MirrorCounts, MirrorDeleted, MirrorOwner, MirrorPage, MirrorPlace, MirrorRefusal,
+    MirrorSubject,
+};
 mod creation;
 pub use creation::BotCreationScan;
 mod decisions;

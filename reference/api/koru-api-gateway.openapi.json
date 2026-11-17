@@ -4054,6 +4054,55 @@
           },
           {
             "additionalProperties": false,
+            "description": "The other computers of this person whose Bots this computer keeps a\ncopy of (M8, P8.3), with how current each copy is and that computer's\nteam pause as last received. Answered `linked_owners`. A computer\nthat keeps no copy answers an empty list.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "list_linked_owners"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "command"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The Bots of one such computer, as last received (M8, P8.3): each is\nthe `Bot` that computer's own `read` answers. With `workspace`, only\nthe Bots whose home is that workspace. Answered `linked_bots`. A\ncomputer this one keeps no copy of answers an empty list in the state\n`never`.",
+            "properties": {
+              "command": {
+                "enum": [
+                  "list_linked_bots"
+                ],
+                "type": "string"
+              },
+              "owner_device": {
+                "type": "string"
+              },
+              "workspace": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/WorkspaceId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              }
+            },
+            "required": [
+              "command",
+              "owner_device"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "properties": {
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -7127,6 +7176,47 @@
             "required": [
               "result",
               "team"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "M8: the answer to `list_linked_owners`.",
+            "properties": {
+              "owners": {
+                "items": {
+                  "$ref": "#/components/schemas/LinkedOwnerView"
+                },
+                "type": "array"
+              },
+              "result": {
+                "enum": [
+                  "linked_owners"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "owners"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "M8: the answer to `list_linked_bots`.",
+            "properties": {
+              "linked": {
+                "$ref": "#/components/schemas/LinkedBotsView"
+              },
+              "result": {
+                "enum": [
+                  "linked_bots"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "linked"
             ],
             "type": "object"
           }
@@ -13145,6 +13235,123 @@
         "required": [
           "run",
           "role"
+        ],
+        "type": "object"
+      },
+      "LinkedBotsView": {
+        "description": "The Bots of one other computer, as this computer last received them\n(M8).",
+        "properties": {
+          "bots": {
+            "items": {
+              "$ref": "#/components/schemas/Bot"
+            },
+            "type": "array"
+          },
+          "last_confirmed_at_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "owner_device": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LinkedOwnerState"
+          }
+        },
+        "required": [
+          "owner_device",
+          "state",
+          "bots"
+        ],
+        "type": "object"
+      },
+      "LinkedOwnerState": {
+        "description": "How current this computer's copy of another computer's Bots is (M8).",
+        "oneOf": [
+          {
+            "description": "Nothing was received from that computer yet.",
+            "enum": [
+              "never"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "A subscription is open and the copy is up to date. Commands can be\nsent.",
+            "enum": [
+              "current"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "No subscription is open: the copy is what was last received, and no\ncommand can be sent.",
+            "enum": [
+              "stale"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "That computer and this one share no protocol version, or it sent a\ncopy format this build does not read.",
+            "enum": [
+              "unsupported"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "That computer is no longer one of this person's linked computers. Its\ncopy is being deleted and is not read.",
+            "enum": [
+              "withdrawing"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "LinkedOwnerView": {
+        "description": "One other computer of this person whose Bots this computer keeps a copy\nof (M8).",
+        "properties": {
+          "display_name": {
+            "description": "That computer's name, when this one knows it.",
+            "nullable": true,
+            "type": "string"
+          },
+          "last_confirmed_at_ms": {
+            "description": "When the copy was last known to be up to date.",
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "owner_device": {
+            "description": "The computer that runs these Bots.",
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/LinkedOwnerState"
+          },
+          "team": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TeamPauseView"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "That computer's team pause as last received; absent until it sent\none."
+          },
+          "withheld_bots": {
+            "description": "How many of that computer's Bots are not copied, because their\nworkspace is kept on that computer only. No name is known here.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "owner_device",
+          "state",
+          "withheld_bots"
         ],
         "type": "object"
       },

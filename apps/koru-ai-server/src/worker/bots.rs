@@ -401,6 +401,11 @@ fn execute_bot_command(
         | BotCommand::PauseTeam { .. }
         | BotCommand::ResumeTeam { .. }
         | BotCommand::ReadTeamPause {}
+        // The two linked reads (M8) are answered before a command reaches
+        // the writer (`client/mirror.rs`): by the copy when a mirror runs,
+        // and otherwise as "no linked Bots". Nothing here answers them.
+        | BotCommand::ListLinkedOwners {}
+        | BotCommand::ListLinkedBots { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,

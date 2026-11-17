@@ -682,5 +682,7 @@ impl Served {
     }
 }
 
+// Lent to the mirror's tests (`client/mirror/tests.rs`), which put a real
+// owner behind a linked desktop's streams.
 #[cfg(test)]
-mod tests;
+pub(in crate::worker::bots::client) mod tests;

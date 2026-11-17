@@ -613,6 +613,22 @@ pub enum BotCommand {
     /// The team pause of this person on this computer (M8). Answered
     /// `team_pause`.
     ReadTeamPause {},
+    /// The other computers of this person whose Bots this computer keeps a
+    /// copy of (M8, P8.3), with how current each copy is and that computer's
+    /// team pause as last received. Answered `linked_owners`. A computer
+    /// that keeps no copy answers an empty list.
+    ListLinkedOwners {},
+    /// The Bots of one such computer, as last received (M8, P8.3): each is
+    /// the `Bot` that computer's own `read` answers. With `workspace`, only
+    /// the Bots whose home is that workspace. Answered `linked_bots`. A
+    /// computer this one keeps no copy of answers an empty list in the state
+    /// `never`.
+    ListLinkedBots {
+        #[cfg_attr(feature = "schema", schemars(with = "String"))]
+        owner_device: DeviceId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        workspace: Option<WorkspaceId>,
+    },
     ReadOperation {
         request_id: BotRequestId,
         bot_id: BotId,
@@ -984,6 +1000,95 @@ pub enum BotResponse {
     TeamPause {
         team: TeamPauseView,
     },
+    /// M8: the answer to `list_linked_owners`.
+    LinkedOwners {
+        owners: Vec<LinkedOwnerView>,
+    },
+    /// M8: the answer to `list_linked_bots`.
+    LinkedBots {
+        linked: LinkedBotsView,
+    },
+}
+
+/// How current this computer's copy of another computer's Bots is (M8).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum LinkedOwnerState {
+    /// Nothing was received from that computer yet.
+    Never,
+    /// A subscription is open and the copy is up to date. Commands can be
+    /// sent.
+    Current,
+    /// No subscription is open: the copy is what was last received, and no
+    /// command can be sent.
+    Stale,
+    /// That computer and this one share no protocol version, or it sent a
+    /// copy format this build does not read.
+    Unsupported,
+    /// That computer is no longer one of this person's linked computers. Its
+    /// copy is being deleted and is not read.
+    Withdrawing,
+}
+
+impl LinkedOwnerState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Never => "never",
+            Self::Current => "current",
+            Self::Stale => "stale",
+            Self::Unsupported => "unsupported",
+            Self::Withdrawing => "withdrawing",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        Some(match value {
+            "never" => Self::Never,
+            "current" => Self::Current,
+            "stale" => Self::Stale,
+            "unsupported" => Self::Unsupported,
+            "withdrawing" => Self::Withdrawing,
+            _ => return None,
+        })
+    }
+}
+
+/// One other computer of this person whose Bots this computer keeps a copy
+/// of (M8).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct LinkedOwnerView {
+    /// The computer that runs these Bots.
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
+    pub owner_device: DeviceId,
+    /// That computer's name, when this one knows it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
+    pub state: LinkedOwnerState,
+    /// When the copy was last known to be up to date.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_confirmed_at_ms: Option<i64>,
+    /// That computer's team pause as last received; absent until it sent
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub team: Option<TeamPauseView>,
+    /// How many of that computer's Bots are not copied, because their
+    /// workspace is kept on that computer only. No name is known here.
+    pub withheld_bots: u32,
+}
+
+/// The Bots of one other computer, as this computer last received them
+/// (M8).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct LinkedBotsView {
+    #[cfg_attr(feature = "schema", schemars(with = "String"))]
+    pub owner_device: DeviceId,
+    pub state: LinkedOwnerState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_confirmed_at_ms: Option<i64>,
+    pub bots: Vec<Bot>,
 }
 
 /// The team pause of one person on one computer (M8). A team that was never

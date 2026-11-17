@@ -35,10 +35,52 @@ use koru_network_edge::TransportSession;
 use crate::bot_ingress::BotIngress;
 use crate::lifecycle::GatewayConfig;
 
-/// Whether a linked device may read and steer this computer's Bots (M8,
-/// P8.3). `false` until the exposure review with a person: the owner server
-/// is built and tested, and is not installed.
+/// Whether Bots cross between this person's linked computers at all (M8,
+/// P8.3). **One switch for both directions**, read in one place,
+/// [`connect_linked_bots`]:
+///
+/// - **serving**: a linked device may read and steer this computer's Bots.
+///   While `false` the owner server is built and tested, and is not
+///   installed: the adapter answers every linked device `bots_unavailable`;
+/// - **following**: this computer keeps a copy of the Bots its linked
+///   computers run and sends them commands. While `false` no mirror is
+///   started, so this computer never dials `koru/bots/1`, never opens a Bot
+///   stream to another device and writes nothing to the copy tables, and
+///   the two linked reads answer "no linked Bots".
+///
+/// `false` until the exposure review with a person (P8.4).
+/// `m8_linked_switch_is_closed_and_nothing_serves_or_dials` pins it.
 pub(crate) const LINKED_BOT_CONTROL_AVAILABLE: bool = false;
+
+/// Open both directions of Bots on linked computers for one AI worker,
+/// **only when [`LINKED_BOT_CONTROL_AVAILABLE`] is `true`**: install the
+/// worker's owner server behind the Bot ingress, and start the worker's
+/// mirror over the bridge link, which is the Bot client's egress as it is
+/// the Store worker's. With the switch `false` this does nothing at all.
+///
+/// Called before the gateway state is built, so the state's AI client
+/// routes by owner when, and only when, a mirror was started.
+pub(crate) fn connect_linked_bots(
+    ai_worker: &koru_ai_server::WorkerHandle,
+    ingress: Option<&BotIngress>,
+    egress: Option<Arc<dyn koru_network_edge::NetworkEgress>>,
+) {
+    if !LINKED_BOT_CONTROL_AVAILABLE {
+        return;
+    }
+    // With no device network there is neither an ingress nor an egress.
+    let Some(ingress) = ingress else {
+        return;
+    };
+    // A worker with no Bot authority has no owner server, and the adapter
+    // keeps answering `bots_unavailable`.
+    if let Some(server) = ai_worker.bot_owner_server() {
+        ingress.set_owner_server(Arc::new(crate::bot_ingress::AiOwnerServer(server)));
+    }
+    if let Some(egress) = egress {
+        let _ = ai_worker.start_bot_mirror(egress, ingress.peers());
+    }
+}
 
 /// The composed runtime, and the two tasks that pump the Agent's network edge.
 pub(crate) struct Composition {
@@ -98,6 +140,11 @@ pub(crate) fn open(
     let artifacts_root = koru_channel::artifacts_root_beside(store_root);
     let legacy_events_root = store_root.join("events");
 
+    // The bridge link is also where this computer would open a Bot stream
+    // to a linked device. Nothing opens one unless the switch is open.
+    let bot_egress = bridge
+        .as_ref()
+        .map(|bridge| Arc::new(bridge.clone()) as Arc<dyn koru_network_edge::NetworkEgress>);
     let (worker_config, bridge_forwarders, bot_ingress) = match bridge {
         Some(bridge) => {
             let (sessions_tx, sessions_rx) = tokio::sync::mpsc::channel(32);
@@ -277,20 +324,10 @@ pub(crate) fn open(
             .map_err(|error| error.to_string())
     }) {
         Ok(ai_worker) => {
-            // The engine behind the Bot ingress (M8): a linked device's
-            // stream is served by this AI worker from here on. A worker
-            // with no Bot authority has none, and the adapter keeps
-            // answering `bots_unavailable`.
-            // Closed until the exposure review with a person (P8.4): while
-            // the constant is `false` no owner server is installed and the
-            // adapter answers every linked device `bots_unavailable`.
-            if !LINKED_BOT_CONTROL_AVAILABLE {
-                // Nothing to install.
-            } else if let (Some(ingress), Some(server)) =
-                (&bot_ingress, ai_worker.bot_owner_server())
-            {
-                ingress.set_owner_server(Arc::new(crate::bot_ingress::AiOwnerServer(server)));
-            }
+            // Bots on linked computers (M8), both directions, behind one
+            // switch. Closed until the exposure review with a person
+            // (P8.4): nothing is installed and nothing is started.
+            connect_linked_bots(&ai_worker, bot_ingress.as_ref(), bot_egress);
             GatewayState::with_ai_events_and_services(
                 segment.to_owned(),
                 worker,

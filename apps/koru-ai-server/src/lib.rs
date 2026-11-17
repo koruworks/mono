@@ -30,6 +30,7 @@ pub use worker::bots::children::{
     ASKABLE_LIMIT, CHILD_ASK_BUDGET, RunAskableBot, RunAskableRequest, RunChildAskItem,
     RunChildAskPending, RunChildAskRequest,
 };
+pub use worker::bots::client::mirror::BotMirror;
 pub use worker::bots::client::owner::{BotClientStream, BotOwnerServer};
 pub use worker::bots::decision_wait::{
     BotDelegateDecisionWait, DecisionWaitDelegate, DecisionWaitPortError, DecisionWaitSubject,

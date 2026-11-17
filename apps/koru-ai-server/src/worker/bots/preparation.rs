@@ -518,7 +518,11 @@ impl WorkerState {
                     // The team pause (M8) names no Bot, page or workspace.
                     | BotCommand::PauseTeam { .. }
                     | BotCommand::ResumeTeam { .. }
-                    | BotCommand::ReadTeamPause {} => {}
+                    | BotCommand::ReadTeamPause {}
+                    // The linked reads (M8) never reach the writer and
+                    // name no Bot, page or workspace of this computer.
+                    | BotCommand::ListLinkedOwners {}
+                    | BotCommand::ListLinkedBots { .. } => {}
                     BotCommand::ListLifecycle { workspace, .. } => {
                         workspaces.insert(*workspace);
                     }
@@ -827,7 +831,9 @@ pub(super) fn bot_targets(
             // The team pause (M8) names no Bot; its owner is proved.
             BotCommand::PauseTeam { .. }
             | BotCommand::ResumeTeam { .. }
-            | BotCommand::ReadTeamPause {} => return Ok(Some(Vec::new())),
+            | BotCommand::ReadTeamPause {}
+            | BotCommand::ListLinkedOwners {}
+            | BotCommand::ListLinkedBots { .. } => return Ok(Some(Vec::new())),
         };
         match super::lifecycle::provable_bot(repository, id, command) {
             Ok(Some(bot)) => {

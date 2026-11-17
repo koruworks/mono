@@ -7,7 +7,9 @@
 //! the computer that runs the Bots: it answers a linked desktop's hello,
 //! writes pages to its stream, runs the commands it may send, each behind a
 //! durable receipt, and forwards a running reply while it watches. The copy
-//! a linked desktop keeps is a separate piece and is not here.
+//! a linked desktop keeps of another computer's Bots, the stream it follows
+//! that computer's feed with and the commands it sends there are [`mirror`].
 
 pub(crate) mod feed;
+pub(crate) mod mirror;
 pub(crate) mod owner;

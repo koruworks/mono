@@ -24,5 +24,12 @@ pub use repository::{
     RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
     TeamPauseChange,
 };
+/// The copy this computer keeps of another computer's Bots (M8).
+pub use repository::{
+    MIRROR_COMMAND_KEEP_MS, MIRROR_COMMAND_PRUNE_BATCH, MIRROR_COMMAND_UNCONFIRMED_MS,
+    MirrorApplied, MirrorChange, MirrorCommand, MirrorCommandBegin, MirrorCommandState,
+    MirrorCounts, MirrorDeleted, MirrorOwner, MirrorPage, MirrorPlace, MirrorRefusal,
+    MirrorSubject,
+};
 
 pub const DATABASE_FILE: &str = "ai.db";

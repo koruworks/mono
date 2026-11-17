@@ -167,6 +167,46 @@ pub mod bot_team_codes {
     pub const ALL: [&str; 2] = [TEAM_PAUSED, TEAM_REVISION_CONFLICT];
 }
 
+/// Refusals of a command or a read that names a Bot another of the person's
+/// computers runs (M8, P8.3), answered by the computer that keeps a copy of
+/// it. A client shows its own localized sentence for a code and never the
+/// message. Additive: the codes of every other Bot command are unchanged,
+/// and the AI wire version is not moved by them.
+pub mod bot_linked_codes {
+    /// This change can only be made on the computer that runs the Bot.
+    /// Never retryable from here.
+    pub const EXECUTING_COMPUTER_ONLY: &str = "executing_computer_only";
+    /// The computer that runs the Bot cannot be reached, or the outcome of
+    /// what was sent is not known yet. `details.delivery` says which:
+    /// `not_sent` (nothing left this computer; keep the draft, try again
+    /// when that computer is reachable), `not_confirmed` (it was sent and
+    /// no answer came; it is sent again by itself when that computer is
+    /// reachable, never by the caller) or `unknown` (that computer cannot
+    /// say whether it took effect, and it is never sent again: look at the
+    /// conversation). Retryable only for `not_sent`.
+    pub const BOT_OWNER_UNREACHABLE: &str = "bot_owner_unreachable";
+    /// That computer and this one share no version of the protocol, or it
+    /// does not offer what was asked. One of the two needs an update.
+    pub const BOT_OWNER_UNSUPPORTED: &str = "bot_owner_unsupported";
+    /// A request id this computer already sent to that computer was used
+    /// again after it was answered. Nothing is sent a second time, and the
+    /// first answer is not kept to be given again; `details.outcome` says
+    /// how it ended (`completed`, `accepted` or `refused`, then with
+    /// `details.failure_code`). A new intent takes a new request id.
+    pub const BOT_REQUEST_ALREADY_ANSWERED: &str = "bot_request_already_answered";
+    /// The `details.delivery` values of [`BOT_OWNER_UNREACHABLE`].
+    pub const DELIVERY_NOT_SENT: &str = "not_sent";
+    pub const DELIVERY_NOT_CONFIRMED: &str = "not_confirmed";
+    pub const DELIVERY_UNKNOWN: &str = "unknown";
+    /// Every code of this module.
+    pub const ALL: [&str; 4] = [
+        EXECUTING_COMPUTER_ONLY,
+        BOT_OWNER_UNREACHABLE,
+        BOT_OWNER_UNSUPPORTED,
+        BOT_REQUEST_ALREADY_ANSWERED,
+    ];
+}
+
 /// Refusals of one Bot asking another, and of reading what it was handed
 /// back (M6). Each is answered with nothing written unless it says otherwise.
 /// A client shows its own localized sentence for a code and never the message.
@@ -1358,6 +1398,34 @@ mod tests {
     /// do not move the wire version. Neither is retryable by itself: a
     /// paused team stays paused until a person resumes it, and a revision
     /// conflict needs a fresh read first.
+    /// M8, P8.3: the codes a computer answers for a Bot another computer
+    /// runs are stable literals, apart from every other code of this crate,
+    /// and do not move the wire version.
+    #[test]
+    fn m8_routing_linked_codes_are_distinct_and_stable() {
+        assert_eq!(crate::AI_WIRE_VERSION, 1);
+        assert_eq!(
+            crate::bot_linked_codes::ALL,
+            [
+                "executing_computer_only",
+                "bot_owner_unreachable",
+                "bot_owner_unsupported",
+                "bot_request_already_answered"
+            ]
+        );
+        assert_eq!(
+            [
+                crate::bot_linked_codes::DELIVERY_NOT_SENT,
+                crate::bot_linked_codes::DELIVERY_NOT_CONFIRMED,
+                crate::bot_linked_codes::DELIVERY_UNKNOWN
+            ],
+            ["not_sent", "not_confirmed", "unknown"]
+        );
+        for code in crate::bot_linked_codes::ALL {
+            assert!(!crate::bot_team_codes::ALL.contains(&code), "{code}");
+        }
+    }
+
     #[test]
     fn m8_team_codes_are_distinct_stable_and_match_the_owners_refusals() {
         use koru_ai_core::bots::BotError;

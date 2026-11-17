@@ -487,6 +487,15 @@ impl AiWorker {
             }),
             _ => None,
         };
+        let bot_mirror_parts =
+            self.config
+                .bot_authority
+                .as_ref()
+                .map(|authority| bots::client::mirror::Parts {
+                    sender: sender.clone(),
+                    shutdown: Arc::clone(&shutdown),
+                    authority: Arc::clone(authority),
+                });
         let thread_shutdown = Arc::clone(&shutdown);
         let status = Arc::new(Mutex::new(WorkerStatus::Starting));
         let thread_status = Arc::clone(&status);
@@ -541,6 +550,8 @@ impl AiWorker {
                     connections: hosted,
                     bot_owner,
                     bot_owner_server: std::sync::OnceLock::new(),
+                    bot_mirror_parts,
+                    bot_mirror: std::sync::OnceLock::new(),
                     shutdown,
                     status,
                     join: Some(join),
@@ -573,6 +584,11 @@ pub struct WorkerHandle {
     /// this worker has a Bot authority and an admission port.
     pub(crate) bot_owner: Option<bots::client::owner::Parts>,
     bot_owner_server: std::sync::OnceLock<bots::client::owner::BotOwnerServer>,
+    /// What the copy of other computers' Bots is built from (M8), when this
+    /// worker has a Bot authority. Nothing is built from it until
+    /// [`WorkerHandle::start_bot_mirror`] is called.
+    pub(crate) bot_mirror_parts: Option<bots::client::mirror::Parts>,
+    bot_mirror: std::sync::OnceLock<bots::client::mirror::BotMirror>,
     connections: Option<connections::Hosted>,
     routine_calls: routine_call::RoutineCallGates,
     native_mutations: Option<Arc<native_recovery::NativeMutationGate>>,
@@ -622,6 +638,47 @@ impl WorkerHandle {
                 })
                 .clone(),
         )
+    }
+
+    /// Start keeping a copy of the Bots other computers of this person run
+    /// (M8), and answer the mirror. `egress` opens a stream to a linked
+    /// device; `peers` says which devices' Bots may be copied. `None` when
+    /// this worker has no Bot authority, or when this is called outside a
+    /// tokio runtime: the mirror's streams are tasks of the runtime it is
+    /// started in. A second call answers the mirror the first one started.
+    ///
+    /// **A worker for which this is never called dials no linked device,
+    /// opens no Bot stream and writes no copy table**, and answers the two
+    /// linked reads "no linked Bots". Whether it is called is the caller's
+    /// switch, in the composition.
+    pub fn start_bot_mirror(
+        &self,
+        egress: Arc<dyn koru_network_edge::NetworkEgress>,
+        peers: koru_store_server::BotPeers,
+    ) -> Option<bots::client::mirror::BotMirror> {
+        let parts = self.bot_mirror_parts.as_ref()?;
+        let runtime = tokio::runtime::Handle::try_current().ok()?;
+        Some(
+            self.bot_mirror
+                .get_or_init(|| {
+                    bots::client::mirror::BotMirror::start(
+                        parts.clone(),
+                        egress,
+                        Arc::new(peers),
+                        bots::client::mirror::Timing::default(),
+                        runtime,
+                    )
+                })
+                .clone(),
+        )
+    }
+
+    /// The linked computers' Bots for the routing port
+    /// (`koru_ai_client::Client::routed`), once
+    /// [`WorkerHandle::start_bot_mirror`] started a mirror; `None` before
+    /// that, and for good when it is never called.
+    pub fn linked_bots(&self) -> Option<Arc<dyn koru_ai_client::LinkedBots>> {
+        self.bot_mirror.get().map(|mirror| mirror.linked())
     }
 
     pub fn status(&self) -> WorkerStatus {
@@ -696,6 +753,13 @@ impl AiServerPort for AiWorkerClient {
         context: RequestContext,
         request: koru_ai_wire::BotCommand,
     ) -> ApiResult<koru_ai_wire::BotResponse> {
+        // A worker keeps no copy of another computer's Bots by itself: the
+        // two linked reads answer "no linked Bots" here. When a mirror runs
+        // the routing port answers them from the copy and they never reach
+        // this.
+        if let Some(answer) = bots::client::mirror::without_copy(&context, &request) {
+            return answer;
+        }
         let (reply, response) = sync_channel(1);
         if matches!(&request, koru_ai_wire::BotCommand::ReadRoutineDetail { .. }) {
             let cancellation = Cancellation::default();

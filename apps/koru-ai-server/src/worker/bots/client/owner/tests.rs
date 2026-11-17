@@ -56,7 +56,7 @@ mod two_clients;
 /// The Bot authority of these tests: the shared fixture's owner and
 /// workspace, Role history that can be captured, and where each workspace
 /// is kept, which a test can change.
-struct Home {
+pub(in crate::worker::bots::client) struct Home {
     inner: Arc<Authority>,
     local_only: Mutex<BTreeSet<WorkspaceId>>,
 }
@@ -140,10 +140,10 @@ impl BotAuthority for Home {
 /// The admission port of these tests: which devices are clients, with which
 /// scopes. A test changes it while a stream is open.
 #[derive(Default)]
-struct Port(Mutex<BTreeMap<DeviceId, BTreeSet<String>>>);
+pub(in crate::worker::bots::client) struct Port(Mutex<BTreeMap<DeviceId, BTreeSet<String>>>);
 
 impl Port {
-    fn name(&self, device: DeviceId, scopes: &[&str]) {
+    pub(in crate::worker::bots::client) fn name(&self, device: DeviceId, scopes: &[&str]) {
         self.0.lock().unwrap().insert(
             device,
             scopes.iter().map(|scope| (*scope).to_owned()).collect(),
@@ -160,13 +160,14 @@ impl ClientAdmission for Port {
     }
 }
 
-const ALL_SCOPES: [&str; 3] = [scope::READ, scope::CONTROL, scope::CONFIGURE];
+pub(in crate::worker::bots::client) const ALL_SCOPES: [&str; 3] =
+    [scope::READ, scope::CONTROL, scope::CONFIGURE];
 
 /// The execution owner: the scripted one of the Bot conversation tests, and
 /// a Bot's own pause taken as it is sent. Anything it was not scripted for
 /// is away.
-struct Delegate {
-    native: Native,
+pub(in crate::worker::bots::client) struct Delegate {
+    pub(in crate::worker::bots::client) native: Native,
 }
 
 impl BotDelegatePort for Delegate {
@@ -196,7 +197,7 @@ impl BotDelegatePort for Delegate {
 /// The local commands with a gate and a script in front of the worker's own
 /// port: a test can hold a command while it is being applied, or have the
 /// next one answered with a failure of its choosing.
-struct Local {
+pub(in crate::worker::bots::client) struct Local {
     port: PortCommands,
     /// Hold the next `apply` until released: `(entered, release)`.
     gate: Mutex<Option<(std::sync::mpsc::SyncSender<()>, Receiver<()>)>>,
@@ -215,7 +216,7 @@ impl Local {
         }
     }
     /// The kinds handed to the local commands so far.
-    fn applied(&self) -> Vec<&'static str> {
+    pub(in crate::worker::bots::client) fn applied(&self) -> Vec<&'static str> {
         self.applied.lock().unwrap().clone()
     }
 }
@@ -240,18 +241,19 @@ impl LocalCommands for Local {
 }
 
 /// One computer that runs a Bot, and the owner server in front of it.
-struct World {
+// Lent to the mirror's tests, which link a second computer to this one.
+pub(in crate::worker::bots::client) struct World {
     runtime: tokio::runtime::Runtime,
     worker: Option<WorkerHandle>,
     returned: Receiver<Repository>,
-    server: BotOwnerServer,
-    local: Arc<Local>,
-    authority: Arc<Home>,
-    port: Arc<Port>,
-    delegate: Arc<Delegate>,
+    pub(in crate::worker::bots::client) server: BotOwnerServer,
+    pub(in crate::worker::bots::client) local: Arc<Local>,
+    pub(in crate::worker::bots::client) authority: Arc<Home>,
+    pub(in crate::worker::bots::client) port: Arc<Port>,
+    pub(in crate::worker::bots::client) delegate: Arc<Delegate>,
     timing: Timing,
-    bot: Bot,
-    owner: BotOwner,
+    pub(in crate::worker::bots::client) bot: Bot,
+    pub(in crate::worker::bots::client) owner: BotOwner,
 }
 
 fn spawn(
@@ -291,7 +293,7 @@ fn spawn(
 }
 
 impl World {
-    fn new() -> Self {
+    pub(in crate::worker::bots::client) fn new() -> Self {
         Self::with(Timing::default(), Native::default())
     }
 
@@ -331,7 +333,7 @@ impl World {
         }
     }
 
-    fn client(&self) -> AiWorkerClient {
+    pub(in crate::worker::bots::client) fn client(&self) -> AiWorkerClient {
         self.worker.as_ref().unwrap().client()
     }
 
@@ -366,7 +368,7 @@ impl World {
     }
 
     /// One piece of work on the worker's writer, with its state.
-    fn on_writer<T: Send + 'static>(
+    pub(in crate::worker::bots::client) fn on_writer<T: Send + 'static>(
         &self,
         work: impl FnOnce(&mut WorkerState) -> T + Send + 'static,
     ) -> T {
@@ -381,7 +383,7 @@ impl World {
     }
 
     /// The Bot as the computer that runs it reads it.
-    fn read_bot(&self) -> Bot {
+    pub(in crate::worker::bots::client) fn read_bot(&self) -> Bot {
         match self
             .client()
             .bots(
@@ -420,7 +422,7 @@ impl World {
 
     /// Wait until no pause or resume of the Bot still waits for its
     /// execution owner, and answer the Bot.
-    fn settled_bot(&self) -> Bot {
+    pub(in crate::worker::bots::client) fn settled_bot(&self) -> Bot {
         until("the Bot's change reached its owner", || {
             self.read_bot().pending_change.is_none()
         });
@@ -428,7 +430,7 @@ impl World {
     }
 
     /// How many turns the execution owner began.
-    fn begun(&self) -> usize {
+    pub(in crate::worker::bots::client) fn begun(&self) -> usize {
         self.delegate.native.state.lock().unwrap().begin
     }
 
@@ -505,7 +507,7 @@ fn never_ending() -> Native {
 /// How many frames one direction of a test stream holds.
 const STREAM_FRAMES: usize = 8;
 
-fn principal(device: DeviceId) -> NetworkPrincipal {
+pub(in crate::worker::bots::client) fn principal(device: DeviceId) -> NetworkPrincipal {
     NetworkPrincipal::Device {
         device: DevicePrincipal {
             device_id: device,
@@ -528,7 +530,7 @@ fn hello(device: DeviceId, role: Role) -> ClientHello {
 }
 
 /// The caller a window of this computer is: what the worker's own tests use.
-fn local_owner() -> koru_ai_api::RequestContext {
+pub(in crate::worker::bots::client) fn local_owner() -> koru_ai_api::RequestContext {
     koru_ai_api::RequestContext {
         principal: koru_ai_api::AiPrincipal {
             label: "owner-window".into(),
@@ -586,7 +588,7 @@ fn pause(bot: &Bot, request: Uuid, expected_revision: u64) -> ClientCommand {
     }
 }
 
-fn until(what: &str, mut done: impl FnMut() -> bool) {
+pub(in crate::worker::bots::client) fn until(what: &str, mut done: impl FnMut() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while !done() {
         assert!(
@@ -730,14 +732,16 @@ fn code(receipt: &Receipt) -> &str {
 
 /// Every receipt the owner holds, oldest first: its kind, its state and
 /// its outcome.
-fn receipts(world: &World) -> Vec<(String, String, Option<String>)> {
+pub(in crate::worker::bots::client) fn receipts(
+    world: &World,
+) -> Vec<(String, String, Option<String>)> {
     world.on_writer(|state| state.repository.client_receipts_for_fixture().unwrap())
 }
 
 /// The feed audit looks at every commit of this database and rolls back
 /// one that changes a copied row without moving its marker. None was: every
 /// write a linked device's commands caused moved its marker.
-fn audit_refused_nothing(world: &World) {
+pub(in crate::worker::bots::client) fn audit_refused_nothing(world: &World) {
     let refused = world.on_writer(|state| state.repository.feed_audit_refusals());
     assert!(refused.is_empty(), "{refused:?}");
 }

@@ -662,6 +662,9 @@ pub(super) fn bot_read_command(request: &BotCommand) -> bool {
             | BotCommand::ReadChildOrigin { .. }
             // M8: the team pause's read names no Bot and changes nothing.
             | BotCommand::ReadTeamPause {}
+            // M8: the two linked reads change nothing.
+            | BotCommand::ListLinkedOwners {}
+            | BotCommand::ListLinkedBots { .. }
     )
 }
 

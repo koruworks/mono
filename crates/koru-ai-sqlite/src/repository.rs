@@ -44,6 +44,12 @@ pub use bots::{
     RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
     RoutineReadSubject, RoutineToolSubject, TeamPauseChange,
 };
+pub use bots::{
+    MIRROR_COMMAND_KEEP_MS, MIRROR_COMMAND_PRUNE_BATCH, MIRROR_COMMAND_UNCONFIRMED_MS,
+    MirrorApplied, MirrorChange, MirrorCommand, MirrorCommandBegin, MirrorCommandState,
+    MirrorCounts, MirrorDeleted, MirrorOwner, MirrorPage, MirrorPlace, MirrorRefusal,
+    MirrorSubject,
+};
 
 /// The connection a repository holds. In a test build it also remembers where
 /// it was last reached from, for the feed audit; in a production build it is

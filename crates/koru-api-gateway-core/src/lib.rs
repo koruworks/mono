@@ -1167,7 +1167,16 @@ impl GatewayState {
         events: Option<koru_events_server::EventsHandle>,
         session_bridge: Option<SessionBridge>,
     ) -> Arc<Self> {
-        let client = koru_ai_client::Client::new(Arc::new(ai_worker.client()));
+        // A worker whose mirror was started (M8) is read through the
+        // routing port: a call that names a Bot another computer runs is
+        // answered from this computer's copy or sent to that computer.
+        // Otherwise, and for every other call, this is the worker's own
+        // client, as before.
+        let local: Arc<dyn koru_ai_api::AiServerPort> = Arc::new(ai_worker.client());
+        let client = match ai_worker.linked_bots() {
+            Some(linked) => koru_ai_client::Client::routed(local, linked),
+            None => koru_ai_client::Client::new(local),
+        };
         Self::build(
             channel,
             store,
