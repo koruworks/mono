@@ -226,6 +226,13 @@ pub enum Outcome {
         profile: koru_core::ProfileId,
         deletion: koru_store_core::ids::DeletionId,
     },
+    /// **Restore to {Profile}** on a workspace that is in this device's
+    /// Trash while the account still keeps it (trash-recovery). The
+    /// container hands it to the workspaces controller, which asks first.
+    RestoreWorkspaceTo {
+        workspace: WorkspaceId,
+        profile: koru_core::ProfileId,
+    },
     WorkspaceMenu {
         workspace: WorkspaceId,
         at: (f32, f32),

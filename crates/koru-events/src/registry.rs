@@ -2025,6 +2025,20 @@ pub const REGISTRY: &[EventSpec] = &[
               (`PUT /v1/profiles/{id}/workspace-order`). There is no workspace \
               subject because every workspace the profile owns may have moved.",
     },
+    EventSpec {
+        name: "workspace.catalog.trashed_in_account_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The list of workspaces that are in this device's trash while \
+              the signed-in account still holds them live changed \
+              (`GET /v1/workspaces/trashed-in-account`): one was first seen \
+              after a sync pass, is no longer listed, or was acknowledged. \
+              There is no subject because the list is replaced as a set; a \
+              surface reads it back. A restore out of it is the ordinary \
+              `workspace.catalog.restored`.",
+    },
     // ---------------------------------------- the settings authority's facts
     //
     // **One producer, and it is the only writer of the settings files.** The

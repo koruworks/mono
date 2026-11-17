@@ -15,7 +15,20 @@
 //! │ [▣] Work                                             [Restore] │
 //! │     Deleted 11/09/2026 14:02 · 3 workspaces · 1 no longer available │
 //! └──────────────────────────────────────────────────────────────┘
+//! In the Trash on this device
+//! ┌──────────────────────────────────────────────────────────────┐
+//! │ [▣] PM                                      [Restore to Work] │
+//! │     In the Trash here, still in your Koru account             │
+//! └──────────────────────────────────────────────────────────────┘
 //! ```
+//!
+//! **The third list is this Profile's alone** (trash-recovery PLAN.final
+//! P2): a workspace this device holds in its Trash while the account still
+//! keeps it live under the Profile whose page this is. The first two are
+//! every Profile's; this one is drawn only where its one action,
+//! *Restore to {Profile}*, would put the workspace. The press opens the
+//! controller's question, which the window draws like its other
+//! confirmations.
 //!
 //! **The data is the shared [`WorkspacesController`](koru_workspaces_ui::WorkspacesController)**,
 //! read with its catalog: `unassigned()` and `deleted_profiles()`. This file
@@ -38,7 +51,9 @@ use koru_draw::tile::Tile;
 use koru_i18n::{Key as Words, fill, number::decimal, t};
 use koru_ui::button::{ActionButton, ActionStyle};
 use koru_ui::card::Card;
-use koru_workspaces_ui::{Action, DeletedProfileRow, Row as Catalog, UnassignedRow};
+use koru_workspaces_ui::{
+    Action, DeletedProfileRow, Row as Catalog, TrashedInAccountRow, UnassignedRow,
+};
 
 const ROW_PAD: f32 = 12.0;
 const ROW_TILE: f32 = 32.0;
@@ -73,23 +88,36 @@ pub(crate) struct RecoverySection {
     pub rect: Rect,
     pub unassigned: Option<RecoveryList>,
     pub deleted: Option<RecoveryList>,
+    /// In this device's Trash, live in the account under this Profile.
+    pub trashed: Option<RecoveryList>,
 }
 
 impl ManageView {
-    /// Lay both lists under `y`, each only while it has rows; answers the
-    /// section and where the page continues.
+    /// Lay the lists under `y`, each only while it has rows; answers the
+    /// section and where the page continues. `profile` is the page's: the
+    /// third list holds only what the account keeps under it.
     pub(super) fn lay_recovery_sections(
         &mut self,
+        profile: ProfileId,
         column: Rect,
         y: f32,
         controls: &mut Vec<Placed>,
         disabled: &mut Vec<Control>,
     ) -> (Option<RecoverySection>, f32) {
-        let (unassigned, deleted) = {
+        let (unassigned, deleted, trashed) = {
             let w = self.w.borrow();
-            (w.unassigned().to_vec(), w.deleted_profiles().to_vec())
+            let trashed: Vec<TrashedInAccountRow> = w
+                .trashed_in_account_of(super::workspaces::catalog_profile(profile))
+                .into_iter()
+                .cloned()
+                .collect();
+            (
+                w.unassigned().to_vec(),
+                w.deleted_profiles().to_vec(),
+                trashed,
+            )
         };
-        if unassigned.is_empty() && deleted.is_empty() {
+        if unassigned.is_empty() && deleted.is_empty() && trashed.is_empty() {
             return (None, y);
         }
         let lang = crate::format::lang();
@@ -132,14 +160,93 @@ impl ManageView {
             cy = list.card.y + list.card.h + LINE_GAP;
             list
         });
+        let trashed = (!trashed.is_empty()).then(|| {
+            let rows: Vec<RecoveryRow> = {
+                let mut out = Vec::new();
+                let top = cy + theme::role::meta().metrics.line_height + 6.0;
+                for (i, row) in trashed.iter().enumerate() {
+                    let rect = Rect::new(column.x, top + i as f32 * ROW_H, column.w, ROW_H);
+                    out.push(self.lay_trashed_row(row, rect, lang, controls, disabled));
+                }
+                out
+            };
+            let list = self.recovery_list(
+                t(lang, Words::WorkspacesTrashedInAccountHeading).to_owned(),
+                column,
+                cy,
+                rows,
+            );
+            cy = list.card.y + list.card.h + LINE_GAP;
+            list
+        });
         let bottom = cy - LINE_GAP;
         (
             Some(RecoverySection {
                 rect: Rect::new(column.x, y, column.w, bottom - y),
                 unassigned,
                 deleted,
+                trashed,
             }),
             bottom,
+        )
+    }
+
+    /// A workspace in the Trash here that the account keeps under this
+    /// Profile: its name, what that means under it, and the one action.
+    fn lay_trashed_row(
+        &mut self,
+        row: &TrashedInAccountRow,
+        rect: Rect,
+        lang: koru_i18n::Lang,
+        controls: &mut Vec<Placed>,
+        disabled: &mut Vec<Control>,
+    ) -> RecoveryRow {
+        let id = row.id;
+        let tile = Rect::new(
+            rect.x + ROW_PAD,
+            rect.y + (ROW_H - ROW_TILE) * 0.5,
+            ROW_TILE,
+            ROW_TILE,
+        );
+        let hint = t(lang, Words::WorkspacesTrashedInAccountHint);
+        controls.push(Placed {
+            control: Control::TrashedInAccountRow(id),
+            rect,
+            label: format!("{}, {hint}", row.name),
+            look: Look::Row,
+        });
+        let profile = self.w.borrow().profile_name(row.profile);
+        let label = fill(t(lang, Words::WorkspacesRestoreTo), &[&profile]);
+        let w = ActionButton::new(&label, ActionStyle::Secondary, None).width(&mut self.engine);
+        let button = Rect::new(
+            rect.x + rect.w - MORE_INSET - w,
+            rect.y + (ROW_H - ActionButton::H) * 0.5,
+            w,
+            ActionButton::H,
+        );
+        controls.push(Placed {
+            control: Control::RestoreTrashedTo(id),
+            rect: button,
+            label,
+            look: Look::Action(ActionStyle::Secondary),
+        });
+        if self
+            .w
+            .borrow()
+            .reason_for(&Action::RestoreTo(id, row.profile), &Catalog::default())
+            .is_some()
+        {
+            disabled.push(Control::RestoreTrashedTo(id));
+        }
+        self.recovery_row_text(
+            Control::TrashedInAccountRow(id),
+            rect,
+            tile,
+            row.icon.clone(),
+            row.color.clone(),
+            &row.name,
+            hint.to_owned(),
+            button.x - 10.0,
         )
     }
 
@@ -344,7 +451,20 @@ impl ManageView {
     /// is not the section's.
     pub(super) fn activate_recovery_control(&mut self, control: Control) -> Option<bool> {
         let done = match control {
-            Control::UnassignedRow(_) => true,
+            Control::UnassignedRow(_) | Control::TrashedInAccountRow(_) => true,
+            // The controller asks; the window draws its question. Into the
+            // Profile the row itself names, never one read off the page.
+            Control::RestoreTrashedTo(id) => {
+                let to = self
+                    .w
+                    .borrow()
+                    .trashed_in_account_row(id)
+                    .map(|row| row.profile);
+                if let Some(to) = to {
+                    self.w.borrow_mut().perform(Action::RestoreTo(id, to));
+                }
+                true
+            }
             Control::UnassignedMore(id) => {
                 let Some(rect) = self.laid.placed(control).map(|placed| placed.rect) else {
                     return Some(false);
@@ -416,15 +536,24 @@ impl ManageView {
                     "controller.deleted_profiles()",
                 );
                 rec.property(
+                    "trashed in account",
+                    section.trashed.as_ref().map_or(0, |list| list.rows.len()),
+                    "controller.trashed_in_account_of(profile)",
+                );
+                rec.property(
                     "data",
                     "koru_workspaces_ui::WorkspacesController",
                     "shared controller",
                 );
             },
         );
-        for list in [section.unassigned.as_ref(), section.deleted.as_ref()]
-            .into_iter()
-            .flatten()
+        for list in [
+            section.unassigned.as_ref(),
+            section.deleted.as_ref(),
+            section.trashed.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
         {
             let (label_rect, label) = &list.label;
             self.paint_caption(canvas, root, *label_rect, label);
@@ -441,10 +570,14 @@ impl ManageView {
                     row.rect.h - 6.0,
                     7.0,
                 );
-                if hovered && matches!(row.control, Control::UnassignedRow(_)) {
+                let is_row = matches!(
+                    row.control,
+                    Control::UnassignedRow(_) | Control::TrashedInAccountRow(_)
+                );
+                if hovered && is_row {
                     scene::fill(canvas, root, p.hover_tint, &inner);
                 }
-                if focused && matches!(row.control, Control::UnassignedRow(_)) {
+                if focused && is_row {
                     scene::stroke(canvas, root, p.focus_ring, theme::BORDER_W * 2.0, &inner);
                 }
                 Tile {
@@ -485,6 +618,7 @@ impl ManageView {
                             Control::UnassignedMore(_)
                                 | Control::RestoreUnassignedProfile(_)
                                 | Control::RestoreDeletedProfile(_)
+                                | Control::RestoreTrashedTo(_)
                         )
                 }) {
                     self.paint_control(canvas, root, placed);

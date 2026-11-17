@@ -257,6 +257,33 @@ impl Host for DesktopCloudHost {
         }))
     }
 
+    fn reconcile_account_live(
+        &self,
+        account: KoruIdentityId,
+        listed: &[(WorkspaceId, ProfileId)],
+    ) -> Result<std::collections::BTreeSet<WorkspaceId>, Failure> {
+        let response = self.ask(ControlRequest::ReconcileCloudAccountLive {
+            control_session_id: self.session()?,
+            account_id: cloud(account.as_uuid()),
+            workspaces: listed
+                .iter()
+                .map(
+                    |(workspace, profile)| koru_sync_control::cloud::CloudAccountLiveWorkspace {
+                        workspace_id: cloud(workspace.as_uuid()),
+                        profile_id: cloud(profile.as_uuid()),
+                    },
+                )
+                .collect(),
+        })?;
+        let ControlResponse::CloudAccountLiveTrashed { trashed, .. } = response else {
+            return Err(Failure::Unavailable);
+        };
+        Ok(trashed
+            .into_iter()
+            .map(|workspace| WorkspaceId::from_uuid(workspace.as_uuid()))
+            .collect())
+    }
+
     /// The Profile whose Identity/Private units are about to sync must be
     /// present here (the selection path's provisioning, TECHNICAL §7.4,
     /// already ran when a Profile was selected on this device). Checked

@@ -912,6 +912,19 @@ payload!(
     }
 );
 
+/// The Store's list of Workspaces that are in this device's Trash while the
+/// account still holds them live changed (trash-recovery): one was first
+/// seen, stopped being listed, or was acknowledged. No subject on purpose:
+/// the list is replaced as a set, and a surface reads it back rather than
+/// following it off the bus.
+pub struct WorkspaceTrashedInAccountChanged;
+
+payload!(
+    WorkspaceTrashedInAccountChanged,
+    "workspace.catalog.trashed_in_account_changed",
+    |self| Draft::new(EventName::from_static(Self::NAME))
+);
+
 // ------------------------------------------ the settings authority's facts
 //
 // One producer: `koru-settings`, through the sink the Gateway hands it, after

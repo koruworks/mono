@@ -338,6 +338,18 @@ Live workspaces reachable from no active Profile, with the reason
 
 Returns: each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore
 
+## GET `/v1/workspaces/trashed-in-account`
+
+Workspaces in this device's trash that the account still holds live
+
+Returns: each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in
+
+## POST `/v1/workspaces/{id}/trashed-in-account/acknowledge`
+
+Record that the person was told a trashed workspace is still in the account
+
+Returns: null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error
+
 ## GET `/v1/workspaces`
 
 Every workspace
@@ -385,6 +397,12 @@ Returns: the moved workspace, previous owner, and replacement facts
 Restore a soft-deleted workspace
 
 Returns: the workspace with deleted_at cleared. The same scope the delete takes: whoever decides what the trash contains decides both ways
+
+## POST `/v1/workspaces/{id}/restore-to`
+
+Restore a soft-deleted workspace into a profile
+
+Returns: the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes
 
 ## POST `/v1/workspaces/{id}/move`
 

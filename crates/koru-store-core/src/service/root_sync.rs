@@ -681,7 +681,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// `path` now, as [`Self::eligible_export_source`] answers it — with a
     /// missing or inconsistent mode row read as a hold rather than a failure
     /// of the whole inventory. Nothing leaves either way.
-    fn export_source_or_hold(
+    pub(super) fn export_source_or_hold(
         &self,
         unit: CatalogUnitRef,
         path: TransportPath,
@@ -975,10 +975,18 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             // unit is not rewritten; only the receipt may advance, and one
             // already there is not written again.
             self.advance_receipt(relationship, receipt_unit, &receipt)?;
+            // The unit did not move, but its row may still be where an
+            // earlier pending placement left it.
+            let placement_changed = match unit {
+                CatalogUnitRef::Workspace { workspace } => {
+                    self.project_pending_placement(workspace)?
+                }
+                CatalogUnitRef::Profile { .. } => false,
+            };
             return Ok(RootJoinOutcome::Applied {
                 frontier,
                 reconciled,
-                placement_changed: false,
+                placement_changed,
                 lifecycle_changed: false,
             });
         }
@@ -995,18 +1003,31 @@ impl<C: Catalog, B: Backend> Store<C, B> {
             Some(json(&receipt)?),
         )];
         let (placement_changed, lifecycle_changed) = match unit {
-            CatalogUnitRef::Workspace { workspace } => self.commit_workspace_root_import(
-                scope,
-                workspace,
-                &candidate,
-                &staged.before,
-                write,
-                state,
-            )?,
+            CatalogUnitRef::Workspace { workspace } => {
+                let (placement, lifecycle) = self.commit_workspace_root_import(
+                    scope,
+                    workspace,
+                    &candidate,
+                    &staged.before,
+                    write,
+                    state,
+                )?;
+                // The import projects the difference this update made. A row
+                // left behind by an earlier one is caught here, by its state.
+                let caught_up = self.project_pending_placement(workspace)?;
+                (placement || caught_up, lifecycle)
+            }
             CatalogUnitRef::Profile { profile } => {
                 let changed =
                     self.commit_profile_root_import(scope, profile, &candidate, write, state)?;
-                (false, changed)
+                // A Profile that came back from the Trash can hold the
+                // Workspaces that were moved to it while it was hidden.
+                let applied = if changed {
+                    self.apply_pending_placements(profile)?
+                } else {
+                    0
+                };
+                (applied > 0, changed)
             }
         };
         if placement_changed {
@@ -1036,7 +1057,9 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// builds the row from the unit. A placement naming a Profile this
     /// device does not hold, holds hidden, or reads as a Holder is pending
     /// (§7.2 "show pending/recovery as applicable") and leaves the row's
-    /// owner as it is; a lifecycle change on a row whose owner is hidden is
+    /// owner as it is until that Profile is here, when
+    /// [`Self::project_pending_placement`] moves the row; a lifecycle change
+    /// on a row whose owner is hidden is
     /// deferred the same way, since the unit is what every reader asks
     /// first.
     fn commit_workspace_root_import(

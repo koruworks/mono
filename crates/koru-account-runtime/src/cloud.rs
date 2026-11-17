@@ -585,6 +585,23 @@ pub trait Host: Send + Sync + 'static {
         dataset: CloudReplicaPrincipalV1,
     ) -> Result<Option<LocalBootstrap>, Failure>;
 
+    /// Tell the Store which Workspaces the account lists **live** under a
+    /// Profile on this device, and learn which of them are in the Trash
+    /// here (`Store::reconcile_account_live`; trash-recovery PLAN.final P2).
+    ///
+    /// Asked once per pass, after a complete discovery and before anything
+    /// is admitted, with the whole list: the Store replaces what it knew
+    /// from it. The coordinator admits none of the Workspaces answered — no
+    /// token is asked for one. A host with no Trash to ask answers none, and
+    /// nothing is dropped.
+    fn reconcile_account_live(
+        &self,
+        _account: KoruIdentityId,
+        _listed: &[(WorkspaceId, ProfileId)],
+    ) -> Result<std::collections::BTreeSet<WorkspaceId>, Failure> {
+        Ok(std::collections::BTreeSet::new())
+    }
+
     /// **The Profiles of this account that are on this device** — chosen at
     /// sign-in, created here, or brought here from the Koru Cloud page.
     ///

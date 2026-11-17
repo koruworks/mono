@@ -74,7 +74,7 @@ pub(super) fn catalog_answer(client: &Client) -> Answer {
 
 /// The recovery lists, read in the same pass as the rows. **A failed read
 /// is an empty list, not an unavailable catalog**: the rows on screen are
-/// still true, and a Store that answers the catalog but not these two
+/// still true, and a Store that answers the catalog but not these three
 /// routes shows no recovery group rather than a dimmed manager.
 fn recovery_answer(client: &Client) -> Recovery {
     let unassigned = client
@@ -110,9 +110,26 @@ fn recovery_answer(client: &Client) -> Recovery {
                 .collect()
         })
         .unwrap_or_default();
+    let trashed_in_account = client
+        .store()
+        .trashed_in_account()
+        .map(|rows| {
+            rows.into_iter()
+                .map(|row| crate::TrashedInAccountRow {
+                    id: row.workspace.id,
+                    name: row.workspace.name,
+                    icon: row.workspace.icon,
+                    color: row.workspace.color,
+                    profile: row.profile,
+                    acknowledged: row.acknowledged_ms.is_some(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Recovery {
         unassigned,
         deleted_profiles,
+        trashed_in_account,
     }
 }
 

@@ -443,6 +443,12 @@ pub enum PopoverRow {
     UnassignedMove(usize),
     /// Only for a workspace from a deleted Profile this device can restore.
     UnassignedRestore(usize),
+    /// **In the Trash here, still in the account** (trash-recovery): an
+    /// index into the controller's list for this window's Profile. The row
+    /// says what it is and does nothing; its one action follows it.
+    TrashedInAccount(usize),
+    /// *Restore to {Profile}*: the controller's question, then the restore.
+    TrashedRestoreTo(usize),
     /// Workspace heading with a separate Manage workspaces target.
     WorkspacesHeading,
     /// The one line an empty Profile's list shows (§3.10): furniture, like
@@ -3395,6 +3401,24 @@ impl ExploreView {
         Some((crate::manage::workspaces::app_profile(former), deletion))
     }
 
+    /// The workspaces in this device's Trash that the account still keeps
+    /// under **this window's Profile** (trash-recovery PLAN.final P2) — the
+    /// only Profile's menu they are listed in, because it is where *Restore*
+    /// puts them. Empty without a controller or a Profile.
+    pub(crate) fn trashed_in_account_rows(&self) -> Vec<koru_workspaces_ui::TrashedInAccountRow> {
+        let (Some(controller), Some(profile)) =
+            (self.workspace_controller.as_ref(), self.current_profile)
+        else {
+            return Vec::new();
+        };
+        controller
+            .borrow()
+            .trashed_in_account_of(crate::manage::workspaces::catalog_profile(profile))
+            .into_iter()
+            .cloned()
+            .collect()
+    }
+
     pub(crate) fn set_workspace_controller(&mut self, controller: crate::manage::SharedWorkspaces) {
         self.workspace_controller = Some(controller);
     }
@@ -3755,6 +3779,12 @@ impl ExploreView {
                     if self.unassigned_restorable(row).is_some() {
                         out.push(PopoverRow::UnassignedRestore(i));
                     }
+                }
+                // Then what is in the Trash here while the account still
+                // keeps it under this Profile: the row and its one action.
+                for i in 0..self.trashed_in_account_rows().len() {
+                    out.push(PopoverRow::TrashedInAccount(i));
+                    out.push(PopoverRow::TrashedRestoreTo(i));
                 }
                 out.push(PopoverRow::WorkspacesHeading);
                 // **Pinned first, archived not at all — except the one you are
@@ -4203,6 +4233,9 @@ impl ExploreView {
             // so the row it is about stays lit.
             PopoverRow::UnassignedMove(_) => true,
             PopoverRow::Unassigned(_) | PopoverRow::UnassignedRestore(_) => false,
+            // The row is words; its action closes the page for the question.
+            PopoverRow::TrashedInAccount(_) => true,
+            PopoverRow::TrashedRestoreTo(_) => false,
             PopoverRow::WorkspacesHeading => part != PopoverPart::Gear,
             PopoverRow::ProfilesHeading => part != PopoverPart::Gear,
             // The foot's words do nothing; each button is a destination —
@@ -4266,6 +4299,15 @@ impl ExploreView {
                 .and_then(|row| self.unassigned_restorable(row))
             {
                 Some((profile, deletion)) => Outcome::RestoreProfile { profile, deletion },
+                None => Outcome::Consumed,
+            },
+            PopoverRow::TrashedInAccount(_) => Outcome::Consumed,
+            // Into the Profile the row names, which is this window's.
+            PopoverRow::TrashedRestoreTo(i) => match self.trashed_in_account_rows().get(i) {
+                Some(row) => Outcome::RestoreWorkspaceTo {
+                    workspace: crate::manage::workspaces::app_workspace(row.id),
+                    profile: crate::manage::workspaces::app_profile(row.profile),
+                },
                 None => Outcome::Consumed,
             },
             PopoverRow::Workspace(i) => {

@@ -4681,6 +4681,73 @@ fn selecting_manage_asks_the_shell_for_nothing_and_does_not_arm_an_idle_poll() {
     assert!(v.workspaces_poll_due.is_none(), "no command is pending");
 }
 
+/// **The notice** (trash-recovery P4): a workspace in the Trash here that
+/// the account still has is said once by a toast naming it; the toast's
+/// action opens the question and restores nothing by itself; and a toast
+/// already on screen is not replaced — the row waits to be said.
+#[test]
+fn a_workspace_trashed_here_but_live_in_the_account_is_announced_once_and_its_action_asks() {
+    use koru_workspaces_ui::{Authorization, ProfileRow, Recovery, TrashedInAccountRow};
+    let (mut v, _workspace) = container();
+    let work = koru_store_core::ids::ProfileId::new();
+    let pm = koru_store_core::ids::WorkspaceId::new();
+    {
+        let mut c = v.workspace_controller.borrow_mut();
+        c.set_authorization(Authorization::Vouched);
+        c.adopt_profiles(&[ProfileRow {
+            id: work,
+            name: "Work".into(),
+        }]);
+        c.fixture_recovery(Recovery {
+            trashed_in_account: vec![TrashedInAccountRow {
+                id: pm,
+                name: "PM".into(),
+                icon: None,
+                color: None,
+                profile: work,
+                acknowledged: false,
+            }],
+            ..Recovery::default()
+        });
+    }
+
+    // Something else is being said: the row is not taken, so not lost.
+    assert!(View::show_notice(&mut v, "Saved".into()));
+    v.poll_manage_workspaces();
+    assert_eq!(
+        v.toast.as_ref().map(|(toast, _)| toast.message()),
+        Some("Saved")
+    );
+
+    v.toast = None;
+    assert!(v.poll_manage_workspaces());
+    let (toast, payload) = v.toast.as_ref().expect("the notice");
+    assert_eq!(
+        toast.message(),
+        "PM is in the Trash on this device but still in your Koru account."
+    );
+    assert_eq!(toast.action(), Some("Restore"));
+    assert!(matches!(
+        payload,
+        ToastPayload::RestoreWorkspaceTo { workspace, profile }
+            if *workspace == pm && *profile == work
+    ));
+
+    // Once: put away, the next poll says nothing more.
+    v.toast = None;
+    v.poll_manage_workspaces();
+    assert!(v.toast.is_none());
+
+    // The action opens the question; the press alone restores nothing.
+    assert!(v.ask_restore_workspace_to(pm, work));
+    let controller = v.workspace_controller.borrow();
+    assert_eq!(
+        controller.dialog().map(|dialog| dialog.title().to_owned()),
+        Some("Restore PM to Work?".to_owned())
+    );
+    assert!(!controller.has_pending());
+}
+
 #[test]
 fn confirmation_scrim_owns_pointer_and_cursor() {
     let (mut v, _workspace) = on_document();

@@ -1028,6 +1028,8 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         for (row, _) in &restored_rows {
             self.hint_manifest_deletion(row.id, None, at);
         }
+        // Visible again: the Workspaces moved to it while it was hidden.
+        self.apply_pending_placements(profile)?;
         tracing::info!(
             profile = %profile,
             batch = %batch,
@@ -1062,6 +1064,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
     /// unit. The `profiles` row and the identity/private units are retained:
     /// their physical removal has `RESTRICT` keys of its own and is outside
     /// this plan; `Store::profiles_removed_before` keeps naming the row.
+    ///
+    /// **A Workspace the account still holds live is not purged**
+    /// ([`PurgeHold::AccountLive`]): it is reported held with nothing
+    /// written, so a Profile deletion batch that names it is not purged
+    /// either — its target still has its row.
     ///
     /// The Store's start-up calls this with the current time.
     pub fn purge_deleted(&mut self, before: Timestamp) -> Result<PurgeOutcome> {
@@ -1099,6 +1106,16 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 .collect();
             let already_purged = !unit.purged().is_empty();
             if expired.is_empty() && !already_purged {
+                continue;
+            }
+            // Asked before `purge_one` writes its first fact: the purge
+            // evidence is terminal, and a Workspace the account still holds
+            // live must stay restorable. One whose evidence is already
+            // written is past that and is finished as before.
+            if !already_purged && self.account_live_hold(workspace)?.is_some() {
+                tracing::info!(workspace = %workspace,
+                    "workspace purge held: the account still holds it live");
+                outcome.held.push((workspace, PurgeHold::AccountLive));
                 continue;
             }
             match self.purge_one(scope, row, &expired, already_purged, before) {

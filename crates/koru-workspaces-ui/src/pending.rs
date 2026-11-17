@@ -32,4 +32,11 @@ pub(crate) enum Pending {
     ),
     /// A Profile deletion batch being restored; the answer words the notice.
     RestoreProfile(ProfileId),
+    /// A workspace being restored into a Profile; the answer words the
+    /// notice, which names both.
+    RestoreTo {
+        workspace: WorkspaceId,
+        to: ProfileId,
+        name: String,
+    },
 }

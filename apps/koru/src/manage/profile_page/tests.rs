@@ -321,16 +321,16 @@ fn sync_modes_profile_and_workspace_choices_show_saved_state_and_ceiling() {
             .look,
         Look::Action(koru_ui::button::ActionStyle::Primary)
     ));
-    assert!(
-        view.laid()
-            .disabled
-            .contains(&Control::SyncMode(Some(workspace), TransportMode::Cloud))
-    );
+    // A Workspace's own choice cannot exceed the Profile's: what its row's
+    // strip is dimmed by (the row itself is `workspaces`' to lay).
     assert!(
         !view
-            .laid()
-            .disabled
-            .contains(&Control::SyncMode(Some(workspace), TransportMode::P2p))
+            .c
+            .sync_mode_enabled(Some(workspace), TransportMode::Cloud)
+    );
+    assert!(
+        view.c
+            .sync_mode_enabled(Some(workspace), TransportMode::P2p)
     );
     view.c.set_cloud_status(profiles::CloudStatus::Manage);
     view.delegate(|_| ());
@@ -341,9 +341,10 @@ fn sync_modes_profile_and_workspace_choices_show_saved_state_and_ceiling() {
             .contains(&Control::SyncMode(None, TransportMode::Cloud))
     );
     assert!(
-        view.laid()
-            .disabled
-            .contains(&Control::SyncMode(Some(workspace), TransportMode::Cloud))
+        !view
+            .c
+            .sync_mode_enabled(Some(workspace), TransportMode::Cloud),
+        "the Profile is still P2P, whatever the account now allows"
     );
 }
 
@@ -367,10 +368,9 @@ fn a_profiles_own_repair_is_an_attention_card_and_another_profiles_is_not() {
 
     let section = view.laid().sign_in.clone().unwrap();
     assert!(section.repair.is_some());
-    assert_eq!(
-        section.rows.len(),
-        2,
-        "sync settings remain below account repair"
+    assert!(
+        section.rows.is_empty(),
+        "the sync choices are on the head and in the rows, not in this card"
     );
     assert!(controls(&view).contains(&Control::SyncMode(
         None,
@@ -500,12 +500,16 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
         vec![
             Control::Tile,
             Control::Name,
-            Control::ImportWorkspaces,
-            Control::NewWorkspace,
-            Control::Session,
+            // The Profile's sync choice ends the title line, and the way to
+            // Koru Cloud is under it: before the Workspaces, as drawn.
             Control::SyncMode(None, koru_store_core::TransportMode::LocalOnly),
             Control::SyncMode(None, koru_store_core::TransportMode::P2p),
             Control::SyncMode(None, koru_store_core::TransportMode::Cloud),
+            Control::CloudSettings,
+            // *Sign-in and sync* sits between the head and the Workspaces.
+            Control::Session,
+            Control::ImportWorkspaces,
+            Control::NewWorkspace,
             Control::Delete,
             Control::RemoveFromDevice,
         ],
@@ -515,7 +519,14 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
     let none = ModifiersState::empty();
     assert!(key(&mut view, NamedKey::Tab, none));
     assert_eq!(view.focus(), Some(nav::Entry::Profile(personal.id)));
-    for _ in 1..nav {
+    // The sync options come before the Profiles, so the open page's row is
+    // not the nav's first: walk from it to the nav's end.
+    let at = view
+        .focus_order()
+        .iter()
+        .position(|entry| *entry == nav::Entry::Profile(personal.id))
+        .unwrap();
+    for _ in at + 1..nav {
         assert!(key(&mut view, NamedKey::Tab, none));
     }
     assert!(key(&mut view, NamedKey::Tab, none));
@@ -529,12 +540,12 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
     // Shift+Tab from the first control goes back to the nav's last row.
     assert!(key(&mut view, NamedKey::ArrowUp, none));
     assert!(key(&mut view, NamedKey::Tab, ModifiersState::SHIFT));
-    assert_eq!(view.focus(), Some(nav::Entry::Cloud));
+    assert_eq!(view.focus(), Some(nav::Entry::NewProfile));
     // Past the last control, Tab wraps to the nav's first row.
     for _ in 0..page.len() + 1 {
         assert!(key(&mut view, NamedKey::Tab, none));
     }
-    assert_eq!(view.focus(), Some(nav::Entry::Profile(personal.id)));
+    assert_eq!(view.focus(), Some(nav::Entry::Devices));
 }
 
 #[test]

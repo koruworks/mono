@@ -865,6 +865,25 @@ pub enum Key {
     WorkspacesRestorePurgedMany,
     /// The batch restore refused or did not answer. Nothing moved.
     WorkspacesRestoreProfileFailed,
+    /// **In the Trash here, live in the account** (trash-recovery): the
+    /// recovery group's third list — its caption, and the hint under a row.
+    WorkspacesTrashedInAccountHeading,
+    WorkspacesTrashedInAccountHint,
+    /// The row's one action; `{}` is the Profile the account keeps it under.
+    WorkspacesRestoreTo,
+    /// The question that action asks: the workspace, then the Profile; and
+    /// the body, which names the Profile.
+    WorkspacesRestoreToTitle,
+    WorkspacesRestoreToBody,
+    /// What it came to: the workspace, then the Profile; or the workspace
+    /// alone when nothing changed.
+    WorkspacesRestoredTo,
+    WorkspacesRestoreToFailed,
+    /// The notice shown once when this device first learns of one: the
+    /// workspace.
+    WorkspacesTrashedInAccountNotice,
+    /// A Trash row's second line, in place of *Opened …*: the Profile.
+    WorkspacesTrashStillInAccount,
     /// An empty Profile (§3.10): the Workspace menu's list and the waiting
     /// pane say so, beside the one explicit way out — *New workspace*.
     ProfileEmptyWorkspaces,
@@ -2676,6 +2695,9 @@ pub enum Key {
     CloudProgressDocuments,
     CloudProgressFiles,
     CloudProgressHeld,
+    /// Beside it on the same summary line: how many of the account's
+    /// workspaces are in the Trash on this device (trash-recovery).
+    CloudProgressTrashedHere,
     CloudProgressMore,
     // An expanded held Workspace: one line per document waiting on a file
     // Koru Cloud does not hold yet, and whom it is waiting for.
@@ -3531,7 +3553,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2473] = [
+    pub const ALL: [Key; 2483] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4166,6 +4188,15 @@ impl Key {
         Key::WorkspacesRestorePurgedOne,
         Key::WorkspacesRestorePurgedMany,
         Key::WorkspacesRestoreProfileFailed,
+        Key::WorkspacesTrashedInAccountHeading,
+        Key::WorkspacesTrashedInAccountHint,
+        Key::WorkspacesRestoreTo,
+        Key::WorkspacesRestoreToTitle,
+        Key::WorkspacesRestoreToBody,
+        Key::WorkspacesRestoredTo,
+        Key::WorkspacesRestoreToFailed,
+        Key::WorkspacesTrashedInAccountNotice,
+        Key::WorkspacesTrashStillInAccount,
         Key::ProfileEmptyWorkspaces,
         Key::ProfileDeleteTargetsOne,
         Key::ProfileDeleteTargetsMany,
@@ -5387,6 +5418,7 @@ impl Key {
         Key::CloudProgressDocuments,
         Key::CloudProgressFiles,
         Key::CloudProgressHeld,
+        Key::CloudProgressTrashedHere,
         Key::CloudProgressMore,
         Key::CloudProgressWaitingOneFile,
         Key::CloudProgressWaitingFiles,
@@ -10986,6 +11018,15 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesRestorePurgedOne, en: "1 is no longer available.", es: "1 ya no está disponible.", pt_br: "1 não está mais disponível.", de: "1 ist nicht mehr verfügbar.", fr: "1 n'est plus disponible.", ar: "واحدة لم تعد متاحة.", zh_hans: "1 个已不可用。", ja: "1 件は利用できません。" },
     Row { key: Key::WorkspacesRestorePurgedMany, en: "{} are no longer available.", es: "{} ya no están disponibles.", pt_br: "{} não estão mais disponíveis.", de: "{} sind nicht mehr verfügbar.", fr: "{} ne sont plus disponibles.", ar: "{} لم تعد متاحة.", zh_hans: "{} 个已不可用。", ja: "{} 件は利用できません。" },
     Row { key: Key::WorkspacesRestoreProfileFailed, en: "Koru couldn't restore this Profile. Nothing was changed.", es: "Koru no pudo restaurar este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu restaurar este perfil. Nada foi alterado.", de: "Koru konnte dieses Profil nicht wiederherstellen. Es wurde nichts geändert.", fr: "Koru n'a pas pu restaurer ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru استعادة ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法恢复此配置文件。未做任何更改。", ja: "Koru はこのプロファイルを復元できませんでした。何も変更されていません。" },
+    Row { key: Key::WorkspacesTrashedInAccountHeading, en: "In the Trash on this device", es: "En la papelera de este dispositivo", pt_br: "Na Lixeira deste dispositivo", de: "Im Papierkorb auf diesem Gerät", fr: "Dans la corbeille de cet appareil", ar: "في المهملات على هذا الجهاز", zh_hans: "在此设备的回收站中", ja: "このデバイスのゴミ箱にあります" },
+    Row { key: Key::WorkspacesTrashedInAccountHint, en: "In the Trash here, still in your Koru account", es: "En la papelera aquí, pero sigue en tu cuenta de Koru", pt_br: "Na Lixeira aqui, mas ainda na sua conta Koru", de: "Hier im Papierkorb, aber noch in deinem Koru-Konto", fr: "Dans la corbeille ici, mais toujours dans votre compte Koru", ar: "في المهملات هنا، لكنها ما زالت في حسابك على Koru", zh_hans: "在此处的回收站中，但仍在你的 Koru 账户中", ja: "ここではゴミ箱にありますが、Koru アカウントにはまだあります" },
+    Row { key: Key::WorkspacesRestoreTo, en: "Restore to {}", es: "Restaurar en {}", pt_br: "Restaurar em {}", de: "In {} wiederherstellen", fr: "Restaurer dans {}", ar: "استعادة إلى {}", zh_hans: "恢复到 {}", ja: "{} に復元" },
+    Row { key: Key::WorkspacesRestoreToTitle, en: "Restore {} to {}?", es: "¿Restaurar {} en {}?", pt_br: "Restaurar {} em {}?", de: "{} in {} wiederherstellen?", fr: "Restaurer {} dans {} ?", ar: "استعادة {} إلى {}؟", zh_hans: "将 {} 恢复到 {}？", ja: "{} を {} に復元しますか？" },
+    Row { key: Key::WorkspacesRestoreToBody, en: "It is in the Trash on this device, but your Koru account still has it under {}. Restoring brings it back here and keeps it in sync.", es: "Está en la papelera de este dispositivo, pero tu cuenta de Koru aún lo conserva en {}. Al restaurarlo vuelve aquí y sigue sincronizándose.", pt_br: "Está na Lixeira deste dispositivo, mas sua conta Koru ainda o mantém em {}. Restaurar o traz de volta para cá e o mantém sincronizado.", de: "Er liegt auf diesem Gerät im Papierkorb, aber dein Koru-Konto führt ihn noch unter {}. Beim Wiederherstellen kommt er hierher zurück und wird wieder synchronisiert.", fr: "Il est dans la corbeille de cet appareil, mais votre compte Koru le conserve encore sous {}. La restauration le ramène ici et le maintient synchronisé.", ar: "إنها في المهملات على هذا الجهاز، لكن حسابك على Koru ما زال يحتفظ بها ضمن {}. الاستعادة تعيدها إلى هنا وتُبقيها متزامنة.", zh_hans: "它在此设备的回收站中，但你的 Koru 账户仍将它保留在 {} 下。恢复后它会回到这里并继续同步。", ja: "このデバイスではゴミ箱にありますが、Koru アカウントでは {} にまだ残っています。復元するとここに戻り、引き続き同期されます。" },
+    Row { key: Key::WorkspacesRestoredTo, en: "{} was restored to {}.", es: "{} se restauró en {}.", pt_br: "{} foi restaurado em {}.", de: "{} wurde in {} wiederhergestellt.", fr: "{} a été restauré dans {}.", ar: "تمت استعادة {} إلى {}.", zh_hans: "{} 已恢复到 {}。", ja: "{} を {} に復元しました。" },
+    Row { key: Key::WorkspacesRestoreToFailed, en: "Koru couldn't restore {}. It is still in the Trash.", es: "Koru no pudo restaurar {}. Sigue en la papelera.", pt_br: "O Koru não conseguiu restaurar {}. Ele continua na Lixeira.", de: "Koru konnte {} nicht wiederherstellen. Er liegt weiterhin im Papierkorb.", fr: "Koru n'a pas pu restaurer {}. Il est toujours dans la corbeille.", ar: "تعذّر على Koru استعادة {}. ما زالت في المهملات.", zh_hans: "Koru 无法恢复 {}。它仍在回收站中。", ja: "Koru は {} を復元できませんでした。まだゴミ箱にあります。" },
+    Row { key: Key::WorkspacesTrashedInAccountNotice, en: "{} is in the Trash on this device but still in your Koru account.", es: "{} está en la papelera de este dispositivo, pero sigue en tu cuenta de Koru.", pt_br: "{} está na Lixeira deste dispositivo, mas continua na sua conta Koru.", de: "{} liegt auf diesem Gerät im Papierkorb, ist aber noch in deinem Koru-Konto.", fr: "{} est dans la corbeille de cet appareil, mais toujours dans votre compte Koru.", ar: "{} في المهملات على هذا الجهاز، لكنها ما زالت في حسابك على Koru.", zh_hans: "{} 在此设备的回收站中，但仍在你的 Koru 账户中。", ja: "{} はこのデバイスのゴミ箱にありますが、Koru アカウントにはまだあります。" },
+    Row { key: Key::WorkspacesTrashStillInAccount, en: "Still in your account under {}", es: "Sigue en tu cuenta, en {}", pt_br: "Ainda na sua conta, em {}", de: "Noch in deinem Konto unter {}", fr: "Toujours dans votre compte, sous {}", ar: "ما زالت في حسابك ضمن {}", zh_hans: "仍在你的账户中，位于 {} 下", ja: "アカウントでは {} にまだあります" },
     Row { key: Key::ProfileEmptyWorkspaces, en: "This profile has no workspaces", es: "Este perfil no tiene espacios de trabajo", pt_br: "Este perfil não tem espaços de trabalho", de: "Dieses Profil hat keine Arbeitsbereiche", fr: "Ce profil n'a aucun espace de travail", ar: "لا توجد مساحات عمل في ملف التعريف هذا", zh_hans: "此配置文件没有工作区", ja: "このプロファイルにはワークスペースがありません" },
     Row { key: Key::ProfileDeleteTargetsOne, en: "This moves 1 workspace to Trash: {}", es: "Esto mueve 1 espacio de trabajo a la papelera: {}", pt_br: "Isto move 1 espaço de trabalho para a Lixeira: {}", de: "Dadurch wird 1 Arbeitsbereich in den Papierkorb verschoben: {}", fr: "Cela déplace 1 espace de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل مساحة عمل واحدة إلى المهملات: {}", zh_hans: "这会将 1 个工作区移到回收站：{}", ja: "ワークスペース 1 件をゴミ箱に移動します: {}" },
     Row { key: Key::ProfileDeleteTargetsMany, en: "This moves {} workspaces to Trash: {}", es: "Esto mueve {} espacios de trabajo a la papelera: {}", pt_br: "Isto move {} espaços de trabalho para a Lixeira: {}", de: "Dadurch werden {} Arbeitsbereiche in den Papierkorb verschoben: {}", fr: "Cela déplace {} espaces de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل {} مساحات عمل إلى المهملات: {}", zh_hans: "这会将 {} 个工作区移到回收站：{}", ja: "ワークスペース {} 件をゴミ箱に移動します: {}" },
@@ -16644,6 +16685,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudProgressDocuments, en: "{} of {} documents", es: "{} de {} documentos", pt_br: "{} de {} documentos", de: "{} von {} Dokumenten", fr: "{} documents sur {}", ar: "{} من {} مستندات", zh_hans: "{} / {} 个文档", ja: "{} / {} 件のドキュメント" },
     Row { key: Key::CloudProgressFiles, en: "{} of {} files", es: "{} de {} archivos", pt_br: "{} de {} arquivos", de: "{} von {} Dateien", fr: "{} fichiers sur {}", ar: "{} من {} ملفات", zh_hans: "{} / {} 个文件", ja: "{} / {} 件のファイル" },
     Row { key: Key::CloudProgressHeld, en: "{} held", es: "{} en espera", pt_br: "{} em espera", de: "{} angehalten", fr: "{} en attente", ar: "{} معلّقة", zh_hans: "{} 个已暂缓", ja: "{} 件が保留中" },
+    Row { key: Key::CloudProgressTrashedHere, en: "{} in the Trash on this device", es: "{} en la papelera de este dispositivo", pt_br: "{} na Lixeira deste dispositivo", de: "{} im Papierkorb auf diesem Gerät", fr: "{} dans la corbeille de cet appareil", ar: "{} في المهملات على هذا الجهاز", zh_hans: "{} 个在此设备的回收站中", ja: "{} 件がこのデバイスのゴミ箱にあります" },
     Row { key: Key::CloudProgressMore, en: "and {} more", es: "y {} más", pt_br: "e mais {}", de: "und {} weitere", fr: "et {} de plus", ar: "و{} أخرى", zh_hans: "还有 {} 个", ja: "ほか {} 件" },
     Row { key: Key::CloudProgressWaitingOneFile, en: "1 file", es: "1 archivo", pt_br: "1 arquivo", de: "1 Datei", fr: "1 fichier", ar: "ملف واحد", zh_hans: "1 个文件", ja: "1 件のファイル" },
     Row { key: Key::CloudProgressWaitingFiles, en: "{} files", es: "{} archivos", pt_br: "{} arquivos", de: "{} Dateien", fr: "{} fichiers", ar: "{} ملفات", zh_hans: "{} 个文件", ja: "{} 件のファイル" },

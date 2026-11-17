@@ -436,6 +436,18 @@ fn row_key(v: &ExploreView, row: PopoverRow) -> String {
                 key(v.unassigned_rows()[i].id.as_uuid())
             )
         }
+        PopoverRow::TrashedInAccount(i) => {
+            format!(
+                "trashed-in-account:{}",
+                key(v.trashed_in_account_rows()[i].id.as_uuid())
+            )
+        }
+        PopoverRow::TrashedRestoreTo(i) => {
+            format!(
+                "trashed-in-account-restore:{}",
+                key(v.trashed_in_account_rows()[i].id.as_uuid())
+            )
+        }
         PopoverRow::Workspace(i) => format!("ws:{}", key(v.workspaces[i].id.as_uuid())),
         PopoverRow::Profile(i) => format!("profile:{}", key(v.profiles[i].id.as_uuid())),
         PopoverRow::WorkspacesHeading => "heading".into(),

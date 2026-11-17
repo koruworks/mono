@@ -78,6 +78,11 @@ enum Command {
     },
     /// Restore a Profile deletion batch (root catalog §6.3).
     RestoreProfile(ProfileId, koru_api_client::DeletionId),
+    /// Restore a trashed workspace into a Profile, in one step.
+    RestoreWorkspaceTo(WorkspaceId, ProfileId),
+    /// Record that the person was told a trashed workspace is still in the
+    /// account.
+    AcknowledgeTrashed(WorkspaceId),
     /// Ask whether this session may remove a workspace at all.
     Probe,
     /// The same question about moving one. Two probes, because a window can
@@ -412,6 +417,22 @@ impl WorkspaceLinks {
         ));
     }
 
+    pub(crate) fn restore_workspace_to(
+        &self,
+        id: crate::CommandId,
+        workspace: WorkspaceId,
+        to: ProfileId,
+    ) {
+        self.send(Command::Keyed(
+            id,
+            Box::new(Command::RestoreWorkspaceTo(workspace, to)),
+        ));
+    }
+
+    pub(crate) fn acknowledge_trashed(&self, workspace: WorkspaceId) {
+        self.send(Command::AcknowledgeTrashed(workspace));
+    }
+
     pub(crate) fn keep_profile(
         &self,
         id: crate::CommandId,
@@ -534,6 +555,20 @@ fn run(client: &Client, command: Command) -> Answer {
         // the restore decides what the Trash contains, like a workspace's.
         Command::RestoreProfile(profile, deletion) => {
             Answer::ProfileRestored(client.store().restore_profile(profile, deletion))
+        }
+        // The Store's own route again, and the same scope: nothing is open
+        // in a trashed workspace, so there is no gateway consequence to ask
+        // for and no token to spend.
+        Command::RestoreWorkspaceTo(workspace, to) => Answer::RestoredTo(
+            client
+                .store()
+                .restore_workspace_to(workspace, to)
+                .map(|_| ()),
+        ),
+        Command::AcknowledgeTrashed(workspace) => {
+            // A failure is only a notice that may be shown once more.
+            let _ = client.store().acknowledge_trashed_in_account(workspace);
+            Answer::Acknowledged
         }
         Command::KeepProfile(owner, attempt) => {
             Answer::ProfileKept(client.catalog().keep_profile(owner, attempt))

@@ -172,6 +172,23 @@ pub(crate) fn app_profile(id: koru_store_core::ids::ProfileId) -> ProfileId {
 
 /// *Opened 3 hours ago*: the catalog's last-opened time, in today's relative
 /// wording, lower-cased after *Opened* in English.
+/// A trashed row's second line when the account still keeps the workspace:
+/// *Still in your account under {Profile}*. `None` for a workspace the
+/// account does not hold live, which keeps the line it always had.
+pub(crate) fn still_in_account_line(
+    w: &koru_workspaces_ui::WorkspacesController,
+    workspace: Wid,
+) -> Option<String> {
+    let row = w.trashed_in_account_row(workspace)?;
+    Some(koru_i18n::fill(
+        koru_i18n::t(
+            crate::format::lang(),
+            koru_i18n::Key::WorkspacesTrashStillInAccount,
+        ),
+        &[&w.profile_name(row.profile)],
+    ))
+}
+
 pub(crate) fn opened_line(then_ms: i64, now_ms: i64) -> String {
     let when = crate::format::ago(then_ms, now_ms);
     let when = if crate::format::lang() == koru_i18n::Lang::En {
@@ -673,13 +690,39 @@ impl ManageView {
             w,
             h,
         );
+        // A live Workspace's own sync choice, left of its `•••` and pushed
+        // before it so keyboard order stays visual order. Only once the
+        // settings are read: a strip with nothing chosen says nothing true.
+        let sync_mode = (kind == ListKind::Active)
+            .then(|| self.c.sync_settings())
+            .flatten()
+            .and_then(|settings| {
+                settings
+                    .workspaces
+                    .iter()
+                    .find(|workspace| Wid::parse(&workspace.id) == Some(id))
+                    .map(|workspace| workspace.mode.clone())
+            });
+        let before_trailing = match sync_mode {
+            Some(mode) => {
+                self.lay_sync_strip(
+                    trailing.x - 10.0,
+                    rect.y + (ROW_H - ActionButton::H) * 0.5,
+                    Some(id),
+                    Some(&mode),
+                    controls,
+                )
+                .x
+            }
+            None => trailing.x,
+        };
         controls.push(Placed {
             control,
             rect: trailing,
             label,
             look,
         });
-        // Tags, right to left before the trailing control.
+        // Tags, right to left before the row's controls.
         let mut tag_names = Vec::new();
         if kind == ListKind::Active && self.w.borrow().effective_pinned(catalog) {
             tag_names.push(PINNED_TAG);
@@ -691,7 +734,7 @@ impl ManageView {
         {
             tag_names.push(OPEN_TAG);
         }
-        let mut right = trailing.x - 10.0;
+        let mut right = before_trailing - 10.0;
         let mut tags = Vec::new();
         for name in tag_names.into_iter().rev() {
             let chip = koru_ui::LabelChip::new(name);
@@ -712,8 +755,16 @@ impl ManageView {
             .min(room);
         let name_line = name_style.metrics.line_height;
         let sub_line = theme::role::meta().metrics.line_height;
+        // A row in the Trash that the account still keeps says so, and
+        // under which Profile, in place of when it was last opened
+        // (trash-recovery P4): that is the fact about it worth a line.
+        let still_in_account = catalog
+            .deleted
+            .then(|| still_in_account_line(&self.w.borrow(), id))
+            .flatten();
         let sub_text = catalog
             .authority_reason(crate::format::lang())
+            .or(still_in_account)
             .or_else(|| catalog.last_opened_at.map(|then| opened_line(then, now)));
         let block = name_line + sub_text.as_ref().map_or(0.0, |_| sub_line);
         let top = rect.y + (ROW_H - block) * 0.5;
@@ -1027,6 +1078,11 @@ impl ManageView {
                 *rect,
                 koru_ui::label_chip::State::default(),
             );
+        }
+        for placed in &laid.controls {
+            if matches!(placed.control, Control::SyncMode(Some(id), _) if id == row.id) {
+                self.paint_control(canvas, root, placed);
+            }
         }
         for trailing in [
             Control::WorkspaceMore(row.id),

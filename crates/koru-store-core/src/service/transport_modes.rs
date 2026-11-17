@@ -148,7 +148,11 @@ impl<C: Catalog, B: Backend> Store<C, B> {
         self.admission_of(state, owner)
     }
 
-    fn admission_of(
+    /// The effective answer for a row as given, filed under `owner`. Taking
+    /// the row lets a caller ask about one it is about to write
+    /// (`restore_workspace_to` decides a Workspace's mode before it plans
+    /// where the restore goes).
+    pub(super) fn admission_of(
         &self,
         state: TransportModeState,
         owner: ProfileId,

@@ -1047,6 +1047,16 @@ impl Catalog for SqliteCatalog {
                     }
                     profile_removal::clear(&tx, *profile)?;
                 }
+                RootProjection::InheritedMode { workspace, mode } => {
+                    tx.execute(
+                        "UPDATE local_transport_modes
+                            SET mode = ?2, revision = revision + 1
+                          WHERE subject_kind = 'workspace' AND subject_id = ?1
+                            AND explicit_choice = 0 AND mode <> ?2",
+                        params![workspace.to_storage(), mode.as_storage()],
+                    )
+                    .map_err(sql_failed)?;
+                }
                 RootProjection::ProfileVisible { profile } => {
                     let changed = tx
                         .execute(

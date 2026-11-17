@@ -598,6 +598,14 @@ pub(crate) enum ToastPayload {
     ReaderEnded {
         terms: Option<koru_store_wire::reader::ReaderTerms>,
     },
+    /// A workspace is in this device's Trash while the account still keeps
+    /// it under a Profile here (trash-recovery P4). Its action opens the
+    /// question *Restore to {Profile}* asks; nothing is restored by the
+    /// press alone.
+    RestoreWorkspaceTo {
+        workspace: koru_store_core::ids::WorkspaceId,
+        profile: koru_store_core::ids::ProfileId,
+    },
     /// Message only — no action button.
     None,
 }
@@ -8273,6 +8281,14 @@ impl MainView {
                 self.arm_workspaces_poll();
                 true
             }
+            // *Restore to {Profile}*: the controller's own question, drawn
+            // by this window like its other confirmations, then one Store
+            // call; the outcome arrives as its notice. Not offered to the
+            // controller at all while it would refuse.
+            Outcome::RestoreWorkspaceTo { workspace, profile } => self.ask_restore_workspace_to(
+                crate::manage::workspaces::catalog_workspace(workspace),
+                crate::manage::workspaces::catalog_profile(profile),
+            ),
             Outcome::OpenSyncSettings => self.open_sync_settings_tab(),
             Outcome::ManageProfile(profile) => {
                 self.open_manage(crate::manage::Page::Profile(profile))

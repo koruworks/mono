@@ -408,6 +408,10 @@ struct World {
     select_lifts: HashSet<String>,
     removed_profiles: HashSet<ProfileId>,
     placement_pending: HashSet<WorkspaceId>,
+    /// What the host's Store holds in its Trash, and what the coordinator
+    /// last told it the account lists live (workspace, Profile).
+    trashed_here: BTreeSet<WorkspaceId>,
+    account_live_listed: Vec<Vec<(WorkspaceId, ProfileId)>>,
     not_ready: HashSet<WorkspaceId>,
     descriptors: HashMap<WorkspaceId, CloudWorkspaceDescriptorV1>,
     descriptors_v2: HashMap<WorkspaceId, CloudWorkspaceDescriptorV2>,
@@ -907,6 +911,22 @@ impl Host for FakeHost {
         Ok(world.local.get(&workspace).copied())
     }
 
+    fn reconcile_account_live(
+        &self,
+        account: KoruIdentityId,
+        listed: &[(WorkspaceId, ProfileId)],
+    ) -> Result<BTreeSet<WorkspaceId>, Failure> {
+        assert_eq!(account, self::account());
+        let mut world = lock(&self.0);
+        world.note("account_live".to_owned());
+        world.account_live_listed.push(listed.to_vec());
+        Ok(listed
+            .iter()
+            .map(|(workspace, _)| *workspace)
+            .filter(|workspace| world.trashed_here.contains(workspace))
+            .collect())
+    }
+
     fn ensure_profile_presence(
         &self,
         profile: ProfileId,
@@ -1277,6 +1297,9 @@ fn a_fresh_device_binds_joins_root_units_then_admits_content_and_profile_units()
         // device nothing is withheld and the answer is zero.
         "repair".to_owned(),
         "discover".to_owned(),
+        // The Store is asked what it has in its Trash before any Workspace
+        // is admitted (trash-recovery PLAN.final P2).
+        "account_live".to_owned(),
         "jwks".to_owned(),
         "token:workspace:1".to_owned(),
         format!("local:{}", workspace(1).to_storage()),
@@ -2552,6 +2575,87 @@ fn a_pending_placement_is_retried_after_the_next_root_join() {
     lock(&harness.world).placement_pending.clear();
     harness.tick(1_000);
     harness.wait_for(|world| world.opened.len() == 2);
+}
+
+/// A Workspace in the Trash on this device is admitted for nothing: the
+/// Store is told what the account lists live, answers the one it has
+/// trashed, and no token is asked for it — while the one beside it syncs
+/// (trash-recovery PLAN.final P2).
+#[test]
+fn a_workspace_in_the_trash_here_is_told_to_the_store_and_spends_no_token() {
+    let world = hosted([1, 2]);
+    lock(&world).trashed_here.insert(workspace(1));
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_for(|world| !world.opened.is_empty());
+
+    let world = lock(&harness.world);
+    let listed = world
+        .account_live_listed
+        .first()
+        .expect("the Store is told once discovery is complete");
+    assert_eq!(
+        listed.iter().map(|(w, _)| *w).collect::<BTreeSet<_>>(),
+        [workspace(1), workspace(2)].into_iter().collect(),
+        "every Workspace the account lists live under a Profile here"
+    );
+    let trashed = format!(
+        "token:{}",
+        scope_label(CloudSyncScopeV2::Workspace {
+            workspace_id: workspace(1),
+        })
+    );
+    let kept = format!(
+        "token:{}",
+        scope_label(CloudSyncScopeV2::Workspace {
+            workspace_id: workspace(2),
+        })
+    );
+    assert!(
+        !world.log.contains(&trashed),
+        "no token for the trashed one"
+    );
+    assert!(world.log.contains(&kept), "the other is admitted as ever");
+    // The account's own catalog token precedes discovery; what must not
+    // precede the question is a token for any Workspace or its Profile.
+    let told = world.log.iter().position(|line| line == "account_live");
+    let discovered = world.log.iter().position(|line| line == "discover");
+    let first_admission = world.log.iter().position(|line| {
+        line.starts_with("token:workspace:") || line.starts_with("token:profile_units:")
+    });
+    assert!(
+        discovered < told && told < first_admission,
+        "asked after discovery and before anything is admitted: {:?}",
+        world.log
+    );
+    drop(world);
+
+    // **The set shrinks when it goes.** The account stops listing the
+    // trashed one; the next pass tells the Store the shorter list, which is
+    // what lets it drop the fact it kept.
+    {
+        let mut world = lock(&harness.world);
+        world.receipts = vec![receipt(
+            vec![candidate_v2(2, Some(2))],
+            vec![live(2)],
+            CloudCoverageV2::Complete,
+            None,
+        )];
+    }
+    harness.control.update_authorization(authority("2"));
+    harness.wait_for(|world| world.account_live_listed.len() >= 2);
+    let world = lock(&harness.world);
+    assert_eq!(
+        world
+            .account_live_listed
+            .last()
+            .unwrap()
+            .iter()
+            .map(|(w, _)| *w)
+            .collect::<Vec<_>>(),
+        vec![workspace(2)],
+        "the whole list each pass, without the one that went"
+    );
 }
 
 /// The account's personal unit for a Workspace follows the Workspace's

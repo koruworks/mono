@@ -17312,6 +17312,37 @@
         ],
         "type": "object"
       },
+      "TrashedInAccount": {
+        "description": "One Workspace that is in the Trash here and live in the account, as the\nrecovery surfaces list it.",
+        "properties": {
+          "acknowledged_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "first_seen_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ProfileId"
+              }
+            ],
+            "description": "The Profile the account keeps it under: where *Restore* puts it."
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/Workspace"
+          }
+        },
+        "required": [
+          "workspace",
+          "profile",
+          "first_seen_ms"
+        ],
+        "type": "object"
+      },
       "TrashedRun": {
         "description": "One run in the trash, as the Trash tab draws it.",
         "properties": {
@@ -35555,6 +35586,54 @@
         "summary": "Create a workspace and its manifest"
       }
     },
+    "/v1/workspaces/trashed-in-account": {
+      "get": {
+        "description": "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/TrashedInAccount"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "each workspace that is in the trash here while the signed-in account lists it live under a profile on this device, with that profile, when this device first learned of it, and when the person was told. Its deletion cannot reach the account from this device, so it stays this way until somebody decides: restore-to with the named profile brings it back. Empty when there is none, and when no account is signed in"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Workspaces in this device's trash that the account still holds live"
+      }
+    },
     "/v1/workspaces/unassigned": {
       "get": {
         "description": "each live workspace placed under nobody, under a deleted or absent Profile, or under a legacy holder, with its former Profile; moving one is the ordinary move, restoring its Profile is the batch restore",
@@ -37202,6 +37281,71 @@
         "summary": "Restore a soft-deleted workspace"
       }
     },
+    "/v1/workspaces/{id}/restore-to": {
+      "post": {
+        "description": "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveWorkspace"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Workspace"
+                }
+              }
+            },
+            "description": "the workspace live under the named profile, restored and placed in one step: for a workspace whose own profile is no longer on this device, which restore refuses and move cannot reach. A sync mode nobody chose follows the new profile; one somebody chose is kept. A workspace that is not in the trash is simply moved. The scope restore takes"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "destroy_workspaces"
+            ]
+          }
+        ],
+        "summary": "Restore a soft-deleted workspace into a profile"
+      }
+    },
     "/v1/workspaces/{id}/snapshot/{document}": {
       "post": {
         "description": "application/octet-stream — a Loro snapshot, ready to import",
@@ -37321,6 +37465,54 @@
           }
         ],
         "summary": "Move a document and its explore subtree into another workspace"
+      }
+    },
+    "/v1/workspaces/{id}/trashed-in-account/acknowledge": {
+      "post": {
+        "description": "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "null. The listing then carries when, so the notice is shown once per device. A workspace that is not listed is not an error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "no bearer token, or one that is not recognised"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Failure"
+                }
+              }
+            },
+            "description": "the credential does not hold the required scope"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "manage_workspaces"
+            ]
+          }
+        ],
+        "summary": "Record that the person was told a trashed workspace is still in the account"
       }
     },
     "/v1/workspaces/{id}/versions/{version}/snapshot": {

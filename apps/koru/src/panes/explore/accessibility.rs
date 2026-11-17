@@ -650,6 +650,20 @@ impl ExploreView {
                 }
                 None => cx.surface(POPOVER, parts::POPOVER),
             },
+            PopoverRow::TrashedInAccount(i) | PopoverRow::TrashedRestoreTo(i) => {
+                match self.trashed_in_account_rows().get(i) {
+                    Some(w) => {
+                        let part = match row {
+                            PopoverRow::TrashedInAccount(_) => {
+                                super::workspace_menu_elements::TRASHED
+                            }
+                            _ => super::workspace_menu_elements::TRASHED_RESTORE,
+                        };
+                        cx.model(w.id.as_uuid(), ControlPart::new(part))
+                    }
+                    None => cx.surface(POPOVER, parts::POPOVER),
+                }
+            }
             PopoverRow::Workspace(i) => match self.workspaces.get(i) {
                 Some(w) => cx.model(w.id.as_uuid(), ControlPart::ROOT),
                 None => cx.surface(POPOVER, parts::POPOVER),
@@ -701,6 +715,20 @@ impl ExploreView {
                 .unwrap_or_default(),
             PopoverRow::UnassignedMove(_) => t(lang, Key::WorkspacesMoveTo).to_string(),
             PopoverRow::UnassignedRestore(_) => t(lang, Key::WorkspacesRestoreProfile).to_string(),
+            PopoverRow::TrashedInAccount(i) => self
+                .trashed_in_account_rows()
+                .get(i)
+                .map(|w| w.name.clone())
+                .unwrap_or_default(),
+            PopoverRow::TrashedRestoreTo(i) => {
+                let profile = self
+                    .trashed_in_account_rows()
+                    .get(i)
+                    .zip(self.workspace_controller.as_ref())
+                    .map(|(w, controller)| controller.borrow().profile_name(w.profile))
+                    .unwrap_or_default();
+                koru_i18n::fill(t(lang, Key::WorkspacesRestoreTo), &[&profile])
+            }
             PopoverRow::ProfilesHeading => t(lang, Key::ProfileManageProfiles).to_string(),
             PopoverRow::ProfileAction(action) => t(lang, action.words()).to_string(),
             PopoverRow::Help(action) => self.help.action_label(action),
@@ -790,6 +818,15 @@ impl ExploreView {
                     _ => super::workspace_menu_elements::UNASSIGNED_RESTORE,
                 };
                 self.unassigned_rows().get(i).is_some_and(|w| {
+                    target.object == object_of(w.id.as_uuid()) && target.part.name() == part
+                })
+            }
+            PopoverRow::TrashedInAccount(i) | PopoverRow::TrashedRestoreTo(i) => {
+                let part = match row {
+                    PopoverRow::TrashedInAccount(_) => super::workspace_menu_elements::TRASHED,
+                    _ => super::workspace_menu_elements::TRASHED_RESTORE,
+                };
+                self.trashed_in_account_rows().get(i).is_some_and(|w| {
                     target.object == object_of(w.id.as_uuid()) && target.part.name() == part
                 })
             }

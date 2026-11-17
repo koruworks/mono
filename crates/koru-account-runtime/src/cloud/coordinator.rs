@@ -895,6 +895,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 })
             });
         }
+        self.drop_trashed_here(&mut candidates);
         // Round robin by current placement before taking a bounded cohort:
         // a large Profile cannot occupy all sixteen slots ahead of every
         // other Profile, and the unassigned group is one group among them.
@@ -914,6 +915,56 @@ impl<A: Api, H: Host> Coordinator<A, H> {
             }
         }
         Ok(())
+    }
+
+    /// **A Workspace in the Trash here is admitted for nothing.** The Store
+    /// is told every Workspace the account lists live under a Profile on
+    /// this device and answers the ones it has in its Trash; those leave the
+    /// pass before a token is asked for them. It is also how the Store
+    /// learns of a Workspace it holds trashed while the account holds it
+    /// live — the one fact the recovery surfaces show (trash-recovery
+    /// PLAN.final P2). Asked on every pass, an empty list included, because
+    /// the Store replaces what it knew from the answer. A Store that cannot
+    /// say drops nothing: the pass goes on as it always did.
+    ///
+    /// **Only against a v2 service.** The fact is about the account's
+    /// catalog, and the v1 window has none: its pair listing carries no
+    /// lifecycle to call live, and that path is kept exactly as it was.
+    fn drop_trashed_here(&self, candidates: &mut VecDeque<Candidate>) {
+        if self.contract != Some(CloudContract::V2) {
+            return;
+        }
+        let Ok(account) = self
+            .current_authority()
+            .map(|authority| authority.owner.account)
+        else {
+            return;
+        };
+        let listed: Vec<(WorkspaceId, ProfileId)> = candidates
+            .iter()
+            .filter(|candidate| candidate.lifecycle == SubjectLifecycle::Live)
+            .filter_map(|candidate| {
+                candidate
+                    .placement
+                    .map(|profile| (candidate.workspace_id, profile))
+            })
+            .collect();
+        match self.host.reconcile_account_live(account, &listed) {
+            Ok(trashed) if trashed.is_empty() => {}
+            Ok(trashed) => {
+                candidates.retain(|candidate| !trashed.contains(&candidate.workspace_id));
+                tracing::info!(
+                    target: "koru_cloud",
+                    trashed = trashed.len(),
+                    "cloud pass: workspaces in the Trash on this device are not admitted"
+                );
+            }
+            Err(error) => tracing::info!(
+                target: "koru_cloud",
+                code = error.code(),
+                "cloud pass: the Store did not say what is in its Trash; nothing dropped"
+            ),
+        }
     }
 
     /// `GET /v1/account/cloud/discovery?scope=workspaces`, paged: results
