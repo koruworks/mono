@@ -15572,3 +15572,147 @@ fn showing_an_unreadable_item_navigates_to_its_document() {
     v.perform_settings_request(koru_settings_ui::Request::ShowReaderItem("nonsense".into()));
     assert_eq!(v.take_pane_request(), None);
 }
+
+/// **Two split panes showing the same document update in real time as you type.**
+///
+/// `App::adopt_others` notifies *other windows* when this window edits `ws`,
+/// skipping this window so the authoring editor does not rebuild over its own
+/// caret. When the same document is open in two split panes of one window, the
+/// sibling pane is inside the skipped window — so without `adopt_siblings` its
+/// `ChangeTracker` never drained and the pane stayed frozen until a paragraph
+/// was edited or split in that second pane.
+#[test]
+fn typing_in_one_split_pane_updates_the_other_pane_showing_the_same_document_immediately() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+
+    let (mut w, doc) = a_document_of(&["first line", "second line"]);
+    let mut v = MainView::new();
+    v.set_viewport(1200.0, 700.0);
+    v.set_pane_context(
+        Vec::new(),
+        koru_core::ProfileId::new(),
+        Vec::new(),
+        w.ws.id(),
+    );
+    v.open_node(&w.ws, doc);
+
+    // Open a second tab on the same document and split it to the right, so both
+    // panes show `doc` side by side in the same window.
+    assert!(v.open_node_in_new_tab(&w.ws, doc));
+    let second_id = v.tabs().active_tab().id;
+    let second_tab = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), second_id)
+        .expect("took second tab");
+    v.panes
+        .split(&PanePath::root(), SplitDir::Right, second_tab);
+    v.size_visible_groups();
+
+    let left = PanePath::root().child(0);
+    let right = PanePath::root().child(1);
+
+    let pane_texts = |v: &MainView, path: &PanePath| -> Vec<String> {
+        let TabView::Leaf(Leaf::Document(d)) = &v
+            .panes
+            .group(path)
+            .expect("pane group")
+            .tabs()
+            .active_tab()
+            .view
+        else {
+            panic!("expected document leaf");
+        };
+        d.editor.body.rows.iter().map(|r| r.text.clone()).collect()
+    };
+
+    assert_eq!(
+        pane_texts(&v, &left),
+        vec!["Notes", "first line", "second line"]
+    );
+    assert_eq!(
+        pane_texts(&v, &right),
+        vec!["Notes", "first line", "second line"]
+    );
+
+    // Focus the right pane, land on the first body line, and type at its end.
+    v.panes.set_focus(right.clone());
+    let first_row = {
+        let TabView::Leaf(Leaf::Document(d)) = &v.tabs().active_tab().view else {
+            panic!("expected document leaf");
+        };
+        d.editor.body.rows[1].id
+    };
+    {
+        let TabView::Leaf(l) = &mut v.tabs_mut().active_mut().view else {
+            panic!("expected document leaf");
+        };
+        l.view_mut().active = true;
+        assert!(Editing::reveal(l, first_row));
+    }
+    v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::End),
+        None,
+        NONE,
+    );
+    v.key(&mut w.ws, &ch("!"), Some("!"), NONE);
+
+    // The left pane updates immediately on the keystroke, without clicking or
+    // editing a paragraph in the left pane.
+    assert_eq!(
+        pane_texts(&v, &left),
+        vec!["Notes", "first line!", "second line"],
+        "inline typing in the right pane must appear immediately in the left pane"
+    );
+
+    // Press Enter and type a new line in the right pane; the structural change
+    // and its text both appear immediately in the left pane.
+    v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        NONE,
+    );
+    for ch_str in ["T", "T", "T"] {
+        v.key(&mut w.ws, &ch(ch_str), Some(ch_str), NONE);
+    }
+    assert_eq!(
+        pane_texts(&v, &left),
+        vec!["Notes", "first line!", "TTT", "second line"],
+        "a new paragraph added in the right pane must appear immediately in the left pane"
+    );
+    assert_eq!(
+        pane_texts(&v, &right),
+        vec!["Notes", "first line!", "TTT", "second line"],
+    );
+
+    // Now switch focus to the left pane and edit `second line`; the right pane
+    // updates immediately in turn.
+    v.panes.set_focus(left.clone());
+    let last_row = {
+        let TabView::Leaf(Leaf::Document(d)) = &v.tabs().active_tab().view else {
+            panic!("expected document leaf");
+        };
+        d.editor.body.rows[3].id
+    };
+    {
+        let TabView::Leaf(l) = &mut v.tabs_mut().active_mut().view else {
+            panic!("expected document leaf");
+        };
+        l.view_mut().active = true;
+        assert!(Editing::reveal(l, last_row));
+    }
+    v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::End),
+        None,
+        NONE,
+    );
+    v.key(&mut w.ws, &ch("?"), Some("?"), NONE);
+
+    assert_eq!(
+        pane_texts(&v, &right),
+        vec!["Notes", "first line!", "TTT", "second line?"],
+        "typing in the left pane must appear immediately in the right pane"
+    );
+}

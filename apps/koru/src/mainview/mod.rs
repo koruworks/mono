@@ -8700,6 +8700,43 @@ impl MainView {
         }
     }
 
+    /// Bring every other tab in this window up to date after a local edit to `ws`.
+    ///
+    /// `App::adopt_others` notifies *other windows* when this window edits the
+    /// workspace document, skipping this window so the editor that just typed
+    /// does not rebuild over its own caret placement. Inside this window,
+    /// however, another split pane (or a background tab) may be showing the
+    /// same document. Each view owns its own [`ChangeTracker`]: a leaf that
+    /// authored the edit has already settled its own tracker, so draining every
+    /// tab here is a no-op for the author and queues the diff for every sibling
+    /// tab; [`catch_up_active`](Self::catch_up_active) then settles the visible
+    /// split panes immediately.
+    pub(super) fn adopt_siblings(&mut self, ws: &WorkspaceDoc) {
+        let focused_path = self.panes.focused_path().clone();
+        let focused_active = self.panes.focused().tabs().active();
+        for (path, group) in self.panes.iter_groups_mut() {
+            let active = group.tabs().active();
+            for (i, t) in group.tabs_mut().iter_mut().enumerate() {
+                if t.draft.is_none() {
+                    if path == focused_path
+                        && i == focused_active
+                        && let TabView::Tasks(tasks) = &mut t.view
+                    {
+                        if let Some(leaf) = tasks.body_leaf_in(ws) {
+                            leaf.body_mut().defer_pending(ws);
+                        }
+                    } else {
+                        t.view.adopt_cheap(ws);
+                    }
+                }
+                if i != active {
+                    t.invalidate_size();
+                }
+            }
+        }
+        self.catch_up_active(ws);
+    }
+
     /// Settle one tab against the document; whether it had anything to take.
     fn catch_up_tab(tab: &mut Tab, ws: &WorkspaceDoc) -> bool {
         if tab.draft.is_some() {
@@ -10170,32 +10207,31 @@ impl MainView {
             return;
         };
         let active = self.active_document;
-        // Names first, so the read of `entries` is finished before the tabs are
-        // written and `mark_tab_widths_stale` can take `&mut self`.
-        let names: Vec<(usize, String)> = self
-            .tabs()
+        let entries: std::collections::HashMap<_, _> = entries
             .iter()
-            .enumerate()
-            .filter_map(|(i, t)| {
-                let id = t.document.filter(|id| Some(*id) != active)?;
-                let entry = entries.iter().find(|e| e.id == id)?;
-                let title = if entry.title.is_empty() {
+            .map(|e| {
+                let title = if e.title.is_empty() {
                     "Untitled".to_owned()
                 } else {
-                    entry.title.clone()
+                    e.title.clone()
                 };
-                Some((i, title))
+                (e.id, title)
             })
             .collect();
-        if names.is_empty() {
-            return;
-        }
-        for (i, name) in names {
-            if let Some(t) = self.tabs_mut().get_mut(i) {
-                t.set_name(&name);
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            for t in group.tabs_mut().iter_mut() {
+                if let Some(id) = t.document.filter(|id| Some(*id) != active)
+                    && let Some(name) = entries.get(&id)
+                {
+                    t.set_name(name);
+                    changed = true;
+                }
             }
         }
-        self.mark_tab_widths_stale();
+        if changed {
+            self.mark_tab_widths_stale();
+        }
     }
 
     fn refresh_labels(&mut self, ws: &WorkspaceDoc) {
@@ -10243,72 +10279,74 @@ impl MainView {
                 Some((*id, title))
             })
             .collect();
-        for t in self.tabs_mut().iter_mut() {
-            // **The Tasks tab is named for what it is showing**, and it is the
-            // one tab whose name can change without anybody pressing anything:
-            // a peer renaming the list it is on moves it. So it is refreshed
-            // here with the document tabs rather than written once where the
-            // queue is pressed. It has no root, so every gate below would skip
-            // it.
-            if matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)) {
-                t.refresh_tasks_label();
-                // The lane's names follow the listing, as the tab's does.
-                if let TabView::Tasks(page) = &mut t.view {
-                    let faces: Vec<crate::tasks_view::LaneItem> = page
-                        .attachment_ids()
-                        .into_iter()
-                        .map(|file| {
-                            let (name, is_file) = titles
-                                .get(&file)
-                                .cloned()
-                                .unwrap_or_else(|| ("File".to_owned(), true));
-                            crate::tasks_view::LaneItem {
-                                id: file,
-                                name,
-                                is_file,
-                            }
-                        })
-                        .collect();
-                    page.set_attachment_faces(faces);
+        for (_, group) in self.panes.iter_groups_mut() {
+            for t in group.tabs_mut().iter_mut() {
+                // **The Tasks tab is named for what it is showing**, and it is the
+                // one tab whose name can change without anybody pressing anything:
+                // a peer renaming the list it is on moves it. So it is refreshed
+                // here with the document tabs rather than written once where the
+                // queue is pressed. It has no root, so every gate below would skip
+                // it.
+                if matches!(t.view, TabView::Tasks(_) | TabView::Reminders(_)) {
+                    t.refresh_tasks_label();
+                    // The lane's names follow the listing, as the tab's does.
+                    if let TabView::Tasks(page) = &mut t.view {
+                        let faces: Vec<crate::tasks_view::LaneItem> = page
+                            .attachment_ids()
+                            .into_iter()
+                            .map(|file| {
+                                let (name, is_file) = titles
+                                    .get(&file)
+                                    .cloned()
+                                    .unwrap_or_else(|| ("File".to_owned(), true));
+                                crate::tasks_view::LaneItem {
+                                    id: file,
+                                    name,
+                                    is_file,
+                                }
+                            })
+                            .collect();
+                        page.set_attachment_faces(faces);
+                    }
+                    continue;
                 }
-                continue;
-            }
-            // **A note's resolved name stands where its title row would be**,
-            // in every tab over it, active or not — the row holds the empty
-            // root text nothing reads, and a person opening the note from
-            // the library expects to see what the library called it.
-            if let Some(document) = t.document
-                && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
-                && let TabView::Leaf(leaf) = &mut t.view
-            {
-                leaf.set_title_display(Some(name.clone()));
-            }
-            // A draft's root names a node in its own throwaway document, not in
-            // this one, so `name_of` here would be a lookup in the wrong place.
-            // Its label is `DRAFT_NAME` until it is promoted.
-            if t.draft.is_some() {
-                continue;
-            }
-            // **And the same is true of a tab over another document**, for the
-            // same reason: `ws` is the *active* one, so `name_of` there finds
-            // nothing and answers `Untitled` — which would rename every
-            // background document tab to that the moment anything changed. Its
-            // label follows the manifest instead, through `set_entries`.
-            if t.document != active_document {
-                continue;
-            }
-            // A note's name is resolved, never its root text, so its tab is
-            // named from the listing like a background tab — active or not.
-            if let Some(document) = t.document
-                && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
-            {
-                t.set_name(name);
-                continue;
-            }
-            // A title being typed into is held at the name it had when the
-            // caret arrived — `settle_naming` releases it on the way out.
-            if let Some(root) = t.view.root().filter(|r| Some(*r) != naming) {
-                t.set_name(&koru_workspace::name_of(ws, root));
+                // **A note's resolved name stands where its title row would be**,
+                // in every tab over it, active or not — the row holds the empty
+                // root text nothing reads, and a person opening the note from
+                // the library expects to see what the library called it.
+                if let Some(document) = t.document
+                    && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
+                    && let TabView::Leaf(leaf) = &mut t.view
+                {
+                    leaf.set_title_display(Some(name.clone()));
+                }
+                // A draft's root names a node in its own throwaway document, not in
+                // this one, so `name_of` here would be a lookup in the wrong place.
+                // Its label is `DRAFT_NAME` until it is promoted.
+                if t.draft.is_some() {
+                    continue;
+                }
+                // **And the same is true of a tab over another document**, for the
+                // same reason: `ws` is the *active* one, so `name_of` there finds
+                // nothing and answers `Untitled` — which would rename every
+                // background document tab to that the moment anything changed. Its
+                // label follows the manifest instead, through `set_entries`.
+                if t.document != active_document {
+                    continue;
+                }
+                // A note's name is resolved, never its root text, so its tab is
+                // named from the listing like a background tab — active or not.
+                if let Some(document) = t.document
+                    && let Some((_, name)) = page_names.iter().find(|(id, _)| *id == document)
+                {
+                    t.set_name(name);
+                    continue;
+                }
+                // A title being typed into is held at the name it had when the
+                // caret arrived — `settle_naming` releases it on the way out.
+                if let Some(root) = t.view.root().filter(|r| Some(*r) != naming) {
+                    t.set_name(&koru_workspace::name_of(ws, root));
+                }
             }
         }
         self.mark_tab_widths_stale();
@@ -10333,6 +10371,15 @@ impl MainView {
 }
 impl MainView {
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_down_inner(ws, x, y, ctrl);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
+    }
+
+    fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         self.tooltip.clear();
         self.pointer = (x, y);
         if self.file_preview.is_some() {
@@ -10906,6 +10953,15 @@ impl MainView {
         handled || opened || toasted || asked || binned || entity_changed || microphones
     }
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_up_inner(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
+    }
+
+    fn mouse_up_inner(&mut self, ws: &mut WorkspaceDoc) -> bool {
         // A chat's lifted picture viewer takes the release of its own press.
         match self.lifted_viewer() {
             Some(LiftedViewer::AiPane) => return self.ai_chat.mouse_up(),
@@ -11388,7 +11444,11 @@ impl View for MainView {
             _ => {}
         }
         let handled = MainView::key(self, ws, key, text, mods);
+        let before = ws.version();
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         if handled || acted {}
         handled || acted
     }
@@ -11441,7 +11501,11 @@ impl View for MainView {
         }
         let handled = MainView::mouse_down(self, ws, x, y, ctrl);
         let attachment_opened = self.open_pending_ai_attachment();
+        let before = ws.version();
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         if handled || acted {}
         handled || acted || attachment_opened
     }
@@ -11459,7 +11523,11 @@ impl View for MainView {
             return View::mouse_up(search, ws);
         }
         let handled = MainView::mouse_up(self, ws);
+        let before = ws.version();
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         if handled || acted {}
         handled || acted
     }
@@ -11657,8 +11725,13 @@ impl View for MainView {
                 // **A run pill asks the same way** (ADR-369): the pill is the
                 // document's, the menu is this window's, because what a run
                 // produced is not something an editor can name.
+                let before = ws.version();
+                let acted = self.drain_trash_all(ws);
+                if ws.version() != before {
+                    self.adopt_siblings(ws);
+                }
                 handled
-                    | self.drain_trash_all(ws)
+                    | acted
                     | self.drain_run_pill_menu((x, y))
                     | self.drain_schedule_pill_menu((x, y))
             }
@@ -12168,7 +12241,12 @@ impl View for MainView {
     }
 
     fn key_up(&mut self, ws: &mut WorkspaceDoc, key: &Key) -> bool {
-        self.canvas_key_up(ws, key)
+        let before = ws.version();
+        let handled = self.canvas_key_up(ws, key);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
     }
 
     fn set_viewport(&mut self, w: f32, h: f32) {
@@ -12641,7 +12719,10 @@ impl View for MainView {
             || crate::taskbar::new_document_pending()
             || crate::taskbar::open_pending()
             || crate::taskbar::open_document_pending()
-            || self.tabs().active_tab().view.is_animating()
+            || self
+                .panes
+                .iter_groups()
+                .any(|(_, group)| group.tabs().active_tab().view.is_animating())
     }
 
     fn invalidate(&mut self) {
@@ -12749,6 +12830,7 @@ impl View for MainView {
         action: accesskit::Action,
         data: Option<&accesskit::ActionData>,
     ) -> bool {
+        let before = ws.version();
         let handled = MainView::accessibility_action(self, ws, target, action, data);
         // **A request from a screen reader is a gesture, and every gesture ends
         // here.** `key`, `mouse_down` and `mouse_up` each finish with this call,
@@ -12757,6 +12839,9 @@ impl View for MainView {
         // none of them, which nothing noticed until the Tasks page gave an AT
         // action something to ask the container for.
         let acted = self.drain_trash_all(ws);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
         handled || acted
     }
 
@@ -13854,14 +13939,19 @@ impl View for MainView {
         let Some(leaf) = self.active_editing_leaf() else {
             return false;
         };
-        leaf.complete_new_page_link(
+        let before = ws.version();
+        let done = leaf.complete_new_page_link(
             ws,
             title,
             koru_editor::trigger::DocumentTarget {
                 document,
                 node: None,
             },
-        )
+        );
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        done
     }
 
     fn complete_selection_move(
@@ -13874,6 +13964,7 @@ impl View for MainView {
         let TabView::Leaf(leaf) = self.active_view() else {
             return false;
         };
+        let before = ws.version();
         let toast = title.clone();
         let done = leaf.complete_selection_move(
             ws,
@@ -13882,6 +13973,9 @@ impl View for MainView {
         );
         if done {
             self.show_notice(format!("Moved to {toast}"));
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
         done
     }
@@ -14964,6 +15058,7 @@ impl View for MainView {
         node: NodeId,
         files: &[(koru_core::DocumentId, String)],
     ) {
+        let before = ws.version();
         let i = self
             .attachment_request
             .take()
@@ -14980,6 +15075,9 @@ impl View for MainView {
         };
         if let Some(l) = leaf {
             View::insert_attachment(l, ws, node, files);
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -15153,8 +15251,14 @@ impl View for MainView {
     }
 
     fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
-        self.active_editing_leaf()
-            .is_some_and(|leaf| View::apply_pending_image_cut(leaf, ws))
+        let before = ws.version();
+        let done = self
+            .active_editing_leaf()
+            .is_some_and(|leaf| View::apply_pending_image_cut(leaf, ws));
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        done
     }
 
     fn take_wants_paste_image(&mut self) -> Option<koru_workspace_host::PasteTarget> {
@@ -15182,6 +15286,7 @@ impl View for MainView {
         if self.canvas_insert_image(ws, node, (hash, mime), width, height) {
             return;
         }
+        let before = ws.version();
         let i = self.image_request.take().unwrap_or(self.tabs().active());
         match self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
             Some(TabView::Leaf(l)) => View::insert_image(l, ws, node, hash, mime, width, height),
@@ -15191,6 +15296,9 @@ impl View for MainView {
                 }
             }
             _ => {}
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -15205,6 +15313,7 @@ impl View for MainView {
         if self.canvas_append_image(ws, (hash, mime), width, height) {
             return;
         }
+        let before = ws.version();
         match self.active_view() {
             TabView::Leaf(l) => View::append_image(l, ws, hash, mime, width, height),
             TabView::Tasks(t) => {
@@ -15213,6 +15322,9 @@ impl View for MainView {
                 }
             }
             _ => {}
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -15225,6 +15337,7 @@ impl View for MainView {
         if self.canvas_insert_images(ws, images) {
             return;
         }
+        let before = ws.version();
         let landed = match self.active_view() {
             TabView::Leaf(l) => {
                 View::paste_images(l, ws, target, images);
@@ -15247,9 +15360,13 @@ impl View for MainView {
             // `adopt` would catch it next frame; this makes it immediate.
             self.explore_stale = true;
         }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
     }
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
+        let before = ws.version();
         match self.active_view() {
             TabView::Leaf(l) => View::paste_text(l, ws, text),
             TabView::Tasks(t) => {
@@ -15258,6 +15375,9 @@ impl View for MainView {
                 }
             }
             _ => {}
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -15321,6 +15441,7 @@ impl View for MainView {
         place: koru_workspace_host::ImagePlace,
         images: &[koru_workspace_host::PastedImage],
     ) {
+        let before = ws.version();
         let mut place = Some(place);
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
@@ -15342,6 +15463,9 @@ impl View for MainView {
                 // The `/image` ask, if this was one, is answered.
                 self.image_request = None;
                 self.explore_stale = true;
+                if ws.version() != before {
+                    self.adopt_siblings(ws);
+                }
             }
             Some(koru_workspace_host::ImagePlace::Paste(target)) => {
                 View::paste_images(self, ws, target, images)
@@ -15397,6 +15521,7 @@ impl View for MainView {
         target: Option<koru_workspace_host::PasteTarget>,
         blocks: &[koru_workspace_host::RichBlock],
     ) {
+        let before = ws.version();
         let landed = match self.active_view() {
             TabView::Leaf(l) => {
                 View::paste_rich(l, ws, target, blocks);
@@ -15415,6 +15540,9 @@ impl View for MainView {
             // Like `paste_images`: image blocks landed under the active document,
             // so the explore column's library cache is stale.
             self.explore_stale = true;
+        }
+        if ws.version() != before {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -15604,7 +15732,10 @@ impl View for MainView {
             self.search
                 .as_ref()
                 .and_then(koru_workspace_host::View::maintenance_deadline),
-            self.tabs().active_tab().view.maintenance_deadline(),
+            self.panes
+                .iter_groups()
+                .filter_map(|(_, group)| group.tabs().active_tab().view.maintenance_deadline())
+                .min(),
             // An open font picker waiting for the scan looks again soon.
             self.font_picker_waiting()
                 .then(|| Instant::now() + std::time::Duration::from_millis(100)),
@@ -15620,12 +15751,15 @@ impl View for MainView {
                 .then(|| Instant::now() + std::time::Duration::from_millis(16)),
             self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
-            // Only the tab in front has one: a Tasks tab in the background
-            // contributes no clock and therefore no wake.
-            match &self.tabs().active_tab().view {
-                TabView::Tasks(t) => t.panel().deadline(),
-                _ => None,
-            },
+            // Only a tab in front of its pane has one: a Tasks tab in the
+            // background contributes no clock and therefore no wake.
+            self.panes
+                .iter_groups()
+                .filter_map(|(_, group)| match &group.tabs().active_tab().view {
+                    TabView::Tasks(t) => t.panel().deadline(),
+                    _ => None,
+                })
+                .min(),
             self.reminders.deadline(),
             self.reminder_shell.maintenance_deadline(),
             if self.ai_visible() {
@@ -15873,15 +16007,13 @@ impl View for MainView {
         // tab in the background has no deadline and makes no request at all,
         // which is the other half of "a background Tasks tab costs a bool".
         let workspace = self.current_workspace();
-        let showing = matches!(self.tabs().active_tab().view, TabView::Tasks(_));
         let mut page_changed = false;
-        let active_path = self.panes.focused_path().clone();
-        for (path, group) in self.panes.iter_groups_mut() {
+        for (_, group) in self.panes.iter_groups_mut() {
             let group_active = group.active();
             for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
                 if let TabView::Tasks(t) = &mut tab.view {
                     let target = t.target();
-                    let in_front = showing && path == active_path && i == group_active;
+                    let in_front = i == group_active;
                     if t.panel_mut()
                         .maintain(workspace, Some(target), in_front, now)
                     {
@@ -15906,12 +16038,11 @@ impl View for MainView {
             .map(|p| p.name.clone())
             .unwrap_or_default();
         let home_offline = self.store_trouble.is_some();
-        let home_showing = matches!(self.tabs().active_tab().view, TabView::Home(_));
-        for (path, group) in self.panes.iter_groups_mut() {
+        for (_, group) in self.panes.iter_groups_mut() {
             let group_active = group.active();
             for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
                 if let TabView::Home(page) = &mut tab.view {
-                    let in_front = home_showing && path == active_path && i == group_active;
+                    let in_front = i == group_active;
                     if page.feed(
                         &home_name,
                         home_recents.clone(),
@@ -16139,7 +16270,14 @@ impl View for MainView {
         while let Some(request) = self.reminder_preferences.take_startup_request() {
             self.ask_pane(PaneRequest::AnswerReminderStartup(request));
         }
-        let view_changed = self.tabs_mut().active_view().maintain(ws, now);
+        let mut view_changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let (view, doc) = group.tabs_mut().active_mut().doc(ws);
+            view_changed |= view.maintain(doc, now);
+        }
+        if reminder_submitted || reminder_cancelled || pasted_draft {
+            self.adopt_siblings(ws);
+        }
         // The Manage tab's *Linked devices* page re-asks for presence on its
         // deadline; the ask leaves as a request for Agent.
         let manage_asked = matches!(self.tabs().active_tab().view, TabView::Manage(_))
@@ -16219,6 +16357,21 @@ impl View for MainView {
 }
 impl MainView {
     fn key(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> bool {
+        let before = ws.version();
+        let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
+    }
+
+    fn key_inner(
         &mut self,
         ws: &mut WorkspaceDoc,
         key: &Key,

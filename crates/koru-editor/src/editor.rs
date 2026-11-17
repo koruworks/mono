@@ -495,12 +495,20 @@ pub trait Editing {
     /// Make the transcript real: one logical edit and one undo step. An empty
     /// final transcript cancels rather than deleting the selection.
     fn commit_dictation(&mut self, ws: &mut WorkspaceDoc, text: &str) {
+        let before = ws.version();
         crate::dictation::commit(self.body_mut(), ws, text);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
     }
 
     /// Throw the composition away: no edit, no undo entry, no trace.
     fn cancel_dictation(&mut self, ws: &mut WorkspaceDoc) {
+        let before = ws.version();
         crate::dictation::cancel(self.body_mut(), ws);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
     }
 
     /// Where the provisional text is, in **view** coordinates. `None` when
@@ -635,6 +643,7 @@ pub trait Editing {
             return false;
         }
         self.body_mut().refresh(ws, pending.identity.node);
+        self.body_mut().settle_local(ws);
         self.body_mut().focus_on(pending.identity.node);
         self.place_caret(start);
         self.reflow();
@@ -4024,6 +4033,7 @@ pub trait Editing {
         }
 
         self.body_mut().refresh(ws, id);
+        self.body_mut().settle_local(ws);
         // Past the gap either way, so re-picking a pill that already had one
         // does not stack up spaces or strand the caret behind them.
         self.place_caret(after + 1);
@@ -4377,6 +4387,21 @@ pub trait Editing {
     }
 
     fn key(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> bool {
+        let before = ws.version();
+        let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn key_inner(
         &mut self,
         ws: &mut WorkspaceDoc,
         key: &Key,
@@ -8547,6 +8572,15 @@ pub trait Editing {
 
     /// Returns true if a redraw is needed.
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_down_inner(ws, x, y, ctrl);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         // A new press is a new drag, of whichever of the three kinds. Cleared
         // here rather than in each arm, so a press that lands on a row cannot
         // inherit the last field drag.
@@ -9626,6 +9660,15 @@ pub trait Editing {
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_up_inner(ws);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn mouse_up_inner(&mut self, ws: &mut WorkspaceDoc) -> bool {
         self.view_mut().dragging = false;
         self.view_mut().drag_scroll_tick = None;
         // Short-click on a body emoji: drop the armed long-press, leave the caret.

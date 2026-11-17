@@ -1127,7 +1127,11 @@ impl BuiltInDocument {
             self.editor.view.overlay.is_open(),
             self.blockers(),
         ));
+        let before = ws.version();
         let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.editor.body.settle_local(ws);
+        }
         koru_ui::keys::debug::write(format_args!(
             "[Koru][input] document key handled={handled} active={}",
             self.editor.view.active,
@@ -3314,9 +3318,13 @@ impl BuiltInDocument {
     }
 
     pub fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let before = ws.version();
         let handled = self.mouse_down_inner(ws, x, y, ctrl);
         self.drain_remove_from_tasks_request(ws);
         self.drain_diagram_requests();
+        if ws.version() != before {
+            self.editor.body.settle_local(ws);
+        }
         self.refresh_title(ws);
         handled
     }
