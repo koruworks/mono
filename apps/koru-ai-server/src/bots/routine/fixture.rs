@@ -58,6 +58,7 @@ impl Fixture {
         );
         let owner = adapter.owner().unwrap();
         let bot = Bot {
+            may_ask: true,
             id: BotId::mint(),
             home_workspace: home,
             user_scope: owner.user_scope,

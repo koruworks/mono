@@ -41,6 +41,7 @@ fn sorted(mut entries: Vec<(BotId, ChatId, BotActivityState)>) -> Vec<BotActivit
     entries
         .into_iter()
         .map(|(bot_id, chat_id, state)| BotActivity {
+            waiting: None,
             bot_id,
             chat_id,
             state,
@@ -200,6 +201,7 @@ fn activity_reads_one_index_probe_per_question_never_the_history() {
     assert_eq!(
         page.entries,
         vec![BotActivity {
+            waiting: None,
             bot_id: bot.id,
             chat_id: live,
             state: BotActivityState::NeedsYou,

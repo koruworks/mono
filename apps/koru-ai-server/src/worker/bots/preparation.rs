@@ -504,6 +504,10 @@ impl WorkerState {
                     | BotCommand::ListBotChats { .. }
                     | BotCommand::ReadRun { .. }
                     | BotCommand::ReadTaskAnswer { .. }
+                    // The two child reads (M6) name a Bot and a conversation
+                    // and need no page proof.
+                    | BotCommand::ListChildRequests { .. }
+                    | BotCommand::ReadChildOrigin { .. }
                     | BotCommand::StopTask { .. }
                     // Owner and home metadata only; a control's own job
                     // proves its pages and reads its Schedule.
@@ -800,6 +804,8 @@ pub(super) fn bot_targets(
             | BotCommand::ListBotChats { bot_id, .. }
             | BotCommand::ReadRun { bot_id, .. }
             | BotCommand::ReadTaskAnswer { bot_id, .. }
+            | BotCommand::ListChildRequests { bot_id, .. }
+            | BotCommand::ReadChildOrigin { bot_id, .. }
             | BotCommand::StopTask { bot_id, .. } => *bot_id,
             BotCommand::List { .. } | BotCommand::ListLifecycle { .. } => unreachable!(),
             // The workspace alone is proved; the read names no Bot or chat.

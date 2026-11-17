@@ -10,4 +10,6 @@ mod enrollment;
 mod replay;
 pub use card::{BotDecisionCard, BotNativeDecisionLink};
 pub use closure::{BOT_DECISION_NEEDED_YOU, BotDecisionClosure};
+pub(super) use enrollment::run_subject_on;
 pub use replay::BotDecisionReplayRollover;
+pub(super) use replay::installed_consumer_on;

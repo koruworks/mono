@@ -7,7 +7,7 @@ use super::*;
 use koru_delegate_core::decisions::*;
 
 const K_PROJECTION: &str = "decision_projection";
-/// The Bot5 format written only by a committed decision projection; the
+/// The Bot format every committed projection leaves the document at; the
 /// reader gate (`RUN_DOCUMENT_SCHEMA_VERSION`) understands it, so ordinary
 /// writes after the exclusive window stay writable.
 const BOT_PROJECTION_SCHEMA: i64 = crate::RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION;
@@ -81,7 +81,7 @@ impl RunProjectionStaging {
         connected: &RunDocument,
         intent: &RunProjectionIntent,
     ) -> Result<DecisionPreparedProjection> {
-        connected.check_projection_subject(&intent.identity, &intent.target, false)?;
+        connected.check_projection_subject(&intent.identity, &intent.target)?;
         connected.check_projection_predecessor(intent)?;
         self.refresh(connected)?;
         let stage = self.staged.as_ref().ok_or_else(|| invalid(()))?;
@@ -115,7 +115,7 @@ impl RunProjectionStaging {
         if self.prepared.as_ref().is_some_and(|p| p != prepared) {
             return Err(invalid(()));
         }
-        connected.check_projection_subject(&prepared.identity, &target, true)?;
+        connected.check_projection_subject(&prepared.identity, &target)?;
         let base = decode_vv(&prepared.base_version)?;
         require_document(covers(&connected.doc.state_vv(), &base))?;
         if connected.check_applied(prepared, &target).is_ok() {
@@ -225,7 +225,6 @@ impl RunDocument {
         &self,
         identity: &DecisionProjectionIdentity,
         target: &RunProjectionTargetV1,
-        retry: bool,
     ) -> Result<()> {
         coherent(self)?;
         target.matches_identity(identity).map_err(invalid)?;
@@ -239,11 +238,25 @@ impl RunDocument {
         let header = self.header()?;
         let bot = header.bot.as_ref().ok_or_else(|| invalid(()))?;
         let original = i64::from(u8::from(identity.source_schema));
+        // An identity names the format the ledger last knew. A Bot Run's
+        // format only moves up, and only to the current one: by a committed
+        // projection, or by a save that pins a version. The ledger cannot see
+        // either move (it names 5 after any applied projection, a number it
+        // learned from the build that wrote 5 there). So a document at the
+        // current format accepts an identity that names an earlier one, and a
+        // document below it must show exactly the named format. The cohort
+        // rule of both formats is checked against the header, so naming an
+        // earlier format never widens what the identity binds.
+        let cohort = |format: i64| match format {
+            3 => bot.routine.is_none(),
+            4 => bot.routine.is_some(),
+            5 | 6 => true,
+            _ => false,
+        };
         require_document(
-            (schema == original || (retry && schema == BOT_PROJECTION_SCHEMA))
-                && matches!(schema, 3..=5)
-                && (schema != 3 || bot.routine.is_none())
-                && (schema != 4 || bot.routine.is_some())
+            (schema == original || schema == BOT_PROJECTION_SCHEMA)
+                && cohort(schema)
+                && cohort(original)
                 && header.bot_fields_valid()
                 && header.run == identity.run
                 && header.created_at_ms == target.predecessor().observed_created_at_ms
@@ -335,7 +348,7 @@ impl RunDocument {
     }
 
     fn write_projection(&self, intent: &RunProjectionIntent) -> Result<()> {
-        self.check_projection_subject(&intent.identity, &intent.target, false)?;
+        self.check_projection_subject(&intent.identity, &intent.target)?;
         self.check_projection_predecessor(intent)?;
         let effects = intent.target.effects();
         let start = self.timeline().len();
@@ -404,7 +417,7 @@ impl RunDocument {
         prepared: &DecisionPreparedProjection,
         target: &RunProjectionTargetV1,
     ) -> Result<()> {
-        self.check_projection_subject(&prepared.identity, target, true)?;
+        self.check_projection_subject(&prepared.identity, target)?;
         require_document(
             self.schema_version() == Some(BOT_PROJECTION_SCHEMA)
                 && covers(&self.doc.state_vv(), &decode_vv(&prepared.result_version)?),

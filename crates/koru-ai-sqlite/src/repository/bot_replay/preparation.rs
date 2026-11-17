@@ -137,7 +137,7 @@ pub(super) fn bot_submission_for_attempt_on(
     Ok(Some(receipt))
 }
 
-pub(super) fn prepare_association_on(
+pub(crate) fn prepare_association_on(
     tx: &Connection,
     preparation: &BotChatPreparation,
     submission: &BotSubmission,

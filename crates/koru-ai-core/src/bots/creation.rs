@@ -620,6 +620,7 @@ impl BotCreationRecord {
         let config = self.config.bot_config(self.role_target(), folder);
         validate_config(&config, self.home_workspace)?;
         Ok(Bot {
+            may_ask: true,
             id: self.bot,
             home_workspace: self.home_workspace,
             user_scope: self.user_scope,

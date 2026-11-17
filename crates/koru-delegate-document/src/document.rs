@@ -30,8 +30,9 @@ use crate::codec::{
     to_stored,
 };
 use crate::{
-    RUN_BOT_DOCUMENT_SCHEMA_VERSION, RUN_DOCUMENT_SCHEMA_VERSION,
-    RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION, RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION,
+    RUN_BOT_DOCUMENT_SCHEMA_VERSION, RUN_BOT_PREVIOUS_DOCUMENT_SCHEMA_VERSION,
+    RUN_DOCUMENT_SCHEMA_VERSION, RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION,
+    RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION,
 };
 
 type Result<T> = std::result::Result<T, RunDocumentError>;
@@ -73,9 +74,9 @@ impl RunDocument {
             return Err(RunDocumentError::AlreadyInitialized);
         }
         let keys = header_to_keys(header)?;
-        // BotRun5: every new Bot Run, Manual or Routine, is created at 5;
-        // ordinary Runs keep 3. Earlier Bot3/Bot4 Runs stay readable and
-        // writable, and a decision projection still upgrades them to 5.
+        // Every new Bot Run, Manual or Routine, is created at 6; ordinary
+        // Runs keep 3. Earlier Bot Runs (3, 4 and 5) stay readable and
+        // writable, and a committed projection upgrades them to 6.
         let schema = if header.bot.is_some() {
             RUN_BOT_DOCUMENT_SCHEMA_VERSION
         } else {
@@ -166,9 +167,11 @@ impl RunDocument {
         let known_cohort = match schema {
             1..=RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION => routine.is_none(),
             RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION => routine.is_some(),
-            // Bot5 carries Manual or Routine Bot provenance, never an ordinary
-            // Run; the provenance/origin checks below still apply.
-            crate::RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION => bot.is_some(),
+            // Formats 5 and 6 carry Manual or Routine Bot provenance, never
+            // an ordinary Run; the provenance/origin checks below still apply.
+            RUN_BOT_PREVIOUS_DOCUMENT_SCHEMA_VERSION | RUN_BOT_DOCUMENT_SCHEMA_VERSION => {
+                bot.is_some()
+            }
             _ => true, // A newer readable header remains read-only at writable().
         };
         if !known_cohort
@@ -364,10 +367,23 @@ impl RunDocument {
             };
         }
         header.native_results.push(reference.clone());
-        self.commit_value(
-            "native_results",
-            to_stored(&header.native_results, Part::Header)?,
-        )
+        let stored = to_stored(&header.native_results, Part::Header)?;
+        let run = self.run();
+        run.insert("native_results", stored)?;
+        // A pinned version is a format 6 fact. A build that knows only an
+        // earlier format refuses the entry's unknown field, so an earlier
+        // document that receives one is stamped 6 in the same commit: that
+        // build then opens it read-only instead of meeting a field it cannot
+        // decode under a format it believes it may write.
+        if reference.version_id.is_some()
+            && self
+                .schema_version()
+                .is_some_and(|schema| schema < RUN_BOT_DOCUMENT_SCHEMA_VERSION)
+        {
+            run.insert(K_SCHEMA, RUN_BOT_DOCUMENT_SCHEMA_VERSION)?;
+        }
+        self.doc.commit();
+        Ok(())
     }
 
     /// One gesture on a finished run (D44). A register: the last write on

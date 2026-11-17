@@ -22,6 +22,7 @@ mod worker;
 
 pub use chat_tools::{AiToolDispatcher, ChatToolAdapter};
 pub use store_context::StoreContextAdapter;
+pub use store_tools::pinned::{PinnedPage, PinnedReadError, PinnedUnavailable, read_pinned_page};
 pub use store_tools::{
     NativeStoreAuthority, StoreToolAdapter, native_document_title, native_store_backend,
 };

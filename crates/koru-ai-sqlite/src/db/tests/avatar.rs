@@ -233,11 +233,16 @@ fn migration_ai24_through_the_real_open_of_a_populated_ai23_file() {
         let after = snapshot(&c);
         for (name, (_, rows)) in &before {
             if name == "bots" {
+                // The opener went on to ai.db 26, which appends `may_ask`
+                // (on) after the face column.
                 assert_eq!(
                     after[name]
                         .1
                         .iter()
-                        .map(|row| without_avatar(row))
+                        .map(|row| without_avatar(&format!(
+                            "{}]",
+                            row.strip_suffix(", Integer(1)]").unwrap()
+                        )))
                         .collect::<Vec<_>>(),
                     *rows
                 );

@@ -2692,6 +2692,10 @@
           "main_chat": {
             "$ref": "#/components/schemas/ChatId"
           },
+          "may_ask": {
+            "description": "\"May ask other bots\" (M6): whether this Bot's Runs may ask another\nBot. A setting of the Bot, changed only by `update_access` with\n`may_ask` present. It is not part of the captured policy: no policy\nbytes, digest or barrier holds it. On by default, and omitted while it\nis on, so a Bot that may ask serializes, and every stored receipt that\nholds one is, exactly as before the field existed (ai.db 26).",
+            "type": "boolean"
+          },
           "open_operation": {
             "anyOf": [
               {
@@ -2785,6 +2789,20 @@
           },
           "state": {
             "$ref": "#/components/schemas/BotActivityState"
+          },
+          "waiting": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotActivityWaiting"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "Present exactly when `state` is `waiting`: the Bots asked and whether\nthis Bot is paused. Omitted otherwise, so an entry that does not wait\nserializes exactly as before the field existed."
           }
         },
         "required": [
@@ -2824,13 +2842,40 @@
             "type": "string"
           },
           {
-            "description": "An approval or a question card is open for the person. Takes\nprecedence over `running` when both hold.",
+            "description": "An approval or a question card is open for the person. Takes\nprecedence over `running` and `waiting` when it holds.",
             "enum": [
               "needs_you"
             ],
             "type": "string"
+          },
+          {
+            "description": "The reply asked other Bots and waits for their requests (M6). Takes\nprecedence over `running`. [`BotActivity::waiting`] says on whom.",
+            "enum": [
+              "waiting"
+            ],
+            "type": "string"
           }
         ]
+      },
+      "BotActivityWaiting": {
+        "description": "What a waiting conversation waits on: the Bots it asked whose requests are\nstill open, at most three, and whether its own Bot is paused (a paused\nBot's wait has no time limit and is shown as paused).",
+        "properties": {
+          "on": {
+            "items": {
+              "$ref": "#/components/schemas/BotId"
+            },
+            "maxItems": 3,
+            "type": "array"
+          },
+          "paused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "on",
+          "paused"
+        ],
+        "type": "object"
       },
       "BotChatCursor": {
         "additionalProperties": false,
@@ -2944,6 +2989,195 @@
               "bot"
             ],
             "type": "string"
+          }
+        ]
+      },
+      "BotChildOrigin": {
+        "description": "The origin line of a child conversation: who asked for it.",
+        "properties": {
+          "child_request_id": {
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotChildOutcome"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "parent_bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "parent_chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "parent_name": {
+            "description": "The asking Bot's current name.",
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "child_request_id",
+          "parent_bot_id",
+          "parent_name",
+          "parent_chat_id",
+          "state"
+        ],
+        "type": "object"
+      },
+      "BotChildOutcome": {
+        "description": "How a settled request reads. Derived at read time: `timed_out` and\n`parent_stopped` from who settled it; the rest from how the child ended.",
+        "enum": [
+          "completed",
+          "failed",
+          "needed_you",
+          "canceled",
+          "timed_out",
+          "parent_stopped"
+        ],
+        "type": "string"
+      },
+      "BotChildProgress": {
+        "description": "Where the child of a request is, read from the child's own rows.",
+        "enum": [
+          "queued",
+          "running",
+          "needs_you",
+          "finished"
+        ],
+        "type": "string"
+      },
+      "BotChildRequestCard": {
+        "description": "One request card of a parent conversation. Host-fed display data.",
+        "properties": {
+          "child": {
+            "$ref": "#/components/schemas/BotChildProgress"
+          },
+          "child_chat_id": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "child_request_id": {
+            "type": "string"
+          },
+          "clock": {
+            "type": "string"
+          },
+          "needs_you": {
+            "description": "The child has an approval or a question open for the person.",
+            "type": "boolean"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotChildOutcome"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "parent_assistant_message_id": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/MessageId"
+              }
+            ],
+            "description": "The assistant message of the parent the card is drawn under."
+          },
+          "recipient_bot_id": {
+            "$ref": "#/components/schemas/BotId"
+          },
+          "recipient_name": {
+            "description": "The recipient's current name.",
+            "type": "string"
+          },
+          "result": {
+            "$ref": "#/components/schemas/BotChildResult"
+          },
+          "state": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "child_request_id",
+          "parent_assistant_message_id",
+          "recipient_bot_id",
+          "recipient_name",
+          "child_chat_id",
+          "state",
+          "child",
+          "clock",
+          "result",
+          "needs_you"
+        ],
+        "type": "object"
+      },
+      "BotChildResult": {
+        "description": "What a request handed over, as a count. Never a title.",
+        "oneOf": [
+          {
+            "description": "The request is open, or it settled without completing.",
+            "properties": {
+              "result": {
+                "enum": [
+                  "none"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The child completed and saved this many pages (at most 20 are read).",
+            "properties": {
+              "pages": {
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "type": "integer"
+              },
+              "result": {
+                "enum": [
+                  "saved"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "pages"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The child completed and saved no page.",
+            "properties": {
+              "result": {
+                "enum": [
+                  "no_page_saved"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -3944,6 +4178,11 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "may_ask": {
+                "description": "\"May ask other bots\" (M6). Absent changes nothing, so a caller\nthat does not know the field keeps the Bot's setting; present sets\nit. The request fingerprint covers it only when it is present.",
+                "nullable": true,
+                "type": "boolean"
+              },
               "request_id": {
                 "$ref": "#/components/schemas/BotRequestId"
               },
@@ -4346,6 +4585,54 @@
             "required": [
               "command",
               "workspace"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "The request cards of one conversation of a Bot that asked other Bots\n(M6): one per child request its Runs made there, oldest first, at\nmost three per Run. Identities, states and counts only. Answered\n`child_requests`.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "command": {
+                "enum": [
+                  "list_child_requests"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "chat_id"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Who asked for a conversation, when another Bot's request started it\n(M6). Answered `child_origin`, with no origin for any other\nconversation.",
+            "properties": {
+              "bot_id": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "chat_id": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "command": {
+                "enum": [
+                  "read_child_origin"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "command",
+              "bot_id",
+              "chat_id"
             ],
             "type": "object"
           },
@@ -6633,6 +6920,54 @@
             "required": [
               "result",
               "activity"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "requests": {
+                "items": {
+                  "$ref": "#/components/schemas/BotChildRequestCard"
+                },
+                "type": "array"
+              },
+              "result": {
+                "enum": [
+                  "child_requests"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result",
+              "requests"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "origin": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotChildOrigin"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "result": {
+                "enum": [
+                  "child_origin"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "result"
             ],
             "type": "object"
           },

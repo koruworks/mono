@@ -490,6 +490,7 @@ fn role_edits_do_not_require_bot_reacceptance_and_access_edits_use_cas() {
     let (mut repo, authority, command) = fixture();
     let bot = created(&mut repo, authority.clone(), command);
     let update = BotCommand::UpdateAccess {
+        may_ask: None,
         request_id: BotRequestId::mint(),
         bot_id: bot.id,
         expected_revision: 1,
@@ -998,6 +999,7 @@ fn m5_grant_commands_update_access_without_connections_changes_no_grant() {
             |_| panic!("access does not rediscover runtime"),
             context(true),
             BotCommand::UpdateAccess {
+                may_ask: None,
                 request_id: BotRequestId::mint(),
                 bot_id: bot.id,
                 expected_revision: revision,

@@ -5,6 +5,7 @@ use super::*;
 fn metadata_epoch_and_bot_wrapper_preserve_the_original_golden_bytes() {
     let bot = super::super::tests::bot();
     let metadata = BotPolicyMetadata {
+        may_ask: true,
         owner: owner(&bot),
         id: bot.id,
         home_workspace: bot.home_workspace,

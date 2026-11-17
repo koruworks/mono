@@ -121,6 +121,9 @@ impl Repository {
         // mention connections passes the Bot's current set, so nothing is
         // removed; the writer accepts a new grant only for a usable one.
         desired.connections = bot.connections.clone();
+        // "May ask other bots" (M6) is changed with access. A command that
+        // did not mention it passes the Bot's current setting.
+        desired.may_ask = bot.may_ask;
         desired.revision += 1;
         desired.policy_revision += 1;
         desired.updated_at_ms = bot.updated_at_ms;

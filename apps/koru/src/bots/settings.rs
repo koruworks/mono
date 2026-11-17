@@ -570,6 +570,7 @@ impl Settings {
         let (bot_id, revision, policy) = (bot.id, bot.revision, bot.policy_revision);
         Some(
             self.send(Change::Access, |request| BotCommand::UpdateAccess {
+                may_ask: None,
                 request_id: request,
                 bot_id,
                 expected_revision: revision,

@@ -656,6 +656,7 @@ fn activity_page(
         entries: entries
             .into_iter()
             .map(|(bot_id, chat_id, state)| BotActivity {
+                waiting: None,
                 bot_id,
                 chat_id,
                 state,

@@ -150,6 +150,98 @@ pub mod bot_creation_codes {
     pub const FOLDER_RESERVED: &str = "folder_reserved";
 }
 
+/// Refusals of one Bot asking another, and of reading what it was handed
+/// back (M6). Each is answered with nothing written unless it says otherwise.
+/// A client shows its own localized sentence for a code and never the message.
+/// `details.index` names the item of the call a refusal is about, where one
+/// is. Additive: the codes of every other Bot command are unchanged, and the
+/// AI wire version is not moved by them.
+pub mod bot_child_codes {
+    /// The asking Bot's "May ask other bots" is off.
+    pub const ASK_NOT_ALLOWED: &str = "ask_not_allowed";
+    /// The recipient does not exist, belongs to another person, another home
+    /// workspace or another computer, or is archived or in Trash. One code:
+    /// nothing tells these apart. `details { index }`.
+    pub const RECIPIENT_UNAVAILABLE: &str = "recipient_unavailable";
+    /// `details { index }`.
+    pub const RECIPIENT_PAUSED: &str = "recipient_paused";
+    /// The recipient has 50 queued requests. `details { index }`.
+    pub const RECIPIENT_FULL: &str = "recipient_full";
+    /// The recipient's working folder overlaps the asking Bot's.
+    /// `details { index }`.
+    pub const RECIPIENT_FOLDER_OVERLAP: &str = "recipient_folder_overlap";
+    /// `details { index }`.
+    pub const SELF_ASK: &str = "self_ask";
+    /// This Run would make more than three requests. `details { used }`.
+    pub const RECIPIENT_LIMIT: &str = "recipient_limit";
+    /// The recipient already waits, directly or through others, on the
+    /// asking Bot. `details { index }`.
+    pub const WOULD_WAIT_ON_ITSELF: &str = "would_wait_on_itself";
+    /// The computer cannot hold another wait now, or a save of this Run is
+    /// still in flight.
+    pub const CHILD_CAPACITY: &str = "child_capacity";
+    /// Under two minutes are left of this Run's active time.
+    pub const CHILD_BUDGET_LOW: &str = "child_budget_low";
+    /// A named page is not readable by this Bot or by the recipient.
+    /// `details { index, document_id }`.
+    pub const PAGE_UNAVAILABLE: &str = "page_unavailable";
+    /// The key was used with a different list.
+    pub const ASK_KEY_CONFLICT: &str = "ask_key_conflict";
+    /// This Run has an open child wait. `details { child_request_ids }`.
+    pub const CHILD_WAIT_IN_PROGRESS: &str = "child_wait_in_progress";
+    /// The ask may have been recorded. Retry with the same key, never a new
+    /// one. Retryable.
+    pub const CHILD_STATUS_UNKNOWN: &str = "child_status_unknown";
+    /// The id is not one of this Run's requests, or the page is not one of
+    /// its result pages.
+    pub const REQUEST_NOT_FOUND: &str = "request_not_found";
+    /// The request is still open, or did not complete.
+    pub const RESULT_NOT_READY: &str = "result_not_ready";
+    /// This Bot's own read authority refuses the page.
+    /// `details { document_id }`. No content.
+    pub const RESULT_NOT_READABLE: &str = "result_not_readable";
+    /// The pinned version cannot be handed over. `details { document_id,
+    /// reason }`, with a reason from [`super::bot_child_result_reasons`].
+    /// Never the latest version.
+    pub const RESULT_VERSION_UNAVAILABLE: &str = "result_version_unavailable";
+
+    /// Every code of this module, for a client that lists them.
+    pub const ALL: [&str; 18] = [
+        ASK_NOT_ALLOWED,
+        RECIPIENT_UNAVAILABLE,
+        RECIPIENT_PAUSED,
+        RECIPIENT_FULL,
+        RECIPIENT_FOLDER_OVERLAP,
+        SELF_ASK,
+        RECIPIENT_LIMIT,
+        WOULD_WAIT_ON_ITSELF,
+        CHILD_CAPACITY,
+        CHILD_BUDGET_LOW,
+        PAGE_UNAVAILABLE,
+        ASK_KEY_CONFLICT,
+        CHILD_WAIT_IN_PROGRESS,
+        CHILD_STATUS_UNKNOWN,
+        REQUEST_NOT_FOUND,
+        RESULT_NOT_READY,
+        RESULT_NOT_READABLE,
+        RESULT_VERSION_UNAVAILABLE,
+    ];
+}
+
+/// Why `result_version_unavailable`: `details.reason`.
+pub mod bot_child_result_reasons {
+    /// The version row is not in the Store.
+    pub const MISSING: &str = "missing";
+    /// The stored bytes do not match the version's checksum.
+    pub const CORRUPT: &str = "corrupt";
+    /// The result was saved without a version id.
+    pub const NOT_PINNED: &str = "not_pinned";
+    /// The snapshot is above the read bound.
+    pub const TOO_LARGE: &str = "too_large";
+
+    pub const ALL: [&str; 4] = [MISSING, CORRUPT, NOT_PINNED, TOO_LARGE];
+}
+
 /// **Why a local agent cannot run, as far as its readiness check knows**
 /// (Bots P1.8), carried as `details.reason` beside a failure's own code. It
 /// is additive: the code stays the contract, a reader that does not know the
@@ -1244,6 +1336,94 @@ pub struct CancelModelPullResponse {
 
 #[cfg(test)]
 mod tests {
+    /// Cohort `m6_child_codes`: the stable codes of one Bot asking another.
+    /// Additive: no existing code moved and the wire version is unchanged.
+    #[test]
+    fn m6_child_codes_are_distinct_stable_and_match_the_owners_refusals() {
+        use koru_ai_core::bots::BotChildAskRefusal as Refusal;
+        assert_eq!(crate::AI_WIRE_VERSION, 1);
+        let all = crate::bot_child_codes::ALL;
+        let distinct: std::collections::BTreeSet<&str> = all.iter().copied().collect();
+        assert_eq!(distinct.len(), all.len());
+        for code in all
+            .iter()
+            .chain(crate::bot_child_result_reasons::ALL.iter())
+        {
+            assert!(
+                !code.is_empty()
+                    && code.len() <= 64
+                    && code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'),
+                "{code}"
+            );
+        }
+        // The literals, so a rename is a visible change.
+        assert_eq!(
+            all,
+            [
+                "ask_not_allowed",
+                "recipient_unavailable",
+                "recipient_paused",
+                "recipient_full",
+                "recipient_folder_overlap",
+                "self_ask",
+                "recipient_limit",
+                "would_wait_on_itself",
+                "child_capacity",
+                "child_budget_low",
+                "page_unavailable",
+                "ask_key_conflict",
+                "child_wait_in_progress",
+                "child_status_unknown",
+                "request_not_found",
+                "result_not_ready",
+                "result_not_readable",
+                "result_version_unavailable",
+            ]
+        );
+        assert_eq!(
+            crate::bot_child_result_reasons::ALL,
+            ["missing", "corrupt", "not_pinned", "too_large"]
+        );
+        // The refusals the AI owner gives by itself answer these codes.
+        for (refusal, code) in [
+            (
+                Refusal::AskNotAllowed,
+                crate::bot_child_codes::ASK_NOT_ALLOWED,
+            ),
+            (
+                Refusal::RecipientUnavailable { index: 0 },
+                crate::bot_child_codes::RECIPIENT_UNAVAILABLE,
+            ),
+            (
+                Refusal::RecipientPaused { index: 0 },
+                crate::bot_child_codes::RECIPIENT_PAUSED,
+            ),
+            (
+                Refusal::SelfAsk { index: 0 },
+                crate::bot_child_codes::SELF_ASK,
+            ),
+            (
+                Refusal::AskKeyConflict,
+                crate::bot_child_codes::ASK_KEY_CONFLICT,
+            ),
+        ] {
+            assert_eq!(refusal.code(), code);
+        }
+        // None collides with a code another Bot command already answers.
+        for existing in [
+            "invalid_request",
+            "not_found",
+            "wrong_owner",
+            "request_conflict",
+            "revision_conflict",
+            "bot_operation_pending",
+            "connection_unavailable",
+            "decision_in_progress",
+        ] {
+            assert!(!distinct.contains(existing), "{existing}");
+        }
+    }
+
     use super::*;
 
     fn transcript() -> ChatTranscript {

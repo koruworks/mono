@@ -559,6 +559,35 @@ pub(crate) fn prepare_bot_submission_tx(
     read_bot_submission_on(tx, owner.user_scope, p.submission)?.ok_or(BotError::Storage)
 }
 
+/// [`Repository::acknowledge_bot_submission`] as one step of the caller's
+/// transaction: a child ask (M6) acknowledges up to three recipients' receipts
+/// together with the wait's enrollment. Nothing is committed here.
+pub(super) fn acknowledge_submission_on(
+    tx: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    request: BotRequestId,
+    admission: &BotAdmissionView,
+    now: i64,
+) -> Result<BotSubmissionReceipt, BotError> {
+    let g = guard(tx, owner, bot)?;
+    let r = read_bot_submission_on(tx, owner.user_scope, request)?.ok_or(BotError::NotFound)?;
+    if r.intent.submission.provenance.bot != bot || r.stage == BotReceiptStage::Rejected {
+        return Err(BotError::Conflict);
+    }
+    let outcome = BotExecutionOutcome::Accepted {
+        version: 1,
+        admission: admission.clone(),
+    };
+    outcome.validate(&r.intent)?;
+    if g.frozen.is_none() && g.lock.as_deref() != Some(request.to_storage().as_str()) {
+        return Err(BotError::FolderLocked);
+    }
+    tx.execute("UPDATE bots SET folder_frozen_at_ms=COALESCE(folder_frozen_at_ms,?2),folder_lock_request_id=NULL WHERE bot_id=?1",params![bot.to_storage(),now]).map_err(bad)?;
+    tx.execute("UPDATE bot_command_receipts SET stage='completed',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;
+    read_bot_submission_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)
+}
+
 impl Repository {
     /// See [`bot_admitting_on`]: whether a submission of this Bot may be
     /// offered to its owner now.
@@ -700,24 +729,7 @@ impl Repository {
             .connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(bad)?;
-        let g = guard(&tx, owner, bot)?;
-        let r =
-            read_bot_submission_on(&tx, owner.user_scope, request)?.ok_or(BotError::NotFound)?;
-        if r.intent.submission.provenance.bot != bot || r.stage == BotReceiptStage::Rejected {
-            return Err(BotError::Conflict);
-        }
-        let outcome = BotExecutionOutcome::Accepted {
-            version: 1,
-            admission: admission.clone(),
-        };
-        outcome.validate(&r.intent)?;
-        if g.frozen.is_none() && g.lock.as_deref() != Some(request.to_storage().as_str()) {
-            return Err(BotError::FolderLocked);
-        }
-        tx.execute("UPDATE bots SET folder_frozen_at_ms=COALESCE(folder_frozen_at_ms,?2),folder_lock_request_id=NULL WHERE bot_id=?1",params![bot.to_storage(),now]).map_err(bad)?;
-        tx.execute("UPDATE bot_command_receipts SET stage='completed',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;
-        let result =
-            read_bot_submission_on(&tx, owner.user_scope, request)?.ok_or(BotError::Storage)?;
+        let result = acknowledge_submission_on(&tx, owner, bot, request, admission, now)?;
         tx.commit().map_err(bad)?;
         Ok(result)
     }

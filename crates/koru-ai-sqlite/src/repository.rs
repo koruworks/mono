@@ -34,11 +34,12 @@ use koru_ai_core::bots::ChatReadAccess;
 
 pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
-    BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotCreationScan, BotDecisionCard, BotDecisionClosure,
-    BotDecisionReplayRollover, BotHold, BotNativeDecisionLink, HistoricalBotRun, LifecycleCapture,
-    LifecycleMember, LifecycleMemberDraft, LifecycleOperation, LifecycleRoutineAnswer,
-    ParkedCursor, ParkedForOwner, RoutineAccessRecoveryPage, RoutineDetailSnapshot,
-    RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
+    BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotChildReplayRollover, BotCreationScan,
+    BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover, BotHold, BotNativeDecisionLink,
+    HistoricalBotRun, LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
+    LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner, RoutineAccessRecoveryPage,
+    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
+    RoutineToolSubject,
 };
 
 pub struct Repository {
@@ -90,10 +91,16 @@ impl Repository {
     /// anything is compared or migrated: what the step under test sees is
     /// the older shape. Production code never looks at the schema to decide
     /// what to write.
+    ///
+    /// The same goes for `bots.may_ask`, which ai26 added: it is lent and
+    /// returned with the face column, so a fixture borrows once.
     #[cfg(test)]
     pub(crate) fn lend_avatar_column(&self) {
         self.connection
-            .execute_batch("ALTER TABLE bots ADD COLUMN avatar INTEGER")
+            .execute_batch(
+                "ALTER TABLE bots ADD COLUMN avatar INTEGER;
+                 ALTER TABLE bots ADD COLUMN may_ask INTEGER NOT NULL DEFAULT 1;",
+            )
             .unwrap();
     }
 
@@ -110,8 +117,17 @@ impl Repository {
             )
             .unwrap();
         assert_eq!(picked, 0, "an older-schema fixture picked a face");
+        let silenced: i64 = self
+            .connection
+            .query_row("SELECT count(*) FROM bots WHERE may_ask<>1", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(silenced, 0, "an older-schema fixture turned asking off");
         self.connection
-            .execute_batch("ALTER TABLE bots DROP COLUMN avatar")
+            .execute_batch(
+                "ALTER TABLE bots DROP COLUMN may_ask; ALTER TABLE bots DROP COLUMN avatar;",
+            )
             .unwrap();
     }
 

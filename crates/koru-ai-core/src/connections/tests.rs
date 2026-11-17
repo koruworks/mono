@@ -22,6 +22,7 @@ fn grant(n: u8) -> ConnectionGrantRef {
 fn bot() -> Bot {
     let workspace = WorkspaceId::from_uuid(id(1));
     Bot {
+        may_ask: true,
         id: BotId::from_uuid(id(2)),
         home_workspace: workspace,
         user_scope: UserScopeId::from_uuid(id(3)),
@@ -141,6 +142,7 @@ fn m5_ai_bot_without_a_grant_serializes_and_decodes_exactly_as_before() {
 #[test]
 fn m5_ai_update_access_fingerprint_covers_connections_only_when_present() {
     let command = |connections| BotCommand::UpdateAccess {
+        may_ask: None,
         request_id: crate::bots::BotRequestId::from_uuid(id(0x20)),
         bot_id: BotId::from_uuid(id(2)),
         expected_revision: 1,

@@ -20,6 +20,8 @@ pub struct BotPolicyMetadata {
     pub selected_pages: Vec<BotPage>,
     /// The Bot's current connection grants (M5), at most 16.
     pub connections: std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
+    /// "May ask other bots" (M6), read current. Never part of [`Self::policy`].
+    pub may_ask: bool,
     /// An unfinished whole-Bot operation, including a parked operation.
     /// Chat-only lifecycle operations do not fence a fresh Routine.
     pub pending_lifecycle: Option<BotRequestId>,
@@ -90,6 +92,34 @@ pub fn bot_native_policy_from(
         },
         selected_pages: pages.iter().map(|p| p.document).collect(),
         connections: connections.clone(),
+    }
+}
+
+/// The policy a child Run is submitted with (M6, the intersection): the
+/// recipient's current policy with `connections` reduced to the grants the
+/// parent also holds. A grant is passed on only when it is in the parent Run's
+/// captured policy **and** in the parent Bot's current grants, so one revoked
+/// from the parent during its Run is not handed to its helper. Nothing else of
+/// the recipient's policy changes: pages, write list, workspace and
+/// destination are the recipient's.
+///
+/// This is the worker's convenience. The rule is the delegate's own check of
+/// the child submission against the parent admission's captured policy.
+pub fn bot_child_policy(
+    recipient: &CapturedBotPolicy,
+    parent_captured: &CapturedBotPolicy,
+    parent_current: &std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
+) -> CapturedBotPolicy {
+    CapturedBotPolicy {
+        connections: recipient
+            .connections
+            .iter()
+            .filter(|grant| {
+                parent_captured.grants_connection(grant) && parent_current.contains(*grant)
+            })
+            .copied()
+            .collect(),
+        ..recipient.clone()
     }
 }
 

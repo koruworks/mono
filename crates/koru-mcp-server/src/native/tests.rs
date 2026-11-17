@@ -621,3 +621,53 @@ fn blank_result_titles_refuse_before_effect() {
         before
     );
 }
+
+/// Cohorts `m6_save_keeps_version_id` and `m6_pinned_read`, the shared half:
+/// both native writes return the Store's version id with their evidence, and
+/// a snapshot is rendered exactly as `read_document` renders the live page.
+#[test]
+fn m6_save_keeps_version_id_and_m6_pinned_read_render_what_read_document_renders() {
+    let store = Embedded::new();
+    let backend = store.backend();
+    let prepared = create(&backend, store.workspace);
+    let key = identity();
+    let created = backend
+        .execute_native_write(&prepared, key.clone())
+        .unwrap();
+    let first = created.version_id.expect("a create carries the Store's id");
+    let read = |document: StoreDocumentId| {
+        backend
+            .invoke(
+                &RequestContext::local(),
+                "read_document",
+                json!({"workspace_id": store.workspace.to_storage(), "document_id": document.to_storage()}),
+            )
+            .unwrap()
+    };
+    // The page as it is now, and its snapshot rendered by the pinned
+    // renderer: the same typed-node tree and the same revision token.
+    let live = read(key.candidate);
+    let pinned_bytes = store.snapshot(store.workspace, key.candidate).unwrap();
+    assert_eq!(
+        render_pinned_document(key.candidate, &pinned_bytes).unwrap(),
+        live
+    );
+    // An edit produces another id, and the earlier bytes still render the
+    // earlier page: the renderer reads its argument and nothing else.
+    let editing = edit(&backend, &store, key.candidate);
+    let mut edit_key = identity();
+    edit_key.candidate = key.candidate;
+    let edited = backend.execute_native_write(&editing, edit_key).unwrap();
+    let second = edited.version_id.expect("an edit carries the Store's id");
+    assert_ne!(first, second);
+    let after = read(key.candidate);
+    assert_ne!(after, live);
+    assert_eq!(
+        render_pinned_document(key.candidate, &pinned_bytes).unwrap(),
+        live
+    );
+    assert!(!live.to_string().contains("New paragraph"));
+    assert!(after.to_string().contains("New paragraph"));
+    // Bytes that are not a page are refused, never rendered as an empty one.
+    assert!(render_pinned_document(key.candidate, b"not a page").is_err());
+}

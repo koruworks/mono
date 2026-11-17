@@ -33,11 +33,11 @@ fn import_change(doc: &RunDocument, change: impl FnOnce(&loro::LoroMap)) {
         .unwrap();
 }
 
-/// BotRun5 creation (contract section 8): every new Bot Run, Manual or
-/// Routine, is created at 5; ordinary creation is unchanged at 3.
+/// Every new Bot Run, Manual or Routine, is created at the current Bot
+/// format (6 since M6); ordinary creation is unchanged at 3.
 #[test]
-fn bot_runs_are_created_at_bot5_and_ordinary_creation_stays_run3() {
-    for (header, version) in [(header(), 3), (bot_header(), 5), (routine_header(), 5)] {
+fn bot_runs_are_created_at_the_bot_format_and_ordinary_creation_stays_run3() {
+    for (header, version) in [(header(), 3), (bot_header(), 6), (routine_header(), 6)] {
         let run = RunDocument::create(&header).unwrap();
         assert_eq!(run.schema_version(), Some(version));
         assert_eq!(run.header().unwrap(), header);
@@ -133,13 +133,18 @@ fn routine_run_import_rechecks_origin_and_newer_schema_on_retained_handles() {
     assert_eq!(run.version(), before);
 }
 
-/// A Bot Run created at 5, Manual or Routine, is readable and writable by
-/// this build, across a snapshot reopen.
+/// A Bot Run created at 5 by the previous build, Manual or Routine, is
+/// readable and writable by this build, across a snapshot reopen, and
+/// ordinary writes leave it at 5.
 #[test]
 fn a_bot_run_created_at_5_is_readable_and_writable_by_this_build() {
     for header in [bot_header(), routine_header()] {
         let run = RunDocument::create(&header).unwrap();
-        assert_eq!(run.schema_version(), Some(RUN_BOT_DOCUMENT_SCHEMA_VERSION));
+        import_change(&run, |map| {
+            map.insert("schema", RUN_BOT_PREVIOUS_DOCUMENT_SCHEMA_VERSION)
+                .unwrap();
+        });
+        assert_eq!(run.schema_version(), Some(5));
         let reopened = RunDocument::from_snapshot(&run.export_snapshot().unwrap()).unwrap();
         assert_eq!(reopened.compatibility(), Compatibility::Writable);
         assert_eq!(reopened.header().unwrap(), header);
@@ -169,10 +174,10 @@ fn a_bot_run_created_at_3_or_4_by_the_previous_default_still_opens_and_writes() 
     }
 }
 
-/// A Bot5 Run written by a newer build (format 6) still opens read-only: it
+/// A Bot Run written by a newer build (format 7) still opens read-only: it
 /// reads, and every write refuses, as "needs newer Koru".
 #[test]
-fn a_version_6_bot_run_still_reads_as_needs_newer_koru() {
+fn a_version_7_bot_run_still_reads_as_needs_newer_koru() {
     for header in [bot_header(), routine_header()] {
         let run = RunDocument::create(&header).unwrap();
         import_change(&run, |map| {
@@ -185,8 +190,8 @@ fn a_version_6_bot_run_still_reads_as_needs_newer_koru() {
         assert!(matches!(
             run.set_status(&RunStatus::Completed),
             Err(RunDocumentError::ReadOnly {
-                found: 6,
-                understood: 5
+                found: 7,
+                understood: 6
             })
         ));
         assert_eq!(run.version(), before);

@@ -142,6 +142,7 @@ fn populated_bot_history_is_filtered_before_search_paging_context_tools_and_usag
 pub(super) fn fixture_bot() -> Bot {
     let workspace = WorkspaceId::new();
     Bot {
+        may_ask: true,
         id: BotId::mint(),
         home_workspace: workspace,
         user_scope: UserScopeId::new(),

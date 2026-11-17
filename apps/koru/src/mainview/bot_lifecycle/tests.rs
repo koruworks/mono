@@ -630,6 +630,7 @@ fn ask_with(question: Question, known: Known) -> (MainView, Receiver<Command>, B
     };
     let entries = |state| {
         vec![koru_ai_core::bots::BotActivity {
+            waiting: None,
             bot_id: bot.id,
             chat_id: chat,
             state,

@@ -76,7 +76,14 @@ fn native_update_error(error: NativeUpdateError) -> NativeWriteError {
     }
 }
 impl NativeStoreAuthority {
-    fn check(&self, store: &mut WorkerStore, workspace: WorkspaceId) -> Result<(), ToolError> {
+    /// The read check every native operation passes, made now against
+    /// current Store state. Also the pinned read's (M6), which must apply the
+    /// reader's own authority and no other.
+    pub(super) fn check(
+        &self,
+        store: &mut WorkerStore,
+        workspace: WorkspaceId,
+    ) -> Result<(), ToolError> {
         if workspace != self.workspace
             || store.local_user_scope().map_err(ToolError::from)? != self.owner_scope
             || store

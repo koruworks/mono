@@ -242,6 +242,7 @@ fn an_archived_bot_reads_and_every_change_answers_bot_archived_after_authority()
             config: bot.config.clone(),
         },
         BotCommand::UpdateAccess {
+            may_ask: None,
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
             expected_revision: bot.revision,

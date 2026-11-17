@@ -9,9 +9,23 @@ use super::routine_controls::foreign_keys;
 use super::*;
 use koru_ai_core::connections as ai;
 
+/// This step and no later one: ai.db 26 exists now, so the real opener goes
+/// further than the step under test.
+pub(super) fn ai25() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 25,
+        migrations: &MIGRATIONS[..25],
+    }
+}
+fn prepare_ai25(c: &mut Connection) -> Result<(), OpenError> {
+    koru_sqlite::prepare_with_preflight(&ai25(), c, refuse_superseded_18)?;
+    refuse_superseded_18(c)
+}
+
 /// The populated fixture every earlier step is tested with, migrated to ai24
 /// and no further, with a face picked so the ai24 column holds a value.
-fn populated_ai24() -> Connection {
+pub(super) fn populated_ai24() -> Connection {
     let mut c = populated_ai23();
     koru_sqlite::prepare_with_preflight(&ai24(), &mut c, refuse_superseded_18).unwrap();
     assert_eq!(user_version(&c).unwrap(), 24);
@@ -59,8 +73,7 @@ fn m5_ai25_migration_keeps_every_populated_ai24_row_and_object_and_adds_four_tab
         before.values().filter(|(_, rows)| !rows.is_empty()).count() > 10,
         "the fixture is not populated"
     );
-    prepare(&mut c).unwrap();
-    assert_eq!(SCHEMA_VERSION, 25);
+    prepare_ai25(&mut c).unwrap();
     assert_eq!(user_version(&c).unwrap(), 25);
     let after = snapshot(&c);
 
@@ -109,15 +122,14 @@ fn m5_ai25_migration_keeps_every_populated_ai24_row_and_object_and_adds_four_tab
     foreign_keys_held(&c);
 
     // Reopened, it is already current and nothing runs again.
-    prepare(&mut c).unwrap();
+    prepare_ai25(&mut c).unwrap();
     assert_eq!(snapshot(&c), after);
 }
 
 #[test]
 fn m5_ai25_migration_fresh_database_reaches_25_with_no_secret_column() {
-    let c = open_in_memory().unwrap();
-    assert_eq!(SCHEMA_VERSION, 25);
-    assert_eq!(MIGRATIONS.len(), 25);
+    let c = koru_sqlite::open_in_memory(&ai25()).unwrap();
+    assert!(MIGRATIONS.len() >= 25);
     assert_eq!(MIGRATIONS[24].to, 25);
     assert_eq!(MIGRATIONS[24].name, "025_ai_bot_connections.sql");
     assert_eq!(user_version(&c).unwrap(), 25);
@@ -245,7 +257,7 @@ fn m5_ai25_migration_failure_rolls_back_every_table_and_the_stamp() {
         assert_eq!(snapshot(&c), before);
         foreign_keys_held(&c);
         // The real step still applies to what the failure left.
-        prepare(&mut c).unwrap();
+        prepare_ai25(&mut c).unwrap();
         assert_eq!(user_version(&c).unwrap(), 25);
     }
 }
@@ -261,7 +273,7 @@ fn m5_ai25_migration_foreign_key_guard_refuses_a_database_with_a_broken_referenc
     )
     .unwrap();
     let before = snapshot(&c);
-    let error = prepare(&mut c).unwrap_err();
+    let error = prepare_ai25(&mut c).unwrap_err();
     assert!(
         error.to_string().contains("CHECK constraint failed"),
         "{error}"
@@ -273,7 +285,7 @@ fn m5_ai25_migration_foreign_key_guard_refuses_a_database_with_a_broken_referenc
 #[test]
 fn m5_ai25_migration_an_ai24_build_refuses_25_before_preflight_or_configuration() {
     let mut c = populated_ai24();
-    prepare(&mut c).unwrap();
+    prepare_ai25(&mut c).unwrap();
     let before = snapshot(&c);
     c.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF")
         .unwrap();
@@ -315,10 +327,17 @@ fn m5_ai25_migration_through_the_real_open_of_a_populated_ai24_file() {
     };
     let mut first = None;
     for _ in 0..2 {
+        // The real opener goes on to the current schema, which adds one
+        // column to `bots` (ai.db 26); every other table this step carried is
+        // compared definition for definition and row for row.
         let c = open(&path).unwrap();
-        assert_eq!(user_version(&c).unwrap(), 25);
+        assert_eq!(user_version(&c).unwrap(), SCHEMA_VERSION);
         let after = snapshot(&c);
         for (name, (sql, rows)) in &before {
+            if name == "bots" {
+                assert_eq!(rows.len(), after[name].1.len());
+                continue;
+            }
             assert_eq!(sql, &after[name].0, "definition changed: {name}");
             assert_eq!(rows, &after[name].1, "raw rows changed: {name}");
         }
@@ -347,7 +366,7 @@ fn pad(id: &str) -> String {
 
 /// One valid `connections` row; `id` is padded to 36 characters and also
 /// makes the account and the name distinct.
-fn connection_row(id: &str, state: &str, revoke: &str, disconnected: &str) -> String {
+pub(super) fn connection_row(id: &str, state: &str, revoke: &str, disconnected: &str) -> String {
     format!(
         "INSERT INTO connections(connection_id,user_scope_id,owner_device_id,provider,service_origin,name,account_subject_digest,account_label,scopes_json,credential_slot_digest,state,vendor_revoke,revision,connected_at_ms,disconnected_at_ms,created_at_ms,updated_at_ms)
          VALUES('{}','{}','{}','{}','https://vendor.example','name-{id}',CAST('{}' AS BLOB),'label','[]',zeroblob(32),'{state}',{revoke},1,1,{disconnected},1,1);",

@@ -113,7 +113,19 @@ pub(super) fn subject_on(
     owner: BotOwner,
     key: &BotWaitEnrollmentKey,
 ) -> Result<(InferenceAttemptId, BotSubmissionReceipt, BotReplayState), BotError> {
-    let (receipt, _) = routines::model::retained_run_subject_on(conn, owner, key.bot, key.run)?;
+    run_subject_on(conn, owner, key.bot, key.run)
+}
+
+/// The retained admission of a Bot Run, its AI attempt and that attempt's
+/// replay state. A decision wait and a child wait (M6) prove the same subject,
+/// so both enrollment owners read it here.
+pub(in crate::repository::bots) fn run_subject_on(
+    conn: &Connection,
+    owner: BotOwner,
+    bot: BotId,
+    run: koru_delegate_core::RunId,
+) -> Result<(InferenceAttemptId, BotSubmissionReceipt, BotReplayState), BotError> {
+    let (receipt, _) = routines::model::retained_run_subject_on(conn, owner, bot, run)?;
     let p = &receipt.intent.submission.provenance;
     let attempt = InferenceAttemptId::parse(&p.ai_attempt_id.ok_or(BotError::Storage)?.to_string())
         .ok_or(BotError::Storage)?;
@@ -142,7 +154,11 @@ pub(super) fn subject_on(
     let replay =
         crate::repository::bot_replay::replay_on(conn, attempt).map_err(|_| BotError::Storage)?;
     let fence = replay.fence.as_ref().ok_or(BotError::Storage)?;
-    if fence.owner != key.owner || fence.bot != key.bot || fence.run != key.run {
+    if fence.owner.user_scope != owner.user_scope
+        || fence.owner.device != owner.device
+        || fence.bot != bot
+        || fence.run != run
+    {
         return Err(BotError::Conflict);
     }
     Ok((attempt, receipt, replay))
@@ -312,12 +328,11 @@ impl Repository {
             return Err(BotError::Conflict);
         }
         if Some(original_fence) != replay.fence.as_ref()
-            && replay::installed_consumer_on(
+            && !replay::installed_consumer_on(
                 &tx,
                 attempt,
                 replay.fence.as_ref().ok_or(BotError::Storage)?,
             )?
-            .is_none()
         {
             return Err(BotError::Conflict);
         }

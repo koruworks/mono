@@ -194,9 +194,10 @@ fn no_error_carries_content() {
 fn the_stored_names_are_pinned() {
     assert_eq!(RUN_KIND, "koru-run");
     assert_eq!(SCHEDULE_KIND, "koru-schedule");
-    assert_eq!(RUN_DOCUMENT_SCHEMA_VERSION, 5);
-    assert_eq!(RUN_BOT_DOCUMENT_SCHEMA_VERSION, 5);
-    assert_eq!(RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION, 5);
+    assert_eq!(RUN_DOCUMENT_SCHEMA_VERSION, 6);
+    assert_eq!(RUN_BOT_DOCUMENT_SCHEMA_VERSION, 6);
+    assert_eq!(RUN_BOT_PROJECTION_DOCUMENT_SCHEMA_VERSION, 6);
+    assert_eq!(RUN_BOT_PREVIOUS_DOCUMENT_SCHEMA_VERSION, 5);
     assert_eq!(RUN_INTERACTIVE_DOCUMENT_SCHEMA_VERSION, 3);
     assert_eq!(RUN_ROUTINE_DOCUMENT_SCHEMA_VERSION, 4);
 }

@@ -838,6 +838,7 @@ fn routine_control_a_routine_waiting_for_a_decision_is_marked_and_leads_to_it() 
     // The window's activity read says that conversation needs the person.
     v.explore.bots_mut().activity_read_for_test(
         vec![koru_ai_core::bots::BotActivity {
+            waiting: None,
             bot_id: bot.id,
             chat_id: chat,
             state: koru_ai_core::bots::BotActivityState::NeedsYou,
@@ -867,6 +868,7 @@ fn routine_control_a_routine_waiting_for_a_decision_is_marked_and_leads_to_it() 
     // A Run still going under a paused Routine is said too.
     v.explore.bots_mut().activity_read_for_test(
         vec![koru_ai_core::bots::BotActivity {
+            waiting: None,
             bot_id: bot.id,
             chat_id: chat,
             state: koru_ai_core::bots::BotActivityState::Running,

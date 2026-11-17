@@ -16,11 +16,12 @@ impl Repository {
             CASE WHEN typeof(policy_revision)='integer' AND policy_revision>0 THEN policy_revision END,
             CASE WHEN typeof(paused)='integer' AND paused IN (0,1) THEN paused END,
             CASE WHEN typeof(lifecycle)='text' AND length(CAST(lifecycle AS BLOB))<=8 THEN lifecycle END,
-            CASE WHEN typeof(access)='text' AND length(CAST(access AS BLOB))<=9 THEN access END
+            CASE WHEN typeof(access)='text' AND length(CAST(access AS BLOB))<=9 THEN access END,
+            CASE WHEN typeof(may_ask)='integer' AND may_ask IN (0,1) THEN may_ask END
             FROM bots WHERE bot_id=?1", [id.to_storage()], |r| Ok((
                 r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,
                 r.get::<_,u64>(3)?,r.get::<_,u64>(4)?,r.get::<_,bool>(5)?,
-                r.get::<_,String>(6)?,r.get::<_,String>(7)?
+                r.get::<_,String>(6)?,r.get::<_,String>(7)?,r.get::<_,bool>(8)?
             ))).optional().map_err(bad)?.ok_or(BotError::NotFound)?;
         let actual_owner = BotOwner {
             user_scope: UserScopeId::parse(&row.0).ok_or(BotError::Storage)?,
@@ -78,6 +79,7 @@ impl Repository {
             },
             selected_pages: selected,
             connections: crate::repository::connections::bot_grants_on(&self.connection, id)?,
+            may_ask: row.8,
             pending_lifecycle: pending_lifecycle(&self.connection, owner, id)?,
             pending_change: pending_change(&self.connection, owner, id)?,
         };

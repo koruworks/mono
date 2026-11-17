@@ -123,6 +123,7 @@ fn an_access_change_rewrites_no_conversation_either() {
         |_| Ok(()),
         context(true),
         BotCommand::UpdateAccess {
+            may_ask: None,
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
             expected_revision: bot.revision,

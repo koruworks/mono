@@ -345,7 +345,9 @@ pub fn confirm_record_as<F>(
     fail: &dyn Fn(&'static str) -> F,
 ) -> Result<NativeResultIntentView, F> {
     let reference = NativeResultReference {
-        version_id: None,
+        // The Store's id for this save (M6). The owner stores it and returns
+        // the same reference, so the equality below still holds.
+        version_id: evidence.version_id,
         operation_id: intent.key.operation_id,
         workspace: evidence.workspace,
         document: evidence.document,
@@ -410,11 +412,15 @@ pub fn saved<H: NativeEffectHost + ?Sized>(
         .ok_or_else(|| host.failure("save_status_unknown"))?;
     native_document_title(store.clone(), authority.clone(), evidence.document)
         .map_err(|error| host.failure(refused_code(&error)))?;
-    Ok(
-        json!({"status":"saved","operation_id":evidence.operation_id,"workspace_id":evidence.workspace,
+    let mut receipt = json!({"status":"saved","operation_id":evidence.operation_id,"workspace_id":evidence.workspace,
         "document_id":evidence.document,"title":evidence.title,
-        "base_revision":evidence.version.iter().map(|b| format!("{b:02x}")).collect::<String>(),"kind":evidence.kind}),
-    )
+        "base_revision":evidence.version.iter().map(|b| format!("{b:02x}")).collect::<String>(),"kind":evidence.kind});
+    // The immutable version this save produced (M6). Absent only for a save
+    // registered before the id was kept: the key is then left out.
+    if let Some(version_id) = evidence.version_id {
+        receipt["version_id"] = json!(version_id);
+    }
+    Ok(receipt)
 }
 
 fn confirm<H: NativeEffectHost + ?Sized>(
@@ -506,6 +512,9 @@ pub fn recover_retained_as<H: NativeEffectHost + ?Sized>(
                 version: evidence.version.clone(),
                 title: evidence.title.clone(),
                 confirmed_at_ms: evidence.confirmed_at_ms,
+                // The retained reference is confirmed again exactly as it
+                // was first sent, with or without a version id.
+                version_id: evidence.version_id,
             },
             proof,
         ));
@@ -606,3 +615,6 @@ pub fn consume<H: NativeEffectHost + ?Sized>(
     )
     .unwrap_or_else(|| Err(fail("save_status_unknown")))
 }
+
+#[cfg(test)]
+mod tests;

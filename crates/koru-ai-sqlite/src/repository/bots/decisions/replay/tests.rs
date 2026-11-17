@@ -397,3 +397,5 @@ fn later_wait_requires_exact_installed_consumer_and_retains_original_admission()
         assert_eq!(after, original, "case {case}");
     }
 }
+
+mod children;

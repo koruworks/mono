@@ -17,6 +17,7 @@ fn at(n: i64) -> Timestamp {
 fn fixture(repo: &mut Repository) -> (Bot, PendingTurn, BotSubmission) {
     let workspace = WorkspaceId::new();
     let bot = Bot {
+        may_ask: true,
         id: BotId::mint(),
         home_workspace: workspace,
         user_scope: UserScopeId::new(),

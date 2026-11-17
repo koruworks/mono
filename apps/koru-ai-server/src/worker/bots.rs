@@ -385,6 +385,10 @@ fn execute_bot_command(
         | BotCommand::ListMemory { .. }
         | BotCommand::ReadMemoryFact { .. }
         | BotCommand::ListTaskBots { .. }
+        // The two child reads (M6) are served by the worker's own readers
+        // once they exist; nothing here answers them.
+        | BotCommand::ListChildRequests { .. }
+        | BotCommand::ReadChildOrigin { .. }
         | BotCommand::StopTask { .. } => return Err(bot_failure(BotError::Unavailable)),
         BotCommand::Create {
             home_workspace,
@@ -480,6 +484,7 @@ fn execute_bot_command(
             validate_runtime(&config)?;
             (
                 Bot {
+                    may_ask: true,
                     id: bot_id,
                     home_workspace,
                     user_scope: owner.user_scope,

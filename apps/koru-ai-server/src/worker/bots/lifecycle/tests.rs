@@ -7,6 +7,7 @@ use koru_ai_core::{DocumentId, ModelSelection};
 fn bot() -> Bot {
     let workspace = WorkspaceId::new();
     Bot {
+        may_ask: true,
         id: BotId::mint(),
         user_scope: UserScopeId::new(),
         owner_device: DeviceId::from_uuid(Uuid::new_v4()),

@@ -26,6 +26,8 @@ pub mod memory;
 pub use memory::*;
 pub mod routines;
 pub use routines::*;
+pub mod children;
+pub use children::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -126,6 +128,26 @@ pub struct Bot {
     #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
     #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
     pub connections: std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>,
+    /// "May ask other bots" (M6): whether this Bot's Runs may ask another
+    /// Bot. A setting of the Bot, changed only by `update_access` with
+    /// `may_ask` present. It is not part of the captured policy: no policy
+    /// bytes, digest or barrier holds it. On by default, and omitted while it
+    /// is on, so a Bot that may ask serializes, and every stored receipt that
+    /// holds one is, exactly as before the field existed (ai.db 26).
+    #[serde(
+        default = "may_ask_default",
+        skip_serializing_if = "is_may_ask_default"
+    )]
+    pub may_ask: bool,
+}
+
+/// The default of [`Bot::may_ask`]: on.
+pub const fn may_ask_default() -> bool {
+    true
+}
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_may_ask_default(value: &bool) -> bool {
+    *value
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -590,6 +612,11 @@ pub enum BotCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "schema", schemars(length(max = 16)))]
         connections: Option<std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>>,
+        /// "May ask other bots" (M6). Absent changes nothing, so a caller
+        /// that does not know the field keeps the Bot's setting; present sets
+        /// it. The request fingerprint covers it only when it is present.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        may_ask: Option<bool>,
     },
     /// Settle the Bot's work and keep it, with its history, out of the roster.
     Archive {
@@ -669,6 +696,21 @@ pub enum BotCommand {
     /// need the person, at most 200, read from durable AI state.
     ListActivity {
         workspace: WorkspaceId,
+    },
+    /// The request cards of one conversation of a Bot that asked other Bots
+    /// (M6): one per child request its Runs made there, oldest first, at
+    /// most three per Run. Identities, states and counts only. Answered
+    /// `child_requests`.
+    ListChildRequests {
+        bot_id: BotId,
+        chat_id: ChatId,
+    },
+    /// Who asked for a conversation, when another Bot's request started it
+    /// (M6). Answered `child_origin`, with no origin for any other
+    /// conversation.
+    ReadChildOrigin {
+        bot_id: BotId,
+        chat_id: ChatId,
     },
     /// Create a Bot together with its Role page and working folder (P1.8).
     /// Answered with the creation's progress; the same request and input
@@ -872,6 +914,13 @@ pub enum BotResponse {
     Activity {
         activity: BotActivityPage,
     },
+    ChildRequests {
+        requests: Vec<BotChildRequestCard>,
+    },
+    ChildOrigin {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        origin: Option<BotChildOrigin>,
+    },
     Creation {
         creation: BotCreation,
     },
@@ -959,8 +1008,11 @@ pub enum BotActivityState {
     /// A reply is in progress: queued for the Bot or executing.
     Running,
     /// An approval or a question card is open for the person. Takes
-    /// precedence over `running` when both hold.
+    /// precedence over `running` and `waiting` when it holds.
     NeedsYou,
+    /// The reply asked other Bots and waits for their requests (M6). Takes
+    /// precedence over `running`. [`BotActivity::waiting`] says on whom.
+    Waiting,
 }
 
 /// One conversation with work in it.
@@ -970,6 +1022,11 @@ pub struct BotActivity {
     pub bot_id: BotId,
     pub chat_id: ChatId,
     pub state: BotActivityState,
+    /// Present exactly when `state` is `waiting`: the Bots asked and whether
+    /// this Bot is paused. Omitted otherwise, so an entry that does not wait
+    /// serializes exactly as before the field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<BotActivityWaiting>,
 }
 
 /// A workspace's Bot activity, ordered by Bot and then conversation.

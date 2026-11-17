@@ -423,6 +423,7 @@ fn the_faces_share_one_deadline_and_ask_for_none_while_nothing_works() {
 
     // Ada and Bo have a reply running; Cy is waiting on the person.
     let activity = |bot: &koru_ai_core::bots::Bot, state| BotActivity {
+        waiting: None,
         bot_id: bot.id,
         chat_id: bot.main_chat,
         state,

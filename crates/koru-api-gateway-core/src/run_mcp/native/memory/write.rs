@@ -461,6 +461,7 @@ fn evidence(intent: &NativeResultIntentView) -> Result<NativeWriteEvidence, Tool
         version: e.version.clone(),
         title: e.title.clone(),
         confirmed_at_ms: e.confirmed_at_ms,
+        version_id: e.version_id,
     })
 }
 fn receipt(

@@ -97,6 +97,9 @@ pub(crate) const BOT_CHAT_PAGE_SQL: &str =
   CROSS JOIN bots AS b ON b.bot_id = bc.bot_id
   WHERE bc.bot_id = ?1
     AND NOT EXISTS(SELECT 1 FROM bot_chat_trash AS t WHERE t.chat_id = bc.chat_id)
+    AND NOT EXISTS(SELECT 1 FROM bot_child_chats AS cc
+                     CROSS JOIN bot_command_receipts AS cr ON cr.user_scope_id = cc.user_scope_id AND cr.request_id = cc.child_request_id
+                     WHERE cc.chat_id = bc.chat_id AND cr.stage NOT IN ('accepted','completed'))
     AND (?2 IS NULL
          OR (bc.purpose = 'main') < ?2
          OR ((bc.purpose = 'main') = ?2
@@ -134,12 +137,21 @@ pub(crate) const BOT_ACTIVITY_SQL: &str = "SELECT bc.bot_id, bc.chat_id,
                 CROSS JOIN tool_invocations AS pt INDEXED BY tool_invocations_by_attempt
                         ON pt.attempt_id = r.ai_attempt_id
                WHERE p.chat_id = bc.chat_id AND p.state = 'pending' AND p.role = 'assistant'
-                 AND pt.status = 'approval_required')) AS needs_you
+                 AND pt.status = 'approval_required')) AS needs_you,
+    EXISTS(SELECT 1 FROM messages AS w INDEXED BY one_pending_assistant_per_chat
+            CROSS JOIN bot_chat_runs AS wl ON wl.assistant_message_id = w.id
+            CROSS JOIN bot_child_wait_enrollments AS we INDEXED BY bot_child_wait_enrollments_run
+                    ON we.run_id = wl.run_id AND we.ai_attempt_id = wl.ai_attempt_id
+           WHERE w.chat_id = bc.chat_id AND w.state = 'pending' AND w.role = 'assistant'
+             AND NOT EXISTS(SELECT 1 FROM bot_child_replay_rollovers AS wo WHERE wo.wait_id = we.wait_id)) AS waiting
     FROM bot_chats AS bc
    CROSS JOIN bots AS b ON b.bot_id = bc.bot_id
    WHERE b.user_scope_id = ?1 AND b.owner_device_id = ?2 AND b.home_workspace_id = ?3
      AND b.lifecycle = 'active'
      AND NOT EXISTS(SELECT 1 FROM bot_chat_trash AS tr WHERE tr.chat_id = bc.chat_id)
+     AND NOT EXISTS(SELECT 1 FROM bot_child_chats AS cc
+                     CROSS JOIN bot_command_receipts AS cr ON cr.user_scope_id = cc.user_scope_id AND cr.request_id = cc.child_request_id
+                     WHERE cc.chat_id = bc.chat_id AND cr.stage NOT IN ('accepted','completed'))
    ORDER BY bc.bot_id, bc.chat_id";
 
 /// One page of an owner's Bot conversations in Trash, for one workspace,
@@ -746,17 +758,22 @@ impl Repository {
                         row.get::<_, String>(1)?,
                         row.get::<_, bool>(2)?,
                         row.get::<_, bool>(3)?,
+                        row.get::<_, bool>(4)?,
                     ))
                 },
             )
             .map_err(bad)?;
         let mut entries = Vec::new();
         for row in rows {
-            let (bot, chat, running, needs_you) = row.map_err(bad)?;
-            let state = match (needs_you, running) {
-                (true, _) => BotActivityState::NeedsYou,
-                (false, true) => BotActivityState::Running,
-                (false, false) => continue,
+            let (bot, chat, running, needs_you, waiting) = row.map_err(bad)?;
+            // Needs you comes first: a card open for the person outranks a
+            // wait. A wait outranks plain running: the reply is not working,
+            // it is held until the Bots it asked have answered.
+            let state = match (needs_you, waiting, running) {
+                (true, _, _) => BotActivityState::NeedsYou,
+                (false, true, _) => BotActivityState::Waiting,
+                (false, false, true) => BotActivityState::Running,
+                (false, false, false) => continue,
             };
             if entries.len() == limit {
                 return Ok(BotActivityPage {
@@ -764,10 +781,24 @@ impl Repository {
                     truncated: true,
                 });
             }
+            let bot_id: BotId = bot.parse().map_err(bad)?;
+            let chat_id = ChatId::parse(&chat).ok_or(BotError::Storage)?;
+            let waiting = if state == BotActivityState::Waiting {
+                // The row said a wait is enrolled; if it settled between the
+                // two reads the entry names nobody, which is still true.
+                let detail = self.bot_child_waiting(owner, bot_id, chat_id)?;
+                Some(BotActivityWaiting {
+                    paused: detail.as_ref().is_some_and(|d| d.paused),
+                    on: detail.map(|d| d.recipients).unwrap_or_default(),
+                })
+            } else {
+                None
+            };
             entries.push(BotActivity {
-                bot_id: bot.parse().map_err(bad)?,
-                chat_id: ChatId::parse(&chat).ok_or(BotError::Storage)?,
+                bot_id,
+                chat_id,
                 state,
+                waiting,
             });
         }
         Ok(BotActivityPage {

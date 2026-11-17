@@ -84,6 +84,11 @@ pub struct NativeWriteEvidence {
     pub version: Vec<u8>,
     pub title: String,
     pub confirmed_at_ms: i64,
+    /// The immutable Store version this save produced (M6). Every save this
+    /// build makes carries it. It is absent only on evidence rebuilt from a
+    /// result reference retained before the id was kept, so that such a
+    /// reference is confirmed again exactly as it was first sent.
+    pub version_id: Option<koru_store_core::ids::DocumentVersionId>,
 }
 /// Unconfirmed is deliberately not NotApplied and never permits blind replay.
 pub enum NativeReconciliation {
@@ -485,6 +490,7 @@ impl LocalBackend {
                     version: retained.version_vector,
                     title,
                     confirmed_at_ms: retained.captured_at.millis(),
+                    version_id: Some(retained.id),
                 })
             }
         }
@@ -546,7 +552,21 @@ fn evidence(
         version: version.version_vector,
         title: prepared.description.title.clone(),
         confirmed_at_ms: version.captured_at.millis(),
+        version_id: Some(version.id),
     })
+}
+
+/// A page at one immutable Store version, rendered exactly as `read_document`
+/// renders the live page: the same typed-node tree, from the version's own
+/// snapshot. The caller has read the bytes by version id under its own read
+/// authority and verified their checksum; nothing here reads a Store, and the
+/// live page is never consulted. Bytes that do not open as a page are refused.
+pub fn render_pinned_document(
+    document: StoreDocumentId,
+    snapshot: &[u8],
+) -> Result<Value, ToolError> {
+    let doc = WorkspaceDoc::from_snapshot(snapshot)?;
+    crate::document_json(document, &doc)
 }
 
 #[cfg(test)]

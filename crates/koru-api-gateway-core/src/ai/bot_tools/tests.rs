@@ -8,6 +8,7 @@ use uuid::Uuid;
 fn bot() -> Bot {
     let home_workspace = WorkspaceId::new();
     Bot {
+        may_ask: true,
         id: BotId::mint(),
         home_workspace,
         user_scope: UserScopeId::new(),

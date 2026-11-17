@@ -931,6 +931,7 @@ fn every_change_to_a_trashed_bot_or_its_conversation_answers_its_code() {
             config: bot.config.clone(),
         },
         BotCommand::UpdateAccess {
+            may_ask: None,
             request_id: BotRequestId::mint(),
             bot_id: bot.id,
             expected_revision: revision,

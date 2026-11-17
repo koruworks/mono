@@ -143,8 +143,8 @@ impl Repository {
         // installed; then the confirmed cleanup must name that consumer.
         let current = replay.fence.as_ref().ok_or(BotError::Storage)?;
         if *current != origin_fence(enrollment) {
-            let archive =
-                replay::installed_consumer_on(&tx, attempt, current)?.ok_or(BotError::Conflict)?;
+            let archive = replay::installed_decision_consumer_on(&tx, attempt, current)?
+                .ok_or(BotError::Conflict)?;
             let named = match target {
                 DecisionCleanupTarget::Consumer {
                     attempt: consumer,

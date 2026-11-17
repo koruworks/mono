@@ -10,6 +10,7 @@ use koru_store_core::ids::WorkspaceId;
 /// roster, everything else is a valid fixture.
 pub(crate) fn bot(id: BotId, home: WorkspaceId, name: &str, paused: bool) -> Bot {
     Bot {
+        may_ask: true,
         id,
         home_workspace: home,
         user_scope: UserScopeId::new(),

@@ -161,10 +161,28 @@ fn archive_on(
     }))
 }
 
-/// Exact immediate installed consumer, not a generation test or history walk.
-/// Historical proof is correlated with its own retained enrollment/invocation;
-/// callers still own all fresh current replay, policy and Stop checks.
-pub(super) fn installed_consumer_on(
+/// Whether `fence` is the consumer some wait of this AI attempt installed: a
+/// decision's or a child wait's (M6). A child rollover may follow a decision
+/// rollover and the reverse, so both tables are read. Exact, not a generation
+/// test or a history walk; callers still own all fresh current replay, policy
+/// and Stop checks.
+pub(in crate::repository::bots) fn installed_consumer_on(
+    conn: &Connection,
+    attempt: InferenceAttemptId,
+    fence: &BotExecutionFence,
+) -> Result<bool, BotError> {
+    Ok(
+        installed_decision_consumer_on(conn, attempt, fence)?.is_some()
+            || super::super::children::rollover::installed_child_consumer_on(conn, attempt, fence)?
+                .is_some(),
+    )
+}
+
+/// Exact immediate consumer a decision installed, not a generation test or
+/// history walk. Historical proof is correlated with its own retained
+/// enrollment/invocation; callers still own all fresh current replay, policy
+/// and Stop checks.
+pub(super) fn installed_decision_consumer_on(
     conn: &Connection,
     attempt: InferenceAttemptId,
     fence: &BotExecutionFence,
@@ -268,7 +286,7 @@ impl Repository {
             _ => return Err(BotError::Conflict),
         };
         if original_fence != expected_old_fence
-            && installed_consumer_on(&tx, attempt, expected_old_fence)?.is_none()
+            && !installed_consumer_on(&tx, attempt, expected_old_fence)?
         {
             return Err(BotError::Conflict);
         }

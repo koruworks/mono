@@ -19,6 +19,7 @@ use crate::TimelineItem;
 mod bots;
 mod dependency;
 mod economics;
+mod format6;
 mod gate;
 mod projection;
 mod schedule;

@@ -173,7 +173,9 @@ pub(crate) fn activity_key(chat: koru_ai_core::ChatId) -> Key {
 /// state: the Chats list's own vocabulary.
 pub(crate) fn activity_status(state: BotActivityState) -> ChatStatus {
     match state {
-        BotActivityState::Running => ChatStatus::Working,
+        // A reply that waits on other Bots (M6) is work in progress until
+        // the roster has its own "Waiting for" line.
+        BotActivityState::Running | BotActivityState::Waiting => ChatStatus::Working,
         BotActivityState::NeedsYou => ChatStatus::NeedsYou,
     }
 }

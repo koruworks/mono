@@ -6,6 +6,7 @@ use koru_ai_core::bots::replay::*;
 use std::io::Write;
 pub(super) mod context;
 mod preparation;
+pub(crate) use preparation::prepare_association_on as prepare_bot_association_on;
 pub(crate) use preparation::prepare_routine_association_on;
 
 /// How a Bot attempt ends on the AI side before any native terminal arrives.

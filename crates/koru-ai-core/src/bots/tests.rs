@@ -195,6 +195,7 @@ fn a_stop_code_is_closed_and_absent_by_default() {
 fn an_active_bot_reads_and_stores_exactly_as_before_and_lifecycle_appears_only_when_set() {
     let workspace = WorkspaceId::new();
     let bot = Bot {
+        may_ask: true,
         id: BotId::mint(),
         home_workspace: workspace,
         user_scope: UserScopeId::new(),

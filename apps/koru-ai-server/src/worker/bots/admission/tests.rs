@@ -45,6 +45,7 @@ fn fixture() -> (Repository, Bot, Arc<Authority>, BotSubmissionIntent) {
     let device = DeviceId::from_uuid(Uuid::new_v4());
     let profile = ProfileId::new();
     let bot = Bot {
+        may_ask: true,
         id: BotId::mint(),
         home_workspace: w,
         user_scope: scope,

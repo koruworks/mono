@@ -2,6 +2,7 @@
 
 //! Koru AI's direct, bounded bridge to the shared workspace-tool semantics.
 mod native;
+pub mod pinned;
 pub use native::{NativeStoreAuthority, native_document_title, native_store_backend};
 
 use std::sync::Arc;

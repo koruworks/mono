@@ -441,11 +441,12 @@ fn migration_ai23_through_the_real_open_of_a_populated_ai22_file() {
         let after = snapshot(&c);
         for (name, (_, rows)) in &before {
             if name == "bots" {
-                // ai24 appends one nullable column, NULL in every old row.
+                // ai24 appends one nullable column, NULL in every old row,
+                // and ai26 one more, on in every old row.
                 let kept: Vec<String> = after[name]
                     .1
                     .iter()
-                    .map(|row| format!("{}]", row.strip_suffix(", Null]").unwrap()))
+                    .map(|row| format!("{}]", row.strip_suffix(", Null, Integer(1)]").unwrap()))
                     .collect();
                 assert_eq!(rows, &kept, "raw rows changed: {name}");
                 continue;

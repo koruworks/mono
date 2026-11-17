@@ -3,10 +3,10 @@ use super::*;
 use koru_delegate_core::decisions::*;
 use loro::VersionVector;
 
-fn id<T: std::str::FromStr>(n: u8) -> T {
+pub(super) fn id<T: std::str::FromStr>(n: u8) -> T {
     v4(n).to_string().parse().ok().unwrap()
 }
-fn rev(n: u64) -> DecisionRevision {
+pub(super) fn rev(n: u64) -> DecisionRevision {
     DecisionRevision::new(n).unwrap()
 }
 fn bot_run_header(routine: bool) -> RunHeader {
@@ -33,8 +33,9 @@ fn bot_run_header(routine: bool) -> RunHeader {
     h
 }
 /// A Bot Run as the previous creation default wrote it: Bot3 (Manual) or
-/// Bot4 (Routine). These are the documents a projection upgrades to Bot5.
-fn bot(routine: bool) -> RunDocument {
+/// Bot4 (Routine). These are the documents a projection upgrades to the
+/// current Bot format.
+pub(super) fn bot(routine: bool) -> RunDocument {
     let doc = RunDocument::create(&bot_run_header(routine)).unwrap();
     doc.doc()
         .get_map("run")
@@ -43,11 +44,18 @@ fn bot(routine: bool) -> RunDocument {
     doc.doc().commit();
     doc
 }
-/// A Bot Run as this build creates it: Bot5, Manual or Routine.
-fn bot5(routine: bool) -> RunDocument {
+/// A Bot Run as the previous build created it: Bot5, Manual or Routine.
+pub(super) fn bot5(routine: bool) -> RunDocument {
+    let doc = RunDocument::create(&bot_run_header(routine)).unwrap();
+    doc.doc().get_map("run").insert("schema", 5i64).unwrap();
+    doc.doc().commit();
+    doc
+}
+/// A Bot Run as this build creates it: Bot6, Manual or Routine.
+pub(super) fn bot6(routine: bool) -> RunDocument {
     RunDocument::create(&bot_run_header(routine)).unwrap()
 }
-fn intent(doc: &RunDocument) -> RunProjectionIntent {
+pub(super) fn intent(doc: &RunDocument) -> RunProjectionIntent {
     let h = doc.header().unwrap();
     let bot = h.bot.as_ref().unwrap();
     let target = RunProjectionTargetV1::Control {
@@ -108,7 +116,7 @@ fn intent(doc: &RunDocument) -> RunProjectionIntent {
         target,
     }
 }
-fn applied(
+pub(super) fn applied(
     stage: &mut RunProjectionStaging,
     doc: &RunDocument,
     prepared: &DecisionPreparedProjection,
@@ -116,7 +124,11 @@ fn applied(
     stage.apply(doc, prepared).unwrap();
     stage.acknowledge(doc, prepared, &doc.version()).unwrap()
 }
-fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> RunProjectionIntent {
+pub(super) fn next(
+    doc: &RunDocument,
+    previous: &RunProjectionIntent,
+    event: RunEvent,
+) -> RunProjectionIntent {
     let mut value = previous.clone();
     value.identity.transition = id(72);
     value.identity.sequence = rev(2);
@@ -156,22 +168,22 @@ fn next(doc: &RunDocument, previous: &RunProjectionIntent, event: RunEvent) -> R
     value
 }
 
-/// BotRun5 compatibility: a Bot Run created at 5 (Manual or Routine) is
-/// projected without a format change, stays at 5, and later ordinary writes
-/// on the same handle stay writable.
+/// A Bot Run created at the current format (Manual or Routine) is projected
+/// without a format change, stays at 6, and later ordinary writes on the same
+/// handle stay writable.
 #[test]
-fn a_bot_run_created_at_5_is_projected_and_stays_bot5() {
+fn a_bot_run_created_at_6_is_projected_and_stays_bot6() {
     for routine in [false, true] {
-        let doc = bot5(routine);
-        assert_eq!(doc.schema_version(), Some(5));
+        let doc = bot6(routine);
+        assert_eq!(doc.schema_version(), Some(6));
         let intent = intent(&doc);
-        assert_eq!(u8::from(intent.identity.source_schema), 5);
+        assert_eq!(u8::from(intent.identity.source_schema), 6);
         let h = doc.header().unwrap();
         let mut stage = RunProjectionStaging::default();
         let p = stage.prepare(&doc, &intent).unwrap();
         let receipt = applied(&mut stage, &doc, &p);
         assert_eq!(receipt.identity(), &intent.identity);
-        assert_eq!(doc.schema_version(), Some(5));
+        assert_eq!(doc.schema_version(), Some(6));
         assert_eq!(doc.header().unwrap().bot, h.bot);
         assert!(doc.compatibility().writable());
         doc.set_status(&RunStatus::Cancelled).unwrap();
@@ -192,11 +204,11 @@ fn projection_prepare_is_private_exact_and_bot3_bot4_upgrade_is_specialized() {
         assert_eq!(stage.prepare(&doc, &intent).unwrap(), p);
         let receipt = applied(&mut stage, &doc, &p);
         assert_eq!(receipt.identity(), &intent.identity);
-        assert_eq!(doc.schema_version(), Some(5));
+        assert_eq!(doc.schema_version(), Some(6));
         assert_eq!(doc.header().unwrap().bot, h.bot);
         assert_eq!(doc.header().unwrap().origin, h.origin);
         assert_eq!(doc.header().unwrap().native_results, h.native_results);
-        // The reader gate understands Bot5: later ordinary writes on the same
+        // The reader gate understands Bot6: later ordinary writes on the same
         // handle stay writable once the exclusive window has ended.
         assert!(doc.compatibility().writable());
         doc.set_status(&RunStatus::Cancelled).unwrap();
@@ -209,7 +221,7 @@ fn projection_prepare_is_private_exact_and_bot3_bot4_upgrade_is_specialized() {
 
 #[test]
 fn projection_refuses_legacy_newer_wrong_subject_and_detached_without_mutating() {
-    for schema in [1, 2, 6] {
+    for schema in [1, 2, 7] {
         let doc = bot(false);
         let intent = intent(&doc);
         doc.doc().get_map("run").insert("schema", schema).unwrap();
@@ -974,9 +986,10 @@ fn decision_usage_full_envelope_only_from_the_exact_applied_marker() {
 
 /// Cohort `m5_run_format_unchanged`: the Run document carries no decision
 /// kind. The same waiting Control projected for an edit decision and for a
-/// private-operation decision (M5) leaves a Bot Run at format 5 with the same
-/// header and the same timeline; only the ledger's own retained target, which
-/// is not part of the document, names the kind.
+/// private-operation decision (M5) leaves a Bot Run with the same format (the
+/// one every projection writes, 6 since M6), the same header and the same
+/// timeline; only the ledger's own retained target, which is not part of the
+/// document, names the kind.
 #[test]
 fn m5_run_format_unchanged_for_a_private_decisions_projection() {
     let project = |kind: DecisionKind| {
@@ -1009,7 +1022,7 @@ fn m5_run_format_unchanged_for_a_private_decisions_projection() {
         let prepared = stage.prepare(&doc, &intent).unwrap();
         let receipt = applied(&mut stage, &doc, &prepared);
         assert_eq!(receipt.identity(), &intent.identity);
-        assert_eq!(doc.schema_version(), Some(5));
+        assert_eq!(doc.schema_version(), Some(6));
         assert!(doc.compatibility().writable());
         (
             doc.header().unwrap(),

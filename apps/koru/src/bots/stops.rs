@@ -119,7 +119,9 @@ pub(crate) fn work_now(scope: Scope, facts: Facts<'_>) -> WorkNow {
             .filter(|entry| entry.bot_id == bot && covers(entry.chat_id))
         {
             match entry.state {
-                BotActivityState::Running => running = true,
+                // A reply that waits on other Bots (M6) is still a Run a
+                // person can stop.
+                BotActivityState::Running | BotActivityState::Waiting => running = true,
                 BotActivityState::NeedsYou => needs_you = true,
             }
         }
