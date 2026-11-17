@@ -52,6 +52,19 @@ fn memory_write_error(error: memory::MemoryCodecError) -> MemoryAuthorityError {
     }
 }
 
+/// The rule of M8 D22 on two stored modes: a Bot is copied unless the lower
+/// of its home workspace's mode and that workspace's Profile's is Local only.
+pub(crate) fn home_copy_of(
+    workspace: koru_store_core::transport::TransportMode,
+    profile: koru_store_core::transport::TransportMode,
+) -> HomeCopy {
+    if workspace.min(profile) == koru_store_core::transport::TransportMode::LocalOnly {
+        HomeCopy::LocalOnly
+    } else {
+        HomeCopy::Copied
+    }
+}
+
 pub struct BotAuthorityAdapter {
     client: StoreWorkerClient,
     device: DeviceId,
@@ -398,6 +411,23 @@ impl BotAuthority for BotAuthorityAdapter {
             user_scope: scope,
             device: self.device,
         })
+    }
+    /// The two stored rows, and nothing else: the workspace's own mode and
+    /// its Profile's, the lower of which decides. `transport_admission` is
+    /// never asked, because it also answers Local only while a workspace is
+    /// fenced in memory, which is not the person's choice. A missing or
+    /// unreadable row, or a Store that does not answer, is `Unavailable`,
+    /// and the caller withholds the Bot.
+    fn home_copy(&self, workspace: WorkspaceId) -> Result<HomeCopy, BotError> {
+        use koru_store_core::transport::TransportSubject;
+        self.client
+            .with_store(move |store| {
+                let own = store.transport_mode(TransportSubject::Workspace(workspace))?;
+                let profile = store.transport_mode(TransportSubject::Profile(own.owner))?;
+                Ok(home_copy_of(own.mode, profile.mode))
+            })
+            .map_err(|_| BotError::Unavailable)?
+            .map_err(|_: koru_store_core::Error| BotError::Unavailable)
     }
     fn workspace(&self, workspace: WorkspaceId) -> Result<ProfileId, BotError> {
         self.client

@@ -257,6 +257,11 @@ impl Repository {
                 ],
             )
             .map_err(bad)?;
+            // From this row on the conversation is one a Bot opened in
+            // another, and is not listed until its owner admits it: its
+            // marker and its messages' say so.
+            crate::repository::bots::client_feed::touch_conversation(&tx, item.chat.id)
+                .map_err(bad)?;
         }
         let rows = chats_of(ask_on(&tx, owner, ask.parent_run, ask.ask_key)?);
         if rows.len() != ask.items.len() {
@@ -477,11 +482,16 @@ impl Repository {
         for row in &rows {
             let request = BotRequestId::from_uuid(row.child_request.as_uuid());
             // Release a first-task folder reservation this request took.
-            tx.execute(
-                "UPDATE bots SET folder_lock_request_id=NULL WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",
-                params![row.recipient_bot.to_storage(), request.to_storage()],
-            )
-            .map_err(bad)?;
+            let released = tx
+                .execute(
+                    "UPDATE bots SET folder_lock_request_id=NULL WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",
+                    params![row.recipient_bot.to_storage(), request.to_storage()],
+                )
+                .map_err(bad)?;
+            if released != 0 {
+                crate::repository::bots::client_feed::touch_bot(&tx, row.recipient_bot)
+                    .map_err(bad)?;
+            }
             let changed = tx
                 .execute(
                     "UPDATE bot_command_receipts SET stage='rejected',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2 AND stage='prepared' AND command_kind='start'",

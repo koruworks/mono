@@ -347,6 +347,8 @@ impl Repository {
             params![input.bot.to_storage(), now],
         )
         .map_err(bad)?;
+        // The Bot's revision moved. Its Knowledge is not copied.
+        super::client_feed::touch_bot(&tx, input.bot).map_err(bad)?;
         let outcome = BotLibraryReceiptV1::SetKnowledge {
             version: 1,
             revision: g.revision + 1,

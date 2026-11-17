@@ -446,3 +446,99 @@ fn a_new_role_page_is_told_to_an_open_workspaces_manifest_room_once() {
     );
     assert!(window.told().is_empty(), "nothing new to tell");
 }
+
+/// Cohort `m8_feed_withheld`: the rule itself. A Bot is copied unless the
+/// lower of its home workspace's stored mode and that workspace's Profile's
+/// is Local only.
+#[test]
+fn m8_feed_withheld_home_copy_is_the_lower_of_the_two_stored_modes() {
+    use koru_store_core::transport::TransportMode::{Cloud, LocalOnly, P2p};
+    for (workspace, profile, expected) in [
+        (Cloud, Cloud, HomeCopy::Copied),
+        (P2p, Cloud, HomeCopy::Copied),
+        (Cloud, P2p, HomeCopy::Copied),
+        (P2p, P2p, HomeCopy::Copied),
+        (LocalOnly, Cloud, HomeCopy::LocalOnly),
+        (LocalOnly, P2p, HomeCopy::LocalOnly),
+        // The Profile's choice caps every workspace in it.
+        (Cloud, LocalOnly, HomeCopy::LocalOnly),
+        (P2p, LocalOnly, HomeCopy::LocalOnly),
+        (LocalOnly, LocalOnly, HomeCopy::LocalOnly),
+    ] {
+        assert_eq!(
+            home_copy_of(workspace, profile),
+            expected,
+            "{workspace:?} {profile:?}"
+        );
+    }
+}
+
+/// Cohort `m8_feed_withheld`: the real adapter over an in-memory Store reads
+/// the two stored rows, and answers `Unavailable` when a row is not there.
+#[test]
+fn m8_feed_withheld_the_adapter_reads_the_stored_modes_of_the_workspace_and_its_profile() {
+    use koru_ai_core::Timestamp;
+    use koru_store_core::Locale;
+    use koru_store_core::transport::{SetTransportMode, TransportMode, TransportSubject};
+    let memory = koru_store_server::memory::MemoryStore::open("bot-home-copy-memory").unwrap();
+    let (profile, workspace) = memory
+        .with_store(|store| {
+            let at = Timestamp::from_millis(1);
+            let profile = store
+                .create_profile("First", None, None, Locale::default(), at)
+                .unwrap()
+                .id;
+            let workspace = store.create_workspace(profile, "Work", at).unwrap().id;
+            (profile, workspace)
+        })
+        .unwrap();
+    let adapter =
+        BotAuthorityAdapter::from_device(memory.client(), &uuid::Uuid::new_v4().to_string())
+            .unwrap();
+    let stored = |subject: TransportSubject| {
+        memory
+            .with_store(move |store| store.transport_mode(subject).unwrap())
+            .unwrap()
+    };
+    let set = |subject: TransportSubject, mode: TransportMode| {
+        let revision = stored(subject).revision;
+        memory
+            .with_store(move |store| {
+                store
+                    .set_transport_mode(SetTransportMode {
+                        subject,
+                        expected_revision: revision,
+                        mode,
+                    })
+                    .unwrap();
+            })
+            .unwrap();
+    };
+    let own = TransportSubject::Workspace(workspace);
+    let above = TransportSubject::Profile(profile);
+    // As the Store seeded them, whatever that is: the answer is the rule on
+    // the two stored rows, and the workspace's row names its Profile.
+    assert_eq!(stored(own).owner, profile);
+    assert_eq!(
+        adapter.home_copy(workspace),
+        Ok(home_copy_of(stored(own).mode, stored(above).mode))
+    );
+    // A workspace cannot sit above its Profile, so the Profile is set first.
+    set(above, TransportMode::Cloud);
+    set(own, TransportMode::P2p);
+    assert_eq!(adapter.home_copy(workspace), Ok(HomeCopy::Copied));
+    set(own, TransportMode::Cloud);
+    assert_eq!(adapter.home_copy(workspace), Ok(HomeCopy::Copied));
+    // Kept on this computer, by the person's own choice.
+    set(own, TransportMode::LocalOnly);
+    assert_eq!(stored(own).mode, TransportMode::LocalOnly);
+    assert_eq!(adapter.home_copy(workspace), Ok(HomeCopy::LocalOnly));
+    set(own, TransportMode::P2p);
+    assert_eq!(adapter.home_copy(workspace), Ok(HomeCopy::Copied));
+    // A workspace the Store does not know: no row, so no answer, and the
+    // caller withholds.
+    assert_eq!(
+        adapter.home_copy(WorkspaceId::new()),
+        Err(BotError::Unavailable)
+    );
+}

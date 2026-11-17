@@ -225,7 +225,7 @@ fn populated_v16_migrates_twice_without_changing_chat_bot_or_receipt() {
     };
     let connection = koru_sqlite::open_in_memory(&older).unwrap();
     let mut repo = Repository {
-        connection,
+        connection: connection.into(),
         bot_replay_fail_after_commit: false,
     };
     // Today's code names `bots.avatar` (ai24): borrowed while the v16 rows

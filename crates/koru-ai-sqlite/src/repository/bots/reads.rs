@@ -439,7 +439,10 @@ impl Repository {
         record_workspace: WorkspaceId,
     ) -> Result<(), BotError> {
         let request = BotRequestId::mint();
-        self.connection
+        // One transaction, with the markers a real preparation moves: the
+        // conversation names the Run, and a reply that has ended names it.
+        let tx = self.connection.unchecked_transaction().map_err(bad)?;
+        tx
             .execute(
                 "INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,planned_run_id,captured_config_revision,captured_policy_revision,submission_version,submission_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,'fixture','start','completed',?4,1,1,1,'{}',1,1)",
                 params![
@@ -450,7 +453,7 @@ impl Repository {
                 ],
             )
             .map_err(bad)?;
-        self.connection
+        tx
             .execute(
                 "INSERT INTO bot_chat_runs(ai_attempt_id,user_scope_id,owner_device_id,submission_id,bot_id,chat_id,assistant_message_id,run_id,record_workspace_id,created_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,1)",
                 params![
@@ -466,7 +469,8 @@ impl Repository {
                 ],
             )
             .map_err(bad)?;
-        Ok(())
+        super::client_feed::touch_turn(&tx, chat, &[message], true).map_err(bad)?;
+        tx.commit().map_err(bad)
     }
 
     /// Set the stage of the receipt behind `run`'s submission: `prepared`
@@ -481,8 +485,8 @@ impl Repository {
         if !matches!(stage, "prepared" | "rejected" | "completed") {
             return Err(BotError::Invalid);
         }
-        let changed = self
-            .connection
+        let tx = self.connection.unchecked_transaction().map_err(bad)?;
+        let changed = tx
             .execute(
                 "UPDATE bot_command_receipts SET stage = ?2
                   WHERE (user_scope_id, request_id) =
@@ -490,11 +494,19 @@ impl Repository {
                 params![run.to_storage(), stage],
             )
             .map_err(bad)?;
-        if changed == 1 {
-            Ok(())
-        } else {
-            Err(BotError::NotFound)
+        if changed != 1 {
+            return Err(BotError::NotFound);
         }
+        // Whether the reply names its Run follows the receipt's stage.
+        let reply: String = tx
+            .query_row(
+                "SELECT assistant_message_id FROM bot_chat_runs WHERE run_id = ?1",
+                [run.to_storage()],
+                |row| row.get(0),
+            )
+            .map_err(bad)?;
+        super::client_feed::touch_message_by_id(&tx, &reply, false).map_err(bad)?;
+        tx.commit().map_err(bad)
     }
 
     /// What a purge of a copied reply's source leaves (no purge writes it
@@ -508,6 +520,14 @@ impl Repository {
         copy_message: MessageId,
     ) -> Result<(), BotError> {
         let tx = self.connection.unchecked_transaction().map_err(bad)?;
+        let source: Option<String> = tx
+            .query_row(
+                "SELECT assistant_message_id FROM bot_chat_runs WHERE run_id = ?1",
+                [run.to_storage()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(bad)?;
         let changed = tx
             .execute(
                 "INSERT INTO bot_historical_run_refs(chat_id,message_id,source_chat_id,source_message_id,bot_id,run_id,record_workspace_id,recorded_at_ms)
@@ -533,6 +553,13 @@ impl Repository {
             [run.to_storage()],
         )
         .map_err(bad)?;
+        // The source reply no longer names a Run, and the copy names the
+        // one it keeps a reference to.
+        if let Some(source) = source {
+            super::client_feed::touch_message_by_id(&tx, &source, true).map_err(bad)?;
+        }
+        super::client_feed::touch_message_by_id(&tx, &copy_message.to_storage(), true)
+            .map_err(bad)?;
         tx.commit().map_err(bad)
     }
 

@@ -178,11 +178,37 @@ impl ChatReadAccess {
     }
 }
 
+/// Whether a Bot whose home is a workspace may be copied to the person's
+/// linked desktops (M8, D22).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HomeCopy {
+    /// The workspace, and its Profile, may leave this computer.
+    Copied,
+    /// The workspace, or its Profile, is kept on this computer only. A Bot
+    /// that lives there is never copied: no record of it, of its
+    /// conversations or of its messages is built.
+    LocalOnly,
+}
+
 /// Fresh authority from the same root's Store and validated supervisor bootstrap.
 pub trait BotAuthority: Send + Sync {
     fn owner(&self) -> Result<BotOwner, BotError>;
     fn workspace(&self, workspace: WorkspaceId) -> Result<ProfileId, BotError>;
     fn page(&self, page: &BotPage) -> Result<(), BotError>;
+    /// Whether Bots whose home is `workspace` may be copied to linked
+    /// desktops: the **stored** choice of where the workspace is kept,
+    /// capped by its Profile's. A choice somebody made and a default nobody
+    /// changed count alike.
+    ///
+    /// It never asks what the workspace is admitted to right now: a
+    /// workspace that is only fenced for a moment is still copied.
+    ///
+    /// An authority that cannot answer says so, and its caller withholds the
+    /// Bot: the default answers `Unavailable`, so an authority that does not
+    /// implement this copies nothing.
+    fn home_copy(&self, _workspace: WorkspaceId) -> Result<HomeCopy, BotError> {
+        Err(BotError::Unavailable)
+    }
     /// Exact captured history metadata, under current owner and reader-profile
     /// authority. Called off the AI writer; never resolves current body content.
     fn pinned_document_revision(

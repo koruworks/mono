@@ -209,6 +209,15 @@ impl Repository {
         open.status = ToolActivityStatus::ApprovalRequired;
         crate::repository::mutations::advance_agent_activity_on(&tx, &open)
             .map_err(|_| BotError::Storage)?;
+        // A card that needs the person: the reply shows it, and the
+        // conversation needs them.
+        crate::repository::bots::client_feed::touch_turn(
+            &tx,
+            card.chat_id,
+            &[card.assistant_message_id],
+            true,
+        )
+        .map_err(bad)?;
         link_on(
             &tx,
             key.decision_id,

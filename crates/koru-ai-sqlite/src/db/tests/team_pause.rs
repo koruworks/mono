@@ -23,6 +23,20 @@ fn populated_ai26() -> Connection {
     c
 }
 
+/// This step and no later one: ai.db 28 exists now, so the real opener goes
+/// further than the step under test.
+pub(super) fn ai27() -> Schema {
+    Schema {
+        database: crate::DATABASE_FILE,
+        understood: 27,
+        migrations: &MIGRATIONS[..27],
+    }
+}
+fn prepare_ai27(c: &mut Connection) -> Result<(), OpenError> {
+    koru_sqlite::prepare_with_preflight(&ai27(), c, refuse_superseded_18)?;
+    refuse_superseded_18(c)
+}
+
 fn columns(c: &Connection, table: &str) -> Vec<String> {
     c.prepare("SELECT name FROM pragma_table_info(?1) ORDER BY cid")
         .unwrap()
@@ -71,8 +85,7 @@ fn m8_ai_team_migration_keeps_every_populated_ai26_row_and_changes_no_bot() {
     );
     assert!(!before.contains_key(TABLE));
 
-    prepare(&mut c).unwrap();
-    assert_eq!(SCHEMA_VERSION, 27);
+    prepare_ai27(&mut c).unwrap();
     assert_eq!(user_version(&c).unwrap(), 27);
     let after = snapshot(&c);
 
@@ -102,7 +115,7 @@ fn m8_ai_team_migration_keeps_every_populated_ai26_row_and_changes_no_bot() {
     foreign_keys_held(&c);
 
     // Reopened, it is already current and nothing runs again.
-    prepare(&mut c).unwrap();
+    prepare_ai27(&mut c).unwrap();
     assert_eq!(snapshot(&c), after);
 }
 
@@ -112,11 +125,11 @@ fn m8_ai_team_migration_empty_and_fresh_databases_reach_27_with_no_content_colum
     let mut empty = koru_sqlite::open_in_memory(&ai26()).unwrap();
     assert_eq!(user_version(&empty).unwrap(), 26);
     assert!(!table_exists(&empty));
-    prepare(&mut empty).unwrap();
+    prepare_ai27(&mut empty).unwrap();
     assert_eq!(user_version(&empty).unwrap(), 27);
-    // A fresh database.
-    let fresh = open_in_memory().unwrap();
-    assert_eq!(MIGRATIONS.len(), 27);
+    // A fresh database, at this step.
+    let fresh = koru_sqlite::open_in_memory(&ai27()).unwrap();
+    assert!(MIGRATIONS.len() >= 27);
     assert_eq!(MIGRATIONS[26].to, 27);
     assert_eq!(MIGRATIONS[26].name, "027_ai_bot_team_pause.sql");
     assert_eq!(user_version(&fresh).unwrap(), 27);
@@ -205,7 +218,7 @@ fn m8_ai_team_migration_failure_at_any_point_leaves_26_and_every_row() {
         assert!(!table_exists(&c));
         foreign_keys_held(&c);
         // The real step still applies to what the failure left.
-        prepare(&mut c).unwrap();
+        prepare_ai27(&mut c).unwrap();
         assert_eq!(user_version(&c).unwrap(), 27);
         assert!(table_exists(&c));
     }
@@ -214,7 +227,7 @@ fn m8_ai_team_migration_failure_at_any_point_leaves_26_and_every_row() {
 #[test]
 fn m8_ai_team_migration_an_ai26_build_refuses_27_before_preflight_or_configuration() {
     let mut c = populated_ai26();
-    prepare(&mut c).unwrap();
+    prepare_ai27(&mut c).unwrap();
     let before = snapshot(&c);
     c.execute_batch("PRAGMA foreign_keys=OFF; PRAGMA synchronous=OFF")
         .unwrap();
@@ -231,10 +244,10 @@ fn m8_ai_team_migration_an_ai26_build_refuses_27_before_preflight_or_configurati
     ));
     assert_eq!(user_version(&c).unwrap(), 27);
     assert_eq!(snapshot(&c), before);
-    // This build refuses a later one the same way.
+    // An ai27 build refuses a later one the same way.
     c.execute_batch("PRAGMA user_version=28").unwrap();
     assert!(matches!(
-        prepare(&mut c).unwrap_err(),
+        prepare_ai27(&mut c).unwrap_err(),
         OpenError::SchemaTooNew {
             discovered: 28,
             supported: 27,
@@ -263,8 +276,9 @@ fn m8_ai_team_migration_through_the_real_open_of_a_populated_ai26_file() {
     };
     let mut first = None;
     for _ in 0..2 {
+        // The real opener runs every later step too.
         let c = open(&path).unwrap();
-        assert_eq!(user_version(&c).unwrap(), 27);
+        assert_eq!(user_version(&c).unwrap(), SCHEMA_VERSION);
         let after = snapshot(&c);
         for (name, (sql, rows)) in &before {
             assert_eq!(sql, &after[name].0, "definition changed: {name}");

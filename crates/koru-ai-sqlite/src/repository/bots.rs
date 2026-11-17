@@ -17,6 +17,11 @@ pub use lifecycle::{
 };
 mod children;
 pub use children::BotChildReplayRollover;
+pub(crate) mod client_feed;
+pub use client_feed::{
+    FEED_RECORD_TABLES, FEED_STARTS_KEPT, FeedBody, FeedBotHome, FeedChat, FeedCounts, FeedItem,
+    FeedKind, FeedMarker, FeedMessage, FeedScan,
+};
 mod creation;
 pub use creation::BotCreationScan;
 mod decisions;
@@ -79,6 +84,9 @@ fn insert_additional_chat(
         params![chat.to_storage(), bot.to_storage(), now.millis()],
     )
     .map_err(bad)?;
+    // The conversation is a Bot's from this row on: its marker, and one for
+    // each message a branch copied into it before the row existed.
+    client_feed::touch_conversation(conn, chat).map_err(bad)?;
     Ok(())
 }
 
@@ -218,6 +226,7 @@ impl Repository {
     ) -> Result<(), BotError> {
         let changed = self
             .connection
+            .fixture()
             .execute(
                 "UPDATE bots SET folder_lock_request_id=?3
           WHERE bot_id=?1 AND revision=?2 AND folder_frozen_at_ms IS NULL
@@ -240,6 +249,7 @@ impl Repository {
         accepted_at: Option<i64>,
     ) -> Result<(), BotError> {
         self.connection
+            .fixture()
             .execute(
                 "UPDATE bots SET folder_frozen_at_ms=?3,folder_lock_request_id=NULL
           WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",
@@ -585,6 +595,11 @@ impl Repository {
                 &bot.connections,
                 bot.updated_at_ms,
             )?;
+        }
+        // The Bot's record changed, or exists now with its main conversation.
+        client_feed::touch_bot(&tx, bot.id).map_err(bad)?;
+        if expected.is_none() {
+            client_feed::touch_conversation(&tx, bot.main_chat).map_err(bad)?;
         }
         let (stage, outcome) = match barrier {
             Some(barrier) if kind == "update_access" => (

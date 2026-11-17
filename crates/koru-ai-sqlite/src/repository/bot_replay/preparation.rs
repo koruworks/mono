@@ -269,6 +269,15 @@ fn prepare_checked_association_on(
         row.started_at.get_or_insert(now.max(row.proposed_at));
         row.completed_at = Some(now.max(row.proposed_at));
         mutations::advance_agent_activity_on(tx, &row)?;
+        // The answered question is a call of the earlier reply: that reply's
+        // record changes, and the conversation no longer needs the person.
+        crate::repository::bots::client_feed::touch_turn(
+            tx,
+            row.chat_id,
+            &[row.assistant_message_id],
+            true,
+        )
+        .map_err(storage_failed)?;
     }
     Ok(current)
 }

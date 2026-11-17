@@ -120,6 +120,7 @@ impl Repository {
                 params![slot.bot.to_storage(), p.ids.submission.to_storage()],
             )
             .map_err(bad)?;
+            crate::repository::bots::client_feed::touch_bot(&tx, slot.bot).map_err(bad)?;
         }
         let stamp = Timestamp::from_millis(now.max(row.updated_at_ms));
         let config = &row.capture.canonical.config;
@@ -195,6 +196,9 @@ fn settle_linked(
     };
     conn.execute("UPDATE bot_command_receipts SET stage='rejected',outcome_json=?3,updated_at_ms=MAX(updated_at_ms,?4) WHERE user_scope_id=?1 AND request_id=?2 AND command_kind='routine_occurrence' AND stage='prepared'",
         params![p.slot.owner.user_scope.to_storage(),p.ids.submission.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;
-    conn.execute("UPDATE bots SET folder_lock_request_id=NULL WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",params![p.slot.bot.to_storage(),p.ids.submission.to_storage()]).map_err(bad)?;
+    let released = conn.execute("UPDATE bots SET folder_lock_request_id=NULL WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",params![p.slot.bot.to_storage(),p.ids.submission.to_storage()]).map_err(bad)?;
+    if released != 0 {
+        crate::repository::bots::client_feed::touch_bot(conn, p.slot.bot).map_err(bad)?;
+    }
     Ok(())
 }

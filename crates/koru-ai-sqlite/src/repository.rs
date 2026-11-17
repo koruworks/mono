@@ -36,33 +36,76 @@ pub use attachments::{KnownAttachmentDirs, RemovedAttachment};
 pub use bots::{
     BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotChildReplayRollover, BotCreationScan,
     BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover, BotHold, BotNativeDecisionLink,
-    BotTeamPauseRow, HistoricalBotRun, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
-    LifecycleOperation, LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner,
-    RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot,
-    RoutineReadSubject, RoutineToolSubject, TeamPauseChange,
+    BotTeamPauseRow, FEED_RECORD_TABLES, FEED_STARTS_KEPT, FeedBody, FeedBotHome, FeedChat,
+    FeedCounts, FeedItem, FeedKind, FeedMarker, FeedMessage, FeedScan, HistoricalBotRun,
+    LifecycleCapture, LifecycleMember, LifecycleMemberDraft, LifecycleOperation,
+    LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner, RoutineAccessRecoveryPage,
+    RoutineDetailSnapshot, RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject,
+    RoutineToolSubject, TeamPauseChange,
 };
 
+/// The connection a repository holds. In a test build it also remembers where
+/// it was last reached from, for the feed audit; in a production build it is
+/// the connection itself.
+#[cfg(any(test, feature = "fixtures"))]
+type Database = bots::client_feed::audit::AuditedConnection;
+#[cfg(not(any(test, feature = "fixtures")))]
+type Database = Connection;
+
 pub struct Repository {
-    connection: Connection,
+    connection: Database,
     #[cfg(any(test, feature = "fixtures"))]
     bot_replay_fail_after_commit: bool,
 }
 
 impl Repository {
+    /// In a test build a database opened from a file carries the feed audit
+    /// too (`repository/bots/client_feed/audit.rs`), reporting only: a
+    /// commit that moves no marker for what it changed is named on stderr
+    /// and in [`Self::feed_audit_refusals`], and goes through. The in-memory
+    /// database refuses it.
     pub fn open(path: &Path) -> Result<Self, OpenError> {
+        #[cfg(any(test, feature = "fixtures"))]
+        let connection = Database::watched(db::open(path)?)?;
+        #[cfg(not(any(test, feature = "fixtures")))]
+        let connection = db::open(path)?;
         Ok(Self {
-            connection: db::open(path)?,
+            connection,
             #[cfg(any(test, feature = "fixtures"))]
             bot_replay_fail_after_commit: false,
         })
     }
 
+    /// The in-memory database every test of this crate and of the AI worker
+    /// opens. It carries the feed audit
+    /// (`repository/bots/client_feed/audit.rs`): a commit that changes what
+    /// a linked desktop is shown and moves no marker is rolled back.
     #[cfg(any(test, feature = "fixtures"))]
     pub fn in_memory() -> Result<Self, OpenError> {
         Ok(Self {
-            connection: db::open_in_memory()?,
+            connection: Database::audited(db::open_in_memory()?)?,
             bot_replay_fail_after_commit: false,
         })
+    }
+
+    /// What each commit the feed audit refused left unmarked, oldest first:
+    /// identities and table names only. Empty when none was refused.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn feed_audit_refusals(&self) -> Vec<String> {
+        self.connection
+            .audit()
+            .map(|audit| audit.refusals())
+            .unwrap_or_default()
+    }
+
+    /// How many commits the feed audit has looked at, and how many of them
+    /// it let through as a fixture's.
+    #[cfg(any(test, feature = "fixtures"))]
+    pub fn feed_audit_commits(&self) -> (u64, u64) {
+        self.connection
+            .audit()
+            .map(|audit| (audit.commits(), audit.exempted()))
+            .unwrap_or_default()
     }
 
     /// An in-memory database migrated to `version` and no further, for a
@@ -78,7 +121,7 @@ impl Repository {
             migrations: &db::MIGRATIONS[..steps],
         };
         Ok(Self {
-            connection: koru_sqlite::open_in_memory(&schema)?,
+            connection: koru_sqlite::open_in_memory(&schema)?.into(),
             bot_replay_fail_after_commit: false,
         })
     }
@@ -94,12 +137,30 @@ impl Repository {
     ///
     /// The same goes for `bots.may_ask`, which ai26 added: it is lent and
     /// returned with the face column, so a fixture borrows once.
+    ///
+    /// And for the owner feed, which ai28 added: every write of a Bot, a Bot
+    /// conversation or a message of one moves a marker, so the two feed
+    /// tables a marker write names are lent too, with the table that says
+    /// which conversations one Bot opened in another (ai26), which a marker
+    /// write reads. All three are taken away again with the columns, so the
+    /// step under test creates the real ones.
     #[cfg(test)]
     pub(crate) fn lend_avatar_column(&self) {
         self.connection
             .execute_batch(
                 "ALTER TABLE bots ADD COLUMN avatar INTEGER;
-                 ALTER TABLE bots ADD COLUMN may_ask INTEGER NOT NULL DEFAULT 1;",
+                 ALTER TABLE bots ADD COLUMN may_ask INTEGER NOT NULL DEFAULT 1;
+                 CREATE TABLE bot_child_chats (
+                   user_scope_id TEXT NOT NULL, child_request_id TEXT NOT NULL, chat_id TEXT NOT NULL);
+                 CREATE TABLE bot_client_feed_meta (
+                   singleton INTEGER PRIMARY KEY, feed_id TEXT NOT NULL,
+                   live_bots INTEGER NOT NULL DEFAULT 0, live_chats INTEGER NOT NULL DEFAULT 0,
+                   live_messages INTEGER NOT NULL DEFAULT 0);
+                 INSERT INTO bot_client_feed_meta(singleton, feed_id) VALUES(1, 'lent');
+                 CREATE TABLE bot_client_feed (
+                   seq INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, subject_id TEXT NOT NULL,
+                   bot_id TEXT, chat_id TEXT, removed INTEGER NOT NULL DEFAULT 0,
+                   withheld INTEGER NOT NULL DEFAULT 0, UNIQUE(kind, subject_id));",
             )
             .unwrap();
     }
@@ -124,6 +185,18 @@ impl Repository {
             })
             .unwrap();
         assert_eq!(silenced, 0, "an older-schema fixture turned asking off");
+        let asked: i64 = self
+            .connection
+            .query_row("SELECT count(*) FROM bot_child_chats", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(asked, 0, "an older-schema fixture had one Bot ask another");
+        self.connection
+            .execute_batch(
+                "DROP TABLE bot_client_feed; DROP TABLE bot_client_feed_meta;
+                 DROP TABLE bot_child_chats;
+                 DELETE FROM sqlite_sequence WHERE name = 'bot_client_feed';",
+            )
+            .unwrap();
         self.connection
             .execute_batch(
                 "ALTER TABLE bots DROP COLUMN may_ask; ALTER TABLE bots DROP COLUMN avatar;",
@@ -162,9 +235,32 @@ impl Repository {
         collect_rows(rows)
     }
 
+    /// A test's own access: where it is called from decides whether what
+    /// it commits is a fixture's.
     #[cfg(test)]
+    #[track_caller]
     fn connection(&self) -> &Connection {
         &self.connection
+    }
+}
+
+impl Repository {
+    /// One change of a chat's own row and, when the chat is a Bot's
+    /// conversation, its marker, in one transaction. An ordinary chat pays
+    /// one index seek for it.
+    fn change_chat(
+        &mut self,
+        chat: ChatId,
+        sql: &str,
+        params: impl rusqlite::Params,
+    ) -> Result<bool, AiError> {
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let updated = transaction.execute(sql, params).map_err(storage_failed)?;
+        if updated != 0 {
+            bots::client_feed::touch_chat(&transaction, chat).map_err(storage_failed)?;
+        }
+        transaction.commit().map_err(storage_failed)?;
+        Ok(updated != 0)
     }
 }
 
@@ -267,13 +363,11 @@ impl AiPersistence for Repository {
     fn rename_chat(&mut self, chat: ChatId, title: &str) -> Result<bool, AiError> {
         // **Not `updated_at_ms`** (the user's call, 2026-10-31): the Chats
         // list is ordered by it, and a renamed chat stays where it was.
-        self.connection
-            .execute(
-                "UPDATE chats SET title = ?2 WHERE id = ?1",
-                params![chat.to_storage(), title],
-            )
-            .map(|updated| updated != 0)
-            .map_err(storage_failed)
+        self.change_chat(
+            chat,
+            "UPDATE chats SET title = ?2 WHERE id = ?1",
+            params![chat.to_storage(), title],
+        )
     }
 
     // **Only messages move a chat** (koru-ai D85, the user's call
@@ -283,27 +377,27 @@ impl AiPersistence for Repository {
     // A message sent (`begin_turn`, `append_user_message`, `begin_retry`)
     // and a reply ending (`apply_event`) are what move it.
     fn update_chat_model(&mut self, chat: ChatId, model: &ModelSelection) -> Result<bool, AiError> {
-        self.connection
-            .execute(
-                "UPDATE chats
-                    SET current_provider = ?2,
-                        current_model = ?3,
-                        current_reasoning = ?4
-                  WHERE id = ?1",
-                params![
-                    chat.to_storage(),
-                    model.provider.as_str(),
-                    model.requested_model,
-                    model.default_reasoning.as_token(),
-                ],
-            )
-            .map(|updated| updated != 0)
-            .map_err(storage_failed)
+        self.change_chat(
+            chat,
+            "UPDATE chats
+                SET current_provider = ?2,
+                    current_model = ?3,
+                    current_reasoning = ?4
+              WHERE id = ?1",
+            params![
+                chat.to_storage(),
+                model.provider.as_str(),
+                model.requested_model,
+                model.default_reasoning.as_token(),
+            ],
+        )
     }
 
     fn set_chat_private(&mut self, chat: ChatId, private: bool) -> Result<Option<Chat>, AiError> {
-        let updated = self
-            .connection
+        // A private conversation is not copied to a linked desktop, and
+        // neither are its messages: each of them gets a marker with it.
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let updated = transaction
             .execute(
                 "UPDATE chats SET private = ?2 WHERE id = ?1",
                 params![chat.to_storage(), private],
@@ -312,6 +406,8 @@ impl AiPersistence for Repository {
         if updated == 0 {
             return Ok(None);
         }
+        bots::client_feed::touch_conversation(&transaction, chat).map_err(storage_failed)?;
+        transaction.commit().map_err(storage_failed)?;
         query_chat(&self.connection, chat)
     }
 
@@ -320,14 +416,11 @@ impl AiPersistence for Repository {
         chat: ChatId,
         folder: Option<&str>,
     ) -> Result<Option<Chat>, AiError> {
-        let updated = self
-            .connection
-            .execute(
-                "UPDATE chats SET agent_working_folder = ?2 WHERE id = ?1",
-                params![chat.to_storage(), folder],
-            )
-            .map_err(storage_failed)?;
-        if updated == 0 {
+        if !self.change_chat(
+            chat,
+            "UPDATE chats SET agent_working_folder = ?2 WHERE id = ?1",
+            params![chat.to_storage(), folder],
+        )? {
             return Ok(None);
         }
         query_chat(&self.connection, chat)
@@ -338,14 +431,11 @@ impl AiPersistence for Repository {
         chat: ChatId,
         mode: Option<&str>,
     ) -> Result<Option<Chat>, AiError> {
-        let updated = self
-            .connection
-            .execute(
-                "UPDATE chats SET agent_mode = ?2 WHERE id = ?1",
-                params![chat.to_storage(), mode],
-            )
-            .map_err(storage_failed)?;
-        if updated == 0 {
+        if !self.change_chat(
+            chat,
+            "UPDATE chats SET agent_mode = ?2 WHERE id = ?1",
+            params![chat.to_storage(), mode],
+        )? {
             return Ok(None);
         }
         query_chat(&self.connection, chat)
@@ -356,14 +446,11 @@ impl AiPersistence for Repository {
         chat: ChatId,
         fast: Option<bool>,
     ) -> Result<Option<Chat>, AiError> {
-        let updated = self
-            .connection
-            .execute(
-                "UPDATE chats SET agent_fast = ?2 WHERE id = ?1",
-                params![chat.to_storage(), fast],
-            )
-            .map_err(storage_failed)?;
-        if updated == 0 {
+        if !self.change_chat(
+            chat,
+            "UPDATE chats SET agent_fast = ?2 WHERE id = ?1",
+            params![chat.to_storage(), fast],
+        )? {
             return Ok(None);
         }
         query_chat(&self.connection, chat)
@@ -384,6 +471,7 @@ impl AiPersistence for Repository {
             "UPDATE chats SET agent_mode = COALESCE(?2, agent_mode), agent_fast = COALESCE(?3, agent_fast) WHERE id = ?1",
             params![chat.to_storage(), mode, fast],
         ).map_err(storage_failed)?;
+        bots::client_feed::touch_chat(&transaction, chat).map_err(storage_failed)?;
         let Some(chat) = query_chat_with_access(&transaction, chat, access)? else {
             return Ok(None);
         };
@@ -396,14 +484,11 @@ impl AiPersistence for Repository {
         chat: ChatId,
         pinned_at: Option<Timestamp>,
     ) -> Result<Option<Chat>, AiError> {
-        let updated = self
-            .connection
-            .execute(
-                "UPDATE chats SET pinned_at_ms = ?2 WHERE id = ?1",
-                params![chat.to_storage(), pinned_at.map(Timestamp::millis)],
-            )
-            .map_err(storage_failed)?;
-        if updated == 0 {
+        if !self.change_chat(
+            chat,
+            "UPDATE chats SET pinned_at_ms = ?2 WHERE id = ?1",
+            params![chat.to_storage(), pinned_at.map(Timestamp::millis)],
+        )? {
             return Ok(None);
         }
         query_chat(&self.connection, chat)
@@ -622,13 +707,11 @@ impl AiPersistence for Repository {
 
     fn assign_chat_profile(&mut self, chat: ChatId, profile: ProfileId) -> Result<bool, AiError> {
         // Only a chat with none: a chat never moves between profiles here.
-        self.connection
-            .execute(
-                "UPDATE chats SET profile_id = ?2 WHERE id = ?1 AND profile_id IS NULL",
-                params![chat.to_storage(), profile.to_storage()],
-            )
-            .map(|updated| updated != 0)
-            .map_err(storage_failed)
+        self.change_chat(
+            chat,
+            "UPDATE chats SET profile_id = ?2 WHERE id = ?1 AND profile_id IS NULL",
+            params![chat.to_storage(), profile.to_storage()],
+        )
     }
 
     fn chat_overviews(&self) -> Result<Vec<ChatOverview>, AiError> {
@@ -900,7 +983,8 @@ impl AiPersistence for Repository {
         if event.message_id.is_none() && event.attempt_id.is_none() {
             return Err(invariant_failed());
         }
-        self.connection
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let recorded = transaction
             .execute(
                 "INSERT INTO feedback_events
                 (id, chat_id, message_id, attempt_id, value, surface, created_at_ms)
@@ -917,6 +1001,11 @@ impl AiPersistence for Repository {
                 ],
             )
             .map_err(storage_failed)?;
+        if let Some(message) = event.message_id.filter(|_| recorded != 0) {
+            bots::client_feed::touch_message_by_id(&transaction, &message.to_storage(), false)
+                .map_err(storage_failed)?;
+        }
+        transaction.commit().map_err(storage_failed)?;
         self.connection
             .query_row(
                 "SELECT id, chat_id, message_id, attempt_id, value, surface, created_at_ms
@@ -1094,11 +1183,24 @@ impl AiPersistence for Repository {
     }
 
     fn create_agent_notice(&mut self, notice: &AgentNotice) -> Result<AgentNotice, AiError> {
-        mutations::create_agent_notice_on(&self.connection, notice)
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let stored = mutations::create_agent_notice_on(&transaction, notice)?;
+        bots::client_feed::touch_message(&transaction, notice.chat_id, notice.assistant_message_id)
+            .map_err(storage_failed)?;
+        transaction.commit().map_err(storage_failed)?;
+        Ok(stored)
     }
 
     fn create_tool_activity(&mut self, activity: &ToolActivity) -> Result<(), AiError> {
-        mutations::create_tool_activity_on(&self.connection, activity)
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        mutations::create_tool_activity_on(&transaction, activity)?;
+        bots::client_feed::touch_message(
+            &transaction,
+            activity.chat_id,
+            activity.assistant_message_id,
+        )
+        .map_err(storage_failed)?;
+        transaction.commit().map_err(storage_failed)
     }
 
     fn update_tool_activity(&mut self, activity: &ToolActivity) -> Result<bool, AiError> {
@@ -1128,7 +1230,10 @@ impl AiPersistence for Repository {
         {
             return Err(invariant_failed());
         }
-        self.connection
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let before =
+            bots::client_feed::tool_before(&transaction, activity).map_err(storage_failed)?;
+        let updated = transaction
             .execute(
                 "UPDATE tool_invocations
                     SET status = ?6, approval = ?7, started_at_ms = ?8,
@@ -1154,12 +1259,23 @@ impl AiPersistence for Repository {
                     activity.target_document_id.map(|id| id.to_storage()),
                 ],
             )
-            .map(|updated| updated != 0)
-            .map_err(storage_failed)
+            .map_err(storage_failed)?;
+        if updated != 0 {
+            bots::client_feed::tool_after(&transaction, before.as_ref(), activity)
+                .map_err(storage_failed)?;
+        }
+        transaction.commit().map_err(storage_failed)?;
+        Ok(updated != 0)
     }
 
     fn advance_agent_activity(&mut self, activity: &ToolActivity) -> Result<(), AiError> {
-        mutations::advance_agent_activity_on(&self.connection, activity)
+        let transaction = self.connection.transaction().map_err(storage_failed)?;
+        let before =
+            bots::client_feed::tool_before(&transaction, activity).map_err(storage_failed)?;
+        mutations::advance_agent_activity_on(&transaction, activity)?;
+        bots::client_feed::tool_after(&transaction, before.as_ref(), activity)
+            .map_err(storage_failed)?;
+        transaction.commit().map_err(storage_failed)
     }
 
     fn delete_chats(&mut self, chats: &[ChatId]) -> Result<u64, AiError> {
@@ -1225,6 +1341,8 @@ impl AiPersistence for Repository {
                 "UPDATE chats SET updated_at_ms = max(updated_at_ms, ?2) WHERE id = ?1",
                 params![stored.chat_id.to_storage(), stored.created_at.millis()],
             )
+            .map_err(storage_failed)?;
+        bots::client_feed::touch_turn(&transaction, stored.chat_id, &[stored.id], true)
             .map_err(storage_failed)?;
         transaction.commit().map_err(storage_failed)?;
         Ok(stored)
@@ -1511,6 +1629,15 @@ impl AiPersistence for Repository {
             return Err(invariant_failed());
         }
         let result = mutations::apply_event_on(&transaction, event, finalized_blocks)?;
+        // A reply that ended: its record and its conversation's, which
+        // stops running. Text, usage and a citation into a pending reply
+        // move nothing, and are not looked up.
+        if event.is_terminal()
+            && let (Some(chat), Some(message)) = (result.chat_id, result.assistant_message_id)
+        {
+            bots::client_feed::touch_turn(&transaction, chat, &[message], true)
+                .map_err(storage_failed)?;
+        }
         transaction.commit().map_err(storage_failed)?;
         trace_attempt_transaction(
             ai_event_transaction_name(event),
@@ -1524,6 +1651,10 @@ impl AiPersistence for Repository {
     fn recover_interrupted(&mut self, now: Timestamp) -> Result<RecoveryCounts, AiError> {
         let started = Instant::now();
         let transaction = self.connection.transaction().map_err(storage_failed)?;
+        // The replies of Bot conversations this is about to end, read before
+        // the three statements below end them as a set: each gets a marker,
+        // and so does its conversation.
+        let interrupted = bots::client_feed::open_replies(&transaction).map_err(storage_failed)?;
         transaction.execute("UPDATE bot_run_replay SET stop_reason='ai_restart',updated_at_ms=?1
             WHERE ai_attempt_id IN (SELECT id FROM inference_attempts WHERE status IN ('pending','streaming'))
             AND stop_reason IS NULL", [now.millis()]).map_err(storage_failed)?;
@@ -1557,6 +1688,10 @@ impl AiPersistence for Repository {
                 [now.millis()],
             )
             .map_err(storage_failed)?;
+        for message in &interrupted {
+            bots::client_feed::touch_message_by_id(&transaction, message, true)
+                .map_err(storage_failed)?;
+        }
         transaction.commit().map_err(storage_failed)?;
         tracing::debug!(
             target: "koru_ai::sqlite",

@@ -15,11 +15,12 @@ pub use db::{OpenError, SCHEMA_VERSION, SUPERSEDED_DEVELOPMENT_SCHEMA};
 pub use repository::{
     BOT_DECISION_NEEDED_YOU, BotBootSnapshot, BotChildReplayRollover, BotCreationScan,
     BotDecisionCard, BotDecisionClosure, BotDecisionReplayRollover, BotHold, BotNativeDecisionLink,
-    BotTeamPauseRow, HistoricalBotRun, KnownAttachmentDirs, LifecycleCapture, LifecycleMember,
-    LifecycleMemberDraft, LifecycleOperation, LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner,
-    RemovedAttachment, Repository, RoutineAccessRecoveryPage, RoutineDetailSnapshot,
-    RoutineListCheckpoint, RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject,
-    TeamPauseChange,
+    BotTeamPauseRow, FEED_RECORD_TABLES, FEED_STARTS_KEPT, FeedBody, FeedBotHome, FeedChat,
+    FeedCounts, FeedItem, FeedKind, FeedMarker, FeedMessage, FeedScan, HistoricalBotRun,
+    KnownAttachmentDirs, LifecycleCapture, LifecycleMember, LifecycleMemberDraft,
+    LifecycleOperation, LifecycleRoutineAnswer, ParkedCursor, ParkedForOwner, RemovedAttachment,
+    Repository, RoutineAccessRecoveryPage, RoutineDetailSnapshot, RoutineListCheckpoint,
+    RoutineListSnapshot, RoutineReadSubject, RoutineToolSubject, TeamPauseChange,
 };
 
 pub const DATABASE_FILE: &str = "ai.db";

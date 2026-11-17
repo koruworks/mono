@@ -2404,42 +2404,47 @@ fn run_worker(
 fn transcript_usage(messages: &[Message], attempts: Vec<InferenceAttempt>) -> Vec<MessageUsage> {
     let mut usage_by_message = attempts
         .into_iter()
-        .filter_map(|attempt| {
-            let context = attempt
-                .context_used_tokens
-                .zip(attempt.context_limit_tokens)
-                .filter(|(_, size)| *size > 0)
-                .map(|(used, size)| ReportedContextUsage { used, size });
-            let usage = attempt.usage;
-            let reported = usage.prompt_tokens.is_some()
-                || usage.cached_prompt_tokens.is_some()
-                || usage.completion_tokens.is_some()
-                || usage.reasoning_tokens.is_some()
-                || usage.total_tokens.is_some();
-            // A refused reply keeps the engine's own stable code (O36), read
-            // from the column `refuse_bot_input` stored it in. Only the closed
-            // engine codes cross; anything else in the column stays private.
-            let stop_code = attempt
-                .stop_reason
-                .filter(|code| koru_ai_core::inference::is_engine_stop_code(code));
-            attempt.assistant_message_id.map(|message_id| {
-                let entry = (reported || context.is_some() || stop_code.is_some()).then_some(
-                    MessageUsage {
-                        message_id,
-                        usage,
-                        context,
-                        stop_code,
-                        run_id: None,
-                    },
-                );
-                (message_id, entry)
-            })
-        })
+        .filter_map(attempt_usage)
         .collect::<HashMap<_, _>>();
     messages
         .iter()
         .filter_map(|message| usage_by_message.remove(&message.id).flatten())
         .collect()
+}
+
+/// The usage entry one attempt gives the reply it wrote, and that reply:
+/// `None` for an attempt that wrote no reply, and no entry for one that
+/// reported nothing. One function for a transcript and for the copy of a
+/// reply a linked desktop is sent, so the two cannot say different things.
+fn attempt_usage(attempt: InferenceAttempt) -> Option<(MessageId, Option<MessageUsage>)> {
+    let context = attempt
+        .context_used_tokens
+        .zip(attempt.context_limit_tokens)
+        .filter(|(_, size)| *size > 0)
+        .map(|(used, size)| ReportedContextUsage { used, size });
+    let usage = attempt.usage;
+    let reported = usage.prompt_tokens.is_some()
+        || usage.cached_prompt_tokens.is_some()
+        || usage.completion_tokens.is_some()
+        || usage.reasoning_tokens.is_some()
+        || usage.total_tokens.is_some();
+    // A refused reply keeps the engine's own stable code (O36), read
+    // from the column `refuse_bot_input` stored it in. Only the closed
+    // engine codes cross; anything else in the column stays private.
+    let stop_code = attempt
+        .stop_reason
+        .filter(|code| koru_ai_core::inference::is_engine_stop_code(code));
+    attempt.assistant_message_id.map(|message_id| {
+        let entry =
+            (reported || context.is_some() || stop_code.is_some()).then_some(MessageUsage {
+                message_id,
+                usage,
+                context,
+                stop_code,
+                run_id: None,
+            });
+        (message_id, entry)
+    })
 }
 
 /// Each reply a Bot Run wrote names that Run in its usage entry, in message

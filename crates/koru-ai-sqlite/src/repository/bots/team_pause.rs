@@ -194,7 +194,9 @@ fn write_on(conn: &Connection, row: &BotTeamPauseRow) -> Result<(), BotError> {
     .map_err(bad)
     .and_then(|written| {
         if written == 1 {
-            Ok(())
+            // The team's record changed. No Bot's marker moves: a Bot's
+            // record holds no team state.
+            super::client_feed::touch_team(conn, row.owner.device).map_err(bad)
         } else {
             Err(BotError::Storage)
         }
@@ -352,6 +354,7 @@ impl Repository {
         if updated != 1 {
             return Err(BotError::Storage);
         }
+        super::client_feed::touch_team(&tx, owner.device).map_err(bad)?;
         let row = row_on(&tx, owner)?.ok_or(BotError::Storage)?;
         tx.commit().map_err(bad)?;
         Ok(Some(row))

@@ -405,6 +405,9 @@ impl Repository {
             )
             .map_err(bad)?;
         }
+        // The Bot exists from here, with its main conversation.
+        super::client_feed::touch_bot(&tx, bot.id).map_err(bad)?;
+        super::client_feed::touch_conversation(&tx, bot.main_chat).map_err(bad)?;
         let done = record.without_seed();
         tx.execute(
             "UPDATE bot_command_receipts SET stage='completed',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",
@@ -461,7 +464,9 @@ impl Repository {
     /// (a trigger that makes the final transaction fail) and seeded state.
     #[cfg(any(test, feature = "fixtures"))]
     pub fn fixture_execute_batch(&self, sql: &str) -> Result<(), BotError> {
-        self.connection.execute_batch(sql).map_err(bad)
+        // Seeded state is not a write path: the feed audit exempts it by
+        // this name.
+        self.connection.fixture().execute_batch(sql).map_err(bad)
     }
 }
 

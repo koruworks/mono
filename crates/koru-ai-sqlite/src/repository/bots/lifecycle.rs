@@ -903,6 +903,7 @@ impl Repository {
             params![op.bot.to_storage(), revision, now, current.revision],
         )
         .map_err(bad)?;
+        super::client_feed::touch_bot(&tx, op.bot).map_err(bad)?;
         // A Routine member is settled only by the coordinator's answer
         // (`settle_bot_lifecycle_routine`), never by completion.
         tx.execute(
@@ -959,6 +960,7 @@ impl Repository {
             params![capture.bot.to_storage(), revision, capture.now, current.revision],
         )
         .map_err(bad)?;
+        super::client_feed::touch_bot(&tx, capture.bot).map_err(bad)?;
         reverse_source(&tx, capture.owner.user_scope, source, capture.now)?;
         complete_operation(
             &tx,
@@ -1024,6 +1026,7 @@ impl Repository {
             params![op.bot.to_storage(), revision, now, current.revision],
         )
         .map_err(bad)?;
+        super::client_feed::touch_bot(&tx, op.bot).map_err(bad)?;
         insert_captured_chat_trash(&tx, scope, operation, now)?;
         complete_operation(&tx, scope, operation, BotLifecycleStage::Settling, now)?;
         let done = read_operation(&tx, scope, operation)?.ok_or(BotError::Storage)?;
@@ -1077,11 +1080,18 @@ impl Repository {
             ],
         )
         .map_err(bad)?;
+        super::client_feed::touch_bot(&tx, capture.bot).map_err(bad)?;
+        // Each conversation the Trash put away leaves Trash: read before
+        // the rows go, marked after.
+        let restored = chats_in_trash(&tx, capture.owner.user_scope, source)?;
         tx.execute(
             "DELETE FROM bot_chat_trash WHERE user_scope_id=?1 AND operation_id=?2",
             params![capture.owner.user_scope.to_storage(), source.to_storage()],
         )
         .map_err(bad)?;
+        for chat in restored {
+            super::client_feed::touch_chat(&tx, chat).map_err(bad)?;
+        }
         reverse_source(&tx, capture.owner.user_scope, source, capture.now)?;
         complete_operation(
             &tx,
@@ -1154,6 +1164,7 @@ impl Repository {
             ],
         )
         .map_err(bad)?;
+        super::client_feed::touch_chat(&tx, chat).map_err(bad)?;
         reverse_source(&tx, capture.owner.user_scope, source, capture.now)?;
         complete_operation(
             &tx,
@@ -1196,7 +1207,30 @@ fn insert_captured_chat_trash(
         params![scope.to_storage(), operation.to_storage(), now],
     )
     .map_err(bad)?;
+    // Each conversation this put in Trash.
+    for chat in chats_in_trash(tx, scope, operation)? {
+        super::client_feed::touch_chat(tx, chat).map_err(bad)?;
+    }
     Ok(())
+}
+
+/// The conversations one operation holds in Trash: its own rows of
+/// `bot_chat_trash`, which hold only what is in Trash now.
+fn chats_in_trash(
+    tx: &Connection,
+    scope: UserScopeId,
+    operation: BotRequestId,
+) -> Result<Vec<ChatId>, BotError> {
+    let mut query = tx
+        .prepare("SELECT chat_id FROM bot_chat_trash INDEXED BY bot_chat_trash_owner WHERE user_scope_id=?1 AND operation_id=?2")
+        .map_err(bad)?;
+    let rows = query
+        .query_map(params![scope.to_storage(), operation.to_storage()], |r| {
+            r.get::<_, String>(0)
+        })
+        .map_err(bad)?;
+    rows.map(|row| ChatId::parse(&row.map_err(bad)?).ok_or(BotError::Storage))
+        .collect()
 }
 
 /// Mark the operation a Restore reverses `reversed`, in the Restore's own
@@ -1441,18 +1475,19 @@ impl Repository {
         chat: ChatId,
         now: i64,
     ) -> Result<(), BotError> {
-        self.connection
-            .execute(
-                "INSERT INTO bot_chat_trash(chat_id,user_scope_id,operation_id,trashed_at_ms) VALUES(?1,?2,?3,?4)",
-                params![
-                    chat.to_storage(),
-                    operation.owner.user_scope.to_storage(),
-                    operation.operation.to_storage(),
-                    now
-                ],
-            )
-            .map_err(bad)?;
-        Ok(())
+        let tx = self.connection.transaction().map_err(bad)?;
+        tx.execute(
+            "INSERT INTO bot_chat_trash(chat_id,user_scope_id,operation_id,trashed_at_ms) VALUES(?1,?2,?3,?4)",
+            params![
+                chat.to_storage(),
+                operation.owner.user_scope.to_storage(),
+                operation.operation.to_storage(),
+                now
+            ],
+        )
+        .map_err(bad)?;
+        super::client_feed::touch_chat(&tx, chat).map_err(bad)?;
+        tx.commit().map_err(bad)
     }
 }
 
@@ -1484,13 +1519,14 @@ impl Repository {
         bot: BotId,
         lifecycle: BotLifecycle,
     ) -> Result<(), BotError> {
-        self.connection
-            .execute(
-                "UPDATE bots SET lifecycle=?2 WHERE bot_id=?1",
-                params![bot.to_storage(), lifecycle.token()],
-            )
-            .map_err(bad)?;
-        Ok(())
+        let tx = self.connection.transaction().map_err(bad)?;
+        tx.execute(
+            "UPDATE bots SET lifecycle=?2 WHERE bot_id=?1",
+            params![bot.to_storage(), lifecycle.token()],
+        )
+        .map_err(bad)?;
+        super::client_feed::touch_bot(&tx, bot).map_err(bad)?;
+        tx.commit().map_err(bad)
     }
 }
 

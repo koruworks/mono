@@ -208,6 +208,7 @@ pub(super) fn prepare_bot_pause_on(
         params![bot.to_storage(), paused, intent.barrier.epoch, now],
     )
     .map_err(bad)?;
+    super::client_feed::touch_bot(tx, bot).map_err(bad)?;
     tx.execute("INSERT INTO bot_command_receipts(user_scope_id,request_id,bot_id,fingerprint,command_kind,stage,desired_pause,expected_revision,pause_ack_stage,outcome_json,created_at_ms,updated_at_ms) VALUES(?1,?2,?3,?4,?5,'prepared',?6,?7,'pending',?8,?9,?9)",params![owner.user_scope.to_storage(),request.to_storage(),bot.to_storage(),fingerprint_value,if paused {"pause"}else{"resume"},paused,expected,serde_json::to_string(&intent).map_err(bad)?,now]).map_err(bad)?;
     pause_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)
 }
@@ -299,6 +300,7 @@ pub(super) fn refuse_captured_on(
                 params![bot.to_storage(), g.revision + 1, now],
             )
             .map_err(bad)?;
+            super::client_feed::touch_bot(tx, bot).map_err(bad)?;
             BotAdmissionBarrier {
                 owner: koru_delegate_core::BotOwner {
                     user_scope: owner.user_scope,
@@ -557,6 +559,9 @@ pub(crate) fn prepare_bot_submission_tx(
             params![p.bot.to_storage(), p.submission.to_storage()],
         )
         .map_err(bad)?;
+        // Only a Bot's first task reaches here: once its folder is frozen
+        // nothing more is written to the Bot's row for a task.
+        super::client_feed::touch_bot(tx, p.bot).map_err(bad)?;
     }
     let kind = if p.continued_from.is_some() {
         BotOperationKind::Continue
@@ -593,8 +598,15 @@ pub(super) fn acknowledge_submission_on(
     if g.frozen.is_none() && g.lock.as_deref() != Some(request.to_storage().as_str()) {
         return Err(BotError::FolderLocked);
     }
-    tx.execute("UPDATE bots SET folder_frozen_at_ms=COALESCE(folder_frozen_at_ms,?2),folder_lock_request_id=NULL WHERE bot_id=?1",params![bot.to_storage(),now]).map_err(bad)?;
+    // The same row as before, written only when it changes: for every task
+    // after a Bot's first the folder is already frozen and unlocked, and the
+    // Bot's record, and so its marker, stays as it is.
+    let frozen = tx.execute("UPDATE bots SET folder_frozen_at_ms=COALESCE(folder_frozen_at_ms,?2),folder_lock_request_id=NULL WHERE bot_id=?1 AND (folder_frozen_at_ms IS NULL OR folder_lock_request_id IS NOT NULL)",params![bot.to_storage(),now]).map_err(bad)?;
+    if frozen != 0 {
+        super::client_feed::touch_bot(tx, bot).map_err(bad)?;
+    }
     tx.execute("UPDATE bot_command_receipts SET stage='completed',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;
+    super::client_feed::touch_admitted(tx, owner.user_scope, request).map_err(bad)?;
     read_bot_submission_on(tx, owner.user_scope, request)?.ok_or(BotError::Storage)
 }
 
@@ -914,6 +926,7 @@ impl Repository {
             params![bot.to_storage(), g.revision + 1, now],
         )
         .map_err(bad)?;
+        super::client_feed::touch_bot(&tx, bot).map_err(bad)?;
         tx.execute("UPDATE bot_command_receipts SET outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;
         let result =
             read_bot_submission_on(&tx, owner.user_scope, request)?.ok_or(BotError::Storage)?;
@@ -994,7 +1007,10 @@ impl Repository {
             if other {
                 return Err(BotError::FolderLocked);
             }
-            tx.execute("UPDATE bots SET folder_lock_request_id=NULL WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",params![bot.to_storage(),request.to_storage()]).map_err(bad)?;
+            let released = tx.execute("UPDATE bots SET folder_lock_request_id=NULL WHERE bot_id=?1 AND folder_lock_request_id=?2 AND folder_frozen_at_ms IS NULL",params![bot.to_storage(),request.to_storage()]).map_err(bad)?;
+            if released != 0 {
+                super::client_feed::touch_bot(&tx, bot).map_err(bad)?;
+            }
         }
         let outcome = BotExecutionOutcome::Rejected { version: 1, reason };
         tx.execute("UPDATE bot_command_receipts SET stage='rejected',outcome_json=?3,updated_at_ms=?4 WHERE user_scope_id=?1 AND request_id=?2",params![owner.user_scope.to_storage(),request.to_storage(),serde_json::to_string(&outcome).map_err(bad)?,now]).map_err(bad)?;

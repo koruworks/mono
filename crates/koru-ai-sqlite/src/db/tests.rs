@@ -5,6 +5,7 @@ use rusqlite::Connection;
 use super::*;
 mod avatar;
 mod children;
+mod client_copies;
 mod connections;
 mod decisions;
 mod library;

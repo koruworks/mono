@@ -200,6 +200,9 @@ impl Repository {
             now,
         )
         .map_err(|_| BotError::Storage)?;
+        // The reply ended as "Needed you": its record, and its
+        // conversation's, which stops running.
+        crate::repository::bots::client_feed::touch_attempt(&tx, attempt, true).map_err(bad)?;
         tx.commit().map_err(bad)?;
         Ok(BotDecisionClosure::Closed { reason })
     }

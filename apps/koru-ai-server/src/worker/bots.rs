@@ -58,6 +58,10 @@ pub(super) use boot::{BootRecovery, BotBootJob, BotBootResult};
 mod branch;
 pub(in crate::worker) mod chat;
 pub(crate) mod children;
+// The owner feed is built and tested ahead of the server that serves it to a
+// linked desktop (M8, P8.3 piece H2), which is its first caller.
+#[allow(dead_code)]
+pub(crate) mod client;
 pub(crate) mod decision_wait;
 mod library;
 mod lifecycle;

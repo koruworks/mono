@@ -2211,7 +2211,7 @@ fn a_v12_stores_chats_are_placed_by_what_they_last_read() {
         .unwrap();
     crate::db::prepare(&mut connection).unwrap();
     let mut repository = Repository {
-        connection,
+        connection: connection.into(),
         bot_replay_fail_after_commit: false,
     };
 

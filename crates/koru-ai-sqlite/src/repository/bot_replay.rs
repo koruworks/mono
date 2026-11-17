@@ -66,6 +66,17 @@ pub(crate) fn settle_routine_attempt_on(
         },
         now,
     )?;
+    touch_ended_reply(conn, &current)?;
+    Ok(())
+}
+
+/// A Bot's reply ended, and with it its open tool calls: the reply's marker
+/// and its conversation's, which stops running and stops needing the person.
+fn touch_ended_reply(conn: &Connection, attempt: &InferenceAttempt) -> Result<(), AiError> {
+    if let (Some(chat), Some(message)) = (attempt.chat_id, attempt.assistant_message_id) {
+        super::bots::client_feed::touch_turn(conn, chat, &[message], true)
+            .map_err(storage_failed)?;
+    }
     Ok(())
 }
 
@@ -222,6 +233,7 @@ impl Repository {
             },
             now,
         )?;
+        touch_ended_reply(&tx, &current)?;
         tx.commit().map_err(storage_failed)
     }
     /// Foundation seam: the ai16 intent must already be prepared. P1.3's typed
@@ -346,6 +358,11 @@ impl Repository {
         let chat = current.chat_id.ok_or_else(invariant_failed)?;
         let assistant = current.assistant_message_id.ok_or_else(invariant_failed)?;
         let mut terminal = false;
+        // What this batch changes of what a linked desktop is shown, written
+        // once at the end: the reply's record, and the conversation's. Text
+        // changes neither.
+        let mut reply_moved = false;
+        let mut chat_moved = false;
         for source_event in &batch.events {
             for effect in &source_event.effects {
                 if terminal {
@@ -382,6 +399,10 @@ impl Repository {
                         }
                         mutations::apply_event_on(&tx, event, finalized_blocks)?;
                         terminal = event.is_terminal();
+                        if terminal {
+                            reply_moved = true;
+                            chat_moved = true;
+                        }
                         if let AiEvent::Completed { at, .. } = event {
                             tx.execute("UPDATE bot_chat_runs SET delivery_state='pending',delivery_confirmed_at_ms=?2 WHERE ai_attempt_id=?1 AND delivery_state='none'",
                                 params![batch.ai_attempt.to_storage(),at.millis()]).map_err(storage_failed)?;
@@ -407,11 +428,22 @@ impl Repository {
                             mutations::create_tool_activity_on(&tx, activity)?;
                             tx.execute("UPDATE tool_invocations SET bot_source_kind=?2,bot_source_id=?3 WHERE id=?1",
                                 params![activity.id.to_storage(),source.kind.token(),source.id]).map_err(storage_failed)?;
+                            reply_moved = true;
                         } else {
                             if mapped != Some(activity.id) {
                                 return Err(invariant_failed());
                             }
+                            // A progress update of a running call changes
+                            // neither value and moves nothing.
+                            let before = super::bots::client_feed::tool_state(&tx, activity.id)
+                                .map_err(storage_failed)?;
                             mutations::advance_agent_activity_on(&tx, activity)?;
+                            if let Some(before) = before {
+                                let (reply, conversation) =
+                                    super::bots::client_feed::tool_moved(&before, activity);
+                                reply_moved |= reply;
+                                chat_moved |= conversation;
+                            }
                         }
                     }
                     BotReplayEffect::Notice(notice) => {
@@ -422,6 +454,7 @@ impl Repository {
                             return Err(invariant_failed());
                         }
                         mutations::create_agent_notice_on(&tx, notice)?;
+                        reply_moved = true;
                     }
                     BotReplayEffect::Mode(mode) => {
                         if mode.as_ref().is_some_and(|v| v.len() > 256) {
@@ -432,6 +465,7 @@ impl Repository {
                             params![chat.to_storage(), mode],
                         )
                         .map_err(storage_failed)?;
+                        chat_moved = true;
                     }
                 }
             }
@@ -441,6 +475,16 @@ impl Repository {
             params![batch.ai_attempt.to_storage(), sequence(last)?, now.millis()],
         )
         .map_err(storage_failed)?;
+        if reply_moved || chat_moved {
+            let reply = [assistant];
+            super::bots::client_feed::touch_turn(
+                &tx,
+                chat,
+                if reply_moved { &reply } else { &[] },
+                chat_moved,
+            )
+            .map_err(storage_failed)?;
+        }
         tx.commit().map_err(storage_failed)?;
         #[cfg(any(test, feature = "fixtures"))]
         if std::mem::take(&mut self.bot_replay_fail_after_commit) {
@@ -485,6 +529,7 @@ impl Repository {
         tx.execute("UPDATE tool_invocations SET status='cancelled',approval=CASE WHEN approval='pending' THEN 'denied' ELSE approval END,
             completed_at_ms=max(proposed_at_ms,?2),error_code='cancelled' WHERE attempt_id=?1 AND status IN ('proposed','approval_required','running')",
             params![attempt.to_storage(),now.millis()]).map_err(storage_failed)?;
+        touch_ended_reply(&tx, &current)?;
         tx.commit().map_err(storage_failed)
     }
 

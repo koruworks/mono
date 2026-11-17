@@ -420,6 +420,8 @@ impl Repository {
             params![identity.bot.to_storage(), next],
         )
         .map_err(bad)?;
+        // The Bot's revision moved. Its Memory is not copied.
+        crate::repository::bots::client_feed::touch_bot(&tx, identity.bot).map_err(bad)?;
         original_stage(&tx, &c, BotMemoryState::Bound, next)?;
         let c = creation_on(&tx, identity.owner, identity.bot, g.home)?.ok_or(BotError::Storage)?;
         let binding = binding_on(&tx, identity.owner, identity.bot, g.home, Some(&c))?
