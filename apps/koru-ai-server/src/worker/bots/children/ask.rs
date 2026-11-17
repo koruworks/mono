@@ -83,8 +83,49 @@ pub(super) fn validate_request(request: &mut RunChildAskRequest) -> ApiResult<()
 impl WorkerState {
     /// The asking Run, current. Not a child itself, a Bot reply with a live
     /// AI attempt bound to an execution with a turn, and the same admission
-    /// the gateway resolved.
+    /// the gateway resolved. Every call of `ask_bot` and `list_askable_bots`
+    /// passes this, at the call.
+    ///
+    /// A Run that passes everything except that this worker has not bound its
+    /// current turn yet (the first input's reply is still on its way, or a
+    /// resumed Run's replay has not rolled over to the new session) is
+    /// refused [`TURN_NOT_STARTED`], retryable: nothing was written, and
+    /// the same call passes once the turn is bound. The ask is attributed to
+    /// that turn, so it is never admitted without one.
     pub(super) fn retained_child_subject(&self, requested: &RunBotSubject) -> ApiResult<Subject> {
+        let (subject, fence) = self.asking_run(requested)?;
+        let fence = fence.ok_or_else(turn_not_started)?;
+        if fence.generation.get() > requested.generation.get() {
+            return Err(denied());
+        }
+        if fence.turn.is_none() || fence.generation != requested.generation {
+            return Err(turn_not_started());
+        }
+        Ok(subject)
+    }
+
+    /// `run_may_ask`: whether the tools that ask are listed to this Run. It
+    /// is [`Self::retained_child_subject`] without the bound turn, plus the
+    /// Bot's "May ask other bots": a coding agent lists its tools when its
+    /// session starts, which is before the turn exists. It authorizes
+    /// nothing. A listed tool's call is checked in full when it is made.
+    pub(super) fn run_may_ask(&self, request: &RunAskableRequest) -> ApiResult<()> {
+        let (subject, _) = self.asking_run(&request.subject)?;
+        if !self.asking_bot(&subject)?.may_ask {
+            return Err(coded(codes::ASK_NOT_ALLOWED, None));
+        }
+        Ok(())
+    }
+
+    /// What is proven of the asking Run from the moment its session starts:
+    /// not a child itself, the admission the gateway resolved, a person's
+    /// request, and a live AI attempt of this Run's reply that was not
+    /// stopped. With it, the execution this worker has bound for that
+    /// attempt, when it is this Run's; another Run's is refused.
+    fn asking_run(
+        &self,
+        requested: &RunBotSubject,
+    ) -> ApiResult<(Subject, Option<koru_delegate_core::BotExecutionFence>)> {
         let p = &requested.provenance;
         if !p.valid() || !requested.captured.valid() || requested.generation.get() == 0 {
             return Err(invalid());
@@ -125,19 +166,21 @@ impl WorkerState {
         {
             return Err(denied());
         }
-        let fence = replay.fence.ok_or_else(denied)?;
-        if fence.turn.is_none()
-            || fence.run != requested.run
-            || fence.bot != p.bot
-            || fence.generation != requested.generation
+        if replay
+            .fence
+            .as_ref()
+            .is_some_and(|fence| fence.run != requested.run || fence.bot != p.bot)
         {
             return Err(denied());
         }
-        Ok(Subject {
-            owner,
-            parent,
-            profile,
-        })
+        Ok((
+            Subject {
+                owner,
+                parent,
+                profile,
+            },
+            replay.fence,
+        ))
     }
 
     /// `list_askable_bots`: the Bots that pass checks 2 and 3 of contract

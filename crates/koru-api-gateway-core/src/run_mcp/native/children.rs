@@ -6,6 +6,10 @@
 //! - **`list_askable_bots`** names the Bots this Bot may ask. The AI worker
 //!   answers from ai.db; `ask_not_allowed` while the Bot's "May ask other
 //!   bots" is off.
+//! - **Listing is not authorization.** The two ask tools are listed from
+//!   what is known when a session starts ([`listed_for`]); each call is
+//!   proven by the worker when it is made, and one made before the Run's
+//!   turn is bound answers the retryable `turn_not_started`.
 //! - **`ask_bot`** hands the AI worker one to three requests under the
 //!   model's own key. The worker admits them all or none, stores the wait's
 //!   enrollment, and only then answers. **The answer is then held (A13)**:
@@ -33,7 +37,7 @@ use koru_ai_core::Cancellation;
 use koru_ai_server::{
     AiWorkerClient, CHILD_ASK_BUDGET, NativePolicyEvidence, NativePolicyRequest,
     NativeStoreAuthority, PinnedReadError, RunAskableBot, RunAskableRequest, RunBotSubject,
-    RunChildAskItem, RunChildAskPending, RunChildAskRequest, read_pinned_page,
+    RunChildAskItem, RunChildAskPending, RunChildAskRequest, TURN_NOT_STARTED, read_pinned_page,
 };
 use koru_ai_wire::bot_child_codes as codes;
 use koru_delegate_api::wire::TimelineQuery;
@@ -158,6 +162,14 @@ pub(super) fn listed(gate: bool, provenance: &BotProvenance, may_ask: bool) -> C
 /// [`listed`] for a classified Bot Run under this build's gate. The AI
 /// worker is asked for `may_ask` only while the gate is open, and only for a
 /// Run that is not a child; a worker that does not answer lists no ask tool.
+///
+/// **Listing is not authorization.** A coding agent lists its tools when its
+/// session starts, before the Run's first input is answered, and may keep
+/// that list for the whole session. So the question asked here
+/// ([`ChildOwner::may_ask`]) is the one that can be answered then: is this a
+/// Run whose Bot may ask at all. It does not need the Run's turn. Every call
+/// of the two tools is still proven by the worker when it is made, and that
+/// proof does need the turn ([`TURN_NOT_STARTED`] until it is bound).
 pub(in crate::run_mcp) async fn listed_for(
     state: &GatewayState,
     record: &RunAuthorityRecord,
@@ -168,25 +180,35 @@ pub(in crate::run_mcp) async fn listed_for(
     if !gate.tools || provenance.parent.is_some() {
         return ChildTools::NONE;
     }
-    let may_ask = match client(state) {
-        Some(client) => {
-            let request = RunAskableRequest {
-                subject: RunBotSubject {
-                    run: record.run,
-                    generation: record.generation,
-                    provenance: provenance.clone(),
-                    captured: captured.clone(),
-                },
-                deadline: Instant::now() + LIST_BUDGET,
-            };
-            matches!(
-                tokio::task::spawn_blocking(move || client.askable_bots_for_run(request)).await,
-                Ok(Ok(_))
-            )
-        }
-        None => false,
+    let Some(client) = client(state) else {
+        return listed(gate.tools, provenance, false);
     };
-    listed(gate.tools, provenance, may_ask)
+    let subject = RunBotSubject {
+        run: record.run,
+        generation: record.generation,
+        provenance: provenance.clone(),
+        captured: captured.clone(),
+    };
+    // The worker's writer answers: never on a thread that serves the person.
+    tokio::task::spawn_blocking(move || listed_by(&client, gate.tools, subject))
+        .await
+        .unwrap_or_else(|_| listed(gate.tools, provenance, false))
+}
+
+/// [`listed_for`] against one owner. A child Run and a closed gate ask
+/// nobody; anything but the owner's plain yes lists no ask tool.
+pub(super) fn listed_by(owner: &dyn ChildOwner, gate: bool, subject: RunBotSubject) -> ChildTools {
+    if !gate || subject.provenance.parent.is_some() {
+        return ChildTools::NONE;
+    }
+    let provenance = subject.provenance.clone();
+    let may_ask = owner
+        .may_ask(RunAskableRequest {
+            subject,
+            deadline: Instant::now() + LIST_BUDGET,
+        })
+        .is_ok();
+    listed(gate, &provenance, may_ask)
 }
 
 /// The Bot endpoint's instructions with the child tools' sentence when any of
@@ -369,6 +391,9 @@ fn message(code: &str) -> &'static str {
         "invalid_request" => "The arguments are invalid.",
         "permission_denied" => "This Run is not authorized to use this tool.",
         codes::ASK_NOT_ALLOWED => "This Bot may not ask other Bots.",
+        TURN_NOT_STARTED => {
+            "This Run's turn has not started yet. Nothing was sent. Call again in a moment; for ask_bot, with the same ask_key and identical requests."
+        }
         codes::RECIPIENT_UNAVAILABLE => "A Bot that was named cannot be asked.",
         codes::RECIPIENT_PAUSED => "A Bot that was named is paused.",
         codes::RECIPIENT_FULL => "A Bot that was named has too much queued work.",
@@ -444,6 +469,8 @@ pub(super) fn ask_refusal(error: &koru_ai_wire::Failure) -> ToolFailure {
         codes::ASK_KEY_CONFLICT,
         codes::CHILD_WAIT_IN_PROGRESS,
         codes::CHILD_STATUS_UNKNOWN,
+        // Refused before anything was written: not an unknown outcome.
+        TURN_NOT_STARTED,
         "decision_in_progress",
         "invalid_request",
         "permission_denied",
@@ -546,6 +573,10 @@ pub(in crate::run_mcp) async fn fenced(
 
 /// What these tools ask of the AI worker.
 pub(super) trait ChildOwner {
+    /// Whether the two ask tools are listed to this Run. Asked when the
+    /// catalog is listed, which may be before the Run's turn exists; it
+    /// authorizes no call.
+    fn may_ask(&self, request: RunAskableRequest) -> Result<(), koru_ai_wire::Failure>;
     fn askable(
         &self,
         request: RunAskableRequest,
@@ -556,6 +587,9 @@ pub(super) trait ChildOwner {
     fn policy(&self, request: NativePolicyRequest) -> Result<NativePolicyEvidence, ToolFailure>;
 }
 impl ChildOwner for AiWorkerClient {
+    fn may_ask(&self, request: RunAskableRequest) -> Result<(), koru_ai_wire::Failure> {
+        self.run_may_ask(request)
+    }
     fn askable(
         &self,
         request: RunAskableRequest,
@@ -755,6 +789,7 @@ fn list(
         .map_err(|error| {
             failure(match error.code.as_str() {
                 codes::ASK_NOT_ALLOWED => codes::ASK_NOT_ALLOWED,
+                TURN_NOT_STARTED => TURN_NOT_STARTED,
                 "permission_denied" => "permission_denied",
                 _ => "workspace_unavailable",
             })

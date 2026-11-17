@@ -2106,11 +2106,23 @@ endpoint's instructions do not name them, and a call answers `unknown_tool`
 before any owner is asked.
 
 They are listed only to a Bot Run that is not itself a child request (depth
-one); the two ask tools also need the Bot's "May ask other bots" switch, and
-are listed only while the AI worker answers for the Run's bound turn.
-`read_bot_request` needs neither. With all three listed the catalog has sixteen
-tools and the instructions say so; with only `read_bot_request`, fourteen. The
-Bot launch allowlist names all sixteen; it lists nothing by itself.
+one). The two ask tools also need the Bot's "May ask other bots" switch and a
+Run with a reply of its own in the Bot's conversation: a task a person sent
+there, or a Routine's Run. A task started through the public API or by an
+external assistant has no such reply, cannot hold a wait, and is not offered
+them. `read_bot_request` needs neither. With all three listed the catalog has
+sixteen tools and the instructions say so; with only `read_bot_request`,
+fourteen. The Bot launch allowlist names all sixteen; it lists nothing by
+itself.
+
+**Listing is not authorization.** A coding agent lists its tools when its
+session starts, before the Run's first input is answered, and may keep that
+list for the session, so the two ask tools are listed from what is known then
+and do not wait for the Run's turn. Every call of `ask_bot` and
+`list_askable_bots` is checked in full when it is made, and the request is
+attributed to the Run's current turn. A call that arrives before that turn is
+bound answers `turn_not_started`: nothing was sent, and the same call (for
+`ask_bot`, the same `ask_key` and identical requests) passes a moment later.
 
 | Tool | Input | Output |
 | --- | --- | --- |
@@ -2149,7 +2161,8 @@ for example); `result_not_ready` before the request completed. A rendered page
 above 1 MiB keeps a prefix of its nodes and says `truncated: true`. Titles and
 content appear only in the asking Bot's tool answer, never in a log or event.
 
-Other codes: `ask_not_allowed`, `recipient_unavailable`, `recipient_paused`,
+Other codes: `ask_not_allowed`, `turn_not_started`, `recipient_unavailable`,
+`recipient_paused`,
 `recipient_full`, `recipient_folder_overlap`, `self_ask`, `would_wait_on_itself`
 and `page_unavailable` (each with `details.index`; the last with
 `details.document_id` too), `recipient_limit` (`details.used`),

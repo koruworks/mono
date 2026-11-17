@@ -6,6 +6,7 @@
 //! provider, browser or network is opened.
 use super::*;
 
+mod listing;
 mod own_library;
 use crate::worker::bots::admission::make_intent;
 use crate::worker::bots::tests::{Authority, created, fixture, turn as pending};

@@ -105,10 +105,15 @@ function Native-Call([string]$id, [string]$name, [object]$arguments, [bool]$refu
 function Native-Discover {
     $catalog = Native-Rpc 'tools/list' @{}
     $names = @($catalog.tools | ForEach-Object { $_.name } | Sort-Object)
-    # Fourteen at thread start: the thirteen and read_bot_request. The two ask
-    # tools are listed only once the AI worker has bound this Run's turn,
-    # which is after thread start.
-    if (($names -join ',') -ne 'correct_memory,create_document,create_routine,edit_document,forget_memory,list_memory,list_routines,read_bot_request,read_document,read_memory,read_routine_creation,remember_memory,retry_routine_creation,search_documents') { Trace-Fixture ('native:catalog-mismatch:' + $names.Count); throw 'native catalog mismatch' }
+    # Listed at thread start, before the Run's first input. Exactly one of two
+    # catalogs. Sixteen: the thirteen, read_bot_request and the two ask tools,
+    # for a Run with a reply of its own whose Bot may ask other Bots (a task
+    # in the Bot's conversation). Fourteen: without the two ask tools, for a
+    # Run with no reply of its own (a task started through the public API) or
+    # a Bot whose "May ask other bots" is off. The test says which it expects.
+    $joined = $names -join ','
+    if ($joined -eq 'ask_bot,correct_memory,create_document,create_routine,edit_document,forget_memory,list_askable_bots,list_memory,list_routines,read_bot_request,read_document,read_memory,read_routine_creation,remember_memory,retry_routine_creation,search_documents') { Trace-Fixture 'native:catalog:16'; return }
+    if ($joined -ne 'correct_memory,create_document,create_routine,edit_document,forget_memory,list_memory,list_routines,read_bot_request,read_document,read_memory,read_routine_creation,remember_memory,retry_routine_creation,search_documents') { Trace-Fixture ('native:catalog-mismatch:' + $names.Count); throw 'native catalog mismatch' }
     Trace-Fixture 'native:catalog:14'
 }
 function Invoke-NativePages {

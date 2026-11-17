@@ -64,6 +64,10 @@ fn owner_failure(code: &str, details: &[(&str, Value)]) -> koru_ai_wire::Failure
 // ---- the AI worker --------------------------------------------------------------
 
 struct Owner {
+    /// What the worker answers the listing's question, and how often and
+    /// for which Run it was asked.
+    may_ask: Mutex<Result<(), koru_ai_wire::Failure>>,
+    may_asks: Mutex<Vec<RunId>>,
     askable: Mutex<Result<Vec<RunAskableBot>, koru_ai_wire::Failure>>,
     /// `None`: admit the ask in input order under [`Owner::wait`].
     answer: Mutex<Option<Result<RunChildAskPending, koru_ai_wire::Failure>>>,
@@ -74,6 +78,10 @@ struct Owner {
     policies: Mutex<usize>,
 }
 impl ChildOwner for Owner {
+    fn may_ask(&self, request: RunAskableRequest) -> Result<(), koru_ai_wire::Failure> {
+        self.may_asks.lock().unwrap().push(request.subject.run);
+        self.may_ask.lock().unwrap().clone()
+    }
     fn askable(&self, _: RunAskableRequest) -> Result<Vec<RunAskableBot>, koru_ai_wire::Failure> {
         *self.lists.lock().unwrap() += 1;
         self.askable.lock().unwrap().clone()
@@ -268,6 +276,8 @@ impl Fixture {
                 revoked_at_ms: None,
             },
             owner: Owner {
+                may_ask: Mutex::new(Ok(())),
+                may_asks: Mutex::new(Vec::new()),
                 askable: Mutex::new(Ok(Vec::new())),
                 answer: Mutex::new(None),
                 wait,
@@ -770,6 +780,116 @@ fn m6_tool_listing_list_askable_bots_answers_the_workers_list_or_ask_not_allowed
         "invalid_request"
     );
     assert_eq!(*f.owner.lists.lock().unwrap(), lists);
+}
+
+fn subject_of(f: &Fixture, provenance: &BotProvenance) -> RunBotSubject {
+    RunBotSubject {
+        run: f.record.run,
+        generation: f.record.generation,
+        provenance: provenance.clone(),
+        captured: f.captured.clone(),
+    }
+}
+
+/// A coding agent lists its tools when its session starts, before the Run's
+/// turn exists. The listing asks the worker only whether this Run's Bot may
+/// ask, never the question a call asks (`askable`, which needs the turn).
+#[test]
+fn m6_tool_listing_at_session_start_the_listing_asks_whether_the_bot_may_ask_and_nothing_else() {
+    let f = Fixture::new();
+    let listing = || listed_by(&f.owner, OPEN.tools, subject_of(&f, &f.provenance));
+    // The worker says yes: all three, sixteen tools, and the instructions
+    // name them.
+    let all = listing();
+    assert_eq!(
+        all,
+        ChildTools {
+            ask: true,
+            read: true
+        }
+    );
+    let catalog = definitions_for(false, all);
+    assert_eq!(catalog.len(), 16);
+    for name in [LIST_TOOL, ASK_TOOL, READ_TOOL] {
+        assert!(
+            names(&catalog).iter().any(|listed| listed == name),
+            "{name}"
+        );
+    }
+    assert!(
+        instructions("exposes thirteen scoped tools.", all).starts_with("exposes sixteen scoped")
+    );
+    assert_eq!(*f.owner.may_asks.lock().unwrap(), [f.record.run]);
+    // The listing never asks for the Bot list, nor anything of the delegate.
+    assert_eq!(*f.owner.lists.lock().unwrap(), 0);
+    assert!(f.owner.asks.lock().unwrap().is_empty());
+    assert!(f.port.script().log.is_empty());
+    // Anything but a plain yes lists no ask tool; the read stays. The Bot's
+    // switch is off; a Run with no reply of its own (a task started through
+    // the public API); a worker that did not answer in time.
+    let mut late = owner_failure("ai_worker_timeout", &[]);
+    late.retryable = true;
+    for refusal in [
+        owner_failure(codes::ASK_NOT_ALLOWED, &[]),
+        owner_failure("permission_denied", &[]),
+        late,
+    ] {
+        *f.owner.may_ask.lock().unwrap() = Err(refusal);
+        let read_only = listing();
+        assert_eq!(
+            read_only,
+            ChildTools {
+                ask: false,
+                read: true
+            }
+        );
+        let catalog = definitions_for(false, read_only);
+        assert_eq!(catalog.len(), 14);
+        assert!(
+            !names(&catalog)
+                .iter()
+                .any(|name| name == ASK_TOOL || name == LIST_TOOL)
+        );
+    }
+    // A child Run and a closed gate list nothing, and the worker is not
+    // asked, even when it would say yes.
+    *f.owner.may_ask.lock().unwrap() = Ok(());
+    let asked = f.owner.may_asks.lock().unwrap().len();
+    assert_eq!(
+        listed_by(&f.owner, OPEN.tools, subject_of(&f, &f.child_provenance())),
+        ChildTools::NONE
+    );
+    assert_eq!(
+        listed_by(&f.owner, CLOSED.tools, subject_of(&f, &f.provenance)),
+        ChildTools::NONE
+    );
+    assert_eq!(f.owner.may_asks.lock().unwrap().len(), asked);
+}
+
+/// Listing is not authorization: a listed tool called before the worker has
+/// bound the Run's turn is refused with one stable, retryable code. Nothing
+/// is admitted, nothing is held, and no worker text reaches the answer.
+#[test]
+fn m6_tool_ask_a_call_before_the_turn_is_bound_answers_turn_not_started() {
+    let f = Fixture::new();
+    let mut early = owner_failure(TURN_NOT_STARTED, &[("index", json!(0))]);
+    early.retryable = true;
+    *f.owner.askable.lock().unwrap() = Err(early.clone());
+    let list = f.call(LIST_TOOL, json!({})).unwrap_err();
+    assert_eq!(list.code, "turn_not_started");
+    assert!(list.details.is_none());
+    *f.owner.answer.lock().unwrap() = Some(Err(early));
+    let ask = f.call(ASK_TOOL, ask_arguments(&[f.recipient])).unwrap_err();
+    assert_eq!(ask.code, "turn_not_started");
+    // Not an unknown outcome, and no detail of the worker's is forwarded.
+    assert_ne!(ask.code, codes::CHILD_STATUS_UNKNOWN);
+    assert!(ask.details.is_none());
+    assert!(ask.message.contains("same ask_key"));
+    // The answer was not held: the delegate was never read.
+    assert!(f.port.script().log.is_empty());
+    for answer in [&list, &ask] {
+        nothing_private(&serde_json::to_string(answer).unwrap());
+    }
 }
 
 // ---- m6_tool_ask -----------------------------------------------------------------

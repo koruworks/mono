@@ -445,15 +445,26 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     // Today's Bot catalog, exact in the fixture: four page tools, five Memory
     // tools, four Routine tools and `read_bot_request`. The private read is
     // not listed while its gate is closed. The gate of the three tools that
-    // ask another Bot was opened on 2026-11-17, but the fixture lists at
-    // thread start, before the AI worker has bound this Run's turn, and the
-    // worker answers "may this Bot ask" only for a bound turn: so the two ask
-    // tools (`list_askable_bots`, `ask_bot`) are not in this listing.
-    // NOT RUN since the gate opened: fourteen is read from the code
-    // (`children::listed_for`, `retained_child_subject`), not observed. A
-    // trace of `native:catalog-mismatch:16` here means the turn was bound
-    // first and the fixture's list is the one to correct.
-    assert!(trace.lines().any(|line| line == "native:catalog:14"));
+    // ask another Bot was opened on 2026-11-17, and this Bot was created with
+    // "May ask other bots" on (the default), so the two ask tools
+    // (`list_askable_bots`, `ask_bot`) are listed too: sixteen. The fixture
+    // lists at thread start, before the AI worker has bound this Run's turn;
+    // the listing does not need the turn (`AiWorkerClient::run_may_ask`).
+    // Only this conversation's Run has started a session so far, so every
+    // catalog traced is the sixteen. The fixture also accepts the fourteen
+    // (no ask tool), which is what the API task further down would list.
+    // NOT RUN since the gate opened: sixteen is read from the code and shown
+    // by the lib cohorts `m6_ask_listing` and `m6_tool_listing`, not observed
+    // here. A trace of `native:catalog:14` at this point means the worker
+    // refused the listing's question for this Run.
+    let catalogs: Vec<_> = trace
+        .lines()
+        .filter(|line| line.starts_with("native:catalog"))
+        .collect();
+    assert!(
+        !catalogs.is_empty() && catalogs.iter().all(|line| *line == "native:catalog:16"),
+        "{catalogs:?}"
+    );
     assert_eq!(
         trace
             .lines()
@@ -622,7 +633,7 @@ fn scripted_native_bot_with_catalog_fixture_public_chat_when_opted_in() {
     );
     assert_eq!(operation.run_id, Some(task_run));
     eprintln!(
-        "scripted native Bot verified: fourteen-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
+        "scripted native Bot verified: sixteen-tool catalog, one turn, durable receipts, delivery, revocation and provider exit; an API task read and stopped"
     );
 }
 

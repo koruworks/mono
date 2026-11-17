@@ -121,7 +121,7 @@ fn initialize(offered: &ProtocolVersion, bot: bool) -> InitializeResult {
 
 /// [`initialize`] for a Bot Run whose catalog may list the tools that ask
 /// another Bot (M6): their sentence, and the count, appear only when they
-/// are listed. In this build they never are, and the text is unchanged.
+/// are listed.
 fn initialize_listing(
     offered: &ProtocolVersion,
     bot: bool,
@@ -199,6 +199,8 @@ pub(super) async fn handle(
     // Which of the three tools that ask another Bot are listed (M6). Their
     // gate is open in this build, so for every message of a Bot Run that is
     // not a child the AI worker is asked whether the Bot may ask (5 s bound).
+    // That answer does not need the Run's turn: an agent lists its tools
+    // when its session starts. It authorizes no call.
     let children = match classification.bot_subject() {
         Some((provenance, policy)) => {
             native::children::listed_for(&state, &authority, provenance, policy).await

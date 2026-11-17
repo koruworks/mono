@@ -116,9 +116,15 @@ def native_call(identity, name, arguments, refused=False):
 
 def native_discover():
     names = sorted(tool["name"] for tool in native_rpc("tools/list", {})["tools"])
-    # Fourteen at thread start: the thirteen and read_bot_request. The two ask
-    # tools are listed only once the AI worker has bound this Run's turn,
-    # which is after thread start.
+    # Listed at thread start, before the Run's first input. Exactly one of two
+    # catalogs. Sixteen: the thirteen, read_bot_request and the two ask tools,
+    # for a Run with a reply of its own whose Bot may ask other Bots (a task
+    # in the Bot's conversation). Fourteen: without the two ask tools, for a
+    # Run with no reply of its own (a task started through the public API) or
+    # a Bot whose "May ask other bots" is off. The test says which it expects.
+    if names == ["ask_bot", "correct_memory", "create_document", "create_routine", "edit_document", "forget_memory", "list_askable_bots", "list_memory", "list_routines", "read_bot_request", "read_document", "read_memory", "read_routine_creation", "remember_memory", "retry_routine_creation", "search_documents"]:
+        trace("native:catalog:16")
+        return
     if names != ["correct_memory", "create_document", "create_routine", "edit_document", "forget_memory", "list_memory", "list_routines", "read_bot_request", "read_document", "read_memory", "read_routine_creation", "remember_memory", "retry_routine_creation", "search_documents"]:
         trace("native:catalog-mismatch:" + str(len(names)))
         raise AssertionError("native catalog mismatch")

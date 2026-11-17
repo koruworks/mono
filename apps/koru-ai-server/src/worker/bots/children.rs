@@ -115,6 +115,13 @@ pub struct RunAskableBot {
 /// The most Bots `list_askable_bots` returns.
 pub const ASKABLE_LIMIT: usize = 64;
 
+/// The code of a call that `ask_bot` or `list_askable_bots` made before this
+/// worker had bound the Run's current turn. Retryable, and nothing was
+/// written: the same call passes once the turn is bound. A Run tool's code,
+/// answered in process to the gateway; it is not one of the AI wire's
+/// `bot_child_codes`, which no client lists it from.
+pub const TURN_NOT_STARTED: &str = "turn_not_started";
+
 /// What the writer is asked for by this module's client calls.
 pub(in crate::worker) enum Incoming {
     Ask {
@@ -124,6 +131,10 @@ pub(in crate::worker) enum Incoming {
     Askable {
         request: RunAskableRequest,
         reply: SyncSender<ApiResult<Vec<RunAskableBot>>>,
+    },
+    MayAsk {
+        request: RunAskableRequest,
+        reply: SyncSender<ApiResult<()>>,
     },
     Cleanup(Box<CleanupIncoming>),
 }
@@ -187,6 +198,35 @@ impl AiWorkerClient {
                 ))
             })
     }
+
+    /// Whether the gateway lists `list_askable_bots` and `ask_bot` to this
+    /// Run: ai.db only, on the writer. `Ok` for a Run that is not a child,
+    /// whose reply this worker holds live, and whose Bot's "May ask other
+    /// bots" is on. It does not need the Run's turn, because a coding agent
+    /// lists its tools when its session starts, before the first input is
+    /// answered.
+    ///
+    /// **It authorizes nothing.** Each call of the two tools is proven again
+    /// by [`Self::askable_bots_for_run`] and [`Self::ask_bots_for_run`],
+    /// which do need the bound turn. In process only: no command, route or
+    /// tool reaches it.
+    pub fn run_may_ask(&self, mut request: RunAskableRequest) -> ApiResult<()> {
+        request.deadline = request.deadline.min(Instant::now() + RESPONSE_TIMEOUT);
+        let deadline = request.deadline;
+        let (reply, response) = sync_channel(1);
+        self.sender
+            .try_send(Envelope::Children(Incoming::MayAsk { request, reply }))
+            .map_err(queue_failure)?;
+        response
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap_or_else(|_| {
+                Err(failure(
+                    "ai_worker_timeout",
+                    "The Bot's setting was not read within its deadline.",
+                    true,
+                ))
+            })
+    }
 }
 
 impl WorkerState {
@@ -195,6 +235,9 @@ impl WorkerState {
             Incoming::Ask { request, reply } => self.start_child_ask(request, reply),
             Incoming::Askable { request, reply } => {
                 let _ = reply.send(self.askable_bots(&request));
+            }
+            Incoming::MayAsk { request, reply } => {
+                let _ = reply.send(self.run_may_ask(&request));
             }
             Incoming::Cleanup(incoming) => self.serve_child_cleanup(*incoming),
         }
@@ -232,6 +275,13 @@ pub(super) fn invalid() -> Failure {
         "invalid_request",
         "The request to other Bots is invalid.",
         false,
+    )
+}
+pub(super) fn turn_not_started() -> Failure {
+    failure(
+        TURN_NOT_STARTED,
+        "This Run's turn has not started yet. Nothing was sent. Call again in a moment.",
+        true,
     )
 }
 pub(super) fn denied() -> Failure {
