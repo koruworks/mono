@@ -21,6 +21,7 @@ scripts/checks/test_oss_checks.py cto * # scanner test samples
 # Third parties' own notices and manifests: their authors' addresses are part
 # of the license text we must reproduce unchanged.
 crates/koru-release/licences/bundled/onnxruntime.txt email * # upstream notice, reproduced verbatim
+crates/koru-release/licences/bundled/oniguruma.txt email * # upstream notice, reproduced verbatim
 crates/koru-release/licences/crates/dlopen2.txt email * # upstream license record, reproduced verbatim
 
 # Frozen bytes, deliberately left: contract vectors are hashed, so they are
