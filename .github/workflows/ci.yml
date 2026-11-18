@@ -17,7 +17,8 @@
 # (GOVERNANCE.md). The app is built and tested on Windows only. Linux
 # runs the checks that do not depend on the platform: formatting, cargo-deny
 # and the repository checks — and, after a merge to main, `linux-check`, which
-# compiles the workspace for Linux, and `android-check`, which builds the
+# compiles the workspace for Linux, `macos-check`, which compiles the read
+# worker's recognition on Apple silicon, and `android-check`, which builds the
 # release APK unsigned. That proves they build, not that they run.
 name: ci
 
@@ -142,6 +143,60 @@ jobs:
       # `--all-targets` type-checks the test modules too.
       - name: cargo check (Linux)
         run: cargo check --workspace --exclude koru-voice-worker --all-targets --locked
+      # **Recognition compiles on Linux too**, as the Windows test job checks
+      # it there: the read worker's `recognition` links ONNX Runtime from
+      # upstream's TTS-free Linux archive, which the fetch script places and
+      # verifies (no voice is built from it; D4). Cached until the pins in
+      # that script change; the fetch then verifies the cached copy.
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.sh') }}
+      - name: Fetch the reader's ONNX Runtime
+        run: bash scripts/setup/fetch-voice-runtime.sh
+      - name: cargo check (recognition, Linux)
+        env:
+          ORT_LIB_PATH: ${{ github.workspace }}/third-party/sherpa-onnx/1.13.6/sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib/lib
+        run: cargo check -p koru-read-worker -p koru-read-paddle -p koru-read-bench --features koru-read-worker/recognition,koru-read-paddle/runtime,koru-read-bench/recognition --all-targets --locked
+
+  # **Recognition compiles on Apple silicon, checked on main only**, as
+  # linux-check is, and kept to the read worker's crates so a macOS runner's
+  # minutes go to the one thing no other job compiles there. The library is
+  # `libonnxruntime.a` from the osx-arm64 archive Mac voice already links,
+  # which the fetch script places, verifies and extracts. The nightly's macOS
+  # job is the backstop that builds the whole app.
+  macos-check:
+    name: macos-check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      SCCACHE_GHA_ENABLED: "true"
+      RUSTC_WRAPPER: sccache
+    steps:
+      # actions/checkout v6.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          submodules: false
+      - name: Fetch third-party code
+        run: bash scripts/setup/fetch-third-party.sh
+      # mozilla-actions/sccache-action v0.0.11
+      - uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.sh') }}
+      - name: Fetch the sherpa-onnx archive
+        run: bash scripts/setup/fetch-voice-runtime.sh
+      - name: cargo check (recognition, macOS)
+        env:
+          ORT_LIB_PATH: ${{ github.workspace }}/third-party/sherpa-onnx/1.13.6/sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib/lib
+        run: cargo check -p koru-read-worker -p koru-read-paddle -p koru-read-bench --features koru-read-worker/recognition,koru-read-paddle/runtime,koru-read-bench/recognition --all-targets --locked
 
   # **The release APK builds, checked on main only**, as linux-check is: the
   # Rust library for both ABIs, the notices, R8 and lintVital, unsigned —
@@ -286,9 +341,10 @@ jobs:
       # else here would notice it breaking. A check needs no library (ort-sys
       # defers it to the link); ORT_LIB_PATH names the one the step above
       # extracted, as koru.bat and run-all.ps1 do, so a later `cargo build`
-      # here would link the same file. Windows x64 only: macOS links it from
-      # its own pinned archive on the mac branch, and on Linux or Windows on
-      # ARM the feature compiles to nothing (TECHNICAL §12).
+      # here would link the same file. Linux x86_64 is checked the same way in
+      # linux-check; macOS links it from its own pinned archive on the mac
+      # branch, and on Windows on ARM the feature compiles to nothing
+      # (TECHNICAL §12).
       - name: cargo check (recognition)
         env:
           ORT_LIB_PATH: ${{ github.workspace }}\third-party\sherpa-onnx\1.13.6\sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib\lib

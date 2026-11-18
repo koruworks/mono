@@ -22,7 +22,7 @@ that the existing maintainers approve.
 | Platform | Status |
 | --- | --- |
 | **Windows** (x64) | **Supported.** Official builds on every channel; CI builds and tests every change on Windows, and packages every merge |
-| **macOS** (Apple silicon) | **Supported.** Stable and nightly builds are published as signed and notarized disk images, built on GitHub from the version tag, and the source builds and runs on a Mac. It links upstream's text-to-speech-free voice runtime, with no eSpeak NG (GPL-3.0), as Windows does ([licensing](licensing/THIRD-PARTY.md#espeak-ng-gpl-30-in-three-shipped-binaries)) |
+| **macOS** (Apple silicon, macOS 13.4+) | **Supported.** Stable and nightly builds are published as signed and notarized disk images, built on GitHub from the version tag, and the source builds and runs on a Mac. It links upstream's text-to-speech-free voice runtime, with no eSpeak NG (GPL-3.0), as Windows does ([licensing](licensing/THIRD-PARTY.md#espeak-ng-gpl-30-in-three-shipped-binaries)) |
 | **Linux** (x86-64) | **Supported.** Koru 0.1.4 (October 31, 2026) is the first stable Linux release: an x86_64 tarball for glibc 2.35 or newer, with nightly builds beside it. Koru runs as an X11 app (XWayland on Wayland desktops). CI checks that the workspace compiles on Linux after every merge |
 | **Android** | **In active development, not released.** Built with Gradle from `apps/android`. It uses Google Play services, which are proprietary |
 | **iOS** | **Held, not released.** The source is here, with its license notices; the first release waits for it to be built and verified on a Mac ([licensing](licensing/README.md#android)) |

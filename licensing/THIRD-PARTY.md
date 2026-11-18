@@ -86,12 +86,12 @@ revision we build.
 | --- | --- | --- |
 | whisper.cpp / ggml (vendored by `whisper-rs-sys` 0.15.0) | MIT, © The ggml authors | `koru-voice-worker` |
 | sherpa-onnx 1.13.6 | Apache-2.0 | `koru-voice-worker` |
-| ONNX Runtime 1.27.1 (static), with its own ThirdPartyNotices | MIT, © Microsoft | `koru-voice-worker`; `koru-read-worker` on Windows x64 (the same library from the same archive, through `ort`, 2026-11-11) |
-| Oniguruma 6.9.10 (built from C by `onig_sys` 69.9.3, under `tokenizers` under `oar-ocr`) | BSD-2-Clause, © K.Kosako | `koru-read-worker` on Windows x64 (2026-11-11) |
+| ONNX Runtime 1.27.1 (static), with its own ThirdPartyNotices | MIT, © Microsoft | `koru-voice-worker`; `koru-read-worker` on Windows x64 (the same library from the same archive, through `ort`, 2026-11-11) and on Linux x86_64 (from upstream's TTS-free Linux archive, 2026-11-17) and macOS on Apple silicon (from the archive Mac voice links, 2026-11-18) |
+| Oniguruma 6.9.10 (built from C by `onig_sys` 69.9.3, under `tokenizers` under `oar-ocr`) | BSD-2-Clause, © K.Kosako | `koru-read-worker` on Windows x64 (2026-11-11), Linux x86_64 (2026-11-17) and macOS on Apple silicon (2026-11-18) |
 | kaldi-native-fbank 1.22.3, kaldi-decoder 0.3.0, OpenFst 1.8.5, simple-sentencepiece 0.7 | Apache-2.0 | `koru-voice-worker` |
 | KISS FFT | BSD-3-Clause | `koru-voice-worker` |
-| piper-phonemize | MIT | **Not linked on any platform** (2026-10-14) |
-| eSpeak NG + ucd-tools | GPL-3.0-or-later | **Not linked on any platform**: gone from Windows 2026-10-11, from macOS 2026-10-14 (a Mac link test is owed, ⚑1) |
+| piper-phonemize | MIT | **Not linked on any platform** (2026-10-14; the Linux x86_64 archive verified free of it 2026-11-17) |
+| eSpeak NG + ucd-tools | GPL-3.0-or-later | **Not linked on any platform**: gone from Windows 2026-10-11, from macOS 2026-10-14 (a Mac link test is owed, ⚑1); the Linux x86_64 archive verified free of both 2026-11-17 |
 | SQLite (`rusqlite` `bundled`) | Public domain | nothing owed |
 
 The speech runtimes are linked into the voice worker only. `koru-agent` and
@@ -131,6 +131,7 @@ static and TTS-free, for every platform, so Koru links those and builds nothing:
 | Windows x64 | `sherpa-onnx-v1.13.6-win-x64-static-MT-Release-no-tts-lib.tar.bz2` | `6c746e0f…` |
 | macOS arm64 | `sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib.tar.bz2` | `5df455ff…` |
 | macOS x64 (source builds only; releases are Apple silicon) | `sherpa-onnx-v1.13.6-osx-x64-static-no-tts-lib.tar.bz2` | `adcc1de3…` |
+| Linux x64 (the read worker's ONNX Runtime only; Linux links no voice yet) | `sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib.tar.bz2` | `b6d61f88…` |
 
 - **What is in them.** None has `espeak-ng`, `ucd` or `piper_phonemize`, and
   none contains eSpeak NG's code: a byte search of every library for its API
@@ -138,7 +139,23 @@ static and TTS-free, for every platform, so Koru links those and builds nothing:
   `phonindex`) and ucd (`ucd_lookup_category`) finds nothing, while the same
   search finds them in upstream's ordinary macOS archive, in `libespeak-ng.a`
   *and* inside `libsherpa-onnx-core.a`. The Windows archive has the same eleven
-  libraries as our own build had.
+  libraries as our own build had. The Linux archive has the same twelve as
+  macOS, PortAudio included (never linked).
+- **The Linux x64 archive, verified 2026-11-17.** SHA-256
+  `b6d61f8836ea247cf529ea411e12c9fc35314f0217278a3d61195672a4778e6a`,
+  21,170,001 bytes, the digest upstream's release lists. The same byte search
+  finds none of eSpeak NG, ucd or piper-phonemize in it, while upstream's
+  ordinary Linux archive has all three; its text-to-speech C functions are
+  stubs that return nothing. Its `lib/libonnxruntime.a` (SHA-256
+  `9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea`,
+  109,507,520 bytes) is byte-identical to the ordinary archive's, reports
+  1.27.1, and was built by GCC 11.2 for a glibc 2.17 baseline. A read worker
+  linked against it through `ort` contains no GPL or LGPL text, depends only
+  on `libc`, `libm`, `libstdc++` and `libgcc_s`, and linked on a glibc 2.41
+  machine asks for nothing newer than `GLIBC_2.34`; the Linux release job
+  checks every packaged binary against the 2.35 floor. A link of the ten libraries voice would take is just as
+  clean, so this check clears Linux voice's licensing too (D4); what is left
+  there is engineering.
 - **How they are linked.** `sherpa-onnx` and `sherpa-onnx-sys` 1.13.6 are fetched
   from crates.io and patched (`third-party/patches/`,
   [ADR-458](../docs/decisions/ADR-458-fetchedthirdparty.md)): the safe wrapper
@@ -220,7 +237,8 @@ kind; `cargo deny check licenses` passes unchanged. In every desktop build
 ## The reader: oar-ocr on ONNX Runtime (2026-11-11)
 
 `koru-read-worker` built with its `recognition` feature — the product build on
-Windows x64, where the ONNX Runtime library is pinned — links
+Windows x64, Linux x86_64 and macOS on Apple silicon, where the ONNX Runtime
+library is pinned — links
 `koru-read-paddle`'s runtime: `oar-ocr` 0.10.2 and `oar-ocr-core` 0.10.2
 (Apache-2.0), `ort` and `ort-sys` 2.0.0-rc.13 (MIT OR Apache-2.0), and what
 they bring: `tokenizers`, `ndarray`, `nalgebra`, `imageproc`, `clipper2-rust`,
@@ -232,12 +250,22 @@ walk turns on the same feature the package build does, so every crate
 recognition brings is attributed exactly where it ships ✅.
 
 Two native components come with it, both in `licences/bundled/`
-(`Platforms: windows`):
+(Oniguruma `Platforms: windows, macos, linux`; ONNX Runtime's file already covers
+every desktop):
 
 - **ONNX Runtime 1.27.1**, the same static library from the same pinned
   sherpa-onnx archive voice links (`onnxruntime.txt`, whose `Files` line now
   names the read worker). One ONNX Runtime in the tree; `ort` downloads nothing
-  and the executable imports no ONNX Runtime DLL ✅.
+  and the executable imports no ONNX Runtime DLL ✅. On Linux x86_64 it is the
+  same 1.27.1 from upstream's TTS-free Linux archive of the same release,
+  pinned by the reader alone until Linux voice lands (2026-11-17) ✅. On
+  Apple silicon it is `lib/libonnxruntime.a` from the osx-arm64 archive Mac
+  voice links (sha256 `93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e`,
+  69,439,552 bytes, its objects built for macOS 13.4, the Mac minimum since
+  2026-11-18) ✅. Its
+  ThirdPartyNotices include Eigen (MPL-2.0), compiled in; MPL §3.2(a) asks a
+  binary to say where Eigen's source is, so the notice now names
+  `https://gitlab.com/libeigen/eigen` ✅.
 - **Oniguruma**, the C regular-expression library `onig_sys` compiles
   (`oniguruma.txt`). `onig_sys`'s own MIT license arrives with the crate;
   Oniguruma's BSD-2-Clause sits in a subdirectory the generator does not read,
