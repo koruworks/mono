@@ -17206,6 +17206,32 @@
           {
             "additionalProperties": false,
             "properties": {
+              "before": {
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "recent_history"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "bot": {
                 "format": "uuid",
                 "type": "string"

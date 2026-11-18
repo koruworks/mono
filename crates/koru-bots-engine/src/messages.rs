@@ -110,6 +110,7 @@ pub struct Message {
     pub sender: String,
     pub kind: String,
     pub content: Content,
+    pub created_at_ms: i64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

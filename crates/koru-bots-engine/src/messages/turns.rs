@@ -102,7 +102,7 @@ impl Database {
             session,
         };
         tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE state='open' AND turn IN (SELECT id FROM turns WHERE bot=?1 AND thread=?2)",params![bot.to_string(),thread.to_string()])?;
-        tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms) SELECT ?1,?2,id,?3,access,'running',?4,?5,x'7b7d',?6 FROM bots WHERE id=?7",params![turn.id.to_string(),thread.to_string(),session.to_string(),generation,worker.to_string(),now,bot.to_string()])?;
+        tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms,reply_message) SELECT ?1,?2,id,?3,access,'running',?4,?5,x'7b7d',?6,?8 FROM bots WHERE id=?7",params![turn.id.to_string(),thread.to_string(),session.to_string(),generation,worker.to_string(),now,bot.to_string(),Uuid::new_v4().to_string()])?;
         let boundary: u64 = tx.query_row(
             "SELECT COALESCE(MAX(sequence),0) FROM messages WHERE thread=?1",
             [thread.to_string()],
@@ -149,7 +149,7 @@ impl Database {
                 fresh.push(obligation.clone());
                 let row: Message = tx
                     .query_row(
-                        "SELECT sequence,sender,kind,payload FROM messages WHERE id=?1",
+                        "SELECT sequence,sender,kind,payload,accepted_at_ms FROM messages WHERE id=?1",
                         [message],
                         |r| {
                             Ok((
@@ -157,17 +157,19 @@ impl Database {
                                 r.get::<_, String>(1)?,
                                 r.get::<_, String>(2)?,
                                 r.get::<_, Vec<u8>>(3)?,
+                                r.get::<_, i64>(4)?,
                             ))
                         },
                     )
                     .map_err(Error::from)
-                    .and_then(|(sequence, sender, kind, payload)| {
+                    .and_then(|(sequence, sender, kind, payload, created_at_ms)| {
                         Ok(Message {
                             id: id(message.clone())?,
                             sequence,
                             sender,
                             kind,
                             content: decode(&payload)?,
+                            created_at_ms,
                         })
                     })?;
                 delivery.work.push(history::input(row));

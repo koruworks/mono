@@ -13,9 +13,9 @@ pub(super) fn read(
 ) -> Result<Vec<Message>, Error> {
     // SQL is chosen from two static statements, never interpolated content.
     let sql = if descending {
-        "SELECT id,sequence,sender,kind,payload FROM messages m WHERE thread=?1 AND sequence>?2 AND sequence<=?3 AND (?5 IS NULL OR NOT EXISTS(SELECT 1 FROM obligations o WHERE o.message=m.id AND o.bot=?5 AND o.state IN ('owed','delivered'))) ORDER BY sequence DESC LIMIT ?4"
+        "SELECT id,sequence,sender,kind,payload,accepted_at_ms FROM messages m WHERE thread=?1 AND sequence>?2 AND sequence<=?3 AND (?5 IS NULL OR NOT EXISTS(SELECT 1 FROM obligations o WHERE o.message=m.id AND o.bot=?5 AND o.state IN ('owed','delivered'))) ORDER BY sequence DESC LIMIT ?4"
     } else {
-        "SELECT id,sequence,sender,kind,payload FROM messages m WHERE thread=?1 AND sequence>?2 AND sequence<=?3 AND (?5 IS NULL OR NOT EXISTS(SELECT 1 FROM obligations o WHERE o.message=m.id AND o.bot=?5 AND o.state IN ('owed','delivered'))) ORDER BY sequence LIMIT ?4"
+        "SELECT id,sequence,sender,kind,payload,accepted_at_ms FROM messages m WHERE thread=?1 AND sequence>?2 AND sequence<=?3 AND (?5 IS NULL OR NOT EXISTS(SELECT 1 FROM obligations o WHERE o.message=m.id AND o.bot=?5 AND o.state IN ('owed','delivered'))) ORDER BY sequence LIMIT ?4"
     };
     let mut statement = connection.prepare(sql)?;
     let rows = statement.query_map(
@@ -33,13 +33,14 @@ pub(super) fn read(
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, Vec<u8>>(4)?,
+                row.get::<_, i64>(5)?,
             ))
         },
     )?;
     let mut result = vec![];
     let mut bytes = 0usize;
     for row in rows {
-        let (key, sequence, sender, kind, payload) = row?;
+        let (key, sequence, sender, kind, payload, created_at_ms) = row?;
         if !result.is_empty() && bytes.saturating_add(payload.len()) > byte_budget {
             break;
         }
@@ -50,6 +51,7 @@ pub(super) fn read(
             sender,
             kind,
             content: decode(&payload)?,
+            created_at_ms,
         });
     }
     Ok(result)
@@ -112,6 +114,33 @@ fn cut(message: &mut InputMessage, mut bytes: usize) {
 }
 
 impl Database {
+    /// Open at the recent end without reading the entire transcript. A page
+    /// is ascending for display; its first sequence is the exclusive bound
+    /// for the preceding page, so concurrent appends do not move that cursor.
+    pub fn read_recent_messages(
+        &self,
+        person: &Person,
+        thread: Uuid,
+        before: Option<u64>,
+    ) -> Result<Vec<Message>, Error> {
+        authorize_thread(&self.connection, person, thread)?;
+        if before == Some(0) {
+            return Err(Error::InvalidRequest);
+        }
+        let upper = before.map_or(i64::MAX as u64, |sequence| sequence - 1);
+        let mut messages = read(
+            &self.connection,
+            thread,
+            0,
+            upper.min(i64::MAX as u64),
+            PAGE_LIMIT,
+            true,
+            None,
+            koru_bot_client_wire::limits::MAX_PAGE_BYTES as usize,
+        )?;
+        messages.reverse();
+        Ok(messages)
+    }
     pub fn read_messages(
         &self,
         person: &Person,

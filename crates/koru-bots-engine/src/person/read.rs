@@ -144,15 +144,22 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
             let thread = thread(c, who, key)?;
             // Terminal history lives in messages. Only current attention/work
             // is projected here, bounded separately from the transcript.
-            let turns=c.prepare("SELECT id,bot,state,generation,session,worker_incarnation,details FROM turns t WHERE thread=?1 AND state IN ('running','needs_you','parked','interrupted') AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.thread=t.thread AND newer.bot=t.bot AND newer.generation>t.generation) ORDER BY created_at_ms,id LIMIT 64")?.query_map([key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,u64>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Vec<u8>>(6)?)))?.map(|row|{let row=row?; Ok(serde_json::json!({"id":row.0,"bot":row.1,"state":row.2,"generation":row.3,"session":row.4,"worker":row.5,"details":decode::<Value>(&row.6)?}))}).collect::<Result<Vec<Value>,Error>>()?;
+            let turns=c.prepare("SELECT id,bot,state,generation,session,worker_incarnation,details,reply_message,created_at_ms FROM turns t WHERE thread=?1 AND state IN ('running','needs_you','parked','interrupted') AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.thread=t.thread AND newer.bot=t.bot AND newer.generation>t.generation) ORDER BY created_at_ms,id LIMIT 64")?.query_map([key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,u64>(3)?,r.get::<_,Option<String>>(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Vec<u8>>(6)?,r.get::<_,Option<String>>(7)?,r.get::<_,i64>(8)?)))?.map(|row|{let row=row?; Ok(ActiveTurn {id:id(row.0)?,bot:id(row.1)?,state:row.2,generation:row.3,session:row.4.map(id).transpose()?,worker:row.5.map(id).transpose()?,details:decode::<Value>(&row.6)?,reply_message:row.7.map(id).transpose()?,created_at_ms:row.8})}).collect::<Result<Vec<_>,Error>>()?;
             let waiting: u64 = c.query_row(
-                "SELECT count(*) FROM inbox WHERE thread=?1",
+                "SELECT count(*) FROM inbox i JOIN obligations o ON o.id=i.id WHERE i.thread=?1 AND o.state='owed'",
                 [key.to_string()],
                 |r| r.get(0),
             )?;
-            value(serde_json::json!({"thread":thread,"turns":turns,"waiting_messages":waiting}))
+            value(ThreadView {
+                thread,
+                turns,
+                waiting_messages: waiting,
+            })
         }
         Query::History { thread, after } => value(db.read_messages(who, thread, after)?),
+        Query::RecentHistory { thread, before } => {
+            value(db.read_recent_messages(who, thread, before)?)
+        }
         Query::Questions { thread } => value(db.read_questions(who, thread)?),
         Query::Outputs { thread, after } => {
             messages::authorize_thread(c, who, thread)?;

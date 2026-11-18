@@ -80,6 +80,10 @@ impl Command {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    RecentHistory {
+        thread: Uuid,
+        before: Option<u64>,
+    },
     ConversationSettings {
         bot: Uuid,
         thread: Uuid,
@@ -298,6 +302,24 @@ pub struct Thread {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub settings: crate::configuration::ConversationSettings,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ActiveTurn {
+    pub id: Uuid,
+    pub bot: Uuid,
+    pub state: String,
+    pub generation: u64,
+    pub session: Option<Uuid>,
+    pub worker: Option<Uuid>,
+    pub reply_message: Option<Uuid>,
+    pub created_at_ms: i64,
+    pub details: Value,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThreadView {
+    pub thread: Thread,
+    pub turns: Vec<ActiveTurn>,
+    pub waiting_messages: u64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

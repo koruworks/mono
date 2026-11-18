@@ -4,6 +4,7 @@ use rusqlite::params;
 mod input_budget;
 mod scripted;
 mod steering;
+mod presentation;
 
 struct Fixture {
     db: Database,

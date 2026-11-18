@@ -22,12 +22,13 @@ impl Database {
         }
         let thread = id(thread)?;
         let bot = id(bot)?;
-        let next: Option<(String, String, u64, String, String, Vec<u8>)> = tx.query_row(
-            "SELECT o.id,m.id,m.sequence,m.sender,m.kind,m.payload FROM obligations o JOIN inbox i ON i.id=o.id JOIN messages m ON m.id=o.message WHERE o.thread=?1 AND o.bot=?2 AND o.state='owed' AND (json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?4) AND NOT EXISTS(SELECT 1 FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery WHERE x.obligation=o.id AND d.turn=?3) ORDER BY m.sequence,o.id LIMIT 1",
+        let next: Option<(String, String, u64, String, String, Vec<u8>, i64)> = tx.query_row(
+            "SELECT o.id,m.id,m.sequence,m.sender,m.kind,m.payload,m.accepted_at_ms FROM obligations o JOIN inbox i ON i.id=o.id JOIN messages m ON m.id=o.message WHERE o.thread=?1 AND o.bot=?2 AND o.state='owed' AND (json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?4) AND NOT EXISTS(SELECT 1 FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery WHERE x.obligation=o.id AND d.turn=?3) ORDER BY m.sequence,o.id LIMIT 1",
             params![thread.to_string(),bot.to_string(),turn.id.to_string(),now],
-            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?)),
+            |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?,r.get(6)?)),
         ).optional()?;
-        let Some((obligation, message, sequence, sender, kind, payload)) = next else {
+        let Some((obligation, message, sequence, sender, kind, payload, created_at_ms)) = next
+        else {
             return Ok(None);
         };
         let boundary: u64 = tx.query_row(
@@ -58,6 +59,7 @@ impl Database {
                 sender,
                 kind,
                 content: decode(&payload)?,
+                created_at_ms,
             })],
             older_history_available,
             continuation: false,

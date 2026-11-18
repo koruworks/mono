@@ -39,7 +39,11 @@ impl Database {
         {
             return Err(Error::InvalidRequest);
         }
-        let message = Uuid::new_v4();
+        let message = id(tx.query_row(
+            "SELECT reply_message FROM turns WHERE id=?1",
+            [request.turn.id.to_string()],
+            |r| r.get::<_, String>(0),
+        )?)?;
         let thread_id = id(thread.clone())?;
         let content = Content {
             body: request.body.clone(),

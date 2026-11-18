@@ -6,6 +6,7 @@ mod lifecycle;
 mod lists;
 mod permissions;
 mod settings;
+mod presentation;
 
 struct Fixture {
     db: Database,

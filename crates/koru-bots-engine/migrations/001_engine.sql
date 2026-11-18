@@ -121,6 +121,9 @@ CREATE TABLE obligations (
 CREATE INDEX owed_for_bot ON obligations(bot, thread, state, accepted_at_ms, id);
 CREATE TABLE turns (
     id TEXT PRIMARY KEY,
+    -- Reserved when a real turn starts; Publish uses this same message id.
+    -- Setup-failure records have no reply because no agent turn started.
+    reply_message TEXT UNIQUE,
     thread TEXT NOT NULL REFERENCES threads(id),
     bot TEXT NOT NULL REFERENCES bots(id),
     session TEXT,
