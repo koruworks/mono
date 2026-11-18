@@ -123,6 +123,7 @@ mod session_lanes;
 mod snapshot_prompt;
 pub mod tab;
 pub mod tab_rules;
+mod task_events;
 pub(crate) mod taskcounts;
 pub(crate) mod tasks;
 mod terminal_look;
@@ -747,6 +748,10 @@ pub struct MainView {
     /// What the tasks rail's numbers come from — one query per refresh on a
     /// worker thread, and nothing at all while the rail is not showing.
     task_counts: taskcounts::TaskCountsPanel,
+    /// The Store saying this workspace's tasks changed, from another device
+    /// or another window: what refreshes the rail and the Tasks page without
+    /// waiting for their timers.
+    task_events: task_events::TaskEvents,
     document_appearances: document_appearance::DocumentAppearances,
     /// **The one place the local date is watched.** Every bucket is a function
     /// of *today*, so midnight — and waking on the other side of one — makes all
@@ -1943,6 +1948,7 @@ impl MainView {
             cloud_images_due: true,
             cloud_images: (0, Vec::new()),
             task_counts: taskcounts::TaskCountsPanel::default(),
+            task_events: task_events::TaskEvents::default(),
             document_appearances: document_appearance::DocumentAppearances::default(),
             tasks_day: crate::tasks_view::query::DayWatch::default(),
             context_tasks_stale: true,
@@ -2206,6 +2212,12 @@ impl MainView {
             }
         }));
         self.run_index.set_waker(std::sync::Arc::new({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        }));
+        self.task_events.set_waker(std::sync::Arc::new({
             let proxy = proxy.clone();
             move || {
                 let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
@@ -15993,6 +16005,15 @@ impl View for MainView {
             self.explore
                 .set_document_appearances(self.document_appearances.rows.clone());
         }
+        // The Store said this workspace's tasks changed — a move on another
+        // device, a tick in another window. The same door a write from this
+        // window uses, so the rail and the page ask now rather than on their
+        // half-minute timers.
+        if self.task_events.take_changed(self.current_workspace()) {
+            self.tasks_changed();
+        }
+        let told = self.task_events.live();
+        self.task_counts.set_event_driven(told);
         let counts_changed = self
             .task_counts
             .maintain(self.current_workspace(), rail_visible, now);
@@ -16030,6 +16051,7 @@ impl View for MainView {
                 if let TabView::Tasks(t) = &mut tab.view {
                     let target = t.target();
                     let in_front = i == group_active;
+                    t.panel_mut().set_event_driven(told);
                     if t.panel_mut()
                         .maintain(workspace, Some(target), in_front, now)
                     {

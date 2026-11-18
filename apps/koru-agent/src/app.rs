@@ -557,6 +557,9 @@ pub struct Agent {
     sync_identity: Option<koru_device::StoredLocalDevice>,
     sync_control: Option<crate::service::SyncControl>,
     account: Option<crate::account::AccountControl>,
+    /// The account state last pushed to every window, so a wake that names
+    /// the same state pushes nothing.
+    last_account_pushed: Option<koru_agent_wire::AccountState>,
     /// Whether this build has a Koru Cloud (`koru_env::cloud_configured`),
     /// told by `run` before the loop. It decides what an Agent with no
     /// account capability answers: *not configured* rather than the
@@ -1018,6 +1021,7 @@ impl Agent {
             sync_identity: None,
             sync_control: None,
             account: None,
+            last_account_pushed: None,
             cloud_configured: true,
             account_generations: HashMap::new(),
             pending_profile_cleanup: std::collections::HashSet::new(),
@@ -7736,6 +7740,15 @@ impl WindowApp for Agent {
             AgentEvent::AccountChanged => {
                 if let Some(control) = &self.account {
                     let state = control.state();
+                    // Several wakes can name one state — the Cloud pass, the
+                    // account worker and the enrollment responder each wake
+                    // this — and a window that is told the same thing twice
+                    // reads it twice. A connection that arrives later is told
+                    // on its hello, not here.
+                    if self.last_account_pushed.as_ref() == Some(&state) {
+                        return false;
+                    }
+                    self.last_account_pushed = Some(state.clone());
                     for connection in self
                         .connections
                         .iter()

@@ -229,6 +229,44 @@ fn only_an_agent_acknowledged_device_id_enables_durable_oauth_scope() {
     assert!(!entry.account().contains("koru-data"));
 }
 
+/// An unchanged presence is not sent again; a changed one is, and so is the
+/// stored one when a replacement Agent connects.
+#[test]
+fn the_same_presence_is_sent_once() {
+    let (link, sent) = AgentLink::for_test();
+    let hello = |workspace: &str| {
+        link.hello(
+            koru_core::ProfileId::parse(P).unwrap(),
+            koru_core::WorkspaceId::parse(workspace).unwrap(),
+            "Profile",
+            "Workspace",
+            &[],
+        )
+    };
+    hello(W);
+    hello(W);
+    hello(W);
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(FromShell::Request {
+            body: Request::Hello { .. },
+            ..
+        })
+    ));
+    assert!(sent.try_recv().is_err(), "the repeats were not sent");
+    hello(D);
+    assert!(
+        matches!(
+            sent.try_recv(),
+            Ok(FromShell::Request {
+                body: Request::Hello { .. },
+                ..
+            })
+        ),
+        "another workspace is news"
+    );
+}
+
 #[test]
 fn replacement_connection_replays_the_latest_window_presence() {
     let (link, first) = AgentLink::for_test();

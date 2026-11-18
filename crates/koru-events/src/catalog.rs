@@ -680,6 +680,20 @@ payload!(DueChanged, "due.changed", |self| {
         .attr("entity_id", AttrValue::Id(self.entity_id))
 });
 
+/// A workspace's tasks changed, as the Store's read model now answers them:
+/// one appeared or went, was ticked, dated, renamed, moved in its list or
+/// filed under another — on this device or arriving from another. The
+/// Tasks surfaces' one outside trigger; they ask the read model again.
+pub struct TasksChanged {
+    pub workspace_id: Uuid,
+}
+
+payload!(TasksChanged, "projection.tasks.changed", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .workspace(WorkspaceId(self.workspace_id))
+        .subject(Subject::workspace(self.workspace_id.to_string()))
+});
+
 pub struct EntityRemoved {
     pub workspace_id: Uuid,
     pub document_id: Uuid,

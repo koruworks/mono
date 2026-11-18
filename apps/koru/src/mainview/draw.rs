@@ -76,6 +76,7 @@ impl MainView {
         self.reminder_preferences
             .set_client(workspace.store_client());
         self.reminders.set_client(workspace.store_client());
+        self.task_events.set_client(workspace.store_client());
         // The Welcome ticks come off a worker thread too; no request here.
         self.welcome_progress.set_client(workspace.store_client());
         // A Welcome tab made anywhere (a closed last tab, + → Welcome, a

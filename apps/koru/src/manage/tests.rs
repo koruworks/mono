@@ -137,8 +137,8 @@ fn the_nav_lays_out_in_order_and_every_row_is_pressed_where_it_is_drawn() {
     assert_eq!(
         order,
         vec![
-            nav::Entry::Devices,
             nav::Entry::Cloud,
+            nav::Entry::Devices,
             nav::Entry::Profile(a),
             nav::Entry::Profile(b),
             nav::Entry::Hidden,
@@ -245,8 +245,11 @@ fn arrows_walk_the_nav_and_enter_shows_the_row() {
     assert_eq!(view.focus(), Some(nav::Entry::Profile(work.id)));
     assert!(key(&mut view, NamedKey::Enter));
     assert_eq!(view.page(), Some(Page::Profile(work.id)));
-    // Up from the first row wraps to the last.
+    // Up walks back out of the Profiles into the sync options: *Linked
+    // devices*, then *Koru Cloud* at the top.
     assert!(key(&mut view, NamedKey::ArrowUp));
+    assert!(key(&mut view, NamedKey::ArrowUp));
+    assert_eq!(view.focus(), Some(nav::Entry::Devices));
     assert!(key(&mut view, NamedKey::ArrowUp));
     assert_eq!(view.focus(), Some(nav::Entry::Cloud));
     assert!(key(&mut view, NamedKey::Enter));
@@ -312,7 +315,7 @@ fn the_nav_and_the_page_are_settings_centred_group() {
 }
 
 /// Narrower than Settings' compact width the nav is chips across the top —
-/// every Profile, *New profile*, *Linked devices* and *Koru Cloud* — and the
+/// every Profile, *New profile*, *Koru Cloud* and *Linked devices* — and the
 /// page starts under them.
 #[test]
 fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
@@ -325,8 +328,8 @@ fn a_narrow_tab_puts_the_nav_in_chips_above_the_page() {
     assert_eq!(
         order,
         vec![
-            nav::Entry::Devices,
             nav::Entry::Cloud,
+            nav::Entry::Devices,
             nav::Entry::Profile(personal.id),
             nav::Entry::Profile(work.id),
             nav::Entry::NewProfile,
@@ -619,7 +622,15 @@ fn a_screen_reader_hears_the_nav_as_options_and_the_page_as_a_heading() {
     let nav = &tree.children[0];
     assert_eq!(nav.role, accesskit::Role::ListBox);
     assert_eq!(nav.size_of_set, Some(nav.children.len()));
-    assert_eq!(nav.children.len(), 5, "Devices, Cloud, two Profiles, New");
+    assert_eq!(nav.children.len(), 5, "Cloud, Devices, two Profiles, New");
+    assert!(
+        nav.children[0]
+            .label
+            .as_deref()
+            .is_some_and(|label| label.starts_with("Koru Cloud")),
+        "Koru Cloud is the first sync option: {:?}",
+        nav.children[0].label
+    );
     assert!(
         nav.children
             .iter()
@@ -635,7 +646,7 @@ fn a_screen_reader_hears_the_nav_as_options_and_the_page_as_a_heading() {
     assert_eq!(heading.label.as_deref(), Some("Personal"));
 
     // Pressing an option is the click.
-    let devices: Occurrence = nav.children[0].occurrence;
+    let devices: Occurrence = nav.children[1].occurrence;
     assert!(view.accessibility_action(&cx, devices, accesskit::Action::Click));
     assert_eq!(view.page(), Some(Page::Devices));
     let tree = view.semantics(&cx);

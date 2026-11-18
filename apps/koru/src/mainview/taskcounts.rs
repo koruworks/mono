@@ -48,13 +48,14 @@ use chrono::NaiveDate;
 use koru_core::WorkspaceId;
 use koru_store_wire::tasks::{BucketWindows, LifecycleFilter, TaskQuery, TaskQueryResponse};
 
-/// How often the numbers are asked for again while the rail is on screen.
+/// How often the numbers are asked for again while the rail is on screen
+/// **and nothing is telling it when to**.
 ///
-/// **Coarse on purpose.** A count is context, not a live readout: a task
-/// completed in this window refreshes it immediately through
-/// [`TaskCountsPanel::invalidate`], and everything else — a peer's edit, a
-/// document imported in another window — is worth at most half a minute of
-/// staleness against a query per workspace.
+/// A task completed in this window refreshes it immediately through
+/// [`TaskCountsPanel::invalidate`], and so does the Store's own
+/// `projection.tasks.changed` for everything else — a peer's edit, a
+/// document imported in another window (`mainview::task_events`). This
+/// interval is what is left for a Store that publishes no events.
 const REFRESH_EVERY: Duration = Duration::from_secs(30);
 
 /// The corpus-wide count and overdue share of one list, keyed by its stored id.
@@ -84,6 +85,9 @@ pub struct TaskCountsPanel {
     client: Option<koru_api_client::Client>,
     workspace: Option<WorkspaceId>,
     visible: bool,
+    /// Whether the Store's task events are being heard; see
+    /// [`REFRESH_WHEN_TOLD`](crate::tasks_view::query::REFRESH_WHEN_TOLD).
+    told: bool,
     generation: u64,
     receiver: Option<Receiver<Stamped>>,
     next_refresh: Option<Instant>,
@@ -118,6 +122,26 @@ impl TaskCountsPanel {
     /// Cache the store client supplied during drawing. **No request is made
     /// here** — the maintenance hook owns every piece of background work, and
     /// a view with no client (every unit test) makes none at all.
+    /// Say whether the Store's task events are being heard: the timer is the
+    /// way the numbers learn anything only while they are not.
+    pub fn set_event_driven(&mut self, told: bool) {
+        if self.told == told {
+            return;
+        }
+        self.told = told;
+        if !told && let Some(due) = self.next_refresh {
+            self.next_refresh = Some(due.min(Instant::now() + REFRESH_EVERY));
+        }
+    }
+
+    fn refresh_every(&self) -> Duration {
+        if self.told {
+            crate::tasks_view::query::REFRESH_WHEN_TOLD
+        } else {
+            REFRESH_EVERY
+        }
+    }
+
     pub fn set_client(&mut self, client: Option<koru_api_client::Client>) {
         self.client = client;
     }
@@ -320,7 +344,7 @@ impl TaskCountsPanel {
             && self.receiver.is_none()
             && self.next_refresh.is_some_and(|due| due <= now)
         {
-            self.next_refresh = Some(now + REFRESH_EVERY);
+            self.next_refresh = Some(now + self.refresh_every());
             changed |= self.start();
         }
         changed

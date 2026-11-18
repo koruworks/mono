@@ -1537,10 +1537,21 @@ impl AgentLink {
             pinned: pinned.to_vec(),
             reopen_claim: self.reopen_claim.clone(),
         };
-        *self
-            .presence
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = Some(hello.clone());
+        {
+            let mut presence = self
+                .presence
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            // **The same presence is not news.** The window calls this when
+            // anything in its context may have moved — the account state
+            // included — and the Agent answers every hello with five pushes,
+            // so an unchanged one sent every few seconds was a loop of its
+            // own (2026-11-17). A reconnect still replays the stored one.
+            if presence.as_ref() == Some(&hello) {
+                return;
+            }
+            *presence = Some(hello.clone());
+        }
         self.request(hello);
     }
 

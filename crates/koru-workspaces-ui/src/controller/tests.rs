@@ -1250,6 +1250,27 @@ fn trashed_in_account(acknowledged: bool) -> Recovery {
     }
 }
 
+/// The pending restore-to answers: `restored` is whether the Store brought
+/// the workspace back.
+fn settle_restore_to(c: &mut WorkspacesController, restored: bool) -> bool {
+    let command = c
+        .pending
+        .iter()
+        .find_map(|(id, pending)| matches!(pending, Pending::RestoreTo { .. }).then_some(*id))
+        .expect("a restore-to is pending");
+    let result = if restored {
+        Ok(())
+    } else {
+        Err(koru_store_core::Error::bare(
+            koru_store_core::Code::StorageFailed,
+        ))
+    };
+    c.receive(Answer::Settled(
+        command,
+        Box::new(Answer::RestoredTo(result)),
+    ))
+}
+
 fn with_profiles(c: &mut WorkspacesController) {
     c.adopt_profiles(&[
         ProfileRow {
@@ -1344,7 +1365,7 @@ fn accepting_restore_to_makes_one_call_and_words_what_it_came_to() {
     c.perform(Action::RestoreTo(id('d'), elsewhere()));
     assert!(c.dialog().is_none());
 
-    assert!(c.fixture_restored_to(true));
+    assert!(settle_restore_to(&mut c, true));
     assert!(!c.has_pending());
     assert_eq!(
         c.notice_for(elsewhere()).map(Notice::text),
@@ -1356,7 +1377,7 @@ fn accepting_restore_to_makes_one_call_and_words_what_it_came_to() {
     // A refusal says so and names the workspace; nothing moved.
     c.perform(Action::RestoreTo(id('d'), elsewhere()));
     c.answer(Outcome::Confirm);
-    assert!(c.fixture_restored_to(false));
+    assert!(settle_restore_to(&mut c, false));
     assert_eq!(
         c.notice_for(elsewhere()).map(Notice::text),
         Some("Koru couldn't restore PM. It is still in the Trash.")

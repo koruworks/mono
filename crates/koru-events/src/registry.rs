@@ -446,6 +446,13 @@ pub const AREAS: &[&str] = &[
     // service, and the distinct id its batches carry is a keyed hash of an
     // app connection, never an installation's.
     "mcp",
+    // What the Store's read model now answers, when that moved. Its own area
+    // rather than a row under `task`: ADR-273 holds `task` to the twelve
+    // facts a command on this device states, and these are a different kind
+    // of thing — derived as the read model is written, whichever device or
+    // window made the change, and content-free. `due` and `entity` are older
+    // wakes of the same kind, named before there was a second one to group.
+    "projection",
     // Reading the words out of pictures and PDFs (OCR TECHNICAL §10): the
     // reader's download installed and removed. Its own area rather than a
     // corner of `search`, whose one event is deliberately `search.opened`;
@@ -628,6 +635,25 @@ pub const REGISTRY: &[EventSpec] = &[
             doc: "The removed node id, meaningful with the document subject.",
         }],
         doc: "A previously projected entity disappeared from a current document projection. This observed transition is a cleanup wake, never permission to infer deletion from a cold projection.",
+    },
+    EventSpec {
+        name: "projection.tasks.changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "A workspace's tasks changed, as the Store's task read model now \
+              answers them: a task appeared or went, was completed or reopened, \
+              dated, prioritised, renamed, reordered in its list or moved to \
+              another. Derived from the read model as it is written, so it \
+              fires for a change made on this device and for one that arrived \
+              from a peer or the Cloud alike; subject = the workspace. \
+              COALESCED: at most one per workspace per projector tick, however \
+              many documents changed in it. Content-free — no task, document \
+              or node is named — so a consumer asks `POST /v1/tasks/query` \
+              again. A trigger, never truth: a consumer that missed one is \
+              only as stale as its own next read. The `task.*` rows say \
+              what a command on this device did; this says the answer moved.",
     },
     EventSpec {
         name: "document.created",

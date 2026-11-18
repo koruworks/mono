@@ -1784,29 +1784,6 @@ impl WorkspacesController {
         ))
     }
 
-    /// The restore-to that is pending answered: `restored` is whether the
-    /// Store brought the workspace back.
-    pub fn fixture_restored_to(&mut self, restored: bool) -> bool {
-        let Some(command) = self
-            .pending
-            .iter()
-            .find_map(|(id, pending)| matches!(pending, Pending::RestoreTo { .. }).then_some(*id))
-        else {
-            return false;
-        };
-        let result = if restored {
-            Ok(())
-        } else {
-            Err(koru_store_core::Error::bare(
-                koru_store_core::Code::StorageFailed,
-            ))
-        };
-        self.receive(Answer::Settled(
-            command,
-            Box::new(Answer::RestoredTo(result)),
-        ))
-    }
-
     /// A lifecycle operation refused part-way (S24): the notice, with a retry
     /// of the same action on the same workspace.
     pub fn fixture_partial_failure(&mut self, action: Action) -> bool {

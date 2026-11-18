@@ -239,6 +239,27 @@ pub enum Failure {
     AccountDamaged(AccountDamage),
 }
 
+/// See [`Host::remembered_refusals`].
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct RememberedRefusals {
+    /// The account's Profiles and their lifecycles at the last complete
+    /// discovery, or `None` before the first. A different list makes every
+    /// unit below a new question.
+    pub profiles: Option<Vec<(ProfileId, koru_account_core::root_catalog::SubjectLifecycle)>>,
+    /// Each refused unit with this device's frontier when it was refused. A
+    /// unit that has changed here since is a new question too.
+    pub units: Vec<(CloudUnitRefV2, Vec<u8>)>,
+}
+
+impl RememberedRefusals {
+    /// Whether `unit` at `frontier` was refused and nothing has changed.
+    pub fn holds(&self, unit: CloudUnitRefV2, frontier: &[u8]) -> bool {
+        self.units
+            .iter()
+            .any(|(held, at)| *held == unit && at.as_slice() == frontier)
+    }
+}
+
 /// Which of the three terminal per-unit refusals the service answered. One
 /// enum rather than a `&str`, so only the service's three codes can be in a
 /// diagnostic, and each keeps its own word.
@@ -602,6 +623,24 @@ pub trait Host: Send + Sync + 'static {
         Ok(std::collections::BTreeSet::new())
     }
 
+    /// **Catalog units the service refused because they name a Profile the
+    /// account does not hold, remembered across restarts** — and what the
+    /// account's Profiles were when it did.
+    ///
+    /// That refusal is a function of two things only: the unit as this device
+    /// holds it, and the account's Profiles. Asked again with neither changed,
+    /// the answer is the same, so a restart used to spend a request and two
+    /// warnings on every start re-hearing it (a purged Workspace still placed
+    /// under a deleted Profile, refused since 2026-11-14). `None` is a host
+    /// that keeps nothing, which asks once per process as before.
+    fn remembered_refusals(&self, _account: KoruIdentityId) -> Option<RememberedRefusals> {
+        None
+    }
+
+    /// Keep `remembered` for `account`, replacing what was kept. Best effort:
+    /// a host that cannot write it asks again on its next start.
+    fn remember_refusals(&self, _account: KoruIdentityId, _remembered: &RememberedRefusals) {}
+
     /// **The Profiles of this account that are on this device** — chosen at
     /// sign-in, created here, or brought here from the Koru Cloud page.
     ///
@@ -894,7 +933,11 @@ fn backoff(failures: u32) -> Duration {
 enum Command {
     Activate(Option<EnrollmentAuthorization>, Option<u64>),
     Refresh(EnrollmentAuthorization, EnrollmentAuthorization),
+    /// Something may have changed the account: check it now.
     Wake,
+    /// The heartbeat: keep what is live alive, and check the account only if
+    /// the last check is old enough.
+    Tick,
     Cancel,
 }
 

@@ -545,7 +545,7 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
     for _ in 0..page.len() + 1 {
         assert!(key(&mut view, NamedKey::Tab, none));
     }
-    assert_eq!(view.focus(), Some(nav::Entry::Devices));
+    assert_eq!(view.focus(), Some(nav::Entry::Cloud));
 }
 
 #[test]
