@@ -383,33 +383,50 @@ pub(super) fn hit_key(hit: &SearchHit) -> String {
     key
 }
 
-/// One row per document (or per workspace, when the hit *is* the workspace).
+/// One row per **target**: a task list, a task, or a document (or the
+/// workspace, when the hit *is* the workspace).
 ///
 /// The index matches fragments, so two paragraphs in the same page produce two
 /// hits with the same title. The surface shows only the best one — query order
 /// is already best-first — matching how the entity picker collapses.
 ///
+/// **A list and a task are targets of their own.** Two lists live in one
+/// system document and two tasks can live in one page; keyed by document they
+/// would each have been one row. So a list is keyed by its id and a task by
+/// the node that makes it one — several fragments of one task (its text and
+/// two attributes, or a page-task's title and its root line) are still one
+/// row, two tasks in one document are two, and the ordinary paragraphs of
+/// that document are still one more.
+///
 /// **Pages are fragments too.** Words read from page 3 and page 39 of one PDF
 /// are two hits with two keys ([`hit_key`]) but one document, so the file is
 /// still one row, and the row is the better-ranked page. The key below names
-/// the document and never the page, which is what keeps it so.
-pub(super) fn keep_top_hit_per_document(hits: &mut Vec<SearchHit>) {
+/// the target and never the page, which is what keeps it so.
+pub(super) fn keep_top_hit_per_target(hits: &mut Vec<SearchHit>) {
     let mut seen = HashSet::with_capacity(hits.len());
-    hits.retain(|hit| {
-        let key = if hit.workspace.starts_with("ai:chat:") {
-            format!(
-                "{}/response/{}",
-                hit.workspace,
-                hit.node.as_deref().unwrap_or("@block")
-            )
-        } else {
-            match hit.document.as_deref() {
-                Some(document) => format!("{}/doc/{document}", hit.workspace),
-                None => format!("{}/ws", hit.workspace),
-            }
-        };
-        seen.insert(key)
-    });
+    hits.retain(|hit| seen.insert(target_key(hit)));
+}
+
+/// What a hit opens, as a key for grouping rows. Not the selection key:
+/// [`hit_key`] still tells two fragments of one target apart.
+pub(super) fn target_key(hit: &SearchHit) -> String {
+    if hit.workspace.starts_with("ai:chat:") {
+        return format!(
+            "{}/response/{}",
+            hit.workspace,
+            hit.node.as_deref().unwrap_or("@block")
+        );
+    }
+    if let Some(list) = &hit.list {
+        return format!("{}/list/{}", hit.workspace, list.id);
+    }
+    match (hit.document.as_deref(), &hit.task) {
+        (Some(document), Some(task)) => {
+            format!("{}/task/{document}/{}", hit.workspace, task.node)
+        }
+        (Some(document), None) => format!("{}/doc/{document}", hit.workspace),
+        (None, _) => format!("{}/ws", hit.workspace),
+    }
 }
 
 /// The manifest kind of a canvas document — `koru_core::explore::KIND_CANVAS`,
@@ -508,7 +525,7 @@ mod tests {
         other.document = Some("doc-2".into());
         other.snippet = "other document".into();
         let mut hits = vec![first.clone(), second, other.clone()];
-        keep_top_hit_per_document(&mut hits);
+        keep_top_hit_per_target(&mut hits);
         assert_eq!(hits, vec![first, other]);
     }
 
@@ -551,7 +568,7 @@ mod tests {
         also.score = 50.0;
         let page_note = a_hit();
         let mut hits = vec![best.clone(), worse, page_note.clone(), also];
-        keep_top_hit_per_document(&mut hits);
+        keep_top_hit_per_target(&mut hits);
         assert_eq!(hits, vec![best, page_note]);
     }
 
@@ -578,6 +595,8 @@ mod tests {
             workspace_last_used_at_ms: None,
             page: None,
             picture_name: None,
+            list: None,
+            task: None,
         }
     }
 

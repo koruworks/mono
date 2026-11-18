@@ -173,6 +173,8 @@ fn target(profile: &str, workspace: &str, document: Option<&str>) -> koru_agent_
         trashed: false,
         match_text: None,
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     }
 }
 
@@ -225,6 +227,44 @@ fn only_an_agent_acknowledged_device_id_enables_durable_oauth_scope() {
             .contains("a6258102-2534-4fab-bd4d-40717b066f29")
     );
     assert!(!entry.account().contains("koru-data"));
+}
+
+/// An unchanged presence is not sent again; a changed one is, and so is the
+/// stored one when a replacement Agent connects.
+#[test]
+fn the_same_presence_is_sent_once() {
+    let (link, sent) = AgentLink::for_test();
+    let hello = |workspace: &str| {
+        link.hello(
+            koru_core::ProfileId::parse(P).unwrap(),
+            koru_core::WorkspaceId::parse(workspace).unwrap(),
+            "Profile",
+            "Workspace",
+            &[],
+        )
+    };
+    hello(W);
+    hello(W);
+    hello(W);
+    assert!(matches!(
+        sent.try_recv(),
+        Ok(FromShell::Request {
+            body: Request::Hello { .. },
+            ..
+        })
+    ));
+    assert!(sent.try_recv().is_err(), "the repeats were not sent");
+    hello(D);
+    assert!(
+        matches!(
+            sent.try_recv(),
+            Ok(FromShell::Request {
+                body: Request::Hello { .. },
+                ..
+            })
+        ),
+        "another workspace is news"
+    );
 }
 
 #[test]
@@ -580,6 +620,72 @@ fn a_target_with_an_id_that_is_not_a_uuid_is_refused() {
         })
         .is_none()
     );
+}
+
+/// A task and a task list arrive as what they are, not as a document or a
+/// workspace.
+#[test]
+fn a_task_and_a_task_list_are_carried_through_as_themselves() {
+    let task = koru_agent_wire::Target {
+        node: Some("n".into()),
+        match_text: Some("a phrase".into()),
+        new_window: true,
+        kind: koru_agent_wire::TargetKind::Task,
+        ..target(P, W, Some(D))
+    };
+    let Some(FromTheAgent::Open(opened)) = translate(Push::Open { target: task }) else {
+        panic!("not an open");
+    };
+    assert!(matches!(
+        *opened,
+        koru_search_ui::Target::Task {
+            ref node,
+            ref match_text,
+            disposition: koru_search_ui::Disposition::NewWindow,
+            ..
+        } if node == "n" && match_text.as_deref() == Some("a phrase")
+    ));
+
+    let list = koru_agent_wire::Target {
+        kind: koru_agent_wire::TargetKind::TaskList,
+        list: Some("l".into()),
+        ..target(P, W, None)
+    };
+    let Some(FromTheAgent::Open(opened)) = translate(Push::Open { target: list }) else {
+        panic!("not an open");
+    };
+    assert!(matches!(
+        *opened,
+        koru_search_ui::Target::List {
+            ref list,
+            disposition: koru_search_ui::Disposition::CurrentWindow,
+            ..
+        } if list == "l"
+    ));
+}
+
+/// **A refused target opens nothing** — it never falls back to the document
+/// or the workspace it also names.
+#[test]
+fn a_task_or_a_task_list_missing_what_its_kind_needs_is_refused() {
+    let task = |document: Option<&str>, node: Option<&str>| koru_agent_wire::Target {
+        node: node.map(str::to_string),
+        kind: koru_agent_wire::TargetKind::Task,
+        ..target(P, W, document)
+    };
+    let list = |document: Option<&str>, list: Option<&str>| koru_agent_wire::Target {
+        list: list.map(str::to_string),
+        kind: koru_agent_wire::TargetKind::TaskList,
+        ..target(P, W, document)
+    };
+    for (what, wire) in [
+        ("task without a node", task(Some(D), None)),
+        ("task without a document", task(None, Some("n"))),
+        ("task_list with a document", list(Some(D), Some("l"))),
+        ("task_list without a list", list(None, None)),
+    ] {
+        assert!(translate(Push::Open { target: wire }).is_none(), "{what}");
+    }
 }
 
 #[test]

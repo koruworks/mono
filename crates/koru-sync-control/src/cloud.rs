@@ -528,6 +528,15 @@ pub struct CloudAccountBindingRef {
     pub catalog_scope_id: CloudId,
 }
 
+/// One Workspace the account lists live, and the Profile it keeps it under
+/// (`ControlRequest::ReconcileCloudAccountLive`). Ids only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CloudAccountLiveWorkspace {
+    pub workspace_id: CloudId,
+    pub profile_id: CloudId,
+}
+
 /// One unit of the account path's root inventory: the unit and the frontier
 /// this device holds for it (an encoded Loro version vector).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -740,3 +740,111 @@ fn a_corpus_with_no_read_fragment_answers_exactly_as_before() {
     let expected = include_str!("read_collapse_tests.expected").replace("\r\n", "\n");
     assert!(actual == expected, "the answers moved:\n{actual}");
 }
+
+// ---------------------------------------------------- one read hit per task
+
+/// A page holding two marked pictures and one unmarked, a marked three-page
+/// file, and an unmarked PDF beside it. Every one of them reads *invoice*.
+fn marked_pictures() -> SearchIndex {
+    let page = Doc::page(1, "Receipts", 10)
+        .read("img-a", "image", 1, None, "invoice from the bakery")
+        .value("img-a", "koru.task", "bool", "true")
+        .read("img-b", "image", 2, None, "invoice from the garage")
+        .value("img-b", "koru.due", "date", "2026-12-01")
+        .read("img-c", "image", 3, None, "invoice nobody marked")
+        .read("img-d", "image", 4, None, "another unmarked invoice")
+        .read("scan", "file", 5, Some(1), "cover page of the invoice")
+        .read("scan", "file", 5, Some(2), "invoice totals")
+        .read("scan", "file", 5, Some(3), "appendix to the invoice")
+        .value("scan", "koru.task", "bool", "true");
+    let pdf =
+        Doc::file(2, "Statement.pdf", 9).pages((1..=4).map(|page| format!("invoice line {page}")));
+    corpus(vec![(ws(1), "Acme", vec![page, pdf])])
+}
+
+fn tasks(text: &str) -> SearchQuery {
+    SearchQuery {
+        task_results: true,
+        ..words(text)
+    }
+}
+
+/// With tasks asked for, a marked picture is a result of its own: two marked
+/// pictures in one document that both match are two rows, not one.
+#[test]
+fn two_marked_pictures_in_one_document_are_two_read_hits() {
+    let index = marked_pictures();
+    let page = ask(&index, tasks("invoice"));
+    let found = reads(&page);
+    let by_task: BTreeSet<&str> = found
+        .iter()
+        .filter_map(|hit| hit.task.as_ref().map(|task| task.node.as_str()))
+        .collect();
+    assert_eq!(
+        by_task,
+        BTreeSet::from(["img-a", "img-b", "scan"]),
+        "each marked node keeps its own best read fragment"
+    );
+    // Several matching pages of one marked file are one row, the best page.
+    let scan: Vec<_> = found
+        .iter()
+        .filter(|hit| hit.node.as_deref() == Some("scan"))
+        .collect();
+    assert_eq!(scan.len(), 1);
+    assert_eq!(scan[0].page, Some(2), "with the winning page's evidence");
+    assert_eq!(highlighted(scan[0]), ["invoice"]);
+    assert!(scan[0].snippet.contains("totals"));
+    // Every unmarked node of the document shares one row.
+    let unmarked: Vec<_> = found
+        .iter()
+        .filter(|hit| hit.task.is_none() && hit.document.as_deref() == Some(id(1).as_str()))
+        .collect();
+    assert_eq!(unmarked.len(), 1);
+    // And an ordinary PDF's pages still collapse to one.
+    let pdf: Vec<_> = found
+        .iter()
+        .filter(|hit| hit.document.as_deref() == Some(id(2).as_str()))
+        .collect();
+    assert_eq!(pdf.len(), 1);
+    assert_eq!(found.len(), 5);
+}
+
+/// With a page size of one the second task is on the second page, not lost
+/// to a collapse that ran after the cut.
+#[test]
+fn a_second_marked_picture_is_on_the_next_page_not_lost() {
+    let index = marked_pictures();
+    let mut seen = BTreeSet::new();
+    let mut offset = 0;
+    loop {
+        let page = ask(
+            &index,
+            SearchQuery {
+                page_size: 1,
+                offset,
+                ..tasks("invoice")
+            },
+        );
+        for hit in &page.hits {
+            if let Some(task) = &hit.task {
+                seen.insert(task.node.clone());
+            }
+        }
+        match page.next_offset {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    assert_eq!(seen.len(), 3, "{seen:?}");
+}
+
+/// Without the flag the collapse is per document, as it was: the marks are
+/// there and change nothing.
+#[test]
+fn without_the_flag_marked_pictures_collapse_per_document() {
+    let index = marked_pictures();
+    let page = ask(&index, words("invoice"));
+    let found = reads(&page);
+    assert_eq!(found.len(), 2, "one per document");
+    assert!(found.iter().all(|hit| hit.task.is_none()));
+}

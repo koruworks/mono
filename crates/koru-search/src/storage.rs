@@ -49,10 +49,12 @@ use koru_projection::model::ListedDocument;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 use sha2::{Digest, Sha256};
 
+use crate::fuzzy::Part;
 use crate::fuzzy::SharedVocabulary;
+use crate::lists::ListRow;
 use crate::model::{
     AttrRow, Fragment, FuzzyIndexStats, IndexStats, Lifecycle, PreviewBlock, RecentQuery,
-    SearchFacet, SearchFacets, SearchPage, SearchPreview, SearchQuery, SearchResult,
+    SearchFacet, SearchFacets, SearchPage, SearchPreview, SearchQuery, SearchResult, field,
 };
 use crate::normalize::{normalize, term_counts};
 
@@ -107,6 +109,23 @@ impl Listed {
 pub struct SearchIndex {
     pub(crate) connection: Connection,
     pub(crate) vocabulary: SharedVocabulary,
+    /// Where the last query's time went. For the timing tool and a
+    /// diagnostic; nothing in the product reads it.
+    pub(crate) last_timing: std::cell::Cell<Option<QueryTiming>>,
+}
+
+/// The three parts of one query's time, in milliseconds, and how many
+/// word-matches it had to consider (`-1` when not counted: fast queries are
+/// not charged a count).
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub struct QueryTiming {
+    /// Matching the typed words, and their typo alternatives, in the index.
+    pub evidence_ms: f64,
+    /// Choosing, scoring and ordering the page.
+    pub statement_ms: f64,
+    /// Dressing each hit: its highlights, its path, its task and list.
+    pub hits_ms: f64,
+    pub evidence_rows: i64,
 }
 
 impl SearchIndex {
@@ -192,10 +211,16 @@ impl SearchIndex {
         Ok(Self {
             connection,
             vocabulary,
+            last_timing: std::cell::Cell::new(None),
         })
     }
 
     // ------------------------------------------------------------- the fuzzy
+
+    /// Where the last query's time went, if one has run.
+    pub fn last_query_timing(&self) -> Option<QueryTiming> {
+        self.last_timing.get()
+    }
 
     pub fn fuzzy_stats(&self) -> FuzzyIndexStats {
         self.vocabulary.stats()
@@ -212,14 +237,19 @@ impl SearchIndex {
             .query_map([], |row| row.get::<_, String>(0))?
             .collect::<Result<Vec<_>, _>>()?;
         drop(statement);
+        // The lists' share of those words, so a query that did not ask for
+        // lists reads the counts it would read if none were indexed.
+        let list_texts = self.texts_where(LIST_FIELD_ONLY, [])?;
         tracing::info!(
             fragments = texts.len(),
             elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "search: loaded fragments for fuzzy vocabulary"
         );
-        self.vocabulary
-            .write()
-            .replace_all(term_counts(texts.iter().map(String::as_str)), now_ms());
+        self.vocabulary.write().replace_all(
+            term_counts(texts.iter().map(String::as_str)),
+            term_counts(list_texts.iter().map(String::as_str)),
+            now_ms(),
+        );
         tracing::info!(
             elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "search: fuzzy vocabulary warmed"
@@ -382,27 +412,145 @@ impl SearchIndex {
         }
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
         Ok(())
+    }
+
+    /// Replace one workspace's task lists: the mirrored rows and one
+    /// fragment per list, in one transaction. Answers whether anything was
+    /// written.
+    ///
+    /// **This writer owns exactly the `list:` keys of one workspace**
+    /// ([`LIST_OWNED`]) and touches nothing else, so renaming, nesting or
+    /// deleting a list re-indexes no document. A table that has not changed
+    /// is not rewritten: the system document reprojects for a new tag or an
+    /// attribute definition too, and none of those is a list.
+    ///
+    /// A list's fragment has no document; its node is the list's id, which is
+    /// what keeps two lists' highlights and spelling corrections apart.
+    pub fn refresh_lists(&mut self, workspace: &str, lists: &[ListRow]) -> SearchResult<bool> {
+        let mut wanted = lists.to_vec();
+        wanted.sort_by(|a, b| a.id.cmp(&b.id));
+        if self.lists_in(workspace)? == wanted {
+            return Ok(false);
+        }
+        let old = self.texts_where(LIST_OWNED, params![workspace])?;
+        let delta = term_delta(
+            term_counts(old.iter().map(String::as_str)),
+            term_counts(lists.iter().map(|list| list.name.as_str())),
+        );
+        let tx = self.connection.transaction()?;
+        tx.execute(
+            "DELETE FROM task_lists WHERE workspace_id = ?1",
+            params![workspace],
+        )?;
+        tx.execute(
+            &format!("DELETE FROM fragments WHERE {LIST_OWNED}"),
+            params![workspace],
+        )?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT INTO task_lists (workspace_id, list_id, parent_id, ordinal, name, color)
+                 VALUES (?1,?2,?3,?4,?5,?6)",
+            )?;
+            for list in lists {
+                insert.execute(params![
+                    workspace,
+                    list.id,
+                    list.parent,
+                    list.ordinal as i64,
+                    list.name,
+                    list.color,
+                ])?;
+            }
+        }
+        for list in lists {
+            if let Some(fragment) = crate::fragments::list_fragment(workspace, &list.id, &list.name)
+            {
+                insert_fragment(&tx, &fragment)?;
+            }
+        }
+        let mut vocabulary = self.vocabulary.write();
+        tx.commit()?;
+        vocabulary.apply_delta(delta, Part::Lists);
+        Ok(true)
+    }
+
+    /// One workspace's mirrored lists, in a stable order.
+    pub fn lists_in(&self, workspace: &str) -> SearchResult<Vec<ListRow>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT list_id, parent_id, ordinal, name, color FROM task_lists
+             WHERE workspace_id = ?1 ORDER BY list_id",
+        )?;
+        let rows = stmt.query_map(params![workspace], |row| {
+            Ok(ListRow {
+                id: row.get(0)?,
+                parent: row.get(1)?,
+                ordinal: row.get::<_, i64>(2)?.max(0) as usize,
+                name: row.get(3)?,
+                color: row.get(4)?,
+            })
+        })?;
+        let mut out = rows.collect::<Result<Vec<_>, _>>()?;
+        out.sort_by(|a, b| a.id.cmp(&b.id));
+        Ok(out)
+    }
+
+    /// The mirrored lists of several workspaces, by workspace and then list
+    /// id — what a page of hits assembles list paths from.
+    pub(crate) fn lists_of(
+        &self,
+        workspaces: &[String],
+    ) -> SearchResult<HashMap<(String, String), ListRow>> {
+        let mut out = HashMap::new();
+        for workspace in workspaces {
+            for list in self.lists_in(workspace)? {
+                out.insert((workspace.clone(), list.id.clone()), list);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Whether `document` carries the generated row that marks its root as a
+    /// task ([`ROOT_TASK_KIND`](crate::fragments::ROOT_TASK_KIND)).
+    pub fn has_root_task_marker(&self, document: &str) -> SearchResult<bool> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT 1 FROM attr_values WHERE document_id = ?1 AND kind = '@root-task' LIMIT 1",
+                params![document],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some())
     }
 
     /// A workspace the store no longer holds.
     pub fn remove_workspace(&mut self, workspace: &str) -> SearchResult<()> {
-        let texts = self.texts_where("workspace_id = ?1", params![workspace])?;
+        // Read in two groups, because the vocabulary keeps the lists' words
+        // apart from everybody else's and each delta goes to its own part.
+        let texts = self.texts_where(
+            "workspace_id = ?1 AND field <> 'task-list'",
+            params![workspace],
+        )?;
+        let list_texts = self.texts_where(LIST_OWNED, params![workspace])?;
         let delta = removal_delta(&texts);
+        let list_delta = removal_delta(&list_texts);
         let tx = self.connection.transaction()?;
         for sql in [
             "DELETE FROM fragments WHERE workspace_id = ?1",
             "DELETE FROM documents WHERE workspace_id = ?1",
             "DELETE FROM listing WHERE workspace_id = ?1",
             "DELETE FROM workspaces WHERE workspace_id = ?1",
+            "DELETE FROM task_lists WHERE workspace_id = ?1",
             "DELETE FROM recent_targets WHERE workspace_id = ?1",
         ] {
             tx.execute(sql, params![workspace])?;
         }
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
+        vocabulary.apply_delta(list_delta, Part::Lists);
         Ok(())
     }
 
@@ -547,7 +695,7 @@ impl SearchIndex {
         )?;
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
         Ok(())
     }
 
@@ -580,7 +728,7 @@ impl SearchIndex {
         )?;
         let mut vocabulary = self.vocabulary.write();
         tx.commit()?;
-        vocabulary.apply_delta(delta);
+        vocabulary.apply_delta(delta, Part::Rest);
         Ok(())
     }
 
@@ -825,6 +973,8 @@ impl SearchIndex {
                 workspace_last_used_at_ms: None,
                 page: None,
                 picture_name: None,
+                list: None,
+                task: None,
             });
         }
         let has_more = hits.len() > page_size;
@@ -906,8 +1056,23 @@ fn insert_attr_value(tx: &rusqlite::Transaction<'_>, value: &AttrRow) -> SearchR
 }
 
 /// Rows the listing path owns: the workspace's own name, and every title.
+///
+/// **By key and field, not by "has no document".** A task list's fragment has
+/// no document either, and when ownership was `document_id IS NULL` every
+/// listing refresh — a document renamed, moved, created — would have deleted
+/// the workspace's list fragments with the workspace's name. Three writers,
+/// three disjoint predicates: this, [`NODE_OWNED`] and [`LIST_OWNED`].
 const LISTING_OWNED: &str =
-    "workspace_id = ?1 AND (document_id IS NULL OR stable_key LIKE 'doc:%')";
+    "workspace_id = ?1 AND (field = 'workspace' OR stable_key LIKE 'doc:%')";
+
+/// Rows the list path owns: one fragment per live task list of a workspace.
+const LIST_OWNED: &str = "workspace_id = ?1 AND stable_key LIKE 'list:%'";
+
+/// Every task-list fragment in the index: the lists' share of the vocabulary.
+const LIST_FIELD_ONLY: &str = "field = 'task-list'";
+
+/// The SQL above spells the field as a literal; this keeps it the token.
+const _: () = assert!(matches!(field::TASK_LIST.as_bytes(), b"task-list"));
 
 /// Rows the document path owns: everything the node walk produced.
 const NODE_OWNED: &str = "document_id = ?1 AND stable_key LIKE 'node:%'";
@@ -986,6 +1151,26 @@ CREATE TABLE IF NOT EXISTS listing (
     trashed_by   TEXT
 );
 CREATE INDEX IF NOT EXISTS listing_workspace ON listing(workspace_id);
+
+-- **The workspace's task lists, mirrored.** A list lives in the system
+-- document's registry, not in any document's tree, so the host hands the rows
+-- over and this is where a list hit's path and swatch are read from at query
+-- time — the `listing` table's idea, for lists. `parent_id` is the list it is
+-- *drawn* under, already repaired by the host.
+--
+-- **No version bump**: `IF NOT EXISTS` in a schema that runs on every open
+-- means an existing index gains the table in place, and an index is not
+-- content. An index that predates it is filled by the indexer's first
+-- reconcile, with no rebuild.
+CREATE TABLE IF NOT EXISTS task_lists (
+    workspace_id TEXT NOT NULL,
+    list_id      TEXT NOT NULL,
+    parent_id    TEXT,
+    ordinal      INTEGER NOT NULL,
+    name         TEXT NOT NULL,
+    color        TEXT,
+    PRIMARY KEY (workspace_id, list_id)
+) WITHOUT ROWID;
 
 CREATE TABLE IF NOT EXISTS workspaces (
     workspace_id   TEXT PRIMARY KEY,

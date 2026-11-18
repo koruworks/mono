@@ -3017,7 +3017,7 @@ fn relocate_moves_a_root_before_the_target() {
         carried_order: vec![ids[2]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Before, &carried, Instant::now());
     let order: Vec<NodeId> = v.rows.iter().map(|r| r.node).collect();
@@ -3086,7 +3086,7 @@ fn relocate_nests_and_rebases_depth() {
         carried_order: vec![a_id],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Nest, &carried, Instant::now());
     let order: Vec<(NodeId, u16)> = v.rows.iter().map(|r| (r.node, r.depth)).collect();
@@ -3424,7 +3424,7 @@ fn drag_auto_scroll_moves_toward_the_edge_the_pointer_is_in() {
             carried_order: vec![ids[0]],
             item_count: 1,
             last: None,
-            spring: None,
+            spring: Default::default(),
         });
         v.drag_tick = None;
     };
@@ -3479,7 +3479,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
         carried_order: vec![ids[1]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.update_drop(Instant::now());
     let d = v.drag.as_ref().unwrap();
@@ -3490,7 +3490,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
             zone: DropZone::Nest
         })
     );
-    assert_eq!(d.spring.map(|(n, _)| n), Some(ids[0]));
+    assert_eq!(d.spring.pending(), Some(ids[0]));
 }
 
 /// Dropping past the end of the list lands at the top level, however deep the
@@ -4326,13 +4326,8 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
     let mut view = ExploreView::new();
     view.show_tasks();
     let list = koru_core::ids::ListId::new();
-    view.rail_mut().set_lists(vec![rail::RailList {
-        id: list,
-        name: "Bike".to_owned(),
-        color: None,
-        count: 0,
-        overdue: 0,
-    }]);
+    view.rail_mut()
+        .set_lists(vec![rail::RailList::flat(list, "Bike", None, 0, 0)]);
     let a = area();
     let top = view.rail_top(a);
     let alt = PressMods {
@@ -4377,10 +4372,20 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
         }),
         "Ctrl's press"
     );
-    let (x, y) = at(rail::RailRow::NewList);
+    // The heading's `+` names no page, so Alt on it keeps its meaning.
+    let (_, heading) = rows
+        .iter()
+        .find(|(row, _)| *row == rail::RailRow::ListsHeading)
+        .copied()
+        .expect("the rail has the Lists heading");
+    let (x, y) = view
+        .rail()
+        .row_parts(rail::RailRow::ListsHeading, heading)
+        .trailing
+        .centre();
     assert_eq!(
         view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
-        Outcome::Tasks(rail::TasksRailRequest::BeginNewList),
+        Outcome::Tasks(rail::TasksRailRequest::BeginNewList { parent: None }),
         "a row that names no page keeps its meaning"
     );
 }
@@ -4407,31 +4412,31 @@ fn drawing_the_rail_leaves_the_scene_balanced() {
         completed: 122,
     });
     v.rail_mut().set_lists(vec![
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Wedding".into(),
-            color: Some("pink".into()),
-            count: 14,
-            overdue: 0,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Bike Project".into(),
-            color: Some("blue".into()),
-            count: 6,
-            overdue: 1,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "A list with no colour at all".into(),
-            color: None,
-            count: 0,
-            overdue: 0,
-        },
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Wedding",
+            Some("pink"),
+            14,
+            0,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Bike Project",
+            Some("blue"),
+            6,
+            1,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "A list with no colour at all",
+            None,
+            0,
+            0,
+        ),
     ]);
     let a = area();
     draw_once(&mut v, a);
-    v.rail_mut().begin_new_list();
+    v.rail_mut().begin_new_list(None);
     draw_once(&mut v, a);
     // A collapsed column draws nothing and must not panic doing it.
     draw_once(&mut v, Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0));
@@ -7194,4 +7199,189 @@ fn hidden_modes_have_no_icon_and_cannot_be_shown() {
             assert_eq!(view.mode, NavigatorMode::Documents, "{hidden:?}");
         }
     });
+}
+
+// ------------------------------------------------------------ quick filter
+
+fn typed(view: &mut ExploreView, text: &str) -> bool {
+    use winit::keyboard::{Key, ModifiersState};
+    let mut engine = TextEngine::new();
+    text.chars().all(|ch| {
+        let s = ch.to_string();
+        view.quick_filter_key(
+            &mut engine,
+            &Key::Character(s.as_str().into()),
+            Some(&s),
+            ModifiersState::empty(),
+        )
+    })
+}
+
+fn pressed(
+    view: &mut ExploreView,
+    key: winit::keyboard::NamedKey,
+    mods: winit::keyboard::ModifiersState,
+) -> bool {
+    let mut engine = TextEngine::new();
+    view.quick_filter_key(&mut engine, &winit::keyboard::Key::Named(key), None, mods)
+}
+
+/// Typing in the sidebar narrows the tree to the names that hold it, keeps
+/// the rows a match is inside (even shut ones), and clearing shows the tree
+/// as it was.
+#[test]
+fn typing_in_the_sidebar_filters_the_tree_and_escape_restores_it() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let rows = entries(&[
+        ("Notes", None),
+        ("Design system", Some(0)),
+        ("Old", Some(1)),
+        ("Roadmap", None),
+        ("Sidebar redesign", None),
+    ]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    // Shut *Notes*: the match inside it must still be found.
+    let notes = view.rows[0].node;
+    view.collapsed.insert(notes);
+    view.rebuild_from_entries(&rows);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+
+    // Not armed: the letters are somebody else's.
+    view.focus = Some(notes);
+    assert!(!typed(&mut view, "d"));
+    assert_eq!(view.quick_filter(), None);
+
+    view.arm_quick_filter(true);
+    assert!(view.quick_filter_armed());
+    assert!(typed(&mut view, "DESIGN"));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(
+        labels(&view),
+        ["Notes", "Design system", "Sidebar redesign"]
+    );
+    assert_eq!(view.quick_match_count(), 2);
+    assert!(
+        view.quick_dim.contains(&notes),
+        "kept for what is inside it"
+    );
+    assert_eq!(
+        view.focus,
+        Some(view.rows[1].node),
+        "the keyboard is on the first match"
+    );
+    // The rows start below the field.
+    assert!(
+        view.rows_top(area()) > {
+            let mut plain = ExploreView::new();
+            plain.rebuild_from_entries(&rows);
+            plain.rows_top(area())
+        }
+    );
+
+    // Nothing matches: no rows, and a count of none.
+    assert!(typed(&mut view, "zz"));
+    assert!(labels(&view).is_empty());
+    assert_eq!(view.quick_match_count(), 0);
+    let none = ModifiersState::empty();
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The field edits as any field does: Ctrl+Backspace takes a word.
+    assert!(typed(&mut view, " sys"));
+    assert_eq!(view.quick_filter(), Some("DESIGN sys"));
+    assert!(pressed(
+        &mut view,
+        NamedKey::Backspace,
+        ModifiersState::CONTROL
+    ));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The answers are a ring: Down from the last is the first.
+    let last = view.rows.last().unwrap().node;
+    view.focus = Some(last);
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowDown));
+    assert_eq!(view.focus, Some(view.rows[0].node));
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowUp));
+    assert_eq!(view.focus, Some(last));
+
+    // Escape puts it away, and the fold is where it was.
+    assert!(pressed(&mut view, NamedKey::Escape, none));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+    assert!(view.collapsed.contains(&notes));
+    // And Escape again is not the filter's.
+    assert!(!pressed(&mut view, NamedKey::Escape, none));
+}
+
+/// The filter stays after the keyboard has gone back to the page. Activating
+/// the pane — a press on its empty ground, which is all a filter with no
+/// matches has — gives Escape the filter again, armed or not.
+#[test]
+fn activating_the_pane_while_it_is_filtered_lets_escape_clear_it() {
+    use winit::keyboard::ModifiersState;
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(typed(&mut view, "zzzz"));
+    assert!(labels(&view).is_empty());
+    // The page took the keyboard. The filter is still showing.
+    view.clear_focus();
+    view.arm_quick_filter(false);
+    assert!(!view.has_focus());
+    let a = area();
+    view.mouse_down(a, (1200.0, 1200.0), a.x + 16.0, a.y + a.h * 0.5, false);
+    assert!(view.has_focus(), "a press in the pane takes the keyboard");
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
+
+    // The same press on the Tasks rail, whose answers are not these rows.
+    view.show_tasks();
+    view.arm_quick_filter(true);
+    assert!(view.focus_tree(a));
+    assert!(typed(&mut view, "Story"));
+    assert_eq!(view.quick_filter(), Some("Story"));
+    assert_eq!(view.quick_match_count(), 0);
+    view.clear_focus();
+    assert!(!view.has_focus());
+    view.mouse_down(a, (1200.0, 1200.0), a.x + 16.0, a.y + a.h * 0.5, false);
+    assert!(view.has_focus(), "the tasks pane takes the keyboard too");
+    assert!(pressed(
+        &mut view,
+        NamedKey::Escape,
+        ModifiersState::empty()
+    ));
+    assert_eq!(view.quick_filter(), None);
+}
+
+/// A chord is never filter text, and another view starts unfiltered.
+#[test]
+fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {
+    use winit::keyboard::{Key, ModifiersState};
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(!view.quick_filter_key(
+        &mut TextEngine::new(),
+        &Key::Character("d".into()),
+        Some("d"),
+        ModifiersState::CONTROL
+    ));
+    assert!(typed(&mut view, "road"));
+    assert_eq!(labels(&view), ["Roadmap"]);
+    view.show_files();
+    assert_eq!(view.quick_filter(), None);
+    view.show_documents();
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
 }

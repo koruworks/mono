@@ -970,7 +970,7 @@ impl View for Leaf {
         }
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         match self {
             Self::Document(d) => View::set_list_table(d, lists),
         }

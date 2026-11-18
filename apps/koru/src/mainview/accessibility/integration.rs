@@ -961,6 +961,7 @@ fn open_tasks_page(window: &mut Window, titles: &[&str]) -> Vec<KoruNodeId> {
                     breadcrumb: String::new(),
                     title: (*title).to_owned(),
                     attributes: Vec::new(),
+                    bucket: None,
                 },
                 today,
                 0,

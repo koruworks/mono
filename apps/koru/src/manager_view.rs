@@ -471,7 +471,7 @@ impl View for DocumentPane {
         View::take_wants_join_new_list(&mut self.doc)
     }
 
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<koru_workspace_host::tasks::ListCreate> {
         View::take_wants_create_list(&mut self.doc)
     }
 
@@ -511,7 +511,7 @@ impl View for DocumentPane {
         View::set_tag_table(&mut self.doc, tags)
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         View::set_list_table(&mut self.doc, lists)
     }
 
@@ -1054,6 +1054,18 @@ impl View for ManagerView {
             Self::Container(view) => {
                 view.open_search_target(ws, document, node, trash_root, match_text)
             }
+            Self::Document(_) => false,
+        }
+    }
+
+    fn open_tasks_target(
+        &mut self,
+        target: koru_workspace_host::TasksTarget,
+        match_text: Option<&str>,
+    ) -> bool {
+        match self {
+            Self::Container(view) => view.open_tasks_target(target, match_text),
+            // A document popped into its own window hosts no Tasks tab.
             Self::Document(_) => false,
         }
     }
@@ -2131,7 +2143,7 @@ impl View for ManagerView {
         }
     }
 
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<koru_workspace_host::tasks::ListCreate> {
         match self {
             Self::Container(v) => v.take_wants_create_list(),
             Self::Document(v) => v.take_wants_create_list(),
@@ -2227,7 +2239,7 @@ impl View for ManagerView {
         }
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         match self {
             Self::Container(v) => v.set_list_table(lists),
             Self::Document(v) => v.set_list_table(lists),

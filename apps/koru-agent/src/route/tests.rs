@@ -16,6 +16,8 @@ fn target(text: &str) -> Target {
         trashed: false,
         match_text: Some(text.into()),
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     }
 }
 

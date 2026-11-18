@@ -399,7 +399,12 @@ impl MainView {
         if chat_tab {
             return self.dictate_chat_tab(tab, action);
         }
-        self.deliver_to(ws, target, tab, action)
+        let before = ws.version();
+        let handled = self.deliver_to(ws, target, tab, action);
+        if ws.version() != before {
+            self.adopt_siblings(ws);
+        }
+        handled
     }
 
     /// **Whether this target may be dictated into at all.**

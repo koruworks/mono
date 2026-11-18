@@ -248,7 +248,10 @@ use serde::{Deserialize, Serialize};
 /// 47 adds the account-owned, bounded Cloud plan read and monotonic request duration.
 /// 48 adds bounded retained Workspace/document inventory reads with exact selectors.
 /// 49 adds exact-scoped detached Cloud inspection and explicit attachment removal.
-pub const PROTOCOL_VERSION: u32 = 49;
+/// 50 adds [`Target::kind`] and [`Target::list`], so a search result can open a
+/// task or a task list in Tasks. A 49 shell would read a task target, by its
+/// missing kind, as a document or a workspace; the handshake refuses it.
+pub const PROTOCOL_VERSION: u32 = 50;
 
 /// The frame version the agent's stream stamps, handed to `koru_ipc::frame`.
 ///
@@ -2052,6 +2055,17 @@ impl std::fmt::Debug for PairingView {
 /// Field-for-field `koru_search_ui::Target`, with the ids as strings — see the
 /// module note. The conversion is at the edges, and a host that cannot parse an
 /// id refuses the navigation rather than guessing.
+///
+/// What a target must carry depends on its [`kind`](Self::kind):
+///
+/// | `kind` | Must have | Means |
+/// | --- | --- | --- |
+/// | `document` | — | exactly what a target meant before 50: `document: None` is the workspace |
+/// | `task` | `document` and `node` | open Tasks on that task |
+/// | `task_list` | `list`, and no `document` | open Tasks on that list |
+///
+/// A target that breaks its row is refused by the receiver and **opens
+/// nothing** — never the workspace or the document instead.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Target {
     pub profile: String,
@@ -2069,6 +2083,40 @@ pub struct Target {
     /// to find anything.
     pub match_text: Option<String>,
     pub new_window: bool,
+    // The serde defaults on the two fields below are for fixtures and logs
+    // written before 50, **not for mixed-version peers**: a 49 peer is refused
+    // at the handshake, so it is never sent a target whose kind it cannot read.
+    /// What to open. Absent reads as [`TargetKind::Document`].
+    #[serde(default)]
+    pub kind: TargetKind,
+    /// The task list's id in storage form; only a `task_list` carries one.
+    #[serde(default)]
+    pub list: Option<String>,
+}
+
+/// What a [`Target`] opens. See the table on [`Target`] for what each kind
+/// must carry.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TargetKind {
+    /// A document, a node in one, or (with no document) the workspace.
+    #[default]
+    Document,
+    /// A task, opened in Tasks.
+    Task,
+    /// A task list, opened as its page in Tasks.
+    TaskList,
+}
+
+impl TargetKind {
+    /// The wire word, for a log line that names the kind and nothing else.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Document => "document",
+            Self::Task => "task",
+            Self::TaskList => "task_list",
+        }
+    }
 }
 
 // ------------------------------------------------------------------ updating

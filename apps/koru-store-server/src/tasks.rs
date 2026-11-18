@@ -364,7 +364,52 @@ fn translate(query: &wire::TaskQuery) -> Result<TaskRowQuery, TaskServiceError> 
         // again here would be a second answer to one question.
         limit: query.limit,
         after: query.after.clone(),
+        only: only(query)?,
     })
+}
+
+/// The exact-task selector, checked at the boundary.
+///
+/// **Exclusive, not a filter that quietly wins.** A caller that sent a
+/// selector and a list has asked two questions; answering one of them would
+/// look like the other had been considered. So every filter the selector
+/// would override is refused beside it, and so is a scope of anything but one
+/// workspace: a task is in exactly one, and the caller knows which.
+fn only(query: &wire::TaskQuery) -> Result<Option<Vec<(String, String)>>, TaskServiceError> {
+    let Some(only) = &query.only else {
+        return Ok(None);
+    };
+    let refuse = |why: &str| Err(TaskServiceError::Invalid(why.to_owned()));
+    if only.is_empty() || only.len() > wire::MAX_ONLY {
+        return refuse("`only` must name between 1 and 50 tasks");
+    }
+    if query.workspaces.len() != 1 {
+        return refuse("`only` needs exactly one workspace");
+    }
+    let filtered = query.bucket.is_some()
+        || query.list.is_some()
+        || query.due.is_some()
+        || query.priority.is_some()
+        || query.min_priority.is_some()
+        || !query.tags.is_empty()
+        || query.has.is_some()
+        || query.missing.is_some()
+        || query.after.is_some()
+        || query.group_by.is_some();
+    if filtered {
+        return refuse(
+            "`only` names its tasks exactly and cannot be combined with bucket, list, due, \
+             priority, min_priority, tags, has, missing, after or group_by",
+        );
+    }
+    let mut out = Vec::with_capacity(only.len());
+    for task in only {
+        let Some(node) = koru_core::NodeId::parse(&task.node) else {
+            return refuse("`only` holds a node id that does not parse");
+        };
+        out.push((task.document.to_storage(), node.to_storage()));
+    }
+    Ok(Some(out))
 }
 
 /// The writes a query wants included, decoded at the boundary.
@@ -574,6 +619,7 @@ fn row_to_wire(row: koru_projection::store::TaskQueryRow) -> wire::TaskRow {
         in_trash: row.in_trash,
         breadcrumb: row.breadcrumb,
         title: row.title,
+        bucket: row.bucket,
         attributes: row
             .attrs
             .into_iter()

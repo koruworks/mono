@@ -107,7 +107,7 @@ impl ExploreView {
     pub(super) fn hold_canvas_drop(&mut self) {
         if let Some(d) = self.drag.as_mut() {
             d.last = None;
-            d.spring = None;
+            d.spring.clear();
         }
     }
 }

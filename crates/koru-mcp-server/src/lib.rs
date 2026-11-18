@@ -3404,6 +3404,11 @@ impl Backend for LocalBackend {
                         request_seq: 0,
                         tags: a.tags,
                         attributes: attribute_filters(&a.attributes)?,
+                        // An agent's search is what it was: no list results
+                        // and tasks as fragments of their documents. How an
+                        // agent names a list is later work.
+                        include_lists: false,
+                        task_results: false,
                     },
                     include_facets: false,
                     recent_queries: None,
@@ -12209,6 +12214,7 @@ mod tests {
             breadcrumb: "Спецификации / 会議録".into(),
             title: title.into(),
             attributes,
+            bucket: None,
         };
         TaskQueryResponse {
             rows: vec![
@@ -13452,6 +13458,8 @@ mod tests {
             workspace_last_used_at_ms: None,
             page: None,
             picture_name: None,
+            list: None,
+            task: None,
         }
     }
 

@@ -141,6 +141,13 @@ const K_LIST_ORDER: &str = "order";
 /// what tells a reader holding a stale `koru.list` value that the list is gone
 /// rather than merely unknown — and [`SystemDoc::lists`] omits it.
 const K_LIST_DELETED: &str = "deleted";
+/// The list this one sits under, as a [`ListId`] in storage form; absent means
+/// top level. Last-writer-wins like every other field here, and **never
+/// trusted**: a merge can leave it naming a deleted list or closing a cycle,
+/// so every reader goes through [`SystemDoc::list_tree`], which repairs on
+/// read and rewrites nothing. A build that predates the key ignores it and
+/// draws the lists flat.
+const K_LIST_PARENT: &str = "parent";
 /// On a page record: the generations of the page's document, a grow-only
 /// set spelled as a map of decimal keys → `true`. The current generation is
 /// the numeric maximum; a replacement after a deletion adds the next key.
@@ -226,9 +233,14 @@ impl TagEntry {
 #[derive(Clone, PartialEq, Debug)]
 pub struct ListEntry {
     pub id: ListId,
-    /// As typed. Lists do not nest and a `/` in a name is just a `/` — the
-    /// path grammar is the tag table's, and SPEC §8 keeps nesting out.
+    /// As typed. A `/` in a name is just a `/`: a list's place is its
+    /// [`parent`](Self::parent), never a path in its name, so renaming a
+    /// parent rewrites no child.
     pub name: String,
+    /// The list this one sits under **as stored**, which may name a deleted
+    /// list or close a cycle after a merge. What is drawn is
+    /// [`ListNode::parent`], from [`SystemDoc::list_tree`].
+    pub parent: Option<ListId>,
     /// An [`AccentColor`](crate::attributes::AccentColor) token, or `None` for
     /// the default swatch. Kept as the raw token so one from a newer build's
     /// palette round-trips.
@@ -248,6 +260,322 @@ impl ListEntry {
     /// as two rows of the same rail.
     pub fn fold_key(&self) -> String {
         tags::fold_key(&self.name)
+    }
+}
+
+/// What [`SystemDoc::create_list_under`] did. The two are told apart because
+/// only a creation writes anything: a caller that selected an existing list
+/// must not move it.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum ListCreation {
+    Created(ListId),
+    /// A live sibling already carried the name. Nothing was written.
+    Existing(ListId),
+}
+
+impl ListCreation {
+    /// The list, whichever happened.
+    pub fn id(self) -> ListId {
+        match self {
+            Self::Created(id) | Self::Existing(id) => id,
+        }
+    }
+
+    pub fn created(self) -> bool {
+        matches!(self, Self::Created(_))
+    }
+}
+
+/// One live list in the repaired tree.
+#[derive(Clone, PartialEq, Debug)]
+pub struct ListNode {
+    pub entry: ListEntry,
+    /// The live list this one is drawn under, **after repair**; `None` is
+    /// the top level. Differs from [`ListEntry::parent`] when that names a
+    /// deleted or unknown list, or when this list is where a cycle is broken.
+    pub parent: Option<ListId>,
+    /// Levels below the top; `0` is a top-level list.
+    pub depth: usize,
+    /// Position among its siblings, from zero.
+    pub ordinal: usize,
+    pub has_children: bool,
+}
+
+/// What [`ListTree::build`] had to repair. Counts only, for the debug log.
+#[derive(Copy, Clone, Default, PartialEq, Eq, Debug)]
+pub struct TreeRepairs {
+    /// Lists whose stored parent is deleted or unknown (rule 1).
+    pub dead_parents: usize,
+    /// Cycles broken at their lowest id (rule 2).
+    pub cycles: usize,
+}
+
+/// The live lists, depth first, siblings in rail order.
+///
+/// # The repair rules (nested-lists D3)
+///
+/// 1. A stored parent that is deleted or unknown is ignored: the list is
+///    drawn under its nearest live ancestor, or at the top.
+/// 2. A cycle is broken at the member with the lowest id, which is drawn at
+///    the top. Every replica holds the same ids, so every replica breaks the
+///    same cycle in the same place.
+/// 3. Nothing is rewritten because of 1 or 2.
+///
+/// **One pass, not a walk per node.** Dead parents are resolved through a
+/// memo, the children map is built once, and the visit runs from the roots
+/// on an explicit stack — so the work is linear in the number of records and
+/// a corrupt or very deep chain cannot overflow the call stack.
+#[derive(Clone, Default, PartialEq, Debug)]
+pub struct ListTree {
+    nodes: Vec<ListNode>,
+    index: HashMap<ListId, usize>,
+    pub repairs: TreeRepairs,
+    /// How many record visits the build took; what the one-pass tests count.
+    steps: usize,
+}
+
+/// **Where a list is, for the surfaces that show it outside the tree** — the
+/// `/task_list` picker, a list chip, a search result. A name alone identifies
+/// a list only while no other live list has it (nested-lists D8), so a list
+/// whose folded name another list shares gets the names of the lists it is
+/// inside, outermost first, each followed by `separator`: *"Top 3 / "*, ready
+/// to be put ahead of its own name.
+///
+/// Only lists that need one are in the answer: a name nobody shares has no
+/// entry, and neither does a top-level list — it has nothing above it, and
+/// the path on its namesake is what tells the two apart. Computed from the
+/// rows a view was pushed; never stored, never part of a list's name.
+pub fn shared_name_paths(nodes: &[ListNode], separator: &str) -> HashMap<ListId, String> {
+    let mut named: HashMap<String, usize> = HashMap::new();
+    for node in nodes {
+        *named.entry(node.entry.fold_key()).or_default() += 1;
+    }
+    let by_id: HashMap<ListId, &ListNode> = nodes.iter().map(|n| (n.entry.id, n)).collect();
+    let mut out = HashMap::new();
+    for node in nodes {
+        if node.parent.is_none() || named.get(&node.entry.fold_key()).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let mut above: Vec<&str> = Vec::new();
+        let mut at = node.parent;
+        // Bounded by the table: the rows are a repaired tree, but a short
+        // path is a better failure than a walk that does not end.
+        for _ in 0..nodes.len() {
+            let Some(parent) = at.and_then(|id| by_id.get(&id)) else {
+                break;
+            };
+            above.push(parent.entry.name.as_str());
+            at = parent.parent;
+        }
+        let mut path = String::new();
+        for name in above.iter().rev() {
+            path.push_str(name);
+            path.push_str(separator);
+        }
+        out.insert(node.entry.id, path);
+    }
+    out
+}
+
+impl ListTree {
+    /// Build from every record, tombstones included: a deleted list is a
+    /// link in the chain to a list's nearest live ancestor.
+    pub fn build(records: Vec<ListEntry>) -> Self {
+        let mut steps = 0usize;
+        let mut repairs = TreeRepairs::default();
+        let raw: HashMap<ListId, (bool, Option<ListId>)> = records
+            .iter()
+            .map(|entry| (entry.id, (entry.deleted_ms.is_none(), entry.parent)))
+            .collect();
+
+        // Rule 1. `nearest[x]` is the nearest live list at or above the
+        // tombstone `x`, memoised so a long dead chain is walked once.
+        let mut nearest: HashMap<ListId, Option<ListId>> = HashMap::new();
+        let mut on_path: std::collections::HashSet<ListId> = std::collections::HashSet::new();
+        let mut resolve = |start: Option<ListId>, steps: &mut usize| -> Option<ListId> {
+            let mut path: Vec<ListId> = Vec::new();
+            let mut at = start;
+            let found = loop {
+                let Some(id) = at else { break None };
+                *steps += 1;
+                if let Some(known) = nearest.get(&id) {
+                    break *known;
+                }
+                match raw.get(&id) {
+                    None => break None,
+                    Some((true, _)) => break Some(id),
+                    Some((false, parent)) => {
+                        // A ring of tombstones leads nowhere live.
+                        if !on_path.insert(id) {
+                            break None;
+                        }
+                        path.push(id);
+                        at = *parent;
+                    }
+                }
+            };
+            for id in path {
+                on_path.remove(&id);
+                nearest.insert(id, found);
+            }
+            found
+        };
+
+        let live: Vec<ListEntry> = records
+            .into_iter()
+            .filter(|entry| entry.deleted_ms.is_none())
+            .collect();
+        let mut parent_of: HashMap<ListId, Option<ListId>> = HashMap::with_capacity(live.len());
+        for entry in &live {
+            steps += 1;
+            let parent = resolve(entry.parent, &mut steps);
+            if parent != entry.parent {
+                repairs.dead_parents += 1;
+            }
+            parent_of.insert(entry.id, parent);
+        }
+
+        // Rule 2. Each list has at most one parent, so every cycle is a
+        // simple ring; colour the walk to find each ring once. Position on
+        // the current walk is kept beside the colour, so finding where a
+        // ring starts is a lookup and not a scan.
+        let mut seen: HashMap<ListId, Option<usize>> = HashMap::with_capacity(live.len());
+        let mut ids: Vec<ListId> = live.iter().map(|entry| entry.id).collect();
+        ids.sort_unstable();
+        for &start in &ids {
+            if seen.contains_key(&start) {
+                continue;
+            }
+            let mut path: Vec<ListId> = Vec::new();
+            let mut at = Some(start);
+            while let Some(id) = at {
+                steps += 1;
+                match seen.get(&id) {
+                    // Settled by an earlier walk.
+                    Some(None) => break,
+                    // On this walk: the ring is the path from there.
+                    Some(Some(from)) => {
+                        if let Some(lowest) = path[*from..].iter().min().copied() {
+                            parent_of.insert(lowest, None);
+                            repairs.cycles += 1;
+                        }
+                        break;
+                    }
+                    None => {
+                        seen.insert(id, Some(path.len()));
+                        path.push(id);
+                        at = parent_of.get(&id).copied().flatten();
+                    }
+                }
+            }
+            for id in path {
+                seen.insert(id, None);
+            }
+        }
+
+        // `live` arrives in rail order, so pushing in that order keeps every
+        // sibling group sorted without sorting again.
+        let mut children: HashMap<Option<ListId>, Vec<usize>> = HashMap::new();
+        for (i, entry) in live.iter().enumerate() {
+            children
+                .entry(parent_of.get(&entry.id).copied().flatten())
+                .or_default()
+                .push(i);
+        }
+        let mut nodes = Vec::with_capacity(live.len());
+        let mut index = HashMap::with_capacity(live.len());
+        let mut stack: Vec<(usize, usize, usize)> = children
+            .get(&None)
+            .map(|roots| {
+                roots
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .map(|(ordinal, &i)| (i, 0, ordinal))
+                    .collect()
+            })
+            .unwrap_or_default();
+        while let Some((i, depth, ordinal)) = stack.pop() {
+            steps += 1;
+            let entry = &live[i];
+            let kids = children.get(&Some(entry.id));
+            index.insert(entry.id, nodes.len());
+            nodes.push(ListNode {
+                entry: entry.clone(),
+                parent: parent_of.get(&entry.id).copied().flatten(),
+                depth,
+                ordinal,
+                has_children: kids.is_some_and(|kids| !kids.is_empty()),
+            });
+            if let Some(kids) = kids {
+                stack.extend(
+                    kids.iter()
+                        .enumerate()
+                        .rev()
+                        .map(|(ordinal, &i)| (i, depth + 1, ordinal)),
+                );
+            }
+        }
+        Self {
+            nodes,
+            index,
+            repairs,
+            steps,
+        }
+    }
+
+    /// Every live list, depth first.
+    pub fn nodes(&self) -> &[ListNode] {
+        &self.nodes
+    }
+
+    pub fn node(&self, list: ListId) -> Option<&ListNode> {
+        self.index.get(&list).map(|i| &self.nodes[*i])
+    }
+
+    /// Every list inside `list`, depth first. Empty for a leaf and for an id
+    /// the tree does not hold.
+    pub fn descendants(&self, list: ListId) -> Vec<ListId> {
+        let Some(&at) = self.index.get(&list) else {
+            return Vec::new();
+        };
+        let depth = self.nodes[at].depth;
+        self.nodes[at + 1..]
+            .iter()
+            .take_while(|node| node.depth > depth)
+            .map(|node| node.entry.id)
+            .collect()
+    }
+
+    /// The names of the lists above `list`, outermost first. What a surface
+    /// outside the tree shows beside a name another live list also has; it
+    /// is never stored and never becomes the list's name.
+    pub fn ancestors(&self, list: ListId) -> Vec<&str> {
+        let mut out = Vec::new();
+        let mut at = self.node(list).and_then(|node| node.parent);
+        while let Some(node) = at.and_then(|id| self.node(id)) {
+            out.push(node.entry.name.as_str());
+            at = node.parent;
+        }
+        out.reverse();
+        out
+    }
+
+    /// Whether another live list carries this list's folded name, anywhere
+    /// in the tree — when a name alone no longer identifies it.
+    pub fn name_is_shared(&self, list: ListId) -> bool {
+        let Some(node) = self.node(list) else {
+            return false;
+        };
+        let key = node.entry.fold_key();
+        self.nodes
+            .iter()
+            .any(|other| other.entry.id != list && other.entry.fold_key() == key)
+    }
+
+    /// How many record visits the build took.
+    pub fn steps(&self) -> usize {
+        self.steps
     }
 }
 
@@ -855,30 +1183,58 @@ impl SystemDoc {
 
     // ------------------------------------------------------------ lists
 
-    /// Create a list — or answer the live one that already carries this name.
-    /// `now_ms` is passed in, never read from a clock.
+    /// Create a list under `parent` (`None` is the top level) — or answer the
+    /// live **sibling** that already carries this name. `now_ms` is passed in,
+    /// never read from a clock.
+    ///
+    /// **A name is unique among live siblings, not across the workspace**
+    /// (nested-lists D8): *Backlog* under *Top 3* and another *Backlog*
+    /// elsewhere are two lists. Siblings are judged by the repaired tree, so
+    /// a list surfaced to the top by a dead parent counts as top level.
     ///
     /// **Reusing a matching name is the local half of the tag rule and only the
-    /// local half.** Typing *Wedding* where `wedding` exists answers the
-    /// existing list rather than drawing a second identical row; two *peers*
-    /// each creating "Wedding" offline, though, keep both rows. That is
-    /// deliberately unlike [`create_tag`](Self::create_tag), which folds
-    /// concurrent duplicates into one id: a tag's name **is** its identity,
-    /// typed afresh every time, while a list is picked from a rail and its name
-    /// is a label on a bucket somebody made. Folding two of those would have to
-    /// choose which bucket's memberships survive, and nothing in SPEC §8 says
-    /// which. Two rows are visible and one rename or one delete fixes them;
-    /// a silent fold is not recoverable.
+    /// local half.** Typing *Wedding* where a sibling `wedding` exists answers
+    /// [`ListCreation::Existing`] and **writes nothing**, neither a parent nor
+    /// a rank; two *peers* each creating "Wedding" offline, though, keep both
+    /// rows. That is deliberately unlike [`create_tag`](Self::create_tag),
+    /// which folds concurrent duplicates into one id: a tag's name **is** its
+    /// identity, typed afresh every time, while a list is picked from a rail
+    /// and its name is a label on a bucket somebody made. Folding two of those
+    /// would have to choose which bucket's memberships survive, and nothing in
+    /// SPEC §8 says which. Two rows are visible and one rename or one delete
+    /// fixes them; a silent fold is not recoverable.
+    ///
+    /// **A new list is first among its siblings**: its rank is one below the
+    /// lowest a sibling holds, written in the same commit as the record, so
+    /// no other list's rank moves. A `parent` that is not a live list — it
+    /// was deleted while the name was being typed — creates at the top level
+    /// rather than losing the name.
     ///
     /// A deleted list's name is history rather than a reservation, exactly as a
     /// merged-away tag's is: creating it again mints a new id.
-    pub fn create_list(&mut self, name: &str, color: Option<&str>, now_ms: i64) -> Result<ListId> {
+    pub fn create_list_under(
+        &mut self,
+        parent: Option<ListId>,
+        name: &str,
+        color: Option<&str>,
+        now_ms: i64,
+    ) -> Result<ListCreation> {
+        let tree = self.list_tree();
+        let parent = parent.filter(|id| tree.node(*id).is_some());
         let key = tags::fold_key(name);
+        let siblings = || tree.nodes().iter().filter(|node| node.parent == parent);
         if !key.is_empty()
-            && let Some(existing) = self.live_list_for_key(&key)
+            && let Some(existing) = siblings()
+                .filter(|node| node.entry.fold_key() == key)
+                .map(|node| node.entry.id)
+                .min()
         {
-            return Ok(existing);
+            return Ok(ListCreation::Existing(existing));
         }
+        let rank = siblings()
+            .filter_map(|node| node.entry.order)
+            .min()
+            .map_or(0, |lowest| lowest.saturating_sub(1));
         let id = ListId::new();
         let record = self
             .doc
@@ -889,18 +1245,22 @@ impl SystemDoc {
             record.insert(K_LIST_COLOR, color)?;
         }
         record.insert(K_LIST_CREATED, now_ms)?;
+        record.insert(K_LIST_ORDER, rank)?;
+        if let Some(parent) = parent {
+            record.insert(K_LIST_PARENT, parent.to_storage())?;
+        }
         self.doc.commit();
-        Ok(id)
+        Ok(ListCreation::Created(id))
     }
 
     /// Rename a list. One record here and **no task at all** (Foundation
     /// invariant 19), because a task stores the [`ListId`]. Answers whether the
     /// list exists; a deleted one does not.
     ///
-    /// There is no subtree to carry along and no fold afterwards — lists do not
-    /// nest, and renaming one onto another's name leaves two rows with one name
-    /// rather than merging them, for [`create_list`](Self::create_list)'s
-    /// reason.
+    /// There is no subtree to carry along and no fold afterwards — a child
+    /// names its parent by id, and renaming one list onto a sibling's name
+    /// leaves two rows with one name rather than merging them, for
+    /// [`create_list_under`](Self::create_list_under)'s reason.
     pub fn rename_list(&mut self, list: ListId, name: &str) -> Result<bool> {
         let Some(record) = self.live_list_record(list) else {
             return Ok(false);
@@ -969,6 +1329,122 @@ impl SystemDoc {
         Ok(true)
     }
 
+    /// Put a list under `parent`, or at the top level with `None`. Answers
+    /// whether anything was written.
+    ///
+    /// **Refused**: a deleted or unknown list, a deleted or unknown parent,
+    /// the list itself, and any of its own descendants *as this replica sees
+    /// them*. That last clause is the honest limit: two replicas can each
+    /// nest the other's list offline, and the cycle that merge leaves is
+    /// [`list_tree`](Self::list_tree)'s to break, not this guard's to prevent.
+    pub fn set_list_parent(&mut self, list: ListId, parent: Option<ListId>) -> Result<bool> {
+        if !self.write_list_parent(list, parent)? {
+            return Ok(false);
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// Move a list: under `parent`, and immediately before the sibling
+    /// `before` (`None` puts it last). One commit.
+    ///
+    /// The destination's siblings are **ranked densely from zero**, the rule
+    /// a flat reorder already keeps: a rank means something only against its
+    /// neighbours', and the unranked lists a peer made are among them. No
+    /// other list's parent is touched.
+    pub fn move_list(
+        &mut self,
+        list: ListId,
+        parent: Option<ListId>,
+        before: Option<ListId>,
+    ) -> Result<bool> {
+        let tree = self.list_tree();
+        let Some(current) = tree.node(list).map(|node| node.parent) else {
+            return Ok(false);
+        };
+        if current != parent && !self.write_list_parent(list, parent)? {
+            return Ok(false);
+        }
+        let mut order: Vec<ListId> = tree
+            .nodes()
+            .iter()
+            .filter(|node| node.parent == parent && node.entry.id != list)
+            .map(|node| node.entry.id)
+            .collect();
+        let at = before
+            .and_then(|before| order.iter().position(|id| *id == before))
+            .unwrap_or(order.len());
+        order.insert(at, list);
+        for (rank, id) in order.into_iter().enumerate() {
+            if let Some(record) = self.live_list_record(id) {
+                record.insert(K_LIST_ORDER, rank as i64)?;
+            }
+        }
+        self.doc.commit();
+        Ok(true)
+    }
+
+    /// The parent write shared by [`set_list_parent`](Self::set_list_parent)
+    /// and [`move_list`](Self::move_list), with every refusal and no commit.
+    fn write_list_parent(&mut self, list: ListId, parent: Option<ListId>) -> Result<bool> {
+        let Some(record) = self.live_list_record(list) else {
+            return Ok(false);
+        };
+        match parent {
+            Some(parent) => {
+                if parent == list || self.live_list_record(parent).is_none() {
+                    return Ok(false);
+                }
+                if self.list_tree().descendants(list).contains(&parent) {
+                    return Ok(false);
+                }
+                record.insert(K_LIST_PARENT, parent.to_storage())?;
+            }
+            None if record.get(K_LIST_PARENT).is_some() => record.delete(K_LIST_PARENT)?,
+            None => {}
+        }
+        Ok(true)
+    }
+
+    /// Delete a list **and the lists the person was shown inside it**, in one
+    /// commit. Answers the ids it tombstoned.
+    ///
+    /// `inside` is exactly what the confirmation counted, and nothing else is
+    /// touched: a list a peer nested in meanwhile is not deleted, and
+    /// [`list_tree`](Self::list_tree) surfaces it one level up. **Never a
+    /// task and never a page note** — [`delete_list`](Self::delete_list)'s
+    /// rule, kept for every id here.
+    pub fn delete_list_tree(
+        &mut self,
+        list: ListId,
+        inside: &[ListId],
+        now_ms: i64,
+    ) -> Result<Vec<ListId>> {
+        let mut gone = Vec::with_capacity(inside.len() + 1);
+        for id in std::iter::once(list).chain(inside.iter().copied()) {
+            if gone.contains(&id) {
+                continue;
+            }
+            if let Some(record) = self.live_list_record(id) {
+                record.insert(K_LIST_DELETED, now_ms)?;
+                gone.push(id);
+            }
+        }
+        if !gone.is_empty() {
+            self.doc.commit();
+        }
+        Ok(gone)
+    }
+
+    /// The live lists as the tree every surface draws: **repaired on read,
+    /// never trusted, and nothing rewritten** (nested-lists D3).
+    ///
+    /// The only home of the repair rules, so the rail, the picker, the chip
+    /// and the search index cannot disagree about where a list sits.
+    pub fn list_tree(&self) -> ListTree {
+        ListTree::build(self.all_lists())
+    }
+
     /// The live lists — tombstones excluded — in rail order: ranked first by
     /// rank, then the unranked by name, and id last so two peers list the same
     /// table the same way.
@@ -1006,16 +1482,6 @@ impl SystemDoc {
     pub fn list_entry(&self, list: ListId) -> Option<ListEntry> {
         let record = self.list_record(list)?;
         Some(read_list(list, &record))
-    }
-
-    /// The live list a fold key names — the lowest id, if two peers minted one
-    /// each and nobody has renamed either.
-    fn live_list_for_key(&self, key: &str) -> Option<ListId> {
-        self.lists()
-            .into_iter()
-            .filter(|entry| tags::fold_key(&entry.name) == key)
-            .map(|entry| entry.id)
-            .min()
     }
 
     // ------------------------------------------------------------ pages
@@ -1624,6 +2090,11 @@ fn read_list(id: ListId, record: &LoroMap) -> ListEntry {
         order: record.get(K_LIST_ORDER).and_then(crate::schema::as_i64),
         created_ms: record.get(K_LIST_CREATED).and_then(crate::schema::as_i64),
         deleted_ms: record.get(K_LIST_DELETED).and_then(crate::schema::as_i64),
+        parent: record
+            .get(K_LIST_PARENT)
+            .and_then(crate::schema::as_string)
+            .as_deref()
+            .and_then(ListId::parse),
     }
 }
 

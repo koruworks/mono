@@ -185,6 +185,13 @@ impl MemoryStore {
         })
     }
 
+    /// The catalog watch's current generation, for a test that asserts a
+    /// Store write woke its readers.
+    #[cfg(test)]
+    pub(crate) fn catalog_generation(&self) -> u64 {
+        *self.state.subscribe_catalog_changes().borrow()
+    }
+
     /// The typed queue: every `StoreWorkerClient` operation, served in arrival
     /// order on this composition's own thread.
     pub fn client(&self) -> StoreWorkerClient {

@@ -55,6 +55,7 @@ pub mod pins;
 pub(crate) mod profile_deletion;
 pub(crate) mod profile_removal;
 mod replacement;
+pub(crate) mod trashed_in_account;
 pub use replacement::{archive_replacing, delete_replacing, move_replacing};
 
 /// What the API needs from the derived node projection to measure live files.
@@ -722,6 +723,53 @@ pub async fn restore_workspace(
     state.publish_catalog_event(koru_events::WorkspaceCatalogRestored {
         workspace_id: id.as_uuid(),
     });
+    Ok(Json(workspace))
+}
+
+/// Restore a workspace **into** a profile: out of the trash and under the
+/// profile named, in one step (`Store::restore_workspace_to`).
+///
+/// It is both of its neighbours at once and tells the rest of the Store so
+/// in the same order they do: the rooms a delete blocked are unblocked and
+/// the restore is published, as [`restore_workspace`] does; then the move is
+/// published when the owner changed, as [`move_workspace`] does. A workspace
+/// that was not in the trash is simply moved, and only the move is said.
+pub async fn restore_workspace_to(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path(id): Path<String>,
+    Json(body): Json<MoveWorkspace>,
+) -> ApiResult<Json<Workspace>> {
+    caller.require(Scope::DestroyWorkspaces)?;
+    let id = WorkspaceId::parse(&id).ok_or_else(invalid_id)?;
+    let mut store = lock(&state)?;
+    // Under the same lock as the write, so what this reports is what the
+    // write actually changed.
+    let before = store.workspace_including_deleted(id)?;
+    let workspace = store.restore_workspace_to(id, body.owner)?;
+    let mut rooms = vec![crate::rooms::Room::Manifest(id)];
+    rooms.extend(
+        store
+            .documents(id)?
+            .into_iter()
+            .map(|document| crate::rooms::Room::Document(document.id)),
+    );
+    state.rooms.unblock(&rooms);
+    drop(store);
+    state.notify_replication();
+    state.notify_catalog_change();
+    if before.deleted_at.is_some() {
+        state.publish_catalog_event(koru_events::WorkspaceCatalogRestored {
+            workspace_id: id.as_uuid(),
+        });
+    }
+    if before.owner != workspace.owner {
+        state.publish_catalog_event(koru_events::WorkspaceCatalogMoved {
+            workspace_id: id.as_uuid(),
+            from_profile: before.owner.as_uuid(),
+            to_profile: workspace.owner.as_uuid(),
+        });
+    }
     Ok(Json(workspace))
 }
 

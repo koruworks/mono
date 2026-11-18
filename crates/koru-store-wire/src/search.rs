@@ -70,6 +70,9 @@ pub mod field {
     /// [`SearchHit::page`](super::SearchHit::page), never from a translated
     /// label.
     pub const READ: &str = "read";
+    /// A task list's own name. A fragment with no document: its node is the
+    /// list's id. Only a query that asks for lists is answered from these.
+    pub const TASK_LIST: &str = "task-list";
 
     /// `heading-1` … `heading-6`.
     pub fn heading(level: u8) -> String {
@@ -181,6 +184,44 @@ pub struct SearchHit {
     /// field, and from an answer written before this field existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub picture_name: Option<String>,
+    /// **This hit is a task list**, not a document: `kind` is `task_list`,
+    /// `document` is absent and `title` is the list's name. Only in an answer
+    /// to a query that set [`SearchQuery::include_lists`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListHit>,
+    /// **This hit is a task**: a node carrying `koru.task` or `koru.due`, or
+    /// the title of a page that is itself one. Only in an answer to a query
+    /// that set [`SearchQuery::task_results`]. A surface opens Tasks on
+    /// `task.node`; the hit's own `node` is what it always was (absent for a
+    /// title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskHit>,
+}
+
+/// What a list result carries beyond its name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ListHit {
+    /// The list's id, in storage form.
+    pub id: String,
+    /// Its swatch, as an accent token; absent for a list wearing no color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// The names of the lists it is inside, outermost first, as the rail
+    /// draws them. Empty for a top-level list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
+}
+
+/// What a task result carries: which node is the task, and whether it is done.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskHit {
+    /// The task's node. For a node hit, the hit's own node; for the title of
+    /// a page that is a task, that page's root node.
+    pub node: String,
+    /// The task's lifecycle token as indexed — `open` when none is recorded.
+    /// A hint for drawing; where the task is opened is decided from the task
+    /// as it is at that moment, never from this.
+    pub state: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -315,6 +356,19 @@ pub struct SearchQuery {
     /// the day it exists.
     #[serde(default)]
     pub attributes: Vec<AttrFilter>,
+    /// Answer with task lists too: a list whose name matches is a hit of its
+    /// own, ahead of every other result in every sort. **Off by default**, and
+    /// with it off no list is a candidate and no list's name changes a typo
+    /// correction: the answer is what it was before lists were indexed.
+    #[serde(default)]
+    pub include_lists: bool,
+    /// Answer with tasks as tasks: a hit on a task carries
+    /// [`SearchHit::task`], a task's own text ranks like a title, and text
+    /// read from pictures and files keeps one result per task rather than one
+    /// per document. **Off by default**; with it off hits, scores, order and
+    /// page membership are unchanged.
+    #[serde(default)]
+    pub task_results: bool,
     #[serde(default)]
     pub sort: SearchSort,
     #[serde(default)]
@@ -355,6 +409,8 @@ impl Default for SearchQuery {
             kinds: Vec::new(),
             tags: Vec::new(),
             attributes: Vec::new(),
+            include_lists: false,
+            task_results: false,
             sort: SearchSort::Relevance,
             lifecycle: LifecycleFilter::Live,
             page_size: DEFAULT_PAGE_SIZE,

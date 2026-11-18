@@ -680,6 +680,20 @@ payload!(DueChanged, "due.changed", |self| {
         .attr("entity_id", AttrValue::Id(self.entity_id))
 });
 
+/// A workspace's tasks changed, as the Store's read model now answers them:
+/// one appeared or went, was ticked, dated, renamed, moved in its list or
+/// filed under another — on this device or arriving from another. The
+/// Tasks surfaces' one outside trigger; they ask the read model again.
+pub struct TasksChanged {
+    pub workspace_id: Uuid,
+}
+
+payload!(TasksChanged, "projection.tasks.changed", |self| {
+    Draft::new(EventName::from_static(Self::NAME))
+        .workspace(WorkspaceId(self.workspace_id))
+        .subject(Subject::workspace(self.workspace_id.to_string()))
+});
+
 pub struct EntityRemoved {
     pub workspace_id: Uuid,
     pub document_id: Uuid,
@@ -910,6 +924,19 @@ payload!(
         Draft::new(EventName::from_static(Self::NAME))
             .attr("profile", AttrValue::Id(self.profile_id))
     }
+);
+
+/// The Store's list of Workspaces that are in this device's Trash while the
+/// account still holds them live changed (trash-recovery): one was first
+/// seen, stopped being listed, or was acknowledged. No subject on purpose:
+/// the list is replaced as a set, and a surface reads it back rather than
+/// following it off the bus.
+pub struct WorkspaceTrashedInAccountChanged;
+
+payload!(
+    WorkspaceTrashedInAccountChanged,
+    "workspace.catalog.trashed_in_account_changed",
+    |self| Draft::new(EventName::from_static(Self::NAME))
 );
 
 // ------------------------------------------ the settings authority's facts

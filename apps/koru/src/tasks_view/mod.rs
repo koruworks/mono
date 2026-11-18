@@ -67,6 +67,7 @@ mod capture;
 mod draw;
 pub mod echo;
 mod heading;
+pub mod landing;
 mod menu;
 mod pickers;
 pub mod query;

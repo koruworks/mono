@@ -44,6 +44,8 @@ use uuid::Uuid;
 
 use crate::MobileHost;
 mod inspection;
+#[cfg(test)]
+mod tests;
 
 /// Shared carrier accounting across this phone's Cloud subscriptions. It is a
 /// cap over real allocations, not a preallocation: a peer record write
@@ -344,6 +346,26 @@ impl Host for MobileCloudHost {
             manifest_document_id: manifest.as_uuid(),
             allows_cloud,
         }))
+    }
+
+    /// The same Store call the gateway makes for the desktop Agent's
+    /// request, in process: there is no control socket on a phone.
+    fn reconcile_account_live(
+        &self,
+        account: KoruIdentityId,
+        listed: &[(WorkspaceId, ProfileId)],
+    ) -> Result<std::collections::BTreeSet<WorkspaceId>, Failure> {
+        let account = account.as_uuid();
+        let listed = listed.to_vec();
+        let outcome = self.with_store(move |store| {
+            store
+                .reconcile_account_live(account, &listed, koru_store_core::Timestamp::now())
+                .map_err(|_| "store_unavailable")
+        })?;
+        if outcome.changed {
+            self.host()?.store().notify_catalog_change();
+        }
+        Ok(outcome.trashed)
     }
 
     /// The Profiles that are on this phone, bound to this account and not

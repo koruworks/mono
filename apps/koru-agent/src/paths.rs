@@ -145,6 +145,14 @@ impl Paths {
         self.agent_dir().join("cloud-sync.json")
     }
 
+    /// Catalog units Koru Cloud refused because they name a Profile the
+    /// account does not hold, per account, so a restart does not ask again.
+    /// Content-free (unit ids and version vectors) and re-derivable: losing
+    /// it costs one request per refused unit.
+    pub fn cloud_refused_units(&self) -> PathBuf {
+        self.agent_dir().join("cloud-refused-units.json")
+    }
+
     /// DPAPI-protected private key blobs. Never part of Store repair.
     pub fn secrets_dir(&self) -> PathBuf {
         self.agent_dir().join("secrets")

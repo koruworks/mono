@@ -403,6 +403,12 @@ enum WorkerCommand {
         reply: tokio::sync::oneshot::Sender<koru_store_api::cloud_changes::Subscription>,
     },
     Noop(std::sync::mpsc::SyncSender<()>),
+    /// The list of workspaces in the Trash here that the account still holds
+    /// changed, by a Store write made outside a route — over sync control,
+    /// or by an in-process host. Wakes the catalog's readers
+    /// (`AppState::notify_catalog_change`) and publishes
+    /// `workspace.catalog.trashed_in_account_changed`.
+    CatalogChanged,
     Status(std::sync::mpsc::SyncSender<StoreWorkerInfo>),
     Http {
         request: axum::extract::Request,

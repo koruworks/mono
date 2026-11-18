@@ -80,6 +80,8 @@ fn dictionary_wake_names_only_its_profile() {
         }),
         projections: Projections::in_memory().unwrap(),
         pending: BTreeMap::new(),
+        task_digests: HashMap::new(),
+        tasks_dirty: BTreeSet::new(),
     };
     let profile = ProfileId::new();
     feed.dictionary_changes(&[DictionaryCommitted { profile }]);
@@ -102,6 +104,8 @@ fn an_imported_identity_wake_carries_which_fact_moved() {
         }),
         projections: Projections::in_memory().unwrap(),
         pending: BTreeMap::new(),
+        task_digests: HashMap::new(),
+        tasks_dirty: BTreeSet::new(),
     };
     let profile = ProfileId::new();
     feed.identity_changes(&[
@@ -173,6 +177,8 @@ fn a_failed_feed_is_coalesced_and_retried_without_another_commit() {
         }),
         projections: Projections::in_memory().unwrap(),
         pending: BTreeMap::new(),
+        task_digests: HashMap::new(),
+        tasks_dirty: BTreeSet::new(),
     };
     let profile = ProfileId::new().to_storage();
 
@@ -195,4 +201,188 @@ fn a_failed_feed_is_coalesced_and_retried_without_another_commit() {
         FeedNote::ReminderChanged { profile: value, change: ReminderWake::Action }
             if value == &profile
     ));
+}
+
+// --------------------------------------------- `projection.tasks.changed`
+
+fn feed_into(delivered: &Arc<Mutex<Vec<Vec<FeedNote>>>>) -> EventsFeed {
+    EventsFeed {
+        sink: Box::new(FlakySink {
+            failures_left: AtomicUsize::new(0),
+            delivered: Arc::clone(delivered),
+        }),
+        projections: Projections::in_memory().unwrap(),
+        pending: BTreeMap::new(),
+        task_digests: HashMap::new(),
+        tasks_dirty: BTreeSet::new(),
+    }
+}
+
+fn plain(id: &str, text: &str) -> koru_projection::ProjectedNode {
+    koru_projection::ProjectedNode {
+        id: id.to_owned(),
+        parent: None,
+        ordinal: 0,
+        depth: 0,
+        kind: "paragraph".to_owned(),
+        text: text.to_owned(),
+        heading: None,
+        list_style: None,
+        done: false,
+        level_name: None,
+        name: None,
+        icon: None,
+        colour: None,
+        language: None,
+        blob: None,
+        mime: None,
+        embed: None,
+        in_trash: false,
+        runs: Vec::new(),
+        attrs: Vec::new(),
+    }
+}
+
+/// A task: a node carrying the marker and its place in the list.
+fn task(id: &str, text: &str, rank: i64) -> koru_projection::ProjectedNode {
+    let attr = |role: &str, kind: &str, value: &str| koru_projection::ProjectedAttr {
+        id: format!("{id}-{role}"),
+        role: role.to_owned(),
+        kind: kind.to_owned(),
+        value: value.to_owned(),
+        zone: None,
+        label: None,
+    };
+    koru_projection::ProjectedNode {
+        attrs: vec![
+            attr("koru.task", "bool", "true"),
+            attr("koru.rank", "number", &rank.to_string()),
+        ],
+        ..plain(id, text)
+    }
+}
+
+fn projection(
+    workspace: WorkspaceId,
+    document: DocumentId,
+    nodes: Vec<koru_projection::ProjectedNode>,
+) -> DocumentProjection {
+    DocumentProjection {
+        workspace,
+        document,
+        source_revision: Vec::new(),
+        nodes,
+    }
+}
+
+/// How many task notes each delivery carried, and for whom.
+fn task_notes(delivered: &Arc<Mutex<Vec<Vec<FeedNote>>>>) -> Vec<String> {
+    delivered
+        .lock()
+        .unwrap()
+        .iter()
+        .flatten()
+        .filter_map(|note| match note {
+            FeedNote::TasksChanged { workspace } => Some(workspace.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The answer moved, said once per workspace per tick: a task moved in its
+/// list says so wherever the change came from; the same projection again and
+/// a paragraph somebody is typing say nothing.
+#[test]
+fn a_task_that_moved_marks_its_workspace_and_plain_text_does_not() {
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let mut feed = feed_into(&delivered);
+    let (workspace, document) = (WorkspaceId::new(), DocumentId::new());
+    let body = |rank, words: &str| {
+        projection(
+            workspace,
+            document,
+            vec![plain("p", words), task("t", "Buy milk", rank)],
+        )
+    };
+
+    // First sight of a document that holds a task: it may have just changed.
+    feed.projected(&body(10, "notes"));
+    assert!(task_notes(&delivered).is_empty(), "nothing before the tick");
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered), vec![workspace.to_string()]);
+
+    // The same rows again, and then only the paragraph beside them.
+    feed.projected(&body(10, "notes"));
+    feed.projected(&body(10, "notes, and more of them"));
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered).len(), 1, "typing moves no task");
+
+    // Dragged to another place in its list.
+    feed.projected(&body(5, "notes, and more of them"));
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered).len(), 2);
+
+    // Ticked: a node field, not an attribute, and still a row that changed.
+    let mut ticked = body(5, "notes, and more of them");
+    ticked.nodes[1].done = true;
+    feed.projected(&ticked);
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered).len(), 3);
+}
+
+/// A renumbered list is many documents and one event; a document with no
+/// task in it never marks anything; a dropped document that held tasks does.
+#[test]
+fn many_documents_in_one_tick_are_one_note_and_a_taskless_document_is_none() {
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let mut feed = feed_into(&delivered);
+    let workspace = WorkspaceId::new();
+    let documents: Vec<DocumentId> = (0..40).map(|_| DocumentId::new()).collect();
+    for (i, document) in documents.iter().enumerate() {
+        feed.projected(&projection(
+            workspace,
+            *document,
+            vec![task("t", "A task", i as i64)],
+        ));
+    }
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered), vec![workspace.to_string()]);
+
+    let elsewhere = WorkspaceId::new();
+    let prose = DocumentId::new();
+    feed.projected(&projection(elsewhere, prose, vec![plain("p", "prose")]));
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered).len(), 1, "no task, no event");
+    feed.removed(elsewhere, prose);
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered).len(), 1, "and none for dropping it");
+
+    feed.removed(workspace, documents[0]);
+    feed.flush_pending();
+    assert_eq!(
+        task_notes(&delivered),
+        vec![workspace.to_string(), workspace.to_string()],
+        "a document that held a task took it along"
+    );
+}
+
+/// A journal that is briefly away loses nothing and repeats nothing: the
+/// note waits, coalesced, for the next tick.
+#[test]
+fn a_tasks_note_the_journal_missed_is_delivered_once_on_a_later_tick() {
+    let delivered = Arc::new(Mutex::new(Vec::new()));
+    let mut feed = feed_into(&delivered);
+    feed.sink = Box::new(FlakySink {
+        // `projected` delivers its own note, then the tick's flush: both fail.
+        failures_left: AtomicUsize::new(2),
+        delivered: Arc::clone(&delivered),
+    });
+    let (workspace, document) = (WorkspaceId::new(), DocumentId::new());
+    feed.projected(&projection(workspace, document, vec![task("t", "A", 1)]));
+    feed.flush_pending();
+    assert!(task_notes(&delivered).is_empty());
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered), vec![workspace.to_string()]);
+    feed.flush_pending();
+    assert_eq!(task_notes(&delivered).len(), 1);
 }

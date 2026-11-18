@@ -380,6 +380,8 @@ fn unacknowledged_snooze_survives_disconnect_and_the_next_cold_hello() {
         trashed: false,
         match_text: None,
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     };
     assert!(matches!(
         agent.router.open(
@@ -2759,6 +2761,8 @@ fn a_pending_launch_wakes_maintenance_and_expires_without_an_overlay() {
         trashed: false,
         match_text: None,
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     };
     assert!(matches!(
         agent
@@ -2772,6 +2776,88 @@ fn a_pending_launch_wakes_maintenance_and_expires_without_an_overlay() {
     assert!(!agent.maintain(deadline));
     assert_eq!(agent.router.pending_count(), 0);
     assert_eq!(agent.maintenance_deadline(), None);
+}
+
+fn kind_wire(
+    kind: koru_agent_wire::TargetKind,
+    document: Option<String>,
+    node: Option<&str>,
+    list: Option<&str>,
+) -> koru_agent_wire::Target {
+    koru_agent_wire::Target {
+        profile: ProfileId::new().to_storage(),
+        workspace: WorkspaceId::new().to_storage(),
+        document,
+        node: node.map(str::to_string),
+        trashed: false,
+        match_text: None,
+        new_window: false,
+        kind,
+        list: list.map(str::to_string),
+    }
+}
+
+#[test]
+fn a_task_or_task_list_target_missing_what_its_kind_needs_opens_nothing() {
+    use koru_agent_wire::TargetKind;
+    let document = || Some(koru_store_core::DocumentId::new().to_storage());
+    for (what, wire) in [
+        (
+            "task without a node",
+            kind_wire(TargetKind::Task, document(), None, None),
+        ),
+        (
+            "task without a document",
+            kind_wire(TargetKind::Task, None, Some("n"), None),
+        ),
+        (
+            "task_list with a document",
+            kind_wire(TargetKind::TaskList, document(), None, Some("l")),
+        ),
+        (
+            "task_list without a list",
+            kind_wire(TargetKind::TaskList, None, None, None),
+        ),
+        (
+            "task with a document that will not parse",
+            kind_wire(TargetKind::Task, Some("not-a-uuid".into()), Some("n"), None),
+        ),
+    ] {
+        assert_eq!(from_wire(wire), None, "{what}");
+    }
+}
+
+#[test]
+fn a_task_and_a_task_list_cross_the_wire_and_come_back_as_themselves() {
+    for disposition in [
+        koru_search_ui::Disposition::CurrentWindow,
+        koru_search_ui::Disposition::NewWindow,
+    ] {
+        let list = koru_search_ui::Target::List {
+            profile: ProfileId::new(),
+            workspace: WorkspaceId::new(),
+            list: "a-list-id".into(),
+            disposition,
+        };
+        let wire = to_wire(list.clone());
+        assert_eq!(wire.kind, koru_agent_wire::TargetKind::TaskList);
+        assert_eq!(wire.document, None);
+        assert_eq!(wire.node, None);
+        assert_eq!(from_wire(wire), Some(list));
+
+        let task = koru_search_ui::Target::Task {
+            profile: ProfileId::new(),
+            workspace: WorkspaceId::new(),
+            document: koru_store_core::DocumentId::new(),
+            node: "a-node-id".into(),
+            match_text: Some("a phrase".into()),
+            disposition,
+        };
+        let wire = to_wire(task.clone());
+        assert_eq!(wire.kind, koru_agent_wire::TargetKind::Task);
+        assert_eq!(wire.list, None);
+        assert_eq!(from_wire(wire), Some(task));
+    }
 }
 
 #[test]

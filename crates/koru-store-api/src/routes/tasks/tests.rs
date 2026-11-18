@@ -87,6 +87,7 @@ fn a_response() -> TaskQueryResponse {
             breadcrumb: "Acme / Plans".into(),
             title: "Ship it".into(),
             attributes: Vec::new(),
+            bucket: None,
         }],
         definitions: Vec::new(),
         tags: Vec::new(),

@@ -640,6 +640,10 @@ async fn run_session(
     }
     if let Err(error) = outcome {
         let code = error.code();
+        if ended_with_its_permit(code, lock(&host).cloud_permit_live(permit_id, generation)) {
+            tracing::debug!(code, "cloud session: ended with its permit");
+            return;
+        }
         tracing::warn!(code, "cloud session: pass ended with a refusal");
         let touched = started_documents
             .lock()
@@ -685,18 +689,37 @@ fn report_pass(
     } else {
         CloudStage::Settled
     };
-    tracing::info!(
-        %dataset,
-        %permit_id,
-        settled = outcome.settled.len(),
-        uploaded = uploaded,
-        downloaded = downloaded,
-        deferred = outcome.deferred.len(),
-        refused = outcome.refused.len(),
-        unavailable = outcome.unavailable.len(),
-        remote_hint = outcome.remote_hint,
-        "cloud session: pass finished"
-    );
+    // News, not activity: a pass that moved something, was held back, or
+    // was told to look again is worth a line; one of the twenty-odd quiet
+    // passes a healthy device runs every minute is not (it was 6 MB of log a
+    // day on one device, 2026-11-17). Per-dataset presence is in the Store's
+    // Cloud activity (`…/cloud-sync`), not in this file.
+    let quiet = uploaded == 0
+        && downloaded == 0
+        && outcome.deferred.is_empty()
+        && outcome.refused.is_empty()
+        && outcome.unavailable.is_empty()
+        && !outcome.remote_hint;
+    if quiet {
+        tracing::debug!(
+            %dataset,
+            settled = outcome.settled.len(),
+            "cloud session: pass finished, nothing moved"
+        );
+    } else {
+        tracing::info!(
+            %dataset,
+            %permit_id,
+            settled = outcome.settled.len(),
+            uploaded = uploaded,
+            downloaded = downloaded,
+            deferred = outcome.deferred.len(),
+            refused = outcome.refused.len(),
+            unavailable = outcome.unavailable.len(),
+            remote_hint = outcome.remote_hint,
+            "cloud session: pass finished"
+        );
+    }
     let counts = PassCounts {
         settled: outcome.settled.len().try_into().unwrap_or(u32::MAX),
         uploaded: uploaded.try_into().unwrap_or(u32::MAX),
@@ -956,6 +979,24 @@ pub(crate) async fn seed_root_placement(
         })
         .await
         .map_err(|_| "store_worker_unavailable")?
+}
+
+/// **A session that outlived its permit ended as designed, and was refused
+/// by nobody.**
+///
+/// The Agent replaces every permit when credentials rotate — about every
+/// eight minutes — and on any fence. The old permit's session then asks
+/// `authorize` for its next unit, is answered `replica_fenced` because the
+/// permit is no longer the live one, and stops; the new permit's session
+/// carries the dataset on. That is not a refused pass. It was logged as a
+/// warning and recorded as one, which marked every workspace *held* and its
+/// documents refused until the next pass finished, once per rotation
+/// (found 2026-11-17: 22 warnings every eight minutes on a healthy device).
+///
+/// `replica_fenced` while the permit **is** still live is the other thing —
+/// the service's own answer — and stays a refusal.
+fn ended_with_its_permit(code: &str, permit_live: bool) -> bool {
+    code == Refusal::ReplicaFenced.code() && !permit_live
 }
 
 #[cfg(test)]

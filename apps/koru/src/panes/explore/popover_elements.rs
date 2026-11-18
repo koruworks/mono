@@ -386,6 +386,9 @@ impl ExploreView {
         if let Some(group) = self.unassigned_group() {
             page = page.child(group);
         }
+        if let Some(group) = self.trashed_in_account_group() {
+            page = page.child(group);
+        }
         page.child(
             col("Workspace header spacing")
                 .child(self.workspace_menu_heading())
@@ -703,9 +706,20 @@ impl ExploreView {
         let mut workspaces = row_rects(frame).into_iter();
         let mut profiles = frame.named(profiles::ROW).map(|node| node.rect);
         let unassigned = self.unassigned_rows();
+        let trashed = self.trashed_in_account_rows();
         self.rows_for(kind)
             .into_iter()
             .filter_map(|row| match row {
+                PopoverRow::TrashedInAccount(i) | PopoverRow::TrashedRestoreTo(i) => {
+                    let id = crate::manage::workspaces::app_workspace(trashed.get(i)?.id);
+                    let key = match row {
+                        PopoverRow::TrashedInAccount(_) => {
+                            super::workspace_menu_elements::trashed(id)
+                        }
+                        _ => super::workspace_menu_elements::trashed_restore(id),
+                    };
+                    frame.node(key).map(|node| (row, node.rect))
+                }
                 PopoverRow::WorkspaceAction(action) => {
                     frame.node(action.key()).map(|node| (row, node.rect))
                 }
@@ -858,6 +872,24 @@ pub(crate) fn row_part_of(view: &ExploreView, key: Key) -> Option<(PopoverRow, P
             _ => return None,
         };
         return Some((row, PopoverPart::Row));
+    }
+    // The trashed-in-account group's row and its one action, the same way.
+    if let Some(i) = view
+        .trashed_in_account_rows()
+        .iter()
+        .position(|row| row.id.as_uuid().as_u128() == id)
+    {
+        match key.part {
+            super::workspace_menu_elements::TRASHED => {
+                return Some((PopoverRow::TrashedInAccount(i), PopoverPart::Row));
+            }
+            super::workspace_menu_elements::TRASHED_RESTORE => {
+                return Some((PopoverRow::TrashedRestoreTo(i), PopoverPart::Row));
+            }
+            // A trashed workspace is not also one of this menu's live rows,
+            // but the key decides, not the list.
+            _ => {}
+        }
     }
     let part = match key.part {
         MANAGE => PopoverPart::Gear,

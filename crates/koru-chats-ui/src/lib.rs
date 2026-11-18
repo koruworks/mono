@@ -226,6 +226,9 @@ pub struct ChatsSurface {
     pub(crate) reveal_owed: bool,
     pub(crate) wants_open: Option<ChatId>,
     pub(crate) wants_new: bool,
+    /// **The host's quick filter**: only the chats whose title holds every
+    /// word, whatever the case. `None` is every chat.
+    pub(crate) filter: Option<Vec<String>>,
     /// The chats a delete was asked for — one, or the selection.
     pub(crate) wants_delete: Vec<ChatId>,
     /// **The picked chats**, the library's multi-selection one column over
@@ -297,6 +300,53 @@ impl ChatsSurface {
 
     /// A surface that will never read anything — for a test, and for a host
     /// that feeds it itself through [`take_listing`](Self::take_listing).
+    /// Narrow the list to the chats whose title holds every word of `text`,
+    /// or show them all. The host types; this only filters. Answers whether
+    /// it changed.
+    pub fn set_filter(&mut self, text: Option<String>) -> bool {
+        let words = text
+            .map(|text| {
+                text.split_whitespace()
+                    .map(str::to_lowercase)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|words| !words.is_empty());
+        if self.filter == words {
+            return false;
+        }
+        self.filter = words;
+        self.scroll = 0.0;
+        true
+    }
+
+    /// Put the keyboard on the first chat the filter lets show.
+    pub fn focus_first_match(&mut self) {
+        if self.filter.is_none() {
+            return;
+        }
+        if let Some(first) = self.chats.iter().find(|chat| self.filter_holds(chat)) {
+            self.focus = Some(Focus::Chat(first.id));
+            self.reveal_owed = true;
+        }
+    }
+
+    /// Whether the filter lets this chat show.
+    pub(crate) fn filter_holds(&self, chat: &Chat) -> bool {
+        let Some(words) = &self.filter else {
+            return true;
+        };
+        let title = crate::text::title(self.lang, chat).to_lowercase();
+        words.iter().all(|word| title.contains(word.as_str()))
+    }
+
+    /// How many chats the filter lets show.
+    pub fn filter_matches(&self) -> usize {
+        self.chats
+            .iter()
+            .filter(|chat| self.filter_holds(chat))
+            .count()
+    }
+
     pub fn without_reader() -> Self {
         Self {
             lang: Lang::default(),
@@ -312,6 +362,7 @@ impl ChatsSurface {
             reveal_owed: false,
             wants_open: None,
             wants_new: false,
+            filter: None,
             wants_delete: Vec::new(),
             selection: Vec::new(),
             anchor: None,

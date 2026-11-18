@@ -47,6 +47,9 @@ fn tasks_sidebar_chord_focuses_toggles_and_navigates_from_open_or_closed() {
         if view.sidebar.is_open() != initially_open {
             view.toggle_sidebar();
         }
+        // The fixture's press on Today leaves the keyboard on that row, as a
+        // press on a sidebar row does; start from the page holding it.
+        view.explore.clear_focus();
         assert!(!view.explore.has_focus());
         let mods = koru_keys::PRIMARY_SHIFT;
         chord(&mut view, &mut workspace, "e", mods);

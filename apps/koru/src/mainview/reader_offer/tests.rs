@@ -96,7 +96,7 @@ fn the_summary_gains_its_line_and_keeps_its_action() {
     assert_eq!(
         toast.line_sentence(),
         Some(
-            "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer. One-time download, 24 MB."
+            "412 pictures and scanned PDFs can be found by the words in them. Koru reads them on this computer, not in the cloud. One-time download, 24 MB."
         )
     );
     assert_eq!(toast.line_actions(), ["Turn on", "Not now"]);

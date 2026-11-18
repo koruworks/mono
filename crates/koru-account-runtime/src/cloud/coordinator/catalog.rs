@@ -478,6 +478,16 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         if theirs.as_deref() == Some(ours) {
             return Ok(());
         }
+        // Refused on an earlier start, unchanged here, and the account's
+        // Profiles unchanged since: the same question has the same answer.
+        // Still reported by id, as a refusal heard this pass is.
+        let account = self.current_authority()?.owner.account;
+        if self.remembered_for(account).holds(unit, ours) {
+            self.refused_units
+                .insert(unit, UnitRefusal::PlacementForeign.code());
+            self.record_deferred(unit, &Failure::UnitRefused(UnitRefusal::PlacementForeign));
+            return Ok(());
+        }
         self.gate(unit, clock)?;
         let mut recipient = theirs;
         for _ in 0..2 {
@@ -531,8 +541,18 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 Ok(receipt) => receipt,
                 // Q12 (a), (b): the service will not take this unit, and a
                 // retry cannot change its mind. Recorded by id; the rest of
-                // the inventory still goes.
+                // the inventory still goes. A placement refusal is also kept
+                // across restarts (`Host::remembered_refusals`): it depends
+                // only on this unit and the account's Profiles.
                 Err(error @ (Failure::UnitFormatTooNew | Failure::UnitRefused(_))) => {
+                    if matches!(error, Failure::UnitRefused(UnitRefusal::PlacementForeign)) {
+                        let account = self.current_authority()?.owner.account;
+                        let remembered = self.remembered_for(account);
+                        remembered.units.retain(|(held, _)| *held != unit);
+                        remembered.units.push((unit, ours.to_vec()));
+                        let remembered = remembered.clone();
+                        self.host.remember_refusals(account, &remembered);
+                    }
                     self.defer_unit(unit, &error);
                     return Ok(());
                 }

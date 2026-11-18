@@ -305,3 +305,64 @@ async fn an_earlier_trash_entry_stays_trashed_through_a_batch_restore() {
     let live = rows.iter().find(|row| row.id == second.id).unwrap();
     assert!(live.deleted_at.is_none());
 }
+
+/// `POST /v1/workspaces/{id}/restore-to` (trash-recovery P1): out of the
+/// trash and under another profile in one call, saying both facts and
+/// opening the rooms the delete had blocked.
+#[tokio::test]
+async fn a_trashed_workspace_is_restored_into_another_profile_in_one_call() {
+    let (state, recorded, owner, workspace) = fixture();
+    let other = lock(&state)
+        .unwrap()
+        .create_profile("Other", None, None, Locale::default(), now())
+        .unwrap();
+    lock(&state)
+        .unwrap()
+        .delete_workspace(workspace.id, now())
+        .unwrap();
+    let manifest = crate::rooms::Room::Manifest(workspace.id);
+    state
+        .rooms
+        .block_and_disconnect(std::slice::from_ref(&manifest));
+    let path = format!("/v1/workspaces/{}/restore-to", workspace.id);
+    let body = serde_json::json!({ "owner": other.id });
+
+    // The scope restore takes: managing workspaces is not enough.
+    let (status, _) = call(
+        &state,
+        "POST",
+        &path,
+        Some(body.clone()),
+        Scope::ManageWorkspaces,
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    let (status, restored) = call(
+        &state,
+        "POST",
+        &path,
+        Some(body.clone()),
+        Scope::DestroyWorkspaces,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let restored: Workspace = serde_json::from_value(restored).unwrap();
+    assert_eq!((restored.owner, restored.deleted_at), (other.id, None));
+    assert_eq!(published(&recorded, "workspace.catalog.restored"), 1);
+    assert_eq!(published(&recorded, "workspace.catalog.moved"), 1);
+    let (sender, _frames) = tokio::sync::mpsc::unbounded_channel();
+    assert!(
+        state
+            .rooms
+            .join(manifest, state.rooms.next_connection(), sender),
+        "the room the delete blocked is open again"
+    );
+
+    // Already live: the same call is a move back, and only the move is said.
+    let home = serde_json::json!({ "owner": owner.id });
+    let (status, _) = call(&state, "POST", &path, Some(home), Scope::DestroyWorkspaces).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(published(&recorded, "workspace.catalog.restored"), 1);
+    assert_eq!(published(&recorded, "workspace.catalog.moved"), 2);
+}

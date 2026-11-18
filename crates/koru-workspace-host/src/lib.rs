@@ -485,6 +485,17 @@ pub trait View {
         false
     }
 
+    /// Open a task list, or the Tasks page a task is on, in a view that can
+    /// host tabs — a list or a task chosen in search. A dedicated search pane
+    /// declines; the container accepts.
+    ///
+    /// For a task the view decides the page **from the task as it is now**,
+    /// and falls back to the task's own document when it cannot. Answering
+    /// `true` means the request was taken, not that the task has landed.
+    fn open_tasks_target(&mut self, _target: TasksTarget, _match_text: Option<&str>) -> bool {
+        false
+    }
+
     /// Open the profile-global reminder destination in this tab host.
     fn open_all_reminders(&mut self) -> bool {
         false
@@ -1596,7 +1607,7 @@ pub trait View {
     /// lives in the system document (ADR-176), a view cannot see one, and the
     /// name has already been typed by the time this is asked. The colour is an
     /// `AccentColor` token from the shared swatch set, never an RGB value.
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<tasks::ListCreate> {
         None
     }
 
@@ -1761,11 +1772,14 @@ pub trait View {
         false
     }
 
-    /// The workspace list table, pushed whenever it changes — a list made
-    /// here, or a peer's arriving through the system document's room. Answers
-    /// whether anything on screen changed. Default no-op: only a view that
-    /// draws the tasks rail cares.
-    fn set_list_table(&mut self, _lists: &[koru_core::system::ListEntry]) -> bool {
+    /// The workspace's lists **as the repaired tree**
+    /// ([`SystemDoc::list_tree`](koru_core::system::SystemDoc::list_tree)),
+    /// depth first, pushed whenever the table changes — a list made here, or
+    /// a peer's arriving through the system document's room. One tree for
+    /// every surface, so the rail, the picker and the chip cannot place a
+    /// list differently. Answers whether anything on screen changed. Default
+    /// no-op: only a view that draws lists cares.
+    fn set_list_table(&mut self, _lists: &[koru_core::system::ListNode]) -> bool {
         false
     }
 
@@ -2433,6 +2447,37 @@ pub enum NavigationTarget {
     Workspace {
         profile: ProfileId,
         workspace: WorkspaceId,
+    },
+    /// A task list's page in Tasks. A list is in no document, so the
+    /// workspace is carried rather than located.
+    TaskList {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        list: koru_core::ids::ListId,
+    },
+    /// One of a workspace's standing task queues, opened as its page.
+    TaskQueue {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        bucket: koru_core::tasks::Bucket,
+    },
+    /// A task, opened in Tasks on the page where it is now. Located through
+    /// its document, as a document is.
+    Task {
+        document: koru_core::DocumentId,
+        node: NodeId,
+    },
+}
+
+/// What a view is asked to open in Tasks ([`View::open_tasks_target`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TasksTarget {
+    List(koru_core::ids::ListId),
+    /// One of the standing queues: Today, Next, Upcoming, Later.
+    Queue(koru_core::tasks::Bucket),
+    Task {
+        document: koru_core::DocumentId,
+        node: NodeId,
     },
 }
 

@@ -3,6 +3,14 @@
   "name": "do.koru/koru",
   "title": "Koru",
   "description": "Koru notes, docs and files for AI. Open-source alternative to Notion, Evernote, Obsidian, Anytype.",
+  "websiteUrl": "https://www.koru.do/en/developers/mcp",
+  "icons": [
+    {
+      "src": "https://www.koru.do/icon.png",
+      "mimeType": "image/png",
+      "sizes": ["192x192"]
+    }
+  ],
   "repository": {
     "url": "https://github.com/koruworks/mono",
     "source": "github"

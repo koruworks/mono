@@ -232,6 +232,30 @@ pub struct TaskQuery {
     /// bug and a quiet answer would hide it. Pagination is untouched.
     #[serde(default)]
     pub covering: Vec<RevisionRequirement>,
+
+    /// **Exactly these tasks**, and nothing else. Absent means no selector.
+    ///
+    /// For opening one task from somewhere that already knows which: the
+    /// answer is that task **as it is now**, whatever page it is on — open or
+    /// completed, however long ago it was finished.
+    ///
+    /// **The selector is exclusive, not a filter that quietly wins.** With it
+    /// present:
+    ///
+    /// - `workspaces` must name exactly one workspace;
+    /// - 1 to [`MAX_ONLY`] entries, each a node id that parses;
+    /// - `bucket`, `list`, `due`, `priority`, `min_priority`, `tags`, `has`,
+    ///   `missing`, `after` and `group_by` are refused (400);
+    /// - `lifecycle`, `completed_on_or_after` and `recently_completed_since`
+    ///   are not applied, and neither is `limit` — the selector bounds the
+    ///   answer;
+    /// - `include_trashed` applies as always;
+    /// - `bucket_windows` is allowed, and fills [`TaskRow::bucket`].
+    ///
+    /// A reference that is not in that workspace, or is not a task, is simply
+    /// not in the answer. That is not an error.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only: Option<Vec<TaskRef>>,
 }
 
 /// One write a query wants included — see [`TaskQuery::covering`].
@@ -381,6 +405,7 @@ impl Default for TaskQuery {
             limit: DEFAULT_LIMIT,
             after: None,
             covering: Vec::new(),
+            only: None,
         }
     }
 }
@@ -485,6 +510,17 @@ pub enum TaskSort {
     Modified,
     Manual,
 }
+
+/// One task, named exactly: the document it is written in and its node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskRef {
+    pub document: DocumentId,
+    /// The task's node id, in storage form.
+    pub node: String,
+}
+
+/// The most tasks one [`TaskQuery::only`] may name.
+pub const MAX_ONLY: usize = 50;
 
 /// What the query answers with.
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -630,6 +666,17 @@ pub struct TaskRow {
     /// Every attribute on the node — not only the ones the filter named, so a
     /// row can be drawn without a second request.
     pub attributes: Vec<AttributeRowValue>,
+    /// **The task's natural bucket**: one of the five tokens, placed by the
+    /// same ordered rule the rail's counts use, so the five are a partition.
+    /// A task pinned to Today with a later due keeps its natural bucket here
+    /// (`upcoming`, say); the pin is the row's own `koru.today` attribute.
+    ///
+    /// Present only in an answer to a query that named tasks with
+    /// [`TaskQuery::only`] **and** sent
+    /// [`bucket_windows`](TaskQuery::bucket_windows). Without the windows the
+    /// store does not know what *today* is and never guesses a day or a zone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
 }
 
 #[cfg(test)]

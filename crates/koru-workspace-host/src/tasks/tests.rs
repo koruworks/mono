@@ -1549,7 +1549,10 @@ fn deleting_a_list_sweeps_memberships_and_leaves_the_tasks() {
     // swept. The tidy-up never runs ahead of the deletion it tidies up after.
     assert!(!super::serve_list_edit(
         &mut workspace,
-        &ListEdit::Delete(wedding)
+        &ListEdit::DeleteTree {
+            id: wedding,
+            inside: vec![bike],
+        }
     ));
     assert_eq!(
         workspace.ws.read(cake).unwrap().list_id(),

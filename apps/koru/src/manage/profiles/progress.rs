@@ -597,7 +597,13 @@ pub fn waiting_lines(lang: Lang, waiting: &Waiting, limit: usize) -> Vec<String>
 }
 
 /// Completed document passes, using exactly the same gate as each row.
-pub(super) fn summary(lang: Lang, rows: &[WorkspaceProgress]) -> String {
+///
+/// `trashed_here` is how many of the account's workspaces under this
+/// Profile are in the Trash on this device (trash-recovery P4). They are
+/// not rows — nothing of them syncs — and the synced count does not count
+/// them; the line says so where *held* goes, so "16 of 16 synced" on a
+/// device missing one is not the whole sentence.
+pub(super) fn summary(lang: Lang, rows: &[WorkspaceProgress], trashed_here: usize) -> String {
     let statuses = || rows.iter().filter_map(|row| row.status.as_ref());
     let on = statuses().filter(|status| documents_synced(status)).count() as u64;
     let mut parts = vec![fill(
@@ -620,6 +626,12 @@ pub(super) fn summary(lang: Lang, rows: &[WorkspaceProgress]) -> String {
         parts.push(fill(
             t(lang, TextKey::CloudProgressHeld),
             &[&decimal(lang, held)],
+        ));
+    }
+    if trashed_here > 0 {
+        parts.push(fill(
+            t(lang, TextKey::CloudProgressTrashedHere),
+            &[&decimal(lang, trashed_here as u64)],
         ));
     }
     parts.join(" · ")
@@ -669,8 +681,11 @@ impl ProfilesController {
             .maintain(target, visible, self.client.as_ref(), now)
     }
 
-    /// What to draw, or `None` for no section.
-    pub fn cloud_progress_lines(&self) -> Option<Lines> {
+    /// What to draw, or `None` for no section. `trashed_here` is the count
+    /// the summary line carries beside *held*: the workspaces the account
+    /// keeps under this Profile that are in the Trash on this device, which
+    /// the host reads from the workspaces controller.
+    pub fn cloud_progress_lines(&self, trashed_here: usize) -> Option<Lines> {
         let profile = self.cloud_progress_profile()?;
         let lang = crate::format::lang();
         let connection = self.cloud_connection(profile);
@@ -693,7 +708,7 @@ impl ProfilesController {
             });
         };
         Some(Lines {
-            summary: summary(lang, rows),
+            summary: summary(lang, rows, trashed_here),
             rows: rows
                 .iter()
                 .map(|row| {

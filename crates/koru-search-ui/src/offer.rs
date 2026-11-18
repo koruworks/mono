@@ -156,7 +156,11 @@ pub(crate) fn view(
         // Something still being read is the empty page itself
         // ([`empty_progress`]), not a line under it. Once nothing here is
         // left, the files whose contents are elsewhere are named as such.
-        return (left == 0 && counts.not_here > 0).then(|| quiet(not_here(lang, counts.not_here)));
+        // **Files whose contents are on another device are not announced**
+        // (owner, 2026-11-16). The line stood under every search that found
+        // nothing and gave nothing to do about it. They are still left out
+        // of the unread counts, which is the part that mattered.
+        return None;
     }
     (left > 0).then(|| quiet(still_reading(lang, left, counts.total)))
 }
@@ -213,6 +217,7 @@ fn still_reading(lang: Lang, left: u64, total: u64) -> String {
 }
 
 /// *38 files are not on this computer.* — a whole sentence for one.
+#[allow(dead_code)]
 pub(crate) fn not_here(lang: Lang, count: u64) -> String {
     match count {
         1 => t(lang, Key::ReaderNotHereOne).to_owned(),
@@ -349,7 +354,21 @@ fn offer(
     if waiting == 0 {
         return None;
     }
-    let lead = lead(lang, waiting, with_results);
+    // What, then where: the reading happens on this computer and nothing is
+    // sent away — the first thing somebody asked to download a reader wants
+    // to know.
+    let lead = sentences(
+        lang,
+        &lead(lang, waiting, with_results),
+        t(
+            lang,
+            if waiting == 1 {
+                Key::ReaderOfferHereOne
+            } else {
+                Key::ReaderOfferHere
+            },
+        ),
+    );
     if let Some(line) = reader
         .install
         .as_ref()

@@ -865,6 +865,25 @@ pub enum Key {
     WorkspacesRestorePurgedMany,
     /// The batch restore refused or did not answer. Nothing moved.
     WorkspacesRestoreProfileFailed,
+    /// **In the Trash here, live in the account** (trash-recovery): the
+    /// recovery group's third list — its caption, and the hint under a row.
+    WorkspacesTrashedInAccountHeading,
+    WorkspacesTrashedInAccountHint,
+    /// The row's one action; `{}` is the Profile the account keeps it under.
+    WorkspacesRestoreTo,
+    /// The question that action asks: the workspace, then the Profile; and
+    /// the body, which names the Profile.
+    WorkspacesRestoreToTitle,
+    WorkspacesRestoreToBody,
+    /// What it came to: the workspace, then the Profile; or the workspace
+    /// alone when nothing changed.
+    WorkspacesRestoredTo,
+    WorkspacesRestoreToFailed,
+    /// The notice shown once when this device first learns of one: the
+    /// workspace.
+    WorkspacesTrashedInAccountNotice,
+    /// A Trash row's second line, in place of *Opened …*: the Profile.
+    WorkspacesTrashStillInAccount,
     /// An empty Profile (§3.10): the Workspace menu's list and the waiting
     /// pane say so, beside the one explicit way out — *New workspace*.
     ProfileEmptyWorkspaces,
@@ -2687,6 +2706,9 @@ pub enum Key {
     CloudProgressDocuments,
     CloudProgressFiles,
     CloudProgressHeld,
+    /// Beside it on the same summary line: how many of the account's
+    /// workspaces are in the Trash on this device (trash-recovery).
+    CloudProgressTrashedHere,
     CloudProgressMore,
     // An expanded held Workspace: one line per document waiting on a file
     // Koru Cloud does not hold yet, and whom it is waiting for.
@@ -3503,13 +3525,46 @@ pub enum Key {
     ImportNoticeViewFile,
     ImportContentFailedTitle,
     ImportContentFailedBody,
+    // ---- nested task lists, and lists and tasks in search
+    /// The Lists section of the tasks rail: its heading, and the name a screen reader gives the tree of lists.
+    TaskListsHeading,
+    /// The `+` beside *Lists*: what it is called, to a screen reader and in a hint.
+    TaskListNew,
+    /// The placeholder in the field a list is named in.
+    TaskListNameHint,
+    /// Shown beside that field when a list beside this one already has the name.
+    TaskListNameTaken,
+    /// A list row's menu, and its hover `+`: make a list inside this one.
+    TaskListNewInside,
+    /// A nested list row's menu: take it out of the list it is inside.
+    TaskListMoveToTop,
+    /// The question before deleting a list with exactly one list inside it. `{}` is the list's name.
+    TaskListDeleteNestedOne,
+    /// The same question for two or more. `{}` is the list's name, then how many lists are inside it, already written as a number.
+    TaskListDeleteNestedMany,
+    /// Under that question: what is not lost.
+    TaskListDeleteNestedBody,
+    /// The button that agrees to it.
+    TaskListDeleteNestedConfirm,
+    /// Between the names of a list's path, where a list is shown outside the tree: *Top 3 / Backlog*. Spaces included.
+    TaskListPathSeparator,
+    /// Said briefly when a search result named a list that has since been deleted.
+    TaskListGone,
+    /// The first part of a list result's path in search: *Tasks / Top 3 / Backlog*.
+    SearchTasksCrumb,
+    /// The band at the top of a Tasks page holding a task opened from search that the page would not otherwise show.
+    TasksFromSearch,
+    /// That band's close control.
+    TasksFromSearchDismiss,
+    /// A task result's menu: open the document the task is written in, at its line.
+    SearchOpenInDocument,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2468] = [
+    pub const ALL: [Key; 2494] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -4144,6 +4199,15 @@ impl Key {
         Key::WorkspacesRestorePurgedOne,
         Key::WorkspacesRestorePurgedMany,
         Key::WorkspacesRestoreProfileFailed,
+        Key::WorkspacesTrashedInAccountHeading,
+        Key::WorkspacesTrashedInAccountHint,
+        Key::WorkspacesRestoreTo,
+        Key::WorkspacesRestoreToTitle,
+        Key::WorkspacesRestoreToBody,
+        Key::WorkspacesRestoredTo,
+        Key::WorkspacesRestoreToFailed,
+        Key::WorkspacesTrashedInAccountNotice,
+        Key::WorkspacesTrashStillInAccount,
         Key::ProfileEmptyWorkspaces,
         Key::ProfileDeleteTargetsOne,
         Key::ProfileDeleteTargetsMany,
@@ -5376,6 +5440,7 @@ impl Key {
         Key::CloudProgressDocuments,
         Key::CloudProgressFiles,
         Key::CloudProgressHeld,
+        Key::CloudProgressTrashedHere,
         Key::CloudProgressMore,
         Key::CloudProgressWaitingOneFile,
         Key::CloudProgressWaitingFiles,
@@ -5978,6 +6043,22 @@ impl Key {
         Key::ImportNoticeViewFile,
         Key::ImportContentFailedTitle,
         Key::ImportContentFailedBody,
+        Key::TaskListsHeading,
+        Key::TaskListNew,
+        Key::TaskListNameHint,
+        Key::TaskListNameTaken,
+        Key::TaskListNewInside,
+        Key::TaskListMoveToTop,
+        Key::TaskListDeleteNestedOne,
+        Key::TaskListDeleteNestedMany,
+        Key::TaskListDeleteNestedBody,
+        Key::TaskListDeleteNestedConfirm,
+        Key::TaskListPathSeparator,
+        Key::TaskListGone,
+        Key::SearchTasksCrumb,
+        Key::TasksFromSearch,
+        Key::TasksFromSearchDismiss,
+        Key::SearchOpenInDocument,
     ];
 }
 
@@ -10959,6 +11040,15 @@ pub const ROWS: &[Row] = &[
     Row { key: Key::WorkspacesRestorePurgedOne, en: "1 is no longer available.", es: "1 ya no está disponible.", pt_br: "1 não está mais disponível.", de: "1 ist nicht mehr verfügbar.", fr: "1 n'est plus disponible.", ar: "واحدة لم تعد متاحة.", zh_hans: "1 个已不可用。", ja: "1 件は利用できません。" },
     Row { key: Key::WorkspacesRestorePurgedMany, en: "{} are no longer available.", es: "{} ya no están disponibles.", pt_br: "{} não estão mais disponíveis.", de: "{} sind nicht mehr verfügbar.", fr: "{} ne sont plus disponibles.", ar: "{} لم تعد متاحة.", zh_hans: "{} 个已不可用。", ja: "{} 件は利用できません。" },
     Row { key: Key::WorkspacesRestoreProfileFailed, en: "Koru couldn't restore this Profile. Nothing was changed.", es: "Koru no pudo restaurar este perfil. No se cambió nada.", pt_br: "O Koru não conseguiu restaurar este perfil. Nada foi alterado.", de: "Koru konnte dieses Profil nicht wiederherstellen. Es wurde nichts geändert.", fr: "Koru n'a pas pu restaurer ce profil. Rien n'a été modifié.", ar: "تعذّر على Koru استعادة ملف التعريف هذا. لم يتغيّر شيء.", zh_hans: "Koru 无法恢复此配置文件。未做任何更改。", ja: "Koru はこのプロファイルを復元できませんでした。何も変更されていません。" },
+    Row { key: Key::WorkspacesTrashedInAccountHeading, en: "In the Trash on this device", es: "En la papelera de este dispositivo", pt_br: "Na Lixeira deste dispositivo", de: "Im Papierkorb auf diesem Gerät", fr: "Dans la corbeille de cet appareil", ar: "في المهملات على هذا الجهاز", zh_hans: "在此设备的回收站中", ja: "このデバイスのゴミ箱にあります" },
+    Row { key: Key::WorkspacesTrashedInAccountHint, en: "In the Trash here, still in your Koru account", es: "En la papelera aquí, pero sigue en tu cuenta de Koru", pt_br: "Na Lixeira aqui, mas ainda na sua conta Koru", de: "Hier im Papierkorb, aber noch in deinem Koru-Konto", fr: "Dans la corbeille ici, mais toujours dans votre compte Koru", ar: "في المهملات هنا، لكنها ما زالت في حسابك على Koru", zh_hans: "在此处的回收站中，但仍在你的 Koru 账户中", ja: "ここではゴミ箱にありますが、Koru アカウントにはまだあります" },
+    Row { key: Key::WorkspacesRestoreTo, en: "Restore to {}", es: "Restaurar en {}", pt_br: "Restaurar em {}", de: "In {} wiederherstellen", fr: "Restaurer dans {}", ar: "استعادة إلى {}", zh_hans: "恢复到 {}", ja: "{} に復元" },
+    Row { key: Key::WorkspacesRestoreToTitle, en: "Restore {} to {}?", es: "¿Restaurar {} en {}?", pt_br: "Restaurar {} em {}?", de: "{} in {} wiederherstellen?", fr: "Restaurer {} dans {} ?", ar: "استعادة {} إلى {}؟", zh_hans: "将 {} 恢复到 {}？", ja: "{} を {} に復元しますか？" },
+    Row { key: Key::WorkspacesRestoreToBody, en: "It is in the Trash on this device, but your Koru account still has it under {}. Restoring brings it back here and keeps it in sync.", es: "Está en la papelera de este dispositivo, pero tu cuenta de Koru aún lo conserva en {}. Al restaurarlo vuelve aquí y sigue sincronizándose.", pt_br: "Está na Lixeira deste dispositivo, mas sua conta Koru ainda o mantém em {}. Restaurar o traz de volta para cá e o mantém sincronizado.", de: "Er liegt auf diesem Gerät im Papierkorb, aber dein Koru-Konto führt ihn noch unter {}. Beim Wiederherstellen kommt er hierher zurück und wird wieder synchronisiert.", fr: "Il est dans la corbeille de cet appareil, mais votre compte Koru le conserve encore sous {}. La restauration le ramène ici et le maintient synchronisé.", ar: "إنها في المهملات على هذا الجهاز، لكن حسابك على Koru ما زال يحتفظ بها ضمن {}. الاستعادة تعيدها إلى هنا وتُبقيها متزامنة.", zh_hans: "它在此设备的回收站中，但你的 Koru 账户仍将它保留在 {} 下。恢复后它会回到这里并继续同步。", ja: "このデバイスではゴミ箱にありますが、Koru アカウントでは {} にまだ残っています。復元するとここに戻り、引き続き同期されます。" },
+    Row { key: Key::WorkspacesRestoredTo, en: "{} was restored to {}.", es: "{} se restauró en {}.", pt_br: "{} foi restaurado em {}.", de: "{} wurde in {} wiederhergestellt.", fr: "{} a été restauré dans {}.", ar: "تمت استعادة {} إلى {}.", zh_hans: "{} 已恢复到 {}。", ja: "{} を {} に復元しました。" },
+    Row { key: Key::WorkspacesRestoreToFailed, en: "Koru couldn't restore {}. It is still in the Trash.", es: "Koru no pudo restaurar {}. Sigue en la papelera.", pt_br: "O Koru não conseguiu restaurar {}. Ele continua na Lixeira.", de: "Koru konnte {} nicht wiederherstellen. Er liegt weiterhin im Papierkorb.", fr: "Koru n'a pas pu restaurer {}. Il est toujours dans la corbeille.", ar: "تعذّر على Koru استعادة {}. ما زالت في المهملات.", zh_hans: "Koru 无法恢复 {}。它仍在回收站中。", ja: "Koru は {} を復元できませんでした。まだゴミ箱にあります。" },
+    Row { key: Key::WorkspacesTrashedInAccountNotice, en: "{} is in the Trash on this device but still in your Koru account.", es: "{} está en la papelera de este dispositivo, pero sigue en tu cuenta de Koru.", pt_br: "{} está na Lixeira deste dispositivo, mas continua na sua conta Koru.", de: "{} liegt auf diesem Gerät im Papierkorb, ist aber noch in deinem Koru-Konto.", fr: "{} est dans la corbeille de cet appareil, mais toujours dans votre compte Koru.", ar: "{} في المهملات على هذا الجهاز، لكنها ما زالت في حسابك على Koru.", zh_hans: "{} 在此设备的回收站中，但仍在你的 Koru 账户中。", ja: "{} はこのデバイスのゴミ箱にありますが、Koru アカウントにはまだあります。" },
+    Row { key: Key::WorkspacesTrashStillInAccount, en: "Still in your account under {}", es: "Sigue en tu cuenta, en {}", pt_br: "Ainda na sua conta, em {}", de: "Noch in deinem Konto unter {}", fr: "Toujours dans votre compte, sous {}", ar: "ما زالت في حسابك ضمن {}", zh_hans: "仍在你的账户中，位于 {} 下", ja: "アカウントでは {} にまだあります" },
     Row { key: Key::ProfileEmptyWorkspaces, en: "This profile has no workspaces", es: "Este perfil no tiene espacios de trabajo", pt_br: "Este perfil não tem espaços de trabalho", de: "Dieses Profil hat keine Arbeitsbereiche", fr: "Ce profil n'a aucun espace de travail", ar: "لا توجد مساحات عمل في ملف التعريف هذا", zh_hans: "此配置文件没有工作区", ja: "このプロファイルにはワークスペースがありません" },
     Row { key: Key::ProfileDeleteTargetsOne, en: "This moves 1 workspace to Trash: {}", es: "Esto mueve 1 espacio de trabajo a la papelera: {}", pt_br: "Isto move 1 espaço de trabalho para a Lixeira: {}", de: "Dadurch wird 1 Arbeitsbereich in den Papierkorb verschoben: {}", fr: "Cela déplace 1 espace de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل مساحة عمل واحدة إلى المهملات: {}", zh_hans: "这会将 1 个工作区移到回收站：{}", ja: "ワークスペース 1 件をゴミ箱に移動します: {}" },
     Row { key: Key::ProfileDeleteTargetsMany, en: "This moves {} workspaces to Trash: {}", es: "Esto mueve {} espacios de trabajo a la papelera: {}", pt_br: "Isto move {} espaços de trabalho para a Lixeira: {}", de: "Dadurch werden {} Arbeitsbereiche in den Papierkorb verschoben: {}", fr: "Cela déplace {} espaces de travail vers la corbeille : {}", ar: "سيؤدي هذا إلى نقل {} مساحات عمل إلى المهملات: {}", zh_hans: "这会将 {} 个工作区移到回收站：{}", ja: "ワークスペース {} 件をゴミ箱に移動します: {}" },
@@ -16628,6 +16718,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::CloudProgressDocuments, en: "{} of {} documents", es: "{} de {} documentos", pt_br: "{} de {} documentos", de: "{} von {} Dokumenten", fr: "{} documents sur {}", ar: "{} من {} مستندات", zh_hans: "{} / {} 个文档", ja: "{} / {} 件のドキュメント" },
     Row { key: Key::CloudProgressFiles, en: "{} of {} files", es: "{} de {} archivos", pt_br: "{} de {} arquivos", de: "{} von {} Dateien", fr: "{} fichiers sur {}", ar: "{} من {} ملفات", zh_hans: "{} / {} 个文件", ja: "{} / {} 件のファイル" },
     Row { key: Key::CloudProgressHeld, en: "{} held", es: "{} en espera", pt_br: "{} em espera", de: "{} angehalten", fr: "{} en attente", ar: "{} معلّقة", zh_hans: "{} 个已暂缓", ja: "{} 件が保留中" },
+    Row { key: Key::CloudProgressTrashedHere, en: "{} in the Trash on this device", es: "{} en la papelera de este dispositivo", pt_br: "{} na Lixeira deste dispositivo", de: "{} im Papierkorb auf diesem Gerät", fr: "{} dans la corbeille de cet appareil", ar: "{} في المهملات على هذا الجهاز", zh_hans: "{} 个在此设备的回收站中", ja: "{} 件がこのデバイスのゴミ箱にあります" },
     Row { key: Key::CloudProgressMore, en: "and {} more", es: "y {} más", pt_br: "e mais {}", de: "und {} weitere", fr: "et {} de plus", ar: "و{} أخرى", zh_hans: "还有 {} 个", ja: "ほか {} 件" },
     Row { key: Key::CloudProgressWaitingOneFile, en: "1 file", es: "1 archivo", pt_br: "1 arquivo", de: "1 Datei", fr: "1 fichier", ar: "ملف واحد", zh_hans: "1 个文件", ja: "1 件のファイル" },
     Row { key: Key::CloudProgressWaitingFiles, en: "{} files", es: "{} archivos", pt_br: "{} arquivos", de: "{} Dateien", fr: "{} fichiers", ar: "{} ملفات", zh_hans: "{} 个文件", ja: "{} 件のファイル" },
@@ -16967,8 +17058,8 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::SettingsReaderKinds, en: "Pictures (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs, and .txt, .md, .csv and .html files. iPhone photos (HEIC) are not read.", es: "Imágenes (PNG, JPEG, GIF, WebP, BMP, TIFF), PDF y archivos .txt, .md, .csv y .html. Las fotos de iPhone (HEIC) no se leen.", pt_br: "Imagens (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs e arquivos .txt, .md, .csv e .html. Fotos de iPhone (HEIC) não são lidas.", de: "Bilder (PNG, JPEG, GIF, WebP, BMP, TIFF), PDFs sowie .txt-, .md-, .csv- und .html-Dateien. iPhone-Fotos (HEIC) werden nicht gelesen.", fr: "Images (PNG, JPEG, GIF, WebP, BMP, TIFF), PDF, et fichiers .txt, .md, .csv et .html. Les photos d’iPhone (HEIC) ne sont pas lues.", ar: "الصور (PNG وJPEG وGIF وWebP وBMP وTIFF) وملفات PDF وملفات ‎.txt و‎.md و‎.csv و‎.html. لا تُقرأ صور iPhone ‏(HEIC).", zh_hans: "图片（PNG、JPEG、GIF、WebP、BMP、TIFF）、PDF，以及 .txt、.md、.csv 和 .html 文件。不读取 iPhone 照片（HEIC）。", ja: "画像（PNG、JPEG、GIF、WebP、BMP、TIFF）、PDF、および .txt、.md、.csv、.html ファイル。iPhone の写真（HEIC）は読み取りません。" },
     Row { key: Key::SettingsReaderArabicNotRead, en: "Arabic script is not read yet.", es: "La escritura árabe todavía no se lee.", pt_br: "A escrita árabe ainda não é lida.", de: "Arabische Schrift wird noch nicht gelesen.", fr: "L’écriture arabe n’est pas encore lue.", ar: "لا تُقرأ الكتابة العربية بعد.", zh_hans: "暂不读取阿拉伯文字。", ja: "アラビア文字はまだ読み取りません。" },
     Row { key: Key::SettingsReaderMore, en: "Not listed here: {}", es: "No se muestran aquí: {}", pt_br: "Não listados aqui: {}", de: "Hier nicht aufgeführt: {}", fr: "Non listés ici : {}", ar: "غير مدرجة هنا: {}", zh_hans: "此处未列出：{}", ja: "ここに表示されていないもの: {}" },
-    Row { key: Key::ReaderOfferHere, en: "Koru reads them on this computer.", es: "Koru los lee en este equipo.", pt_br: "O Koru os lê neste computador.", de: "Koru liest sie auf diesem Computer.", fr: "Koru les lit sur cet ordinateur.", ar: "يقرؤها Koru على هذا الكمبيوتر.", zh_hans: "Koru 在这台电脑上读取它们。", ja: "Koru がこのコンピューター上で読み取ります。" },
-    Row { key: Key::ReaderOfferHereOne, en: "Koru reads it on this computer.", es: "Koru lo lee en este equipo.", pt_br: "O Koru o lê neste computador.", de: "Koru liest es auf diesem Computer.", fr: "Koru le lit sur cet ordinateur.", ar: "يقرؤه Koru على هذا الكمبيوتر.", zh_hans: "Koru 在这台电脑上读取它。", ja: "Koru がこのコンピューター上で読み取ります。" },
+    Row { key: Key::ReaderOfferHere, en: "Koru reads them on this computer, not in the cloud.", es: "Koru los lee en este equipo, no en la nube.", pt_br: "O Koru os lê neste computador, não na nuvem.", de: "Koru liest sie auf diesem Computer, nicht in der Cloud.", fr: "Koru les lit sur cet ordinateur, pas dans le cloud.", ar: "يقرؤها Koru على هذا الكمبيوتر، وليس في السحابة.", zh_hans: "Koru 在这台电脑上读取它们，不经过云端。", ja: "Koru がこのコンピューター上で読み取ります。クラウドには送信しません。" },
+    Row { key: Key::ReaderOfferHereOne, en: "Koru reads it on this computer, not in the cloud.", es: "Koru lo lee en este equipo, no en la nube.", pt_br: "O Koru o lê neste computador, não na nuvem.", de: "Koru liest es auf diesem Computer, nicht in der Cloud.", fr: "Koru le lit sur cet ordinateur, pas dans le cloud.", ar: "يقرؤه Koru على هذا الكمبيوتر، وليس في السحابة.", zh_hans: "Koru 在这台电脑上读取它，不经过云端。", ja: "Koru がこのコンピューター上で読み取ります。クラウドには送信しません。" },
     Row { key: Key::ReaderResultsAppear, en: "Results appear as they are read.", es: "Los resultados aparecen a medida que se leen.", pt_br: "Os resultados aparecem conforme são lidos.", de: "Ergebnisse erscheinen, sobald sie gelesen sind.", fr: "Les résultats apparaissent au fil de la lecture.", ar: "تظهر النتائج فور قراءتها.", zh_hans: "读取后，结果会陆续出现。", ja: "読み取りが進むにつれて結果が表示されます。" },
     Row { key: Key::ReaderNotHere, en: "{} files are not on this computer.", es: "{} archivos no están en este equipo.", pt_br: "{} arquivos não estão neste computador.", de: "{} Dateien sind nicht auf diesem Computer.", fr: "{} fichiers ne sont pas sur cet ordinateur.", ar: "{} من الملفات ليست على هذا الكمبيوتر.", zh_hans: "{} 个文件不在这台电脑上。", ja: "{} 件のファイルはこのコンピューターにありません。" },
     Row { key: Key::ReaderNotHereOne, en: "One file is not on this computer.", es: "Un archivo no está en este equipo.", pt_br: "Um arquivo não está neste computador.", de: "Eine Datei ist nicht auf diesem Computer.", fr: "Un fichier n’est pas sur cet ordinateur.", ar: "ملف واحد ليس على هذا الكمبيوتر.", zh_hans: "1 个文件不在这台电脑上。", ja: "1 件のファイルはこのコンピューターにありません。" },
@@ -17623,4 +17714,20 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ImportNoticeViewFile, en: "View file", es: "Ver archivo", pt_br: "Ver arquivo", de: "Datei anzeigen", fr: "Voir le fichier", ar: "عرض الملف", zh_hans: "查看文件", ja: "ファイルを表示" },
     Row { key: Key::ImportContentFailedTitle, en: "The content could not be imported", es: "No se pudo importar el contenido", pt_br: "Não foi possível importar o conteúdo", de: "Der Inhalt konnte nicht importiert werden", fr: "Le contenu n’a pas pu être importé", ar: "تعذّر استيراد المحتوى", zh_hans: "无法导入内容", ja: "内容をインポートできませんでした" },
     Row { key: Key::ImportContentFailedBody, en: "No empty documents were left behind.", es: "No quedaron documentos vacíos.", pt_br: "Nenhum documento vazio foi deixado para trás.", de: "Es wurden keine leeren Dokumente zurückgelassen.", fr: "Aucun document vide n’a été laissé.", ar: "لم تُترك أي مستندات فارغة.", zh_hans: "没有留下空文档。", ja: "空のドキュメントは残っていません。" },
+    Row { key: Key::TaskListsHeading, en: "Lists", es: "Listas", pt_br: "Listas", de: "Listen", fr: "Listes", ar: "القوائم", zh_hans: "列表", ja: "リスト" },
+    Row { key: Key::TaskListNew, en: "New list", es: "Nueva lista", pt_br: "Nova lista", de: "Neue Liste", fr: "Nouvelle liste", ar: "قائمة جديدة", zh_hans: "新建列表", ja: "新規リスト" },
+    Row { key: Key::TaskListNameHint, en: "List name", es: "Nombre de la lista", pt_br: "Nome da lista", de: "Listenname", fr: "Nom de la liste", ar: "اسم القائمة", zh_hans: "列表名称", ja: "リスト名" },
+    Row { key: Key::TaskListNameTaken, en: "There is already a list with that name here", es: "Ya hay una lista con ese nombre aquí", pt_br: "Já existe uma lista com esse nome aqui", de: "Hier gibt es bereits eine Liste mit diesem Namen", fr: "Une liste porte déjà ce nom ici", ar: "توجد قائمة بهذا الاسم هنا", zh_hans: "此处已有同名列表", ja: "ここには同じ名前のリストがあります" },
+    Row { key: Key::TaskListNewInside, en: "New list inside", es: "Nueva lista dentro", pt_br: "Nova lista dentro", de: "Neue Liste darin", fr: "Nouvelle liste à l’intérieur", ar: "قائمة جديدة بالداخل", zh_hans: "在其中新建列表", ja: "中に新規リスト" },
+    Row { key: Key::TaskListMoveToTop, en: "Move to top level", es: "Mover al nivel superior", pt_br: "Mover para o nível superior", de: "Auf oberste Ebene verschieben", fr: "Déplacer au premier niveau", ar: "نقل إلى المستوى الأعلى", zh_hans: "移至顶层", ja: "最上位へ移動" },
+    Row { key: Key::TaskListDeleteNestedOne, en: "Delete “{}” and the list inside it?", es: "¿Eliminar “{}” y la lista que contiene?", pt_br: "Excluir “{}” e a lista dentro dela?", de: "„{}“ und die Liste darin löschen?", fr: "Supprimer « {} » et la liste qu’elle contient ?", ar: "حذف “{}” والقائمة التي بداخلها؟", zh_hans: "删除“{}”及其中的列表？", ja: "「{}」とその中のリストを削除しますか？" },
+    Row { key: Key::TaskListDeleteNestedMany, en: "Delete “{}” and the {} lists inside it?", es: "¿Eliminar “{}” y las {} listas que contiene?", pt_br: "Excluir “{}” e as {} listas dentro dela?", de: "„{}“ und die {} Listen darin löschen?", fr: "Supprimer « {} » et les {} listes qu’elle contient ?", ar: "حذف “{}” والقوائم الـ{} التي بداخلها؟", zh_hans: "删除“{}”及其中的 {} 个列表？", ja: "「{}」とその中の {} 件のリストを削除しますか？" },
+    Row { key: Key::TaskListDeleteNestedBody, en: "Their tasks are kept.", es: "Sus tareas se conservan.", pt_br: "As tarefas delas são mantidas.", de: "Ihre Aufgaben bleiben erhalten.", fr: "Leurs tâches sont conservées.", ar: "يتم الاحتفاظ بمهامها.", zh_hans: "其中的任务会保留。", ja: "タスクは残ります。" },
+    Row { key: Key::TaskListDeleteNestedConfirm, en: "Delete lists", es: "Eliminar listas", pt_br: "Excluir listas", de: "Listen löschen", fr: "Supprimer les listes", ar: "حذف القوائم", zh_hans: "删除列表", ja: "リストを削除" },
+    Row { key: Key::TaskListPathSeparator, en: " / ", es: " / ", pt_br: " / ", de: " / ", fr: " / ", ar: " / ", zh_hans: " / ", ja: " / " },
+    Row { key: Key::TaskListGone, en: "That list was deleted", es: "Esa lista se eliminó", pt_br: "Essa lista foi excluída", de: "Diese Liste wurde gelöscht", fr: "Cette liste a été supprimée", ar: "تم حذف تلك القائمة", zh_hans: "该列表已被删除", ja: "そのリストは削除されました" },
+    Row { key: Key::SearchTasksCrumb, en: "Tasks", es: "Tareas", pt_br: "Tarefas", de: "Aufgaben", fr: "Tâches", ar: "المهام", zh_hans: "任务", ja: "タスク" },
+    Row { key: Key::TasksFromSearch, en: "From search", es: "Desde la búsqueda", pt_br: "Da busca", de: "Aus der Suche", fr: "Depuis la recherche", ar: "من البحث", zh_hans: "来自搜索", ja: "検索から" },
+    Row { key: Key::TasksFromSearchDismiss, en: "Dismiss", es: "Descartar", pt_br: "Dispensar", de: "Ausblenden", fr: "Ignorer", ar: "تجاهل", zh_hans: "关闭", ja: "閉じる" },
+    Row { key: Key::SearchOpenInDocument, en: "Open in document", es: "Abrir en el documento", pt_br: "Abrir no documento", de: "Im Dokument öffnen", fr: "Ouvrir dans le document", ar: "فتح في المستند", zh_hans: "在文档中打开", ja: "ドキュメントで開く" },
 ];

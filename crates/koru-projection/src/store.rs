@@ -1874,7 +1874,11 @@ impl Projections {
         // `Open` would otherwise answer nothing at all, which is a silent empty
         // page on the most obvious request anybody makes of this field.
         let recently = query.recently_completed_since.as_ref();
-        if query.bucket.is_none() {
+        // **A selector names its tasks, and nothing else narrows them**: not
+        // the lifecycle, not either completed window. An old completion is
+        // exactly what somebody opening it from search is asking for.
+        let selected = query.only.as_deref();
+        if query.bucket.is_none() && selected.is_none() {
             if let Some(clause) = lifecycle_sql(query.lifecycle, recently) {
                 conditions.push(clause);
                 if recently.is_some() && query.lifecycle == LifecycleFilter::Open {
@@ -1892,10 +1896,39 @@ impl Projections {
             })?;
             conditions.push(bucket_sql(bucket, windows, &mut params, recently)?);
         }
-        if let Some(day) = &query.completed_on_or_after {
+        if let Some(day) = query
+            .completed_on_or_after
+            .as_ref()
+            .filter(|_| selected.is_none())
+        {
             conditions.push(completed_window_sql());
             params.push(day.clone());
         }
+        if let Some(only) = selected {
+            if only.is_empty() {
+                return Ok(TaskPage {
+                    rows: Vec::new(),
+                    restarted: false,
+                });
+            }
+            let pairs = vec!["(n.document_id = ? AND n.node_id = ?)"; only.len()].join(" OR ");
+            conditions.push(format!("({pairs})"));
+            for (document, node) in only {
+                params.push(document.clone());
+                params.push(node.clone());
+            }
+        }
+        // **The natural bucket, as a column**, for a selector that came with
+        // windows. The `CASE` sits in the `SELECT` list and SQLite binds by
+        // position, so its parameters bind first, ahead of the conditions'.
+        let (bucket_column, bucket_params) = match (selected, &query.windows) {
+            (Some(_), Some(windows)) => natural_bucket_case(windows)?,
+            _ => ("NULL".to_owned(), Vec::new()),
+        };
+        let limit = match selected {
+            Some(only) => only.len(),
+            None => query.limit,
+        };
 
         let key = task_sort_key_sql(query.sort);
 
@@ -1921,7 +1954,8 @@ impl Projections {
              SELECT n.document_id, n.node_id, l.workspace_id, {TASK_REF_SQL}, n.kind,
                     n.text, n.name, n.in_trash,
                     EXISTS(SELECT 1 FROM trashed t WHERE t.document_id = n.document_id),
-                    {completed}
+                    {completed},
+                    {bucket_column}
                FROM nodes n
                JOIN listing l ON l.document_id = n.document_id
                JOIN documents d ON d.document_id = n.document_id
@@ -1931,8 +1965,8 @@ impl Projections {
             completed = completed_sql(),
             conditions = conditions.join(" AND "),
             order = task_order_sql(query.sort, &key),
-            limit = query.limit,
         );
+        let params: Vec<String> = bucket_params.into_iter().chain(params).collect();
 
         let mut stmt = self.db.prepare(&sql)?;
         let rows = stmt
@@ -1948,6 +1982,7 @@ impl Projections {
                     r.get::<_, bool>(7)?,
                     r.get::<_, bool>(8)?,
                     r.get::<_, bool>(9)?,
+                    r.get::<_, Option<String>>(10)?,
                 ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -1974,6 +2009,7 @@ impl Projections {
             in_trash,
             document_trashed,
             completed,
+            bucket,
         ) in rows
         {
             let (Some(workspace_id), Some(document_id)) =
@@ -2028,6 +2064,7 @@ impl Projections {
                 breadcrumb: koru_core::tasks::breadcrumb(&borrowed),
                 title: koru_title::resolve_title(&text, name.as_deref()).into_owned(),
                 attrs,
+                bucket,
             });
         }
         Ok(TaskPage {
@@ -2206,14 +2243,15 @@ impl Projections {
         // in the statement text, so **its parameters bind first**, ahead of the
         // conditions' — the fold `task_list_counts` and `attribute_groups`
         // already do, with three arms instead of one.
+        //
+        // **The `CASE` is [`natural_bucket_case`]'s**, shared with the task-row
+        // query, so a row's bucket and the rail's count for it cannot be two
+        // rules. What stays this statement's own is the two columns after it.
+        let (bucket_case, mut params) = natural_bucket_case(windows)?;
         let arms = bucket_arms(windows)?;
         // The pinned column below re-states the today window, and SQLite binds
         // by position, so its parameters have to be bound a second time.
         let today_again = arms.today.1.clone();
-        let mut params: Vec<String> = Vec::new();
-        params.extend(arms.today.1);
-        params.extend(arms.next.1);
-        params.extend(arms.upcoming.1);
         let mut overdue_params: Vec<String> = Vec::new();
         let overdue = due_window_sql(&windows.overdue_window(), &mut overdue_params)?;
         params.extend(overdue_params);
@@ -2225,11 +2263,7 @@ impl Projections {
         let sql = format!(
             "{TRASHED_CTE}
              SELECT l.workspace_id,
-                    CASE WHEN {completed} THEN '{done}'
-                         WHEN {today} THEN '{today_token}'
-                         WHEN {next} THEN '{next_token}'
-                         WHEN {upcoming} THEN '{upcoming_token}'
-                         ELSE '{later_token}' END AS bucket,
+                    {bucket_case} AS bucket,
                     COUNT(*),
                     COUNT(CASE WHEN NOT {completed} AND {overdue} THEN 1 END),
                     COUNT(CASE WHEN EXISTS(
@@ -2243,14 +2277,7 @@ impl Projections {
               WHERE {conditions}
               GROUP BY l.workspace_id, bucket",
             today = arms.today.0,
-            next = arms.next.0,
-            upcoming = arms.upcoming.0,
             pinned = pinned_today_sql(),
-            done = Bucket::Completed.as_str(),
-            today_token = Bucket::Today.as_str(),
-            next_token = Bucket::Next.as_str(),
-            upcoming_token = Bucket::Upcoming.as_str(),
-            later_token = Bucket::Later.as_str(),
             conditions = conditions.join(" AND "),
         );
 
@@ -2628,6 +2655,40 @@ impl Projections {
         Ok(out)
     }
 
+    /// The documents of one workspace whose **root node is itself a task**:
+    /// it carries the task marker or a due. What the search index asks once
+    /// per workspace after an upgrade, to find the pages whose title should
+    /// be a task result and are not yet marked as one.
+    ///
+    /// The root is the document's first node in reading order, of kind
+    /// `document`, and live. Bounded by the number of pages that are tasks:
+    /// the walk starts from `document` nodes that carry one of two roles.
+    pub fn task_root_documents(&self, workspace: WorkspaceId) -> Result<Vec<DocumentId>> {
+        use koru_core::attributes::{KEY_DUE, KEY_TASK};
+        let mut q = self.db.prepare(&format!(
+            "SELECT DISTINCT n.document_id
+               FROM nodes n
+               JOIN documents d ON d.document_id = n.document_id
+               JOIN attrs a ON a.document_id = n.document_id AND a.node_id = n.node_id
+              WHERE d.workspace_id = ?1
+                AND n.kind = 'document' {bin}
+                AND a.role IN ('{KEY_TASK}', '{KEY_DUE}')
+                AND TRIM(a.value) <> ''
+                AND n.seq = (SELECT MIN(m.seq) FROM nodes m
+                              WHERE m.document_id = n.document_id)
+              ORDER BY n.document_id",
+            bin = NodeScope::Live.clause("n.in_trash"),
+        ))?;
+        let rows = q.query_map(params![workspace.to_storage()], |r| r.get::<_, String>(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            if let Some(document) = DocumentId::parse(&row?) {
+                out.push(document);
+            }
+        }
+        Ok(out)
+    }
+
     // --------------------------------------------------------------- state
 
     /// A small key/value table, for the rebuild cursor and nothing else yet.
@@ -2870,6 +2931,14 @@ pub struct TaskRowQuery {
     pub limit: usize,
     /// The `task:` reference the previous page ended on, exclusive.
     pub after: Option<String>,
+    /// **Exactly these tasks**, each `(document, node)` in storage form.
+    ///
+    /// An exclusive selector: with it present the lifecycle filter, the two
+    /// completed windows and the limit are not applied — an old completion
+    /// answers — and each row carries its natural bucket when
+    /// [`windows`](Self::windows) are given. The caller refuses it beside any
+    /// other filter; this layer only reads the fields it documents here.
+    pub only: Option<Vec<(String, String)>>,
 }
 
 /// **The reader's zone, resolved into days and instants by whoever asked.**
@@ -3121,6 +3190,10 @@ pub struct TaskQueryRow {
     pub title: String,
     /// Everything the node carries, so a row draws without a second request.
     pub attrs: Vec<ProjectedAttr>,
+    /// The task's natural bucket token, when the query named tasks with
+    /// [`TaskRowQuery::only`] and carried windows. See
+    /// [`natural_bucket_case`].
+    pub bucket: Option<String>,
 }
 
 /// One list's share of a query's whole corpus, from
@@ -3258,6 +3331,44 @@ struct BucketArms {
     today: (String, Vec<String>),
     next: (String, Vec<String>),
     upcoming: (String, Vec<String>),
+}
+
+/// **The natural-bucket `CASE`** and, in order, the parameters it binds.
+///
+/// The ordered rule of the domain's bucket function as one SQL expression:
+/// completed first, then Today (overdue included), Next, Upcoming, and Later
+/// for the rest — a partition, because each row takes the first arm it
+/// matches. A task pinned to Today by hand keeps its natural bucket here; the
+/// pin is a different fact ([`pinned_today_sql`]).
+///
+/// One definition for the rail's counts and for a task row's own bucket, so
+/// the two cannot disagree. **Not [`bucket_sql`]**, which is one queue's
+/// membership test and overlaps for a pinned task.
+///
+/// It sits in a `SELECT` list, so a caller binds these parameters **first**,
+/// ahead of its `WHERE` parameters.
+fn natural_bucket_case(windows: &BucketWindows) -> Result<(String, Vec<String>)> {
+    let arms = bucket_arms(windows)?;
+    let sql = format!(
+        "CASE WHEN {completed} THEN '{done}'
+              WHEN {today} THEN '{today_token}'
+              WHEN {next} THEN '{next_token}'
+              WHEN {upcoming} THEN '{upcoming_token}'
+              ELSE '{later_token}' END",
+        completed = completed_sql(),
+        today = arms.today.0,
+        next = arms.next.0,
+        upcoming = arms.upcoming.0,
+        done = Bucket::Completed.as_str(),
+        today_token = Bucket::Today.as_str(),
+        next_token = Bucket::Next.as_str(),
+        upcoming_token = Bucket::Upcoming.as_str(),
+        later_token = Bucket::Later.as_str(),
+    );
+    let mut params = arms.today.1;
+    params.extend(arms.next.1);
+    params.extend(arms.upcoming.1);
+    Ok((sql, params))
 }
 
 fn bucket_arms(windows: &BucketWindows) -> Result<BucketArms> {

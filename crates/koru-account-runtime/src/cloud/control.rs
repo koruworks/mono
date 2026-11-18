@@ -73,7 +73,11 @@ impl Control {
         let worker_visible = visible.clone();
         let worker_foreground = foreground.clone();
         let worker_cancel = cancel.clone();
-        let notify = Arc::new(Mutex::new(notify));
+        // **Told when the snapshot changed, not every time one is made.** The
+        // worker makes one between every dataset session and after every
+        // dispatch; the Agent turned each into a push of the whole account to
+        // every window, about two a second on an idle device (2026-11-17).
+        let notify = Arc::new(Mutex::new(Notifier { notify, last: None }));
         let result = spawn(Box::new(move || {
             let mut coordinator = Coordinator::new(api, host, entropy, worker_cancel);
             coordinator.follow_authorization(worker_desired.clone(), worker_foreground.clone());
@@ -86,7 +90,8 @@ impl Control {
                 // Publish between blocking dataset sessions as well as after a pass.
                 progress_notify
                     .lock()
-                    .unwrap_or_else(|error| error.into_inner())(snapshot);
+                    .unwrap_or_else(|error| error.into_inner())
+                    .publish(snapshot);
             });
             loop {
                 let next = {
@@ -112,7 +117,10 @@ impl Control {
                     *visible = snapshot.clone();
                 }
                 // Notification is never invoked under the cached-state lock.
-                notify.lock().unwrap_or_else(|error| error.into_inner())(snapshot);
+                notify
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .publish(snapshot);
                 let wait = coordinator
                     .deadline(foreground)
                     .map(|at| at.saturating_duration_since(clock.monotonic()));
@@ -193,8 +201,20 @@ impl Control {
         self.enqueue(Command::Refresh(previous, next))
     }
 
+    /// **Check the account now**: something here may have changed it — a
+    /// sign-in, a Profile chosen, a local catalog change, the reconcile.
     pub fn wake(&self) -> bool {
         self.enqueue(Command::Wake)
+    }
+
+    /// **The heartbeat.** Renews what is about to expire and keeps the live
+    /// sessions' credentials current, and checks the account's catalog only
+    /// when the last check is [`ACCOUNT_CHECK_EVERY`] old — so a quiet device
+    /// reads the whole catalog every few minutes, not every half minute.
+    ///
+    /// [`ACCOUNT_CHECK_EVERY`]: super::coordinator::ACCOUNT_CHECK_EVERY
+    pub fn tick(&self) -> bool {
+        self.enqueue(Command::Tick)
     }
 
     pub fn cancel(&self) -> bool {
@@ -260,5 +280,45 @@ impl Driver for Control {
     }
     fn snapshot(&self) -> Snapshot {
         Control::snapshot(self)
+    }
+}
+
+/// The control's observer, and what it was last told.
+struct Notifier<F> {
+    notify: F,
+    last: Option<Snapshot>,
+}
+
+impl<F: Fn(Snapshot)> Notifier<F> {
+    /// Pass `snapshot` on when it differs from the last one passed on.
+    fn publish(&mut self, snapshot: Snapshot) {
+        if self.last.as_ref() == Some(&snapshot) {
+            return;
+        }
+        self.last = Some(snapshot.clone());
+        (self.notify)(snapshot);
+    }
+}
+
+#[cfg(test)]
+mod notifier_tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn an_unchanged_snapshot_is_not_passed_on_again() {
+        let told = RefCell::new(0);
+        let mut notifier = Notifier {
+            notify: |_: Snapshot| *told.borrow_mut() += 1,
+            last: None,
+        };
+        notifier.publish(Snapshot::default());
+        notifier.publish(Snapshot::default());
+        assert_eq!(*told.borrow(), 1);
+        notifier.publish(Snapshot {
+            retry_at_millis: Some(1),
+            ..Snapshot::default()
+        });
+        assert_eq!(*told.borrow(), 2, "a change is");
     }
 }

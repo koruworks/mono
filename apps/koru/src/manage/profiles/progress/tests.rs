@@ -26,7 +26,7 @@ fn subtitle_and_rows(
         .collect();
     c.maintain_cloud_progress(Instant::now());
     c.progress.show(work.id, rows);
-    let lines = c.cloud_progress_lines().expect("the section shows");
+    let lines = c.cloud_progress_lines(0).expect("the section shows");
     (
         c.cloud_sync_subtitle(&work)
             .expect("a syncing Profile says something"),
@@ -94,7 +94,7 @@ fn a_refused_cloud_sync_row_makes_the_workspace_rows_unavailable_too() {
     assert_eq!(c.cloud_connection(work.id), Connection::Unavailable);
     assert_eq!(c.cloud_sync_subtitle(&work), Some(unavailable.clone()));
     assert_eq!(
-        c.cloud_progress_lines().unwrap().rows[0].detail,
+        c.cloud_progress_lines(0).unwrap().rows[0].detail,
         unavailable
     );
 }
@@ -225,13 +225,13 @@ fn routine_rechecks_keep_confirmed_counts_and_workspace_completion() {
     });
     assert_eq!(row_detail(EN, Some(&status), CONNECTING), "Synced");
     assert_eq!(
-        summary(EN, &[row("Notes", status.clone())]),
+        summary(EN, &[row("Notes", status.clone())], 0),
         "1 of 1 workspaces synced"
     );
     status.pass.as_mut().unwrap().documents_changed = true;
     assert_ne!(row_detail(EN, Some(&status), CONNECTING), "Synced");
     assert_eq!(
-        summary(EN, &[row("Notes", status)]),
+        summary(EN, &[row("Notes", status)], 0),
         "0 of 1 workspaces synced"
     );
 }
@@ -242,7 +242,7 @@ fn a_blank_workspace_name_has_a_visible_fallback() {
     let work = c.profiles[0].id;
     c.maintain_cloud_progress(Instant::now());
     c.progress.show(work, vec![row("  ", synced())]);
-    assert_eq!(c.cloud_progress_lines().unwrap().rows[0].name, "Untitled");
+    assert_eq!(c.cloud_progress_lines(0).unwrap().rows[0].name, "Untitled");
 }
 
 /// `(name, detail)` for each row, the two strings every row draws.
@@ -260,7 +260,7 @@ fn the_section_is_absent_for_a_local_only_profile() {
     let local = c.profiles[2].id;
     c.selected = Some(local);
     assert_eq!(c.cloud_progress_profile(), None);
-    assert_eq!(c.cloud_progress_lines(), None);
+    assert_eq!(c.cloud_progress_lines(0), None);
     // And it asks nothing: no target, so no clock and no worker.
     c.maintain_cloud_progress(Instant::now());
     assert_eq!(c.progress.deadline(), None);
@@ -271,10 +271,10 @@ fn the_section_is_absent_for_a_local_only_profile() {
 fn the_section_is_absent_while_the_profiles_cloud_sync_is_off() {
     let mut c = controller_with(false);
     assert_eq!(c.cloud_progress_profile(), None);
-    assert_eq!(c.cloud_progress_lines(), None);
+    assert_eq!(c.cloud_progress_lines(0), None);
     // The account's other Profile has sync off too.
     c.selected = Some(c.profiles[1].id);
-    assert_eq!(c.cloud_progress_lines(), None);
+    assert_eq!(c.cloud_progress_lines(0), None);
 }
 
 #[test]
@@ -284,7 +284,7 @@ fn a_profile_with_cloud_sync_on_reads_first_then_draws_its_rows() {
     assert_eq!(c.cloud_progress_profile(), Some(work));
     // Before the poll has anything, the section says so rather than zeros.
     assert_eq!(
-        c.cloud_progress_lines().map(|lines| lines.summary),
+        c.cloud_progress_lines(0).map(|lines| lines.summary),
         Some("Reading Cloud sync…".to_owned())
     );
 
@@ -300,7 +300,7 @@ fn a_profile_with_cloud_sync_on_reads_first_then_draws_its_rows() {
         vec![row("Notes", synced()), row("Photos", partial())],
     );
     assert!(c.maintain_cloud_progress(now));
-    let lines = c.cloud_progress_lines().expect("the section shows");
+    let lines = c.cloud_progress_lines(0).expect("the section shows");
     assert_eq!(lines.summary, "1 of 2 workspaces synced");
     assert_eq!(
         texts(&lines),
@@ -334,11 +334,31 @@ fn hiding_the_tab_stops_the_poll() {
     assert_eq!(c.progress.deadline(), None);
 }
 
+/// The summary line says how many of the account's workspaces are in the
+/// Trash on this device, where *held* goes, without touching the synced
+/// count (trash-recovery P4).
+#[test]
+fn the_summary_names_what_is_in_the_trash_on_this_device_beside_the_count() {
+    assert_eq!(
+        summary(EN, &[row("Notes", synced())], 1),
+        "1 of 1 workspaces synced · 1 in the Trash on this device"
+    );
+    assert_eq!(
+        summary(EN, &[row("Notes", synced()), row("Photos", partial())], 2),
+        "1 of 2 workspaces synced · 2 in the Trash on this device"
+    );
+    assert_eq!(
+        summary(EN, &[row("Notes", synced())], 0),
+        "1 of 1 workspaces synced",
+        "nothing there, nothing said"
+    );
+}
+
 #[test]
 fn a_fully_synced_workspace_reads_as_synced() {
     assert_eq!(row_detail(EN, Some(&synced()), CONNECTING), "Synced");
     assert_eq!(
-        summary(EN, &[row("Notes", synced())]),
+        summary(EN, &[row("Notes", synced())], 0),
         "1 of 1 workspaces synced"
     );
 }
@@ -410,7 +430,12 @@ fn the_summary_counts_what_is_held_and_formats_its_numbers() {
         row("Scans", held("paused_by_person")),
         row("Big", cloud_on(blobs(3, 1_000))),
     ];
-    assert_eq!(summary(EN, &rows), "1 of 5 workspaces synced · 2 held");
+    assert_eq!(summary(EN, &rows, 0), "1 of 5 workspaces synced · 2 held");
+    assert_eq!(
+        summary(EN, &rows, 1),
+        "1 of 5 workspaces synced · 2 held · 1 in the Trash on this device",
+        "after held, on the same line"
+    );
 }
 
 #[test]
@@ -429,7 +454,7 @@ fn a_workspace_not_on_cloud_is_counted_out_but_not_as_held() {
         t(EN, TextKey::CloudTabSyncOff)
     );
     assert_eq!(
-        summary(EN, &[row("Notes", synced()), row("Local", off)]),
+        summary(EN, &[row("Notes", synced()), row("Local", off)], 0),
         "1 of 2 workspaces synced"
     );
 }
@@ -554,7 +579,7 @@ fn only_a_held_row_can_open() {
     c.progress.show(work, vec![notes, photos]);
     assert!(!c.progress.toggle(notes_id, Instant::now()));
     c.perform(Intent::ToggleProgress(photos_id));
-    let lines = c.cloud_progress_lines().unwrap();
+    let lines = c.cloud_progress_lines(0).unwrap();
     assert_eq!(lines.rows[0].waiting, None);
     // Open, and asking at once rather than at the next tick.
     assert_eq!(lines.rows[1].waiting, Some(Waiting::Reading));
@@ -564,7 +589,7 @@ fn only_a_held_row_can_open() {
             .is_some_and(|due| due <= Instant::now())
     );
     c.perform(Intent::ToggleProgress(photos_id));
-    assert_eq!(c.cloud_progress_lines().unwrap().rows[1].waiting, None);
+    assert_eq!(c.cloud_progress_lines(0).unwrap().rows[1].waiting, None);
 }
 
 /// A row that stops being held closes itself: there is nothing left to list.
@@ -588,5 +613,5 @@ fn a_row_that_is_no_longer_held_closes() {
     );
     c.maintain_cloud_progress(Instant::now());
     assert!(c.progress.open.is_empty());
-    assert_eq!(c.cloud_progress_lines().unwrap().rows[0].waiting, None);
+    assert_eq!(c.cloud_progress_lines(0).unwrap().rows[0].waiting, None);
 }

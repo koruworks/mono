@@ -47,6 +47,8 @@ fn a_read_hit(page: Option<u32>) -> SearchHit {
         workspace_last_used_at_ms: None,
         page,
         picture_name: None,
+        list: None,
+        task: None,
     }
 }
 
@@ -67,6 +69,8 @@ fn a_picture_hit(name: Option<&str>) -> SearchHit {
         node: Some(DocumentId::new().to_storage()),
         page: None,
         picture_name: name.map(str::to_owned),
+        list: None,
+        task: None,
         ..a_read_hit(None)
     }
 }

@@ -64,6 +64,7 @@ fn queue_geometry_and_activation_match_the_existing_pointer_path() {
                 bounds.x + bounds.w / 2.0,
                 bounds.y + bounds.h / 2.0,
                 false,
+                false,
             )
             .unwrap();
         let actual = rail.queue_action(context.area, 100.0, node.occurrence, Action::Click);
@@ -107,12 +108,8 @@ fn offscreen_completed_queue_can_be_focused_and_revealed_without_pointer() {
     let mut rail = TasksRail::default();
     rail.set_lists(
         (0..40)
-            .map(|n| super::super::RailList {
-                id: ListId::new(),
-                name: format!("fixture {n}"),
-                color: None,
-                count: 0,
-                overdue: 0,
+            .map(|n| {
+                super::super::RailList::flat(ListId::new(), &format!("fixture {n}"), None, 0, 0)
             })
             .collect(),
     );

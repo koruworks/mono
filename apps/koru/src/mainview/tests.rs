@@ -2267,18 +2267,59 @@ fn ctrl_digits_select_rail_workspaces_and_leave_tab_selection_alone() {
 
 /// Ctrl+Tab reaches the container as a direction, because the shell is the only
 /// place that can tell it apart from Ctrl+I. See `keys::tests`.
+///
+/// It stands the quick switch up, and the list stays until something is
+/// chosen: letting go of Control does nothing, Enter goes to the highlighted
+/// tab, Escape leaves everything where it was.
 #[test]
-fn cycle_tab_wraps_in_both_directions() {
-    let (mut v, _w) = on_document();
+fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
+    let (mut v, w) = on_document();
+    let mut w = w;
+    let named = |key| Key::Named(key);
     assert_eq!(v.tabs().len(), 2);
     v.select(0);
-    assert_eq!(v.tabs().active(), 0);
+    v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
+    v.set_mods(ModifiersState::empty());
+    assert_eq!(
+        v.tabs().active(),
+        0,
+        "letting go of Control chooses nothing"
+    );
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(v.tabs().active(), 1, "Enter goes to the highlighted tab");
+
+    // Tab walks on, and wraps back to the tab in front.
+    assert!(v.cycle_tab(1));
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Tab),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
     assert_eq!(v.tabs().active(), 1);
+
+    // Escape puts it away and goes nowhere.
     assert!(v.cycle_tab(1));
-    assert_eq!(v.tabs().active(), 0, "wraps forward");
-    assert!(v.cycle_tab(-1));
-    assert_eq!(v.tabs().active(), 1, "and backward");
+    assert!(v.key(
+        &mut w.ws,
+        &named(winit::keyboard::NamedKey::Escape),
+        None,
+        ModifiersState::empty()
+    ));
+    assert_eq!(v.tabs().active(), 1);
+    assert!(v.cycle_tab(1), "and it opens again afterwards");
 }
 
 // (A lone tab having nowhere to cycle to is `tabset::tests`' — reaching into
@@ -4638,6 +4679,73 @@ fn selecting_manage_asks_the_shell_for_nothing_and_does_not_arm_an_idle_poll() {
     assert!(v.select(manage));
     assert_eq!(View::take_pane_request(&mut v), None);
     assert!(v.workspaces_poll_due.is_none(), "no command is pending");
+}
+
+/// **The notice** (trash-recovery P4): a workspace in the Trash here that
+/// the account still has is said once by a toast naming it; the toast's
+/// action opens the question and restores nothing by itself; and a toast
+/// already on screen is not replaced — the row waits to be said.
+#[test]
+fn a_workspace_trashed_here_but_live_in_the_account_is_announced_once_and_its_action_asks() {
+    use koru_workspaces_ui::{Authorization, ProfileRow, Recovery, TrashedInAccountRow};
+    let (mut v, _workspace) = container();
+    let work = koru_store_core::ids::ProfileId::new();
+    let pm = koru_store_core::ids::WorkspaceId::new();
+    {
+        let mut c = v.workspace_controller.borrow_mut();
+        c.set_authorization(Authorization::Vouched);
+        c.adopt_profiles(&[ProfileRow {
+            id: work,
+            name: "Work".into(),
+        }]);
+        c.fixture_recovery(Recovery {
+            trashed_in_account: vec![TrashedInAccountRow {
+                id: pm,
+                name: "PM".into(),
+                icon: None,
+                color: None,
+                profile: work,
+                acknowledged: false,
+            }],
+            ..Recovery::default()
+        });
+    }
+
+    // Something else is being said: the row is not taken, so not lost.
+    assert!(View::show_notice(&mut v, "Saved".into()));
+    v.poll_manage_workspaces();
+    assert_eq!(
+        v.toast.as_ref().map(|(toast, _)| toast.message()),
+        Some("Saved")
+    );
+
+    v.toast = None;
+    assert!(v.poll_manage_workspaces());
+    let (toast, payload) = v.toast.as_ref().expect("the notice");
+    assert_eq!(
+        toast.message(),
+        "PM is in the Trash on this device but still in your Koru account."
+    );
+    assert_eq!(toast.action(), Some("Restore"));
+    assert!(matches!(
+        payload,
+        ToastPayload::RestoreWorkspaceTo { workspace, profile }
+            if *workspace == pm && *profile == work
+    ));
+
+    // Once: put away, the next poll says nothing more.
+    v.toast = None;
+    v.poll_manage_workspaces();
+    assert!(v.toast.is_none());
+
+    // The action opens the question; the press alone restores nothing.
+    assert!(v.ask_restore_workspace_to(pm, work));
+    let controller = v.workspace_controller.borrow();
+    assert_eq!(
+        controller.dialog().map(|dialog| dialog.title().to_owned()),
+        Some("Restore PM to Work?".to_owned())
+    );
+    assert!(!controller.has_pending());
 }
 
 #[test]
@@ -8817,33 +8925,47 @@ fn every_caption_tooltip_takes_its_chord_from_the_registry() {
     }
 }
 
-/// **A list dragged on the rail writes the whole section's order.** The rows
-/// are already where the drag left them, so what the container owes the table
-/// is every id in that order — one rank per list, dense from zero, rather
-/// than one row's new number with the rest left to be guessed at.
+/// **A list dragged on the rail writes the move it made.** The rows are
+/// already where the drag left them, so what the container owes the table is
+/// the one move — which list, under which parent, before which sibling —
+/// passed through as the edit the system document applies.
 #[test]
-fn dragging_a_list_on_the_rail_writes_the_sections_order() {
+fn dragging_a_list_on_the_rail_writes_the_move() {
     use crate::panes::explore::rail::{RailList, TasksRailRequest};
     let (mut v, _w) = on_tasks();
     let ids: Vec<koru_core::ids::ListId> = (0..3).map(|_| koru_core::ids::ListId::new()).collect();
     v.explore.rail_mut().set_lists(
         ids.iter()
             .enumerate()
-            .map(|(i, id)| RailList {
-                id: *id,
-                name: format!("list {i}"),
-                color: None,
-                count: 0,
-                overdue: 0,
-            })
+            .map(|(i, id)| RailList::flat(*id, &format!("list {i}"), None, 0, 0))
             .collect(),
     );
-    assert!(v.apply_tasks_rail(TasksRailRequest::ReorderList { id: ids[0], to: 2 }));
+    assert!(v.apply_tasks_rail(TasksRailRequest::MoveList {
+        ids: vec![ids[0]],
+        parent: None,
+        before: None
+    }));
+    assert!(v.apply_tasks_rail(TasksRailRequest::MoveList {
+        ids: vec![ids[2]],
+        parent: Some(ids[1]),
+        before: None
+    }));
     let edits = View::take_wants_list_edits(&mut v);
     assert_eq!(
         edits,
-        vec![koru_workspace_host::tasks::ListEdit::Reorder(ids.clone())],
-        "the rail's own order, every id in it"
+        vec![
+            koru_workspace_host::tasks::ListEdit::Move {
+                id: ids[0],
+                parent: None,
+                before: None
+            },
+            koru_workspace_host::tasks::ListEdit::Move {
+                id: ids[2],
+                parent: Some(ids[1]),
+                before: None
+            },
+        ],
+        "the rail's own move, as it was made"
     );
 }
 
@@ -10279,6 +10401,22 @@ fn the_tasks_tab_is_named_for_its_target() {
     }
 }
 
+/// A list table with nothing nested: every entry a top-level leaf, in order —
+/// what `SystemDoc::list_tree` makes of a table nobody has nested in.
+fn flat_table(entries: &[koru_core::system::ListEntry]) -> Vec<koru_core::system::ListNode> {
+    entries
+        .iter()
+        .enumerate()
+        .map(|(ordinal, entry)| koru_core::system::ListNode {
+            entry: entry.clone(),
+            parent: None,
+            depth: 0,
+            ordinal,
+            has_children: false,
+        })
+        .collect()
+}
+
 /// **A list's tab wears the list's name, and follows a rename.**
 ///
 /// The label is a cache and the view is the authority, which is the contract a
@@ -10294,12 +10432,13 @@ fn a_list_tab_follows_the_lists_name() {
     let entry = |name: &str, color: &str| koru_core::system::ListEntry {
         id,
         name: name.to_owned(),
+        parent: None,
         color: Some(color.to_owned()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
     };
-    View::set_list_table(&mut v, &[entry("Wedding", "pink")]);
+    View::set_list_table(&mut v, &flat_table(&[entry("Wedding", "pink")]));
     // The tab first: the push is a push, and it has nowhere to land until a
     // Tasks tab exists — which is also why the label it opens with is the
     // fallback, before the table has told it the list's name.
@@ -10313,7 +10452,7 @@ fn a_list_tab_follows_the_lists_name() {
     assert_eq!(v.tabs().active_tab().label, "Wedding");
 
     // Renamed and recoloured underneath it, with nothing pressed.
-    View::set_list_table(&mut v, &[entry("Honeymoon", "teal")]);
+    View::set_list_table(&mut v, &flat_table(&[entry("Honeymoon", "teal")]));
     assert!(v.refresh_tasks_context(&w));
     assert_eq!(
         v.tabs().active_tab().label,
@@ -10730,12 +10869,14 @@ fn the_list_table_reaches_the_rail_with_its_names_and_swatches() {
     let entry = koru_core::system::ListEntry {
         id,
         name: "Bike Project".into(),
+        parent: None,
         color: Some("blue".into()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
     };
-    assert!(View::set_list_table(&mut v, std::slice::from_ref(&entry)));
+    let table = flat_table(std::slice::from_ref(&entry));
+    assert!(View::set_list_table(&mut v, &table));
     let lists = v.explore.rail().lists();
     assert_eq!(lists.len(), 1);
     assert_eq!(lists[0].id, id);
@@ -10747,7 +10888,7 @@ fn the_list_table_reaches_the_rail_with_its_names_and_swatches() {
         "no group row is a zero, not an unknown"
     );
     assert!(
-        !View::set_list_table(&mut v, std::slice::from_ref(&entry)),
+        !View::set_list_table(&mut v, &table),
         "and the same table again changes nothing"
     );
 }
@@ -10769,7 +10910,11 @@ fn a_list_is_made_inline_and_handed_to_the_shell() {
     };
     let (x, y) = plus.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.rail().composing(), "the row is reserved");
+    assert_eq!(
+        v.explore.rail().composing(),
+        Some(None),
+        "the row is reserved"
+    );
 
     for ch in "Wedding".chars() {
         let text = ch.to_string();
@@ -10791,20 +10936,26 @@ fn a_list_is_made_inline_and_handed_to_the_shell() {
         None,
         NONE,
     );
-    let (name, color) = View::take_wants_create_list(&mut v).expect("the list");
-    assert_eq!(name, "Wedding");
-    assert!(color.is_some(), "with a swatch off the shared set");
-    assert!(!v.explore.rail().composing(), "and the field is gone");
+    let create = View::take_wants_create_list(&mut v).expect("the list");
+    assert_eq!(create.name, "Wedding");
+    assert_eq!(create.parent, None, "at the top level");
+    assert!(create.color.is_some(), "with a swatch off the shared set");
+    assert_eq!(v.explore.rail().composing(), None, "and the field is gone");
 }
 
 /// Escape takes the field away and makes nothing.
 #[test]
 fn escape_cancels_the_inline_list_field() {
     let (mut v, mut w) = on_tasks();
-    let row = rail_row(&v, crate::panes::explore::rail::RailRow::NewList);
+    let heading = rail_row(&v, crate::panes::explore::rail::RailRow::ListsHeading);
+    let row = v
+        .explore
+        .rail()
+        .row_parts(crate::panes::explore::rail::RailRow::ListsHeading, heading)
+        .trailing;
     let (x, y) = row.centre();
     v.mouse_down(&mut w.ws, x, y, false);
-    assert!(v.explore.rail().composing());
+    assert_eq!(v.explore.rail().composing(), Some(None));
     for ch in "Reading".chars() {
         let text = ch.to_string();
         v.key(
@@ -10820,7 +10971,7 @@ fn escape_cancels_the_inline_list_field() {
         None,
         NONE,
     );
-    assert!(!v.explore.rail().composing());
+    assert_eq!(v.explore.rail().composing(), None);
     assert_eq!(View::take_wants_create_list(&mut v), None);
 }
 
@@ -11455,6 +11606,7 @@ fn seed_one_task_row_in(
                 }]
             })
             .unwrap_or_default(),
+        bucket: None,
     };
     let answered = koru_store_wire::tasks::TaskQueryResponse {
         rows: vec![row],
@@ -11500,6 +11652,7 @@ fn a_list(name: &str, color: &str) -> (koru_core::ids::ListId, crate::tasks_view
             id,
             name: name.to_owned(),
             color: Some(color.to_owned()),
+            path: None,
         },
     )
 }
@@ -11529,14 +11682,15 @@ fn go_to_list_moves_the_page_to_the_list() {
     };
     assert_eq!(page.target(), RailTarget::Bucket(Bucket::Today));
 
-    v.set_list_table(&[koru_core::system::ListEntry {
+    v.set_list_table(&flat_table(&[koru_core::system::ListEntry {
         id: birthday,
         name: "Birthday Tasks".to_owned(),
+        parent: None,
         color: Some("pink".to_owned()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
-    }]);
+    }]));
     assert!(v.run_menu_action_for_test(
         MenuSubject::Task { document, node },
         MenuAction::TaskGoToList
@@ -11662,14 +11816,15 @@ fn a_capture_that_lands_elsewhere_raises_a_toast_with_a_way_there_and_back() {
         panic!("container")
     };
     let (birthday, _) = a_list("Birthday Tasks", "pink");
-    v.set_list_table(&[koru_core::system::ListEntry {
+    v.set_list_table(&flat_table(&[koru_core::system::ListEntry {
         id: birthday,
         name: "Birthday Tasks".to_owned(),
+        parent: None,
         color: Some("pink".to_owned()),
         order: None,
         created_ms: Some(1),
         deleted_ms: None,
-    }]);
+    }]));
     v.open_tasks_tab(RailTarget::Bucket(Bucket::Today), false);
     v.queue_task_command(
         TaskCommand::Create {
@@ -11828,14 +11983,15 @@ fn the_list_table_reaches_the_tasks_tab() {
     let id = koru_core::ids::ListId::new();
     View::set_list_table(
         &mut v,
-        &[koru_core::system::ListEntry {
+        &flat_table(&[koru_core::system::ListEntry {
             id,
             name: "Bike Project".to_owned(),
+            parent: None,
             color: Some("blue".to_owned()),
             order: None,
             created_ms: Some(1),
             deleted_ms: None,
-        }],
+        }]),
     );
     assert!(v.refresh_tasks_context(&w));
     let TabView::Tasks(tab) = &v.tabs().active_tab().view else {
@@ -12112,14 +12268,15 @@ fn on_a_list() -> (MainView, Workspace, koru_core::ids::ListId) {
     let id = koru_core::ids::ListId::new();
     View::set_list_table(
         &mut v,
-        &[koru_core::system::ListEntry {
+        &flat_table(&[koru_core::system::ListEntry {
             id,
             name: "Wedding".into(),
+            parent: None,
             color: Some("blue".into()),
             order: None,
             created_ms: Some(1),
             deleted_ms: None,
-        }],
+        }]),
     );
     (v, w, id)
 }
@@ -12144,11 +12301,14 @@ fn right_clicking_a_list_opens_its_menu() {
         &[
             MenuAction::RailOpenInNewTab,
             MenuAction::Divider,
+            MenuAction::ListNewInside,
+            MenuAction::Divider,
             MenuAction::ListRename,
             MenuAction::ListColor,
             MenuAction::Divider,
             MenuAction::ListDelete,
-        ]
+        ],
+        "a top-level list has no Move to top"
     );
     assert!(
         MenuAction::ListDelete.destructive(),
@@ -12161,7 +12321,7 @@ fn right_clicking_a_list_opens_its_menu() {
         &mut v.engine,
         MenuSubject::List(koru_core::ids::ListId::new()),
         (0.0, 0.0),
-        context_menu::list_items(),
+        context_menu::list_items(false),
     );
     assert!(
         v.enabled_items(&stale).iter().all(|on| !on),
@@ -12374,7 +12534,7 @@ fn right_clicking_a_bucket_offers_the_one_thing_you_can_do_to_it() {
 
         // And the furniture still opens nothing, rather than falling through to the
         // library menu the other two modes raise.
-        let (x, y) = rail_row(&v, RailRow::NewList).centre();
+        let (x, y) = rail_row(&v, RailRow::ListsHeading).centre();
         v.menu = None;
         View::context_menu(&mut v, &mut w.ws, x, y);
         assert!(v.menu.is_none());
@@ -12532,18 +12692,19 @@ fn recoloring_a_list_moves_the_row_and_the_chip() {
     // tab's `ListFace` both read it.
     View::set_list_table(
         &mut v,
-        &[koru_core::system::ListEntry {
+        &flat_table(&[koru_core::system::ListEntry {
             id,
             name: "Wedding".into(),
+            parent: None,
             color: Some("teal".into()),
             order: None,
             created_ms: Some(1),
             deleted_ms: None,
-        }],
+        }]),
     );
     assert_eq!(v.explore.rail().lists()[0].color.as_deref(), Some("teal"));
     assert_eq!(
-        v.list_table[0].color.as_deref(),
+        v.list_table[0].entry.color.as_deref(),
         Some("teal"),
         "and the chip's own source with it"
     );
@@ -12579,7 +12740,10 @@ fn deleting_a_list_goes_through_the_confirm() {
     v.settle_confirm(true);
     assert_eq!(
         View::take_wants_list_edits(&mut v),
-        vec![koru_workspace_host::tasks::ListEdit::Delete(id)]
+        vec![koru_workspace_host::tasks::ListEdit::DeleteTree {
+            id,
+            inside: Vec::new()
+        }]
     );
 }
 
@@ -15474,4 +15638,148 @@ fn showing_an_unreadable_item_navigates_to_its_document() {
     );
     v.perform_settings_request(koru_settings_ui::Request::ShowReaderItem("nonsense".into()));
     assert_eq!(v.take_pane_request(), None);
+}
+
+/// **Two split panes showing the same document update in real time as you type.**
+///
+/// `App::adopt_others` notifies *other windows* when this window edits `ws`,
+/// skipping this window so the authoring editor does not rebuild over its own
+/// caret. When the same document is open in two split panes of one window, the
+/// sibling pane is inside the skipped window — so without `adopt_siblings` its
+/// `ChangeTracker` never drained and the pane stayed frozen until a paragraph
+/// was edited or split in that second pane.
+#[test]
+fn typing_in_one_split_pane_updates_the_other_pane_showing_the_same_document_immediately() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+
+    let (mut w, doc) = a_document_of(&["first line", "second line"]);
+    let mut v = MainView::new();
+    v.set_viewport(1200.0, 700.0);
+    v.set_pane_context(
+        Vec::new(),
+        koru_core::ProfileId::new(),
+        Vec::new(),
+        w.ws.id(),
+    );
+    v.open_node(&w.ws, doc);
+
+    // Open a second tab on the same document and split it to the right, so both
+    // panes show `doc` side by side in the same window.
+    assert!(v.open_node_in_new_tab(&w.ws, doc));
+    let second_id = v.tabs().active_tab().id;
+    let second_tab = v
+        .panes
+        .take_tab_by_id(&PanePath::root(), second_id)
+        .expect("took second tab");
+    v.panes
+        .split(&PanePath::root(), SplitDir::Right, second_tab);
+    v.size_visible_groups();
+
+    let left = PanePath::root().child(0);
+    let right = PanePath::root().child(1);
+
+    let pane_texts = |v: &MainView, path: &PanePath| -> Vec<String> {
+        let TabView::Leaf(Leaf::Document(d)) = &v
+            .panes
+            .group(path)
+            .expect("pane group")
+            .tabs()
+            .active_tab()
+            .view
+        else {
+            panic!("expected document leaf");
+        };
+        d.editor.body.rows.iter().map(|r| r.text.clone()).collect()
+    };
+
+    assert_eq!(
+        pane_texts(&v, &left),
+        vec!["Notes", "first line", "second line"]
+    );
+    assert_eq!(
+        pane_texts(&v, &right),
+        vec!["Notes", "first line", "second line"]
+    );
+
+    // Focus the right pane, land on the first body line, and type at its end.
+    v.panes.set_focus(right.clone());
+    let first_row = {
+        let TabView::Leaf(Leaf::Document(d)) = &v.tabs().active_tab().view else {
+            panic!("expected document leaf");
+        };
+        d.editor.body.rows[1].id
+    };
+    {
+        let TabView::Leaf(l) = &mut v.tabs_mut().active_mut().view else {
+            panic!("expected document leaf");
+        };
+        l.view_mut().active = true;
+        assert!(Editing::reveal(l, first_row));
+    }
+    v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::End),
+        None,
+        NONE,
+    );
+    v.key(&mut w.ws, &ch("!"), Some("!"), NONE);
+
+    // The left pane updates immediately on the keystroke, without clicking or
+    // editing a paragraph in the left pane.
+    assert_eq!(
+        pane_texts(&v, &left),
+        vec!["Notes", "first line!", "second line"],
+        "inline typing in the right pane must appear immediately in the left pane"
+    );
+
+    // Press Enter and type a new line in the right pane; the structural change
+    // and its text both appear immediately in the left pane.
+    v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::Enter),
+        None,
+        NONE,
+    );
+    for ch_str in ["T", "T", "T"] {
+        v.key(&mut w.ws, &ch(ch_str), Some(ch_str), NONE);
+    }
+    assert_eq!(
+        pane_texts(&v, &left),
+        vec!["Notes", "first line!", "TTT", "second line"],
+        "a new paragraph added in the right pane must appear immediately in the left pane"
+    );
+    assert_eq!(
+        pane_texts(&v, &right),
+        vec!["Notes", "first line!", "TTT", "second line"],
+    );
+
+    // Now switch focus to the left pane and edit `second line`; the right pane
+    // updates immediately in turn.
+    v.panes.set_focus(left.clone());
+    let last_row = {
+        let TabView::Leaf(Leaf::Document(d)) = &v.tabs().active_tab().view else {
+            panic!("expected document leaf");
+        };
+        d.editor.body.rows[3].id
+    };
+    {
+        let TabView::Leaf(l) = &mut v.tabs_mut().active_mut().view else {
+            panic!("expected document leaf");
+        };
+        l.view_mut().active = true;
+        assert!(Editing::reveal(l, last_row));
+    }
+    v.key(
+        &mut w.ws,
+        &Key::Named(winit::keyboard::NamedKey::End),
+        None,
+        NONE,
+    );
+    v.key(&mut w.ws, &ch("?"), Some("?"), NONE);
+
+    assert_eq!(
+        pane_texts(&v, &right),
+        vec!["Notes", "first line!", "TTT", "second line?"],
+        "typing in the left pane must appear immediately in the right pane"
+    );
 }
