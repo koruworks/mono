@@ -49,7 +49,7 @@ fn unsupported_domain_and_orphan_work_are_rejected() {
     let db = Database::in_memory().unwrap();
     assert!(
         db.connection
-            .execute("INSERT INTO team VALUES ('owner', 2)", [])
+            .execute("INSERT INTO team(owner,paused) VALUES ('owner', 2)", [])
             .is_err()
     );
     assert!(
@@ -65,7 +65,7 @@ fn unsupported_domain_and_orphan_work_are_rejected() {
 #[test]
 fn diagnostic_never_contains_content() {
     let db = Database::in_memory().unwrap();
-    db.connection.execute("INSERT INTO bots VALUES ('bot', 'owner', 'private name', X'00', X'00', NULL, X'00', NULL, 'private', 0, 'active')", []).unwrap();
+    db.connection.execute("INSERT INTO bots(id,owner,name,settings,access,role_page,knowledge_pages,memory_page,visibility,paused,lifecycle) VALUES ('bot', 'owner', 'private name', X'00', X'00', NULL, X'00', NULL, 'private', 0, 'active')", []).unwrap();
     db.connection
         .execute(
             "INSERT INTO workers VALUES ('bot', 'incarnation', 1, 2)",

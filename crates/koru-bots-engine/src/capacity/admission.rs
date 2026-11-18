@@ -71,6 +71,22 @@ impl Admission {
         self.sessions.len()
     }
 
+    /// Refresh cancellation after the durable command commits, retaining the
+    /// physical reservation until the worker confirms retirement. Pause alone
+    /// never stops an already running turn.
+    pub(crate) fn refresh_stops(&mut self, db: &Database) -> Result<(), Error> {
+        for (key, slot) in &mut self.sessions {
+            let stopped: bool = db.connection.query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM bots b JOIN threads t ON t.id=?2 WHERE b.id=?1 AND b.lifecycle='active' AND t.lifecycle='active') OR EXISTS(SELECT 1 FROM credentials WHERE session=?3 AND revoked=1)",
+                params![key.bot.to_string(), key.thread.to_string(), slot.provider.map(|id|id.to_string())], |r|r.get(0),
+            )?;
+            if stopped {
+                slot.phase = Phase::Stopping;
+            }
+        }
+        Ok(())
+    }
+
     pub fn provider(&self, reservation: Reservation, worker: Uuid) -> Result<Option<Uuid>, Error> {
         self.sessions
             .get(&reservation.key)

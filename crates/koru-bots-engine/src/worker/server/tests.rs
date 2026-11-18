@@ -60,7 +60,7 @@ fn failed_wake_is_a_refusal_and_next_command_can_succeed() {
         .unwrap();
     assert!(matches!(wake_bot(&db, bot, || Ok(())), Reply::Queued));
     db.connection
-        .execute("INSERT INTO team VALUES ('owner',1)", [])
+        .execute("INSERT INTO team(owner,paused) VALUES ('owner',1)", [])
         .unwrap();
     assert!(matches!(
         wake_bot(&db, bot, || panic!("team paused")),

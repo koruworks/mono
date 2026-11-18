@@ -42,6 +42,7 @@ pub enum Command {
     Hello,
     Status,
     Capacity,
+    Person(crate::person::Request),
     Operation(crate::operations::control::Command),
     SessionCatalog {
         secret: crate::authority::Secret,
@@ -76,6 +77,7 @@ pub enum Reply {
     Capacity { sessions: u32 },
     Resolved(crate::authority::Resolution),
     Catalog(CatalogGrant),
+    Person(crate::person::Reply),
     Operation(crate::operations::control::Reply),
     Refused(Error),
 }

@@ -15,6 +15,7 @@ enum ActorCommand {
     Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
+    Person(crate::person::Request, mpsc::SyncSender<Reply>),
     Operation(crate::operations::control::Command, mpsc::SyncSender<Reply>),
     SessionCatalog(crate::authority::Secret, mpsc::SyncSender<Reply>),
     ResolveCall(
@@ -175,8 +176,13 @@ pub(super) fn serve(
         }
         dispatch |= retry_dispatch.is_some_and(|deadline| std::time::Instant::now() >= deadline);
         if dispatch {
+            // A committed Stop remains discoverable even if the first read
+            // after its commit fails. Never free a physical slot here.
             admission.set_capacity(launcher.capacity());
-            retry_dispatch = match dispatch_work(&database, &mut admission, &launcher, now_ms()) {
+            retry_dispatch = match admission
+                .refresh_stops(&database)
+                .and_then(|()| dispatch_work(&database, &mut admission, &launcher, now_ms()))
+            {
                 Ok(()) => None,
                 Err(_) => Some(std::time::Instant::now() + std::time::Duration::from_secs(1)),
             };
@@ -188,6 +194,17 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::Person(request, reply) => {
+                let changes = request.command.changes();
+                let result = crate::person::handle(&mut database, &observations, request, now_ms());
+                let _ = reply.try_send(result.map(Reply::Person).unwrap_or_else(Reply::Refused));
+                if changes {
+                    dispatch = true;
+                    recovery.changed();
+                    // Bounded maintenance on normal work, never timer writes.
+                    let _ = database.prune_receipt_answers(now_ms());
+                }
+            }
             ActorCommand::Operation(command, reply) => {
                 let result = crate::operations::control::handle(&mut database, command, now_ms());
                 let _ = reply.try_send(Reply::Operation(result));
@@ -273,6 +290,19 @@ fn handle(
         Reply::Refused(Error::Unauthenticated)
     } else {
         match request.command {
+            Command::Person(request) => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::Person(request, reply))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
             Command::Operation(command) => {
                 let (reply, answer) = mpsc::sync_channel(1);
                 if actor

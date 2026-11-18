@@ -217,7 +217,7 @@ fn fairness_and_pause_use_durable_work_and_capacity_reduction_preserves_live_wor
     assert!(!f.admission.owns(first, f.worker));
     assert!(!f.admission.owns(second, f.worker));
     f.db.connection
-        .execute("INSERT INTO team VALUES ('owner',1)", [])
+        .execute("INSERT INTO team(owner,paused) VALUES ('owner',1)", [])
         .unwrap();
     assert_eq!(f.next(5), None);
     f.db.connection

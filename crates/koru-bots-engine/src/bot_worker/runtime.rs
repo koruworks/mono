@@ -54,6 +54,38 @@ struct Entry {
     failure_recorded: bool,
     retry: Instant,
 }
+// Returning true forgets only a confirmed physical retirement. In particular,
+// StaleTurn from SetupFailed can mean Stop fenced ordinary commands while the
+// exact assignment still owes Retired.
+fn retire(
+    entry: &mut Entry,
+    mut call: impl FnMut(Command) -> Result<ControlReply, Error>,
+) -> Result<bool, Error> {
+    let (code, confirmed) = entry.finished.ok_or(Error::InvalidRequest)?;
+    if let Some(code) = code
+        && !entry.failure_recorded
+    {
+        match call(Command::SetupFailed {
+            reservation: entry.reservation,
+            code,
+        })? {
+            ControlReply::Done => entry.failure_recorded = true,
+            ControlReply::Refused(Error::StaleTurn) if confirmed => entry.failure_recorded = true,
+            _ if confirmed => return Ok(false),
+            _ => return Err(Error::EngineUnavailable),
+        }
+    }
+    if !confirmed {
+        return Err(Error::EngineUnavailable);
+    }
+    Ok(matches!(
+        call(Command::Retired {
+            reservation: entry.reservation,
+            turn: entry.port.as_ref().and_then(|port| port.turn()),
+        })?,
+        ControlReply::Done | ControlReply::Refused(Error::StaleTurn)
+    ))
+}
 fn exchange(stream: &mut koru_ipc::Stream, command: &Command) -> Result<ControlReply, Error> {
     koru_ipc::frame::write_frame(stream, VERSION, command).map_err(|_| Error::EngineUnavailable)?;
     let (version, reply) = koru_ipc::frame::read_frame::<_, super::Reply>(stream)
@@ -121,41 +153,9 @@ pub(super) fn run(
                 .collect();
             for thread in finishing {
                 let entry = entries.get_mut(&thread).unwrap();
-                let (code, confirmed) = entry.finished.unwrap();
                 entry.retry = now + Duration::from_secs(1);
-                if let Some(code) = code
-                    && !entry.failure_recorded
-                {
-                    match exchange(
-                        &mut stream,
-                        &Command::SetupFailed {
-                            reservation: entry.reservation,
-                            code,
-                        },
-                    )? {
-                        ControlReply::Done => entry.failure_recorded = true,
-                        ControlReply::Refused(Error::StaleTurn) if confirmed => {
-                            entries.remove(&thread);
-                            continue;
-                        }
-                        _ if confirmed => continue,
-                        _ => return Err(Error::EngineUnavailable),
-                    }
-                }
-                if !confirmed {
-                    return Err(Error::EngineUnavailable);
-                }
-                match exchange(
-                    &mut stream,
-                    &Command::Retired {
-                        reservation: entry.reservation,
-                        turn: entry.port.as_ref().and_then(|port| port.turn()),
-                    },
-                )? {
-                    ControlReply::Done | ControlReply::Refused(Error::StaleTurn) => {
-                        entries.remove(&thread);
-                    }
-                    _ => {}
+                if retire(entry, |command| exchange(&mut stream, &command))? {
+                    entries.remove(&thread);
                 }
             }
             if now >= poll {
@@ -268,3 +268,6 @@ pub(super) fn run(
         result => result,
     }
 }
+
+#[cfg(test)]
+mod tests;

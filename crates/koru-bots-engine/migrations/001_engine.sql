@@ -2,6 +2,9 @@ CREATE TABLE bots (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
     name TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL DEFAULT 0,
     settings BLOB NOT NULL,
     access BLOB NOT NULL,
     role_page TEXT,
@@ -13,19 +16,24 @@ CREATE TABLE bots (
 );
 CREATE TABLE team (
     owner TEXT PRIMARY KEY,
-    paused INTEGER NOT NULL CHECK (paused IN (0, 1))
+    paused INTEGER NOT NULL CHECK (paused IN (0, 1)),
+    revision INTEGER NOT NULL DEFAULT 0 CHECK (revision >= 0)
 );
+CREATE INDEX bots_roster ON bots(owner, lifecycle, id);
 CREATE TABLE threads (
     id TEXT PRIMARY KEY,
     bot TEXT NOT NULL REFERENCES bots(id),
     kind TEXT NOT NULL CHECK (kind IN ('main', 'conversation', 'routine', 'between_bots', 'branch')),
     title TEXT NOT NULL,
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    created_at_ms INTEGER NOT NULL DEFAULT 0,
     lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'archived', 'trashed')),
     origin_thread TEXT REFERENCES threads(id),
     origin_message TEXT,
     CHECK ((origin_thread IS NULL) = (origin_message IS NULL))
 );
 CREATE UNIQUE INDEX one_main_thread ON threads(bot) WHERE kind = 'main';
+CREATE INDEX threads_roster ON threads(bot, lifecycle, id);
 CREATE TABLE participants (
     thread TEXT NOT NULL REFERENCES threads(id),
     participant TEXT NOT NULL,
@@ -53,6 +61,7 @@ CREATE TABLE inbox (
     UNIQUE (message, bot)
 );
 CREATE INDEX inbox_order ON inbox(bot, accepted_at_ms, id);
+CREATE INDEX inbox_thread ON inbox(thread);
 CREATE TABLE obligations (
     id TEXT PRIMARY KEY,
     thread TEXT NOT NULL REFERENCES threads(id),
@@ -79,6 +88,7 @@ CREATE TABLE turns (
 );
 CREATE UNIQUE INDEX one_running_turn ON turns(thread, bot) WHERE state = 'running';
 CREATE INDEX turn_queue ON turns(state, created_at_ms, id);
+CREATE INDEX turns_by_participant ON turns(thread, bot, generation);
 CREATE TABLE deliveries (
     id TEXT PRIMARY KEY,
     turn TEXT NOT NULL REFERENCES turns(id),

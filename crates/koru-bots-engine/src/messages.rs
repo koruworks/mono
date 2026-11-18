@@ -74,7 +74,7 @@ pub struct Accepted {
     pub sequence: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Receipt<T> {
     pub answer: T,
     pub replayed: bool,
