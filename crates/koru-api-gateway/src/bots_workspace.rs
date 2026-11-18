@@ -26,7 +26,7 @@ impl Server {
 }
 pub(crate) fn start(
     config: &crate::GatewayConfig,
-    state: &GatewayState,
+    state: &Arc<GatewayState>,
 ) -> Result<Option<Server>, String> {
     if !koru_bots_engine::ENABLED {
         return Ok(None);
@@ -58,8 +58,15 @@ pub(crate) fn start(
     let listener = koru_ipc::AsyncListener::bind(endpoint)
         .map_err(|_| "engine_workspace_unavailable".to_owned())?;
     let (stop, mut stopping) = oneshot::channel();
+    let (recovery_stop, recovery_stopping) = tokio::sync::watch::channel(false);
+    let recovery_state = state.clone();
     let task = tokio::spawn(async move {
         let mut calls = JoinSet::new();
+        calls.spawn(async move {
+            recovery_state
+                .recover_bots_creations(recovery_stopping)
+                .await;
+        });
         loop {
             tokio::select! {
                 _ = &mut stopping => break,
@@ -72,6 +79,7 @@ pub(crate) fn start(
             }
         }
         drop(listener);
+        recovery_stop.send_replace(true);
         while calls.join_next().await.is_some() {}
     });
     Ok(Some(Server { stop, task }))

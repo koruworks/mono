@@ -10,6 +10,51 @@ use koru_bots_engine::{
 use uuid::Uuid;
 
 impl Gateway {
+    /// One bounded startup scan, then no polling while idle. A transport or
+    /// database failure leaves the scan owed; explicit incomplete creations
+    /// keep their reason and still require the person's Retry command.
+    fn recover_creations(&self, stopped: impl Fn() -> bool) -> Result<(), Error> {
+        if stopped() {
+            return Ok(());
+        }
+        let owner = self.authority.owner().map_err(authority_error)?;
+        let mut after = None;
+        let mut visited = 0;
+        let mut failure = None;
+        while visited < c::MAX_PENDING_PER_OWNER && !stopped() {
+            let c::Reply::Pending(records) =
+                self.creation_call(owner, c::Command::Pending { after })?
+            else {
+                return Err(Error::EngineUnavailable);
+            };
+            if records.is_empty() {
+                break;
+            }
+            for listed in records {
+                if stopped() || visited == c::MAX_PENDING_PER_OWNER {
+                    break;
+                }
+                // The listing is byte-bounded, not count-paginated. It omits
+                // seed bytes, so always reload before driving an effect.
+                if after.is_some_and(|id| listed.request <= id) {
+                    return Err(Error::EngineUnavailable);
+                }
+                after = Some(listed.request);
+                visited += 1;
+                let resumed = self
+                    .creation_read(owner, listed.request)
+                    .and_then(|record| {
+                        record.map_or(Ok(()), |record| {
+                            self.creation_progress(owner, record).map(|_| ())
+                        })
+                    });
+                if let Err(error) = resumed {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+        failure.map_or(Ok(()), Err)
+    }
     /// A concurrent poll or abandonment may advance the same intent. Report
     /// its current progress; that CAS conflict is not changed person input.
     pub(super) fn creation_progress(
@@ -224,6 +269,46 @@ impl Gateway {
             }
         }
         Ok(record)
+    }
+}
+
+impl GatewayState {
+    /// Supervised with the private workspace service. Its shutdown signals
+    /// this job before draining it, so no creation effect outlives Store.
+    pub async fn recover_bots_creations(&self, mut stopping: tokio::sync::watch::Receiver<bool>) {
+        let Some(gateway) = self.bots_engine.get().cloned() else {
+            return;
+        };
+        let mut delay = std::time::Duration::from_millis(250);
+        loop {
+            if *stopping.borrow() {
+                return;
+            }
+            let permit = tokio::select! {
+                _ = stopping.changed() => return,
+                permit = gateway.permits.clone().acquire_owned() => {
+                    let Ok(permit) = permit else { return };
+                    permit
+                }
+            };
+            let job = gateway.clone();
+            let stop = stopping.clone();
+            let result = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                job.recover_creations(|| *stop.borrow())
+            })
+            .await;
+            if matches!(result, Ok(Ok(()))) || *stopping.borrow() {
+                return;
+            }
+            // Only an owed scan retries. Once it completes, no timer reads
+            // the document, Store or engine database.
+            tokio::select! {
+                _ = stopping.changed() => return,
+                _ = tokio::time::sleep(delay) => {}
+            }
+            delay = (delay * 2).min(std::time::Duration::from_secs(5));
+        }
     }
 }
 
