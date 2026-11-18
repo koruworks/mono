@@ -4,6 +4,45 @@
 use super::*;
 
 impl Gateway {
+    pub(super) fn update_action(
+        &self,
+        owner: BotOwner,
+        bot_id: BotId,
+        expected_revision: u64,
+        config: BotConfig,
+    ) -> Result<Change, Error> {
+        let current: person::Bot = self.person_read(
+            owner,
+            Query::Bot {
+                bot: bot_id.as_uuid(),
+            },
+        )?;
+        if config.role.workspace != current.definition.access.workspace {
+            return Err(Error::InvalidRequest);
+        }
+        let managed = koru_bots_engine::folders::managed_path(&self.root, bot_id.as_uuid());
+        let folder = if std::path::Path::new(&config.working_folder) == managed {
+            None
+        } else {
+            Some(config.working_folder.clone())
+        };
+        let creation = BotCreationConfig {
+            name: config.name,
+            avatar: config.avatar,
+            model: config.model,
+            mode: config.mode,
+            fast: config.fast,
+        };
+        let configuration = configured(&creation, folder)?;
+        Ok(Change::Configure {
+            bot: bot_id.as_uuid(),
+            revision: expected_revision,
+            name: creation.name,
+            avatar: creation.avatar,
+            configuration,
+            role: Some(config.role.document.as_uuid()),
+        })
+    }
     fn control_response(
         bot_id: BotId,
         request_id: BotRequestId,
@@ -151,41 +190,8 @@ impl Gateway {
                 expected_revision,
                 config,
             } => {
-                let current: person::Bot = self.person_read(
-                    owner,
-                    Query::Bot {
-                        bot: bot_id.as_uuid(),
-                    },
-                )?;
-                if config.role.workspace != current.definition.access.workspace {
-                    return Err(Error::InvalidRequest);
-                }
-                let managed = koru_bots_engine::folders::managed_path(&self.root, bot_id.as_uuid());
-                let folder = if std::path::Path::new(&config.working_folder) == managed {
-                    None
-                } else {
-                    Some(config.working_folder.clone())
-                };
-                let creation = BotCreationConfig {
-                    name: config.name,
-                    avatar: config.avatar,
-                    model: config.model,
-                    mode: config.mode,
-                    fast: config.fast,
-                };
-                let configuration = configured(&creation, folder)?;
-                let bot = self.window_change(
-                    owner,
-                    request_id,
-                    Change::Configure {
-                        bot: bot_id.as_uuid(),
-                        revision: expected_revision,
-                        name: creation.name,
-                        avatar: creation.avatar,
-                        configuration,
-                        role: Some(config.role.document.as_uuid()),
-                    },
-                )?;
+                let action = self.update_action(owner, bot_id, expected_revision, config)?;
+                let bot = self.window_change(owner, request_id, action)?;
                 Ok(BotResponse::Bot {
                     bot: self.bot_view(owner, bot)?,
                 })

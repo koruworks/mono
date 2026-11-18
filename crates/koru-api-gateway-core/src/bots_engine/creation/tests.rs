@@ -4,6 +4,7 @@ mod lifecycle;
 mod lists;
 mod permissions;
 mod recovery;
+mod readiness;
 use koru_ai_core::{
     DocumentId, ProfileId, WorkspaceId,
     bots::{BOT_ROLE_SCOPE, BotRoleProof},

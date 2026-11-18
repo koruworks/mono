@@ -2159,7 +2159,7 @@ fn invalid_identity(kind: &str) -> Response {
     )
 }
 
-fn status_for(failure: &Failure) -> StatusCode {
+pub(crate) fn status_for(failure: &Failure) -> StatusCode {
     use koru_ai_wire::attachment_codes as attachment;
     match failure.code.as_str() {
         "invalid_request"

@@ -11,6 +11,33 @@ use uuid::Uuid;
 mod lifecycle;
 mod lists;
 mod management;
+pub(super) mod readiness;
+
+fn model_view(configuration: &Configuration) -> Result<ModelSelection, Error> {
+    let provider = koru_ai_provider_agent::agent_provider_kinds()
+        .into_iter()
+        .find(|kind| kind.kind == configuration.provider)
+        .ok_or(Error::InvalidRequest)?
+        .id;
+    Ok(ModelSelection {
+        provider,
+        requested_model: configuration
+            .selection
+            .model
+            .as_ref()
+            .map(|model| model.as_str().to_owned())
+            .unwrap_or_else(|| koru_ai_core::AGENT_DEFAULT_MODEL.into()),
+        default_reasoning: configuration
+            .selection
+            .reasoning
+            .as_ref()
+            .map(|reasoning| {
+                ReasoningChoice::parse(reasoning.as_str()).ok_or(Error::InvalidRequest)
+            })
+            .transpose()?
+            .unwrap_or_default(),
+    })
+}
 
 fn configured(config: &BotCreationConfig, folder: Option<String>) -> Result<Configuration, Error> {
     config.validate().map_err(authority_error)?;
@@ -87,11 +114,7 @@ impl Gateway {
     }
     fn bot_view(&self, owner: BotOwner, bot: person::Bot) -> Result<Bot, Error> {
         let d = bot.definition;
-        let provider = koru_ai_provider_agent::agent_provider_kinds()
-            .into_iter()
-            .find(|kind| kind.kind == d.configuration.provider)
-            .ok_or(Error::InvalidRequest)?
-            .id;
+        let model = model_view(&d.configuration)?;
         let selection = d.configuration.selection;
         let working_folder = d.configuration.working_folder.unwrap_or_else(|| {
             koru_bots_engine::folders::managed_path(&self.root, bot.id)
@@ -111,20 +134,7 @@ impl Gateway {
                     document: DocumentId::from_uuid(d.role.ok_or(Error::InvalidRequest)?),
                 },
                 working_folder,
-                model: ModelSelection {
-                    provider,
-                    requested_model: selection
-                        .model
-                        .map(|model| model.as_str().to_owned())
-                        .unwrap_or_else(|| koru_ai_core::AGENT_DEFAULT_MODEL.into()),
-                    default_reasoning: selection
-                        .reasoning
-                        .map(|reasoning| {
-                            ReasoningChoice::parse(reasoning.as_str()).ok_or(Error::InvalidRequest)
-                        })
-                        .transpose()?
-                        .unwrap_or_default(),
-                },
+                model,
                 mode: selection.mode.map(|mode| mode.as_str().to_owned()),
                 fast: selection.fast,
             },

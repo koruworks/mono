@@ -344,14 +344,17 @@ pub(crate) async fn command(
     let Ok(permit) = gateway.permits.clone().try_acquire_owned() else {
         return failed(Error::EngineUnavailable);
     };
+    let client = state.ai_client();
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        gateway.execute(&principal, command)
+        gateway.validated_execute(&principal, command, |configuration| {
+            window::readiness::validate(client.as_ref(), configuration)
+        })
     })
     .await
     {
         Ok(Ok(value)) => Json(value).into_response(),
-        Ok(Err(error)) => failed(error),
+        Ok(Err(error)) => error.response(false),
         Err(_) => failed(Error::EngineUnavailable),
     }
 }
@@ -369,14 +372,17 @@ pub(crate) async fn window_command(
     let Ok(permit) = gateway.permits.clone().try_acquire_owned() else {
         return window_failed(Error::EngineUnavailable);
     };
+    let client = state.ai_client();
     match tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        gateway.window_command(command)
+        gateway.validated_window_command(command, |configuration| {
+            window::readiness::validate(client.as_ref(), configuration)
+        })
     })
     .await
     {
         Ok(Ok(reply)) => Json(reply).into_response(),
-        Ok(Err(error)) => window_failed(error),
+        Ok(Err(error)) => error.response(true),
         Err(_) => window_failed(Error::EngineUnavailable),
     }
 }

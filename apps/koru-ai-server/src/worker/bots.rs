@@ -294,13 +294,29 @@ fn validate_model_catalog(
     catalog: &koru_ai_wire::AgentModelsResponse,
     require_fast: bool,
 ) -> ApiResult<Option<ReasoningControl>> {
-    if catalog.provider != config.model.provider {
+    validate_agent_model_catalog(
+        &config.model,
+        config.mode.as_deref(),
+        require_fast || config.fast == Some(true),
+        catalog,
+    )
+}
+
+/// Validate a selection against native discovery without consulting AI or Bot
+/// persistence. The engine gateway uses the same rules as the legacy owner.
+pub fn validate_agent_model_catalog(
+    selection: &koru_ai_core::ModelSelection,
+    mode: Option<&str>,
+    require_fast: bool,
+    catalog: &koru_ai_wire::AgentModelsResponse,
+) -> ApiResult<Option<ReasoningControl>> {
+    if catalog.provider != selection.provider {
         return Err(bot_failure(BotError::Unavailable));
     }
     let model = catalog
         .models
         .iter()
-        .find(|model| model.id == config.model.requested_model)
+        .find(|model| model.id == selection.requested_model)
         .ok_or_else(|| {
             agents::with_reason(
                 failure(
@@ -316,14 +332,11 @@ fn validate_model_catalog(
             .reasoning
             .as_ref()
             .unwrap_or(&ReasoningControl::Unsupported),
-        config.model.default_reasoning,
+        selection.default_reasoning,
     )
     .map_err(ai_failure)?;
-    if config
-        .mode
-        .as_ref()
-        .is_some_and(|mode| !catalog.modes.iter().any(|m| &m.id == mode))
-        || ((require_fast || config.fast == Some(true)) && model.fast.is_none())
+    if mode.is_some_and(|mode| !catalog.modes.iter().any(|m| m.id == mode))
+        || (require_fast && model.fast.is_none())
     {
         return Err(failure(
             "unsupported_capability",
