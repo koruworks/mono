@@ -59,7 +59,7 @@ pub enum Command {
     /// Inline code — mono with a background.
     Code,
     Highlight,
-    /// The link prompt, seeded from the selection — `Ctrl+K`.
+    /// The link prompt, seeded from the selection — `Ctrl+Shift+L`.
     Link,
     /// Strip every mark and colour from the selection, leaving the heading and
     /// the alignment alone.
@@ -164,13 +164,13 @@ impl Command {
             Self::Strike => "Strikethrough  Ctrl+Shift+S",
             Self::Code => "Code  Ctrl+Shift+C",
             Self::Highlight => "Highlight  Ctrl+Shift+H",
-            Self::Link => "Link  Ctrl+K",
+            Self::Link => "Link  Ctrl+Shift+L",
             Self::ClearFormatting => "Clear formatting  Ctrl+\\",
             Self::Superscript => "Superscript",
             Self::Subscript => "Subscript",
-            Self::AlignStart => "Align left  Ctrl+Shift+L",
-            Self::AlignCenter => "Centre  Ctrl+Shift+E",
-            Self::AlignEnd => "Align right  Ctrl+Shift+R",
+            Self::AlignStart => "Align left  Ctrl+L",
+            Self::AlignCenter => "Centre  Ctrl+E",
+            Self::AlignEnd => "Align right  Ctrl+R",
         }
     }
 

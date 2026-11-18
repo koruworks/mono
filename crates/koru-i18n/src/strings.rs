@@ -3010,7 +3010,7 @@ pub enum Key {
     ShowSidebar,
     /// The lane's Search, and the command bar's placeholder.
     SearchOrTypeACommand,
-    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+P`), then
+    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+K`), then
     /// the agent's machine-wide one (`Ctrl+Shift+K`), which opens search from
     /// any app.
     SearchChordsAnywhere,

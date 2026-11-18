@@ -2268,11 +2268,11 @@ fn ctrl_digits_select_rail_workspaces_and_leave_tab_selection_alone() {
 /// Ctrl+Tab reaches the container as a direction, because the shell is the only
 /// place that can tell it apart from Ctrl+I. See `keys::tests`.
 ///
-/// It stands the quick switch up, and the list stays until something is
-/// chosen: letting go of Control does nothing, Enter goes to the highlighted
-/// tab, Escape leaves everything where it was.
+/// It stands the quick switch up, and **letting go of Control goes to the
+/// highlighted tab** — hold to cycle, release to switch. Enter also goes;
+/// Escape leaves everything where it was.
 #[test]
-fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
+fn ctrl_tab_is_hold_to_cycle_and_release_to_switch() {
     let (mut v, w) = on_document();
     let mut w = w;
     let named = |key| Key::Named(key);
@@ -2280,37 +2280,27 @@ fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
     v.select(0);
     v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
+    assert_eq!(v.tabs().active(), 0, "the list is up, nothing chosen yet");
     v.set_mods(ModifiersState::empty());
     assert_eq!(
         v.tabs().active(),
-        0,
-        "letting go of Control chooses nothing"
+        1,
+        "letting go of Control goes to the highlighted tab"
     );
-    assert!(v.key(
-        &mut w.ws,
-        &named(winit::keyboard::NamedKey::Enter),
-        None,
-        ModifiersState::empty()
-    ));
-    assert_eq!(v.tabs().active(), 1, "Enter goes to the highlighted tab");
 
-    // Tab walks on, and wraps back to the tab in front.
+    // Enter goes while the list is still up.
+    v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
     assert!(v.key(
         &mut w.ws,
-        &named(winit::keyboard::NamedKey::Tab),
-        None,
-        ModifiersState::empty()
-    ));
-    assert!(v.key(
-        &mut w.ws,
         &named(winit::keyboard::NamedKey::Enter),
         None,
         ModifiersState::empty()
     ));
-    assert_eq!(v.tabs().active(), 1);
+    assert_eq!(v.tabs().active(), 0, "Enter goes to the highlighted tab");
 
     // Escape puts it away and goes nowhere.
+    v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
     assert!(v.key(
         &mut w.ws,
@@ -2318,7 +2308,7 @@ fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
         None,
         ModifiersState::empty()
     ));
-    assert_eq!(v.tabs().active(), 1);
+    assert_eq!(v.tabs().active(), 0);
     assert!(v.cycle_tab(1), "and it opens again afterwards");
 }
 

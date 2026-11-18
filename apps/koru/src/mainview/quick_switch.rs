@@ -3,19 +3,21 @@
 //! **Quick switch**: Ctrl+Tab's list of the open tabs, most recently used
 //! first.
 //!
-//! **It stays until something is chosen or it is put away** (owner,
-//! 2026-11-16): Enter or a click on a row goes there, Escape or a click
-//! anywhere else closes it. Tab, Ctrl+Tab and the arrows move the highlight,
-//! Shift the other way. Letting go of Control does nothing. It opens with
-//! the highlight on the tab used before this one, so Ctrl+Tab, Enter is *back
-//! to where I was*.
+//! **Ctrl+Tab is hold-to-cycle, release-to-switch** (owner, 2026-11-18):
+//! the first press stands the list up on the tab used before this one, and
+//! each further press moves the highlight; letting go of Control goes to the
+//! highlighted tab and puts the list away. Enter or a click on a row goes
+//! there, Escape or a click anywhere else closes it. Tab, Ctrl+Tab and the
+//! arrows move the highlight, Shift the other way. It opens with the
+//! highlight on the tab used before this one, so Ctrl+Tab, Enter is *back to
+//! where I was*.
 //!
-//! **Typing narrows it** to the tabs whose name holds every word typed, the
-//! sidebar quick filter's own matching, and the highlight goes to the first
-//! answer. More tabs than fit scroll: with the wheel, and with the highlight.
+//! **Hovering a row shows its ✕**, which closes that tab and keeps the list
+//! open so several can be closed in one pass. More tabs than fit scroll: with
+//! the wheel, and with the highlight.
 //!
-//! It stands on the scrim and the panel search stands on, so the two read as
-//! the same kind of thing.
+//! It stands on the scrim the panel search stands on, so the two read as the
+//! same kind of thing.
 //!
 //! **Every tab of the window, whichever split it is in**, and in the order
 //! they were last *used*: written in, or a task made on. A tab only looked
@@ -28,23 +30,20 @@ use koru_draw::scene;
 use koru_draw::text::TextEngine;
 use koru_draw::{icons, theme};
 use koru_shell_chrome::status_mark::StatusMark;
-use koru_ui::text_input::{InputStyle, TextInput};
 use vello::Scene;
 use vello::kurbo::Affine;
 
-use crate::panes::explore::quick_filter::{spans, words};
-
 const WIDTH: f32 = 440.0;
 const PAD: f32 = 8.0;
-/// The search row at the top, and the air under its hairline. **It is the
-/// heading**: the panel used to carry a *Quick Switch* title with its chord
-/// above it, which said nothing the list does not (owner, 2026-11-16).
-const FIELD_H: f32 = 44.0;
 const ROW_H: f32 = 38.0;
 const ROW_GAP: f32 = 2.0;
 const ROW_RADIUS: f32 = 7.0;
 const INSET: f32 = 12.0;
 const ICON: f32 = 16.0;
+/// The air reserved at the right of every row for the hovered ✕, so a hover
+/// does not move the label. The ✕ glyph itself is [`ICON`] wide, centred in
+/// this.
+const CLOSE: f32 = 24.0;
 /// More tabs than this and the list scrolls.
 const MAX_ROWS: usize = 10;
 
@@ -65,18 +64,14 @@ pub(super) struct Entry {
 
 pub(super) struct QuickSwitch {
     entries: Vec<Entry>,
-    /// The entries the typed words let through, in order: indices into
-    /// `entries`. All of them while nothing is typed.
-    matching: Vec<usize>,
-    /// The highlighted answer: an index into `matching`.
+    /// The highlighted answer: an index into `entries`.
     selected: usize,
-    /// The first answer shown: an index into `matching`.
+    /// The first answer shown: an index into `entries`.
     top: usize,
-    /// The answer under the pointer: an index into `matching`.
+    /// The answer under the pointer: an index into `entries`.
     hovered: Option<usize>,
-    /// What is typed, in the shared one-line input. Made at the first key
-    /// that types, because making one needs the text engine.
-    input: Option<TextInput>,
+    /// The answer whose ✕ is under the pointer: an index into `entries`.
+    hovered_close: Option<usize>,
 }
 
 impl QuickSwitch {
@@ -88,12 +83,11 @@ impl QuickSwitch {
             return None;
         }
         let mut switch = Self {
-            matching: (0..entries.len()).collect(),
             entries,
             selected: 0,
             top: 0,
             hovered: None,
-            input: None,
+            hovered_close: None,
         };
         switch.step(delta);
         Some(switch)
@@ -101,7 +95,7 @@ impl QuickSwitch {
 
     /// Move the highlight, round the ends, and keep it in view.
     pub fn step(&mut self, delta: i32) {
-        let n = self.matching.len() as i32;
+        let n = self.entries.len() as i32;
         if n == 0 {
             return;
         }
@@ -119,7 +113,7 @@ impl QuickSwitch {
     }
 
     fn clamp_top(&mut self) {
-        self.top = self.top.min(self.matching.len().saturating_sub(MAX_ROWS));
+        self.top = self.top.min(self.entries.len().saturating_sub(MAX_ROWS));
     }
 
     /// The wheel: `rows` down, or up when negative. `true` when it moved.
@@ -128,62 +122,19 @@ impl QuickSwitch {
         self.top = (self.top as i32 + rows).max(0) as usize;
         self.clamp_top();
         self.hovered = None;
+        self.hovered_close = None;
         self.top != before
     }
 
-    /// The tab to go to, and the split it is in. `None` when nothing typed
-    /// matches a tab.
+    /// The tab to go to, and the split it is in.
     pub fn chosen(&self) -> Option<(super::panes::PanePath, u64)> {
-        let entry = &self.entries[*self.matching.get(self.selected)?];
+        let entry = self.entries.get(self.selected)?;
         Some((entry.group.clone(), entry.tab))
     }
 
-    fn query(&self) -> String {
-        self.input
-            .as_ref()
-            .map(TextInput::value)
-            .unwrap_or_default()
-    }
-
-    /// **A key that is not the list's own**: it edits what is typed, as any
-    /// field does, and the list narrows. `true` when the field took it.
-    pub fn type_key(
-        &mut self,
-        engine: &mut TextEngine,
-        key: &winit::keyboard::Key,
-        text: Option<&str>,
-        mods: winit::keyboard::ModifiersState,
-    ) -> bool {
-        let before = self.query();
-        let input = self
-            .input
-            .get_or_insert_with(|| TextInput::new(engine, theme::role::row()));
-        if matches!(
-            input.key(engine, key, text, mods),
-            koru_ui::text_field::Typed::Passed
-        ) {
-            return false;
-        }
-        if self.query() != before {
-            self.refilter();
-        }
-        true
-    }
-
-    fn refilter(&mut self) {
-        let typed = words(&self.query());
-        self.matching = (0..self.entries.len())
-            .filter(|&i| typed.is_empty() || spans(&self.entries[i].label, &typed).is_some())
-            .collect();
-        // The first answer — or, with nothing typed, the tab before this
-        // one again.
-        self.selected = if typed.is_empty() && self.matching.len() > 1 {
-            1
-        } else {
-            0
-        };
-        self.top = 0;
-        self.hovered = None;
+    /// The entry at `index`, for the caller that closes it by identity.
+    pub fn entry(&self, index: usize) -> Option<&Entry> {
+        self.entries.get(index)
     }
 
     #[cfg(test)]
@@ -191,17 +142,17 @@ impl QuickSwitch {
         self.selected
     }
 
-    /// The answers in view: indices into `matching`.
+    /// The answers in view: indices into `entries`.
     fn shown(&self) -> std::ops::Range<usize> {
-        self.top..(self.top + MAX_ROWS).min(self.matching.len())
+        self.top..(self.top + MAX_ROWS).min(self.entries.len())
     }
 
     pub fn panel(&self, viewport: (f32, f32)) -> Rect {
-        // The list keeps the height of what it opened with, up to the cap,
-        // so typing narrows the rows without the panel jumping about.
+        // The list keeps the height of what it opened with, up to the cap, so
+        // the panel never jumps about as rows come and go.
         let rows = self.entries.len().min(MAX_ROWS) as f32;
         let w = WIDTH.min((viewport.0 - 32.0).max(120.0));
-        let h = PAD * 2.0 + FIELD_H + rows * ROW_H + (rows - 1.0).max(0.0) * ROW_GAP;
+        let h = PAD * 2.0 + rows * ROW_H + (rows - 1.0).max(0.0) * ROW_GAP;
         Rect::new(
             ((viewport.0 - w) * 0.5).max(0.0),
             ((viewport.1 - h) * 0.33).max(0.0),
@@ -210,27 +161,28 @@ impl QuickSwitch {
         )
     }
 
-    fn field_rect(&self, viewport: (f32, f32)) -> Rect {
-        let panel = self.panel(viewport);
-        Rect::new(
-            panel.x + PAD,
-            panel.y + PAD,
-            panel.w - PAD * 2.0,
-            FIELD_H - 8.0,
-        )
-    }
-
     fn row_rect(&self, viewport: (f32, f32), slot: usize) -> Rect {
         let panel = self.panel(viewport);
         Rect::new(
             panel.x + PAD,
-            panel.y + PAD + FIELD_H + slot as f32 * (ROW_H + ROW_GAP),
+            panel.y + PAD + slot as f32 * (ROW_H + ROW_GAP),
             panel.w - PAD * 2.0,
             ROW_H,
         )
     }
 
-    /// Which answer the pointer is over: an index into `matching`.
+    /// The ✕ on a row: the right-hand [`CLOSE`] air, centred.
+    fn close_rect(&self, viewport: (f32, f32), slot: usize) -> Rect {
+        let r = self.row_rect(viewport, slot);
+        Rect::new(
+            r.x + r.w - INSET - CLOSE,
+            r.y + (r.h - CLOSE) * 0.5,
+            CLOSE,
+            CLOSE,
+        )
+    }
+
+    /// Which answer the pointer is over: an index into `entries`.
     fn row_at(&self, viewport: (f32, f32), x: f32, y: f32) -> Option<usize> {
         self.shown()
             .enumerate()
@@ -238,17 +190,27 @@ impl QuickSwitch {
             .map(|(_, index)| index)
     }
 
-    /// The pointer moved. `true` when the row under it changed, so the
-    /// caller repaints only then.
+    /// Which answer's ✕ the pointer is over: an index into `entries`.
+    pub fn close_at(&self, viewport: (f32, f32), x: f32, y: f32) -> Option<usize> {
+        self.shown()
+            .enumerate()
+            .find(|(slot, _)| self.close_rect(viewport, *slot).contains(x, y))
+            .map(|(_, index)| index)
+    }
+
+    /// The pointer moved. `true` when what is lit changed, so the caller
+    /// repaints only then.
     pub fn hover(&mut self, viewport: (f32, f32), x: f32, y: f32) -> bool {
         let over = self.row_at(viewport, x, y);
-        let moved = over != self.hovered;
+        let over_close = self.close_at(viewport, x, y);
+        let moved = over != self.hovered || over_close != self.hovered_close;
         self.hovered = over;
+        self.hovered_close = over_close;
         moved
     }
 
     /// Whether a point is on the panel: a press there that is not on a row
-    /// (the heading, the field) keeps the list open.
+    /// keeps the list open.
     pub fn contains(&self, viewport: (f32, f32), x: f32, y: f32) -> bool {
         self.panel(viewport).contains(x, y)
     }
@@ -291,60 +253,8 @@ impl QuickSwitch {
             &scene::Panel::popover(koru_search_ui::SURFACE_RADIUS),
         );
 
-        // What is typed. No box of its own: the panel is the field, as it
-        // is in search.
-        let field = self.field_rect(viewport);
-        let glass = engine.icon_layout(icons::SEARCH, 14.0);
-        scene::draw_layout(
-            canvas,
-            root,
-            &glass,
-            field.x + INSET + 1.0,
-            field.y + (field.h - glass.height()) * 0.5,
-            Some(p.text_dim),
-        );
-        let text_rect = Rect::new(
-            field.x + INSET + ICON + 10.0,
-            field.y,
-            (field.w - INSET * 2.0 - ICON - 10.0).max(0.0),
-            field.h,
-        );
-        // The hairline under the search row, edge to edge, as the heading's
-        // was.
-        scene::fill(
-            canvas,
-            root,
-            p.panel_border,
-            &scene::rect(panel.x, field.y + field.h + 3.0, panel.w, 1.0),
-        );
-        let input = self
-            .input
-            .get_or_insert_with(|| TextInput::new(engine, theme::role::row()));
-        input.draw(
-            canvas,
-            root,
-            engine,
-            text_rect,
-            InputStyle::bare(theme::role::row()),
-            Some("Search open tabs"),
-            true,
-        );
-
-        let typed = words(&self.query());
-        if self.matching.is_empty() {
-            let none = engine.simple_layout("No open tab matches", theme::role::row());
-            let r = self.row_rect(viewport, 0);
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &none,
-                r.x + INSET,
-                r.y + (r.h - scene::first_line_height(&none)) * 0.5,
-                Some(p.text_dim),
-            );
-        }
         for (slot, index) in self.shown().enumerate() {
-            let entry = &self.entries[self.matching[index]];
+            let entry = &self.entries[index];
             let r = self.row_rect(viewport, slot);
             let shape = scene::rrect(r.x, r.y, r.w, r.h, ROW_RADIUS);
             if index == self.selected {
@@ -381,8 +291,9 @@ impl QuickSwitch {
                 }
             }
 
-            // The trailing word: a chat's state, or *Current*.
-            let mut right = r.x + r.w - INSET;
+            // The trailing word: a chat's state, or *Current*. The ✕'s air is
+            // reserved to the right of it, so the label never moves on hover.
+            let mut right = r.x + r.w - INSET - CLOSE;
             if let Some(status) = entry.status {
                 let (word, color) = match status {
                     StatusMark::Spinner { color, .. } => ("Running", color),
@@ -430,38 +341,33 @@ impl QuickSwitch {
             let label_w = (right - label_x).max(0.0);
             let line = engine.simple_layout(&entry.label, theme::role::row());
             let label_y = r.y + (r.h - scene::first_line_height(&line)) * 0.5;
-            match spans(&entry.label, &typed) {
-                Some(found) => koru_ui::highlighted_text::draw_highlighted_line(
+            let shown = engine.elided(&entry.label, theme::role::row(), label_w);
+            let label = engine.simple_layout(&shown, theme::role::row());
+            scene::draw_layout_first_line(canvas, root, &label, label_x, label_y, Some(p.text));
+
+            // The ✕, only on the row under the pointer. Darker when the
+            // pointer is on the ✕ itself, like the strip's close box.
+            if self.hovered == Some(index) {
+                let close = self.close_rect(viewport, slot);
+                let colour = if self.hovered_close == Some(index) {
+                    p.text
+                } else {
+                    p.text_dim
+                };
+                let glyph = engine.icon_layout(icons::WINDOW_CLOSE, ICON);
+                scene::draw_layout(
                     canvas,
                     root,
-                    engine,
-                    &entry.label,
-                    found,
-                    label_x,
-                    label_y,
-                    label_w,
-                    theme::role::row(),
-                    p.text,
-                    p.text,
-                    p.highlights[0].1,
-                ),
-                None => {
-                    let shown = engine.elided(&entry.label, theme::role::row(), label_w);
-                    let label = engine.simple_layout(&shown, theme::role::row());
-                    scene::draw_layout_first_line(
-                        canvas,
-                        root,
-                        &label,
-                        label_x,
-                        label_y,
-                        Some(p.text),
-                    );
-                }
+                    &glyph,
+                    close.x + (close.w - glyph.width()) * 0.5,
+                    close.y + (close.h - glyph.height()) * 0.5,
+                    Some(colour),
+                );
             }
         }
 
         // More answers than rows: a thumb down the panel's inside edge.
-        let n = self.matching.len();
+        let n = self.entries.len();
         if n > MAX_ROWS {
             let first = self.row_rect(viewport, 0);
             let track_h = MAX_ROWS as f32 * (ROW_H + ROW_GAP) - ROW_GAP;
@@ -534,8 +440,6 @@ mod tests {
         assert_eq!(tab(&switch), Some(3));
         assert!(!switch.press(viewport, 2.0, 2.0));
         assert!(!switch.contains(viewport, 2.0, 2.0));
-        let field = switch.field_rect(viewport);
-        assert!(switch.contains(viewport, field.x + 5.0, field.y + 5.0));
     }
 
     /// A long list shows a window of rows that follows the highlight, and
@@ -557,40 +461,28 @@ mod tests {
         assert!(!switch.scroll_rows(1));
     }
 
-    /// Typing narrows the list to the names that hold it and puts the
-    /// highlight on the first answer; emptied, the list is whole again.
+    /// The ✕ lives in a row's right-hand air: hovering it answers which row,
+    /// and the hover itself lights the row and its ✕ together.
     #[test]
-    fn typing_narrows_the_list_to_matching_names() {
-        use winit::keyboard::{Key, ModifiersState, NamedKey};
-        let mut engine = TextEngine::new();
-        let mut list = entries(12);
-        list[7].label = "Roadmap".into();
-        let mut switch = QuickSwitch::new(list, 1).unwrap();
-        for ch in ["r", "o", "a"] {
-            assert!(switch.type_key(
-                &mut engine,
-                &Key::Character(ch.into()),
-                Some(ch),
-                ModifiersState::empty()
-            ));
-        }
-        assert_eq!(switch.matching, vec![7]);
-        assert_eq!(tab(&switch), Some(7));
-        assert!(switch.type_key(
-            &mut engine,
-            &Key::Character("z".into()),
-            Some("z"),
-            ModifiersState::empty()
-        ));
-        assert_eq!(tab(&switch), None, "nothing matches, nothing to go to");
-        // Ctrl+Backspace takes the word, as in any field.
-        assert!(switch.type_key(
-            &mut engine,
-            &Key::Named(NamedKey::Backspace),
-            None,
-            ModifiersState::CONTROL
-        ));
-        assert_eq!(switch.matching.len(), 12);
-        assert_eq!(tab(&switch), Some(1), "back on the tab before this one");
+    fn the_close_box_answers_for_the_row_under_it() {
+        let viewport = (1000.0, 800.0);
+        let mut switch = QuickSwitch::new(entries(4), 1).unwrap();
+        // First shown row's ✕: pointer on its centre.
+        let close = switch.close_rect(viewport, 0);
+        let (x, y) = (close.x + close.w * 0.5, close.y + close.h * 0.5);
+        assert!(switch.hover(viewport, x, y));
+        assert_eq!(
+            switch.hovered,
+            Some(0),
+            "slot 0 shows entry 0, the tab in front"
+        );
+        assert_eq!(switch.hovered_close, Some(0));
+        assert_eq!(switch.close_at(viewport, x, y), Some(0));
+        // Off the ✕ but on the same row: the row is hovered, its ✕ is not.
+        let row = switch.row_rect(viewport, 0);
+        assert!(switch.hover(viewport, row.x + 5.0, row.y + 5.0));
+        assert_eq!(switch.hovered, Some(0));
+        assert_eq!(switch.hovered_close, None);
+        assert_eq!(switch.close_at(viewport, row.x + 5.0, row.y + 5.0), None);
     }
 }

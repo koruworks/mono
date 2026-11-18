@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! Ctrl+K: a caption and a URL.
+//! Ctrl+Shift+L: a caption and a URL.
 //!
 //! Two single-line fields, so both the key handling and the "which one has
 //! focus" question live here rather than in the editor's key map.
@@ -54,7 +54,7 @@ pub fn field_rect(which: Field, pw: f32) -> Rect {
 }
 
 /// Whether a piece of selected text reads as a link target rather than a
-/// caption, so `Ctrl+K` knows which of its two fields the selection fills.
+/// caption, so `Ctrl+Shift+L` knows which of its two fields the selection fills.
 ///
 /// Deliberately narrow. Guessing wrong costs the user a Tab, but calling a
 /// caption a URL puts their words in the field that has to be a working

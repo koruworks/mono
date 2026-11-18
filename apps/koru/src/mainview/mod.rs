@@ -1387,7 +1387,7 @@ pub struct MainView {
     note_documents: std::collections::HashSet<koru_core::DocumentId>,
     /// When the deep-link captions were last re-asked for.
     deep_links_polled: Option<Instant>,
-    /// A search hidden by successful navigation. Reopening Ctrl+P restores the
+    /// A search hidden by successful navigation. Reopening Ctrl+K restores the
     /// exact query instead of constructing an empty surface; explicit close or
     /// outside-click still discards it.
     retained_search: Option<crate::search::SearchSurface>,
@@ -3943,11 +3943,11 @@ impl MainView {
         let Some(switch) = self.quick_switch.take() else {
             return false;
         };
-        // Nothing typed matches a tab: there is nowhere to go.
+        // By identity: a tab closed while the list stood is simply not there.
+        // With no search there is always a highlighted tab to go to.
         let Some((group, chosen)) = switch.chosen() else {
             return true;
         };
-        // By identity: a tab closed while the list stood is simply not there.
         let found = self
             .panes
             .iter_groups()
@@ -3962,6 +3962,74 @@ impl MainView {
             self.wake_workspaces_tab();
         }
         true
+    }
+
+    /// Every split's tabs: the focused split first, each in the order its
+    /// tabs last showed. That is the order among tabs nobody has used. Most
+    /// recent first; the sort is stable, so tabs never used keep the order.
+    /// The tab in front leads whatever its stamp: the list starts from where
+    /// you are.
+    fn quick_switch_entries(&self) -> Vec<quick_switch::Entry> {
+        let focused = self.panes.focused_path().clone();
+        let current = self.tabs().active_tab().id;
+        let mut groups: Vec<_> = self.panes.iter_groups().collect();
+        groups.sort_by_key(|(path, _)| *path != focused);
+        let mut entries: Vec<(u64, quick_switch::Entry)> = Vec::new();
+        for (path, group) in groups {
+            for i in group.tabs().by_recency() {
+                let Some(tab) = group.tabs().get(i) else {
+                    continue;
+                };
+                entries.push((
+                    self.tab_used.get(&tab.id).copied().unwrap_or(0),
+                    quick_switch::Entry {
+                        tab: tab.id,
+                        group: path.clone(),
+                        label: tab.label.clone(),
+                        glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
+                        emoji: tab.icon.clone(),
+                        current: tab.id == current,
+                        status: tab.view.status_mark(),
+                    },
+                ));
+            }
+        }
+        entries.sort_by(|a, b| b.1.current.cmp(&a.1.current).then(b.0.cmp(&a.0)));
+        entries.into_iter().map(|(_, entry)| entry).collect()
+    }
+
+    /// Close the tab the list's `index` row is over — its ✕. The list is
+    /// rebuilt afterwards, so it stays open (or closes, when that was the
+    /// second-to-last tab).
+    fn close_quick_switch_tab(&mut self, index: usize) {
+        let Some((group, tab_id)) = self
+            .quick_switch
+            .as_ref()
+            .and_then(|switch| switch.entry(index))
+            .map(|entry| (entry.group.clone(), entry.tab))
+        else {
+            return;
+        };
+        let found = self
+            .panes
+            .iter_groups()
+            .find(|(path, _)| *path == group)
+            .and_then(|(_, tabs)| tabs.tabs().position(|candidate| candidate.id == tab_id));
+        let Some(i) = found else {
+            // The tab closed while the list stood: rebuild without it.
+            self.rebuild_quick_switch();
+            return;
+        };
+        self.panes.set_focus(group);
+        self.close_requested(i);
+        self.rebuild_quick_switch();
+    }
+
+    /// Stand the list back up from the tabs as they are now. The highlight
+    /// lands on the tab used before this one; with fewer than two tabs open
+    /// there is nothing to switch to and the list closes.
+    fn rebuild_quick_switch(&mut self) {
+        self.quick_switch = quick_switch::QuickSwitch::new(self.quick_switch_entries(), 1);
     }
 
     fn select(&mut self, i: usize) -> bool {
@@ -10413,15 +10481,29 @@ impl MainView {
         if self.file_preview.is_some() {
             return self.file_preview_press(x, y);
         }
-        // On a row of the quick switch: go there. Anywhere else: put it away,
-        // and the press is spent.
-        if let Some(switch) = self.quick_switch.as_mut() {
-            if switch.press(self.viewport, x, y) {
+        // On a row of the quick switch: go there. On its ✕: close that tab and
+        // keep the list up. Anywhere else: put it away, and the press is spent.
+        if self.quick_switch.is_some() {
+            if let Some(index) = self
+                .quick_switch
+                .as_ref()
+                .and_then(|switch| switch.close_at(self.viewport, x, y))
+            {
+                self.close_quick_switch_tab(index);
+                return true;
+            }
+            let mut go = false;
+            if let Some(switch) = self.quick_switch.as_mut() {
+                if switch.press(self.viewport, x, y) {
+                    go = true;
+                } else if !switch.contains(self.viewport, x, y) {
+                    // Off the panel puts it away; on its padding is not a
+                    // choice and not a dismissal.
+                    self.quick_switch = None;
+                }
+            }
+            if go {
                 self.finish_quick_switch();
-            } else if !switch.contains(self.viewport, x, y) {
-                // Off the panel puts it away; on its heading or its field
-                // is not a choice and not a dismissal.
-                self.quick_switch = None;
             }
             return true;
         }
@@ -12303,7 +12385,13 @@ impl View for MainView {
     }
 
     fn set_mods(&mut self, mods: ModifiersState) {
+        // Ctrl+Tab is hold-to-cycle, release-to-switch: when Control lifts
+        // while the list stands, go to the highlighted tab and put it away.
+        let control_lifted = self.mods.control_key() && !mods.control_key();
         self.mods = mods;
+        if control_lifted && self.quick_switch.is_some() {
+            self.finish_quick_switch();
+        }
         self.ai_chat.set_mods(mods);
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
@@ -15597,47 +15685,16 @@ impl View for MainView {
         had
     }
 
-    /// **Ctrl+Tab is the quick switch.** The first press stands the list
-    /// up on the tab used before this one; each further press moves the
-    /// highlight. It stays until Enter or a click chooses, or Escape or a
-    /// click elsewhere puts it away. It used to step along the strip at once.
+    /// **Ctrl+Tab is the quick switch, hold-to-cycle.** The first press stands
+    /// the list up on the tab used before this one; each further press moves
+    /// the highlight. Letting go of Control goes (see [`set_mods`]); Enter or
+    /// a click on a row goes, Escape or a click elsewhere puts it away.
     fn cycle_tab(&mut self, delta: i32) -> bool {
         if let Some(switch) = self.quick_switch.as_mut() {
             switch.step(delta);
             return true;
         }
-        // Every split's tabs: the focused split first, each in the order
-        // its tabs last showed. That is the order among tabs nobody has used.
-        let focused = self.panes.focused_path().clone();
-        let current = self.tabs().active_tab().id;
-        let mut groups: Vec<_> = self.panes.iter_groups().collect();
-        groups.sort_by_key(|(path, _)| *path != focused);
-        let mut entries: Vec<(u64, quick_switch::Entry)> = Vec::new();
-        for (path, group) in groups {
-            for i in group.tabs().by_recency() {
-                let Some(tab) = group.tabs().get(i) else {
-                    continue;
-                };
-                entries.push((
-                    self.tab_used.get(&tab.id).copied().unwrap_or(0),
-                    quick_switch::Entry {
-                        tab: tab.id,
-                        group: path.clone(),
-                        label: tab.label.clone(),
-                        glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
-                        emoji: tab.icon.clone(),
-                        current: tab.id == current,
-                        status: tab.view.status_mark(),
-                    },
-                ));
-            }
-        }
-        // **By last use**, most recent first; the sort is stable, so tabs
-        // never used keep the order above. The tab in front leads whatever
-        // its stamp: the list starts from where you are.
-        entries.sort_by(|a, b| b.1.current.cmp(&a.1.current).then(b.0.cmp(&a.0)));
-        let entries = entries.into_iter().map(|(_, entry)| entry).collect();
-        self.quick_switch = quick_switch::QuickSwitch::new(entries, delta);
+        self.quick_switch = quick_switch::QuickSwitch::new(self.quick_switch_entries(), delta);
         self.quick_switch.is_some()
     }
 
@@ -16438,11 +16495,9 @@ impl MainView {
                 }
                 Key::Named(winit::keyboard::NamedKey::ArrowDown) => switch.step(1),
                 Key::Named(winit::keyboard::NamedKey::ArrowUp) => switch.step(-1),
-                // Everything else is typed: the list narrows to the tabs
-                // whose name holds it.
-                _ => {
-                    switch.type_key(&mut self.engine, key, text, mods);
-                }
+                // Anything else is consumed while the list stands, and does
+                // nothing — there is no field to type into.
+                _ => {}
             }
             return true;
         }

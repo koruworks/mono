@@ -14767,7 +14767,7 @@ mod tests {
         assert_eq!(e.view.cursor_icon(), koru_ui::cursor::PRESS);
     }
 
-    /// Ctrl+Shift+L after Ctrl+Shift+E has to bring the row back to the left.
+    /// Ctrl+L after Ctrl+E has to bring the row back to the left.
     ///
     /// `set_align`'s "press it again to undo it" rule reads the *current*
     /// alignment, and left is the value an unaligned row already reports — so

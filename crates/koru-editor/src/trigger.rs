@@ -75,7 +75,8 @@ pub enum Anchor {
     TriggerText,
     /// An existing pill's anchor character at `Trigger::start`.
     Pill,
-    /// Nothing — a free-standing prompt (Ctrl+K) inserting at `Trigger::start`.
+    /// Nothing — a free-standing prompt (Ctrl+Shift+L) inserting at
+    /// `Trigger::start`.
     /// Deliberately distinct from `TriggerText`: there is no `/` in the document
     /// to track, and treating it as trigger text made `refresh` dismiss the
     /// prompt the instant it opened.
@@ -459,8 +460,8 @@ pub fn open_link_prompt(engine: &mut TextEngine, trigger: Trigger) -> Overlay {
 /// one of them. Which one is legible from the text itself: `https://…` is a
 /// target, and a word is a caption. So the half the selection supplies is
 /// filled in and **the other half takes the focus**, because that is the one
-/// still to be answered. Selecting a word and pressing `Ctrl+K` should leave
-/// you typing the URL, not retyping the word.
+/// still to be answered. Selecting a word and pressing `Ctrl+Shift+L` should
+/// leave you typing the URL, not retyping the word.
 pub fn open_link_prompt_for(engine: &mut TextEngine, trigger: Trigger, selected: &str) -> Overlay {
     let mut prompt = link_prompt(engine, trigger);
     let selected = selected.trim();
@@ -661,7 +662,7 @@ mod tests {
         ));
     }
 
-    /// The Ctrl+K prompt drives two fields. This exercises the whole flow
+    /// The Ctrl+Shift+L prompt drives two fields. This exercises the whole flow
     /// headlessly: open, type a name, switch field, type a URL, commit.
     #[test]
     fn link_prompt_collects_both_fields_and_commits() {
@@ -679,7 +680,7 @@ mod tests {
             name, url, field, ..
         }) = &mut overlay
         else {
-            panic!("Ctrl+K should open the link prompt");
+            panic!("Ctrl+Shift+L should open the link prompt");
         };
         assert_eq!(
             *field,
