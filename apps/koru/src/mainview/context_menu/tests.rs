@@ -524,6 +524,20 @@ fn the_tasks_flyout_lists_nested_coloured_lists_under_new_list() {
     assert_eq!(task_plus_items(), vec![MenuAction::NewList]);
 }
 
+/// The `+` menu's flyouts wear the letters the launcher already uses, so a
+/// plain key opens the same door the grid's letter does.
+#[test]
+fn the_plus_menu_flyouts_carry_mnemonic_letters() {
+    assert_eq!(MenuAction::Documents.mnemonic(), Some('d'));
+    assert_eq!(MenuAction::Canvases.mnemonic(), Some('v'));
+    assert_eq!(MenuAction::Tasks.mnemonic(), Some('t'));
+    assert_eq!(MenuAction::NewShell.mnemonic(), Some('s'));
+    assert_eq!(MenuAction::NewAgent.mnemonic(), Some('a'));
+    assert_eq!(MenuAction::Chats.mnemonic(), Some('c'));
+    assert_eq!(MenuAction::ImportAs.mnemonic(), Some('i'));
+    assert_eq!(MenuAction::OpenWelcome.mnemonic(), None, "no letter");
+}
+
 // ------------------------------------------------ the + menu's profile rows
 
 /// **The reconciled display names** (W4.4a). Koru Terminal rendered the

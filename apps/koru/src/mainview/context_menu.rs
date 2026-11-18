@@ -1529,6 +1529,26 @@ impl MenuAction {
         .into()
     }
 
+    /// The letter a plain key chooses while the menu is open — underlined in
+    /// the label. `None` for a row without one. Only the `+` menu's flyouts
+    /// and launchers carry one; the letters echo the launcher's (D, T, C, A,
+    /// S, I) where they overlap.
+    pub fn mnemonic(self) -> Option<char> {
+        match self {
+            MenuAction::Documents => Some('d'),
+            MenuAction::Canvases => Some('v'),
+            MenuAction::Tasks => Some('t'),
+            MenuAction::NewShell => Some('s'),
+            MenuAction::NewAgent => Some('a'),
+            MenuAction::Delegate => Some('g'),
+            MenuAction::Chats => Some('c'),
+            MenuAction::Socials => Some('o'),
+            MenuAction::ImportAs => Some('i'),
+            MenuAction::ViewOpenTabs => Some('w'),
+            _ => None,
+        }
+    }
+
     /// The chord that does the same thing, set quietly at the row's right-hand
     /// end. A blank column says "no shortcut" more honestly than an invented
     /// chord — which is why `Rename` names F2 and nothing else claims one.
@@ -1812,6 +1832,10 @@ impl koru_ui::MenuItem for MenuAction {
             MenuAction::TaskListRow(_, _, depth) => *depth,
             _ => 0,
         }
+    }
+
+    fn mnemonic(&self) -> Option<char> {
+        (*self).mnemonic()
     }
 
     fn shortcut(&self) -> Option<String> {

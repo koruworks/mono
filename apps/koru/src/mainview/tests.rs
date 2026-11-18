@@ -9120,6 +9120,21 @@ fn the_plus_tooltip_names_new_tab_and_teaches_its_chord() {
     );
 }
 
+/// A plain letter opens the flyout whose mnemonic it matches — Ctrl+T, then D
+/// opens Documents, the way the launcher's letters choose its tiles.
+#[test]
+fn a_letter_opens_the_flyout_whose_mnemonic_it_matches() {
+    let (mut v, _workspace) = container();
+    assert!(v.open_new_tab_menu());
+    assert!(v.menu_key(&ch("d")));
+    let (_, sub) = v.submenu.as_ref().expect("the Documents flyout");
+    assert_eq!(
+        sub.items(),
+        context_menu::document_plus_items().as_slice(),
+        "the letter opened Documents"
+    );
+}
+
 #[test]
 fn pressing_a_caption_control_clears_its_tooltip() {
     // Drives the sidebar toggle: the search control left the caption for the

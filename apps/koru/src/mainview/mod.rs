@@ -6243,6 +6243,36 @@ impl MainView {
             };
         }
         let enabled = self.enabled_items(&menu);
+        // A plain letter chooses the row whose mnemonic it underlines, the way
+        // the launcher's letters do — so Ctrl+T, then D, opens Documents.
+        if let Key::Character(c) = key
+            && let Some(letter) = c.chars().next().filter(|ch| ch.is_ascii_alphabetic())
+        {
+            let letter = letter.to_ascii_lowercase();
+            let matched = menu
+                .items()
+                .iter()
+                .position(|action| {
+                    action
+                        .mnemonic()
+                        .is_some_and(|m| m.to_ascii_lowercase() == letter)
+                })
+                .filter(|&i| enabled.get(i).copied().unwrap_or(false));
+            if let Some(i) = matched {
+                let action = menu.items()[i];
+                if context_menu::submenu(action).is_some() {
+                    self.open_submenu(i);
+                    if let Some((_, m)) = self.submenu.as_mut() {
+                        let inner: Vec<bool> = m.items().iter().map(|a| a.selectable()).collect();
+                        m.step(&inner, 1);
+                    }
+                    return true;
+                }
+                self.menu = None;
+                self.run_menu_action(menu.subject, action);
+            }
+            return true;
+        }
         match key {
             Key::Named(NamedKey::Escape) => {
                 // **Only the menu.** A menu opened over the switcher leaves it
@@ -18854,12 +18884,8 @@ impl MainView {
             Hit::NewTab => {
                 let slot = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
                 (slot.w > 0.0).then(|| {
-                    TooltipContent::new(
-                        4,
-                        slot,
-                        koru_keys::label_of(koru_keys::ShortcutId::NewTab),
-                    )
-                    .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
+                    TooltipContent::new(4, slot, koru_keys::label_of(koru_keys::ShortcutId::NewTab))
+                        .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
                 })
             }
             // A hovered history row answers with the exact moment behind its
