@@ -348,6 +348,21 @@ impl MainView {
         // the Run document only follows once that has answered.
         let (runs, nodes) = self.split_runs(nodes);
         let mut acted = self.purge_runs(runs);
+        // **Documents go to the shell, which owns the manifest** — the split
+        // `drain_restore` and `queue_trash` make. A Trash row's `NodeId` is a
+        // `DocumentId`'s bytes, so `ws.delete_permanently` found no such node
+        // in the open document and the row stayed, while Empty Trash (which
+        // asks the shell) worked.
+        let (documents, nodes) = self.split_documents(nodes);
+        if !documents.is_empty() {
+            for document in &documents {
+                self.trashed_here.remove(&NodeId::from_uuid(document.as_uuid()));
+            }
+            self.ask_pane(koru_workspace_host::PaneRequest::PurgeDocuments(
+                documents,
+            ));
+            acted = true;
+        }
         for node in nodes {
             if ws.delete_permanently(node).is_ok() {
                 self.trashed_here.remove(&node);

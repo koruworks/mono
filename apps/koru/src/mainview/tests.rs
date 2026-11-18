@@ -15783,3 +15783,41 @@ fn typing_in_one_split_pane_updates_the_other_pane_showing_the_same_document_imm
         "typing in the left pane must appear immediately in the right pane"
     );
 }
+
+/// **Delete permanently on a Trash row destroys that document.** A row is a
+/// manifest document, not a node in the open one, so the confirmed delete
+/// goes to the shell by document — as Restore and Empty Trash do. It used to
+/// look for the node in the open document, find nothing, and leave the row.
+#[test]
+fn delete_permanently_on_a_trashed_document_asks_the_shell_to_purge_it() {
+    use koru_core::explore::ExploreEntry;
+    let (mut v, mut workspace) = container();
+    let doc = koru_core::DocumentId::new();
+    View::set_entries(&mut v, Vec::new(), None);
+    View::set_trashed(
+        &mut v,
+        vec![ExploreEntry {
+            id: doc,
+            parent: None,
+            ordinal: 0,
+            title: "setup.exe".to_owned(),
+            kind: koru_core::explore::KIND_FILE.to_owned(),
+            mime: None,
+            note: None,
+            trashed_at: Some(1),
+            trashed_by: None,
+        }],
+    );
+    let node = NodeId::from_uuid(doc.as_uuid());
+
+    v.pending_delete_forever = Some((vec![node], false));
+    assert!(v.drain_delete_forever(&mut workspace.ws), "asks first");
+    assert!(View::take_pane_request(&mut v).is_none(), "nothing before the yes");
+
+    v.pending_delete_forever = Some((vec![node], true));
+    assert!(v.drain_delete_forever(&mut workspace.ws));
+    assert_eq!(
+        View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::PurgeDocuments(vec![doc])),
+    );
+}
