@@ -15278,6 +15278,19 @@ impl View for MainView {
             .and_then(|leaf| View::take_wants_copy_html(leaf))
     }
 
+    /// A picture's read words are the document's that shows it, as its
+    /// menu's offers are.
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        self.active_editing_leaf()
+            .map(|leaf| View::take_wants_picture_texts(leaf))
+            .unwrap_or_default()
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        self.active_editing_leaf()
+            .is_some_and(|leaf| View::set_picture_text(leaf, hash, text))
+    }
+
     fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
         let before = ws.version();
         let done = self

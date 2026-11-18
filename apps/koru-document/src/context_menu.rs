@@ -138,6 +138,10 @@ pub enum Choice {
     /// Store says it would be accepted (`koru_workspace_host::reading_requests`);
     /// the request is the shell's.
     ReadAgain,
+    /// *Copy text*: put the words read out of the picture (OCR) on the
+    /// clipboard, as plain text. Shown only when the view has them; nothing
+    /// is fetched when it is chosen.
+    CopyPictureText,
 }
 
 /// Which pill, if any, the context menu was opened on.
@@ -329,11 +333,13 @@ pub struct DiagramContext {
 pub enum BlockContext {
     /// A `mermaid` code block.
     Diagram(DiagramContext),
-    /// A picture. Its rows are *Save reading to file…*, which only
-    /// `KORU_READ_DEBUG` shows ([`Choice::SaveReading`]), and *Read again*,
-    /// shown when `read_again` — the Store's answer for these bytes (OCR Plan
-    /// 3.2). With neither, the group is filtered away whole, rule and all.
-    Picture { read_again: bool },
+    /// A picture. Its rows are *Copy text*, shown when `copy_text`: the view
+    /// holds words read out of it ([`Choice::CopyPictureText`]); *Save
+    /// reading to file…*, which only `KORU_READ_DEBUG` shows
+    /// ([`Choice::SaveReading`]); and *Read again*, shown when `read_again`,
+    /// the Store's answer for these bytes (OCR Plan 3.2). With none, the
+    /// group is filtered away whole, rule and all.
+    Picture { read_again: bool, copy_text: bool },
 }
 
 /// The spelling rows' input: what the snapshot holds for the clicked word.
@@ -537,6 +543,7 @@ pub fn rows(
         table.is_some(),
         picture,
         read_again_offered(block),
+        copy_text_offered(block),
     )
     .into_iter()
     .map(|index| full[index].clone())
@@ -549,7 +556,8 @@ pub fn rows(
 /// whether `full` carries the table group, which decides where the rows after
 /// it sit ([`choice_at_edit`]); `picture` whether the block group there is a
 /// picture's rather than a diagram's; `read_again` whether the Store offers
-/// *Read again* on that picture (OCR Plan 3.2).
+/// *Read again* on that picture (OCR Plan 3.2); `copy_text` whether the view
+/// holds words read out of it.
 fn kept(
     full: &[menu::Row],
     pill: PillContext,
@@ -557,10 +565,13 @@ fn kept(
     has_table: bool,
     picture: bool,
     read_again: bool,
+    copy_text: bool,
 ) -> Vec<usize> {
     let shown = |index: usize| {
         full_choice_at(index, pill, spell, has_table, picture).is_none_or(|choice| {
-            choice.shown_in_product() && (choice != Choice::ReadAgain || read_again)
+            choice.shown_in_product()
+                && (choice != Choice::ReadAgain || read_again)
+                && (choice != Choice::CopyPictureText || copy_text)
         })
     };
     if (0..full.len()).all(shown) {
@@ -936,9 +947,16 @@ fn full_rows(
     //
     // *Read again* follows it (OCR Plan 3.2), always in the full list so the
     // map below has one shape; `kept` drops it unless the Store offers it.
+    //
+    // *Copy text* leads the group, kept only when the view holds the words
+    // read out of the picture. First, so that *Read again*, which the Store's
+    // answer can add while the menu is open, is still the row that appears
+    // at the end rather than one that pushes others down.
     if let Some(BlockContext::Picture { .. }) = block {
         rows.extend([
             menu::Row::Divider,
+            menu::Row::item(koru_i18n::t(lang, koru_i18n::Key::ReadingCopyText))
+                .with_icon(icons::COPY),
             menu::Row::item(koru_workspace_host::reading_file::LABEL)
                 .with_icon(icons::FILE_ARROW_UP),
             menu::Row::item(koru_workspace_host::reading_requests::label(
@@ -1015,6 +1033,7 @@ pub fn choice_at(
         has_table,
         picture,
         read_again_offered(block),
+        copy_text_offered(block),
     )
     .get(index)?;
     full_choice_at(full, pill, spell, has_table, picture)
@@ -1022,7 +1041,24 @@ pub fn choice_at(
 
 /// Whether the menu's block is a picture the Store offers *Read again* on.
 fn read_again_offered(block: Option<BlockContext>) -> bool {
-    matches!(block, Some(BlockContext::Picture { read_again: true }))
+    matches!(
+        block,
+        Some(BlockContext::Picture {
+            read_again: true,
+            ..
+        })
+    )
+}
+
+/// Whether the menu's block is a picture whose read words the view holds.
+fn copy_text_offered(block: Option<BlockContext>) -> bool {
+    matches!(
+        block,
+        Some(BlockContext::Picture {
+            copy_text: true,
+            ..
+        })
+    )
 }
 
 /// [`choice_at`] over the full, unfiltered list.
@@ -1162,7 +1198,8 @@ fn choice_at_edit(index: usize, has_table: bool, picture: bool) -> Option<Choice
         28 if has_table => Some(Choice::Table(koru_editor::table::Edit::DeleteColumn)),
         // The diagram group: after the table group when the shape has one,
         // in its place when it does not. Its divider is the first index. A
-        // picture's group sits in the same place: Save reading, Read again.
+        // picture's group sits in the same place: Copy text, Save reading,
+        // Read again.
         _ => {
             let start = if has_table {
                 BLOCK_GROUP_START + TABLE_GROUP_LEN
@@ -1170,8 +1207,9 @@ fn choice_at_edit(index: usize, has_table: bool, picture: bool) -> Option<Choice
                 BLOCK_GROUP_START
             };
             match index.checked_sub(start)? {
-                1 if picture => Some(Choice::SaveReading),
-                2 if picture => Some(Choice::ReadAgain),
+                1 if picture => Some(Choice::CopyPictureText),
+                2 if picture => Some(Choice::SaveReading),
+                3 if picture => Some(Choice::ReadAgain),
                 _ if picture => None,
                 1 => Some(Choice::DiagramEditText),
                 2 => Some(Choice::DiagramOpen),
@@ -1250,13 +1288,17 @@ mod tests {
         }))
     }
 
-    /// **A picture's group is one row where the diagram's would be**, mapped
-    /// to *Save reading to file…*; every ordinary index keeps its meaning;
-    /// and the row is drawn exactly when `KORU_READ_DEBUG` is on — without
-    /// it the group goes, rule and all, and the menu is the ordinary one.
+    /// **A picture's group sits where the diagram's would be**: *Copy text*,
+    /// *Save reading to file…*, *Read again*; every ordinary index keeps its
+    /// meaning; and with no read words and nothing offered the debug row is
+    /// drawn exactly when `KORU_READ_DEBUG` is on. Without it the group
+    /// goes, rule and all, and the menu is the ordinary one.
     #[test]
     fn a_pictures_group_is_the_debug_reading_row() {
-        let picture = Some(BlockContext::Picture { read_again: false });
+        let picture = Some(BlockContext::Picture {
+            read_again: false,
+            copy_text: false,
+        });
         let full = super::full_rows(
             true,
             true,
@@ -1269,28 +1311,38 @@ mod tests {
             None,
             koru_i18n::Lang::En,
         );
-        assert_eq!(full.len(), 22);
+        assert_eq!(full.len(), 23);
         assert!(matches!(full[19], menu::Row::Divider));
+        assert_eq!(label_of(&full[20]), Some("Copy text"));
         assert_eq!(
-            label_of(&full[20]),
+            label_of(&full[21]),
             Some(koru_workspace_host::reading_file::LABEL)
         );
-        assert_eq!(label_of(&full[21]), Some("Read again"));
+        assert_eq!(label_of(&full[22]), Some("Read again"));
         assert_eq!(
             super::full_choice_at(20, PillContext::None, None, false, true),
-            Some(Choice::SaveReading)
+            Some(Choice::CopyPictureText)
         );
         assert_eq!(
             super::full_choice_at(21, PillContext::None, None, false, true),
-            Some(Choice::ReadAgain)
+            Some(Choice::SaveReading)
         );
         assert_eq!(
             super::full_choice_at(22, PillContext::None, None, false, true),
+            Some(Choice::ReadAgain)
+        );
+        assert_eq!(
+            super::full_choice_at(23, PillContext::None, None, false, true),
             None,
             "nothing of the diagram's group on a picture"
         );
-        // Not offered: the full list without its Read again row.
-        let full: Vec<menu::Row> = full[..21].to_vec();
+        // No read words and nothing offered: the full list without its Copy
+        // text and Read again rows.
+        let full: Vec<menu::Row> = full[..20]
+            .iter()
+            .chain(std::iter::once(&full[21]))
+            .cloned()
+            .collect();
         for index in 0..18 {
             assert_eq!(
                 super::full_choice_at(index, PillContext::None, None, false, true),
@@ -1346,7 +1398,10 @@ mod tests {
                 TaskContext::Open,
                 true,
                 None,
-                Some(BlockContext::Picture { read_again }),
+                Some(BlockContext::Picture {
+                    read_again,
+                    copy_text: false,
+                }),
                 PillContext::None,
                 None,
                 koru_i18n::Lang::En,
@@ -1369,7 +1424,10 @@ mod tests {
                 last,
                 PillContext::None,
                 None,
-                Some(BlockContext::Picture { read_again: true })
+                Some(BlockContext::Picture {
+                    read_again: true,
+                    copy_text: false,
+                })
             ),
             Some(Choice::ReadAgain)
         );
@@ -1399,7 +1457,10 @@ mod tests {
                 TaskContext::Open,
                 true,
                 None,
-                Some(BlockContext::Picture { read_again: true }),
+                Some(BlockContext::Picture {
+                    read_again: true,
+                    copy_text: false,
+                }),
                 PillContext::None,
                 None,
                 lang,
@@ -1410,6 +1471,86 @@ mod tests {
                     koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain,
                     lang
                 ))
+            );
+        }
+    }
+
+    /// ***Copy text* on a picture is shown exactly when the view holds words
+    /// read out of it**: first in the picture's group, mapped to
+    /// [`Choice::CopyPictureText`] alone or beside *Read again*, and absent
+    /// otherwise. In every language, the words the file preview's *Copy
+    /// text* already uses.
+    #[test]
+    fn copy_text_on_a_picture_is_shown_only_with_read_words() {
+        let menu_for = |read_again: bool, copy_text: bool, lang: koru_i18n::Lang| {
+            let block = Some(BlockContext::Picture {
+                read_again,
+                copy_text,
+            });
+            let drawn = super::rows(
+                true,
+                true,
+                false,
+                TaskContext::Open,
+                true,
+                None,
+                block,
+                PillContext::None,
+                None,
+                lang,
+            );
+            (drawn, block)
+        };
+        let en = koru_i18n::Lang::En;
+
+        let (with, block) = menu_for(false, true, en);
+        let at = with
+            .iter()
+            .position(|row| label_of(row) == Some("Copy text"))
+            .expect("shown with read words");
+        assert!(
+            matches!(with[at - 1], menu::Row::Divider),
+            "first in the picture's group"
+        );
+        assert_eq!(
+            super::choice_at(at, PillContext::None, None, block),
+            Some(Choice::CopyPictureText)
+        );
+
+        let (without, _) = menu_for(false, false, en);
+        assert!(
+            without.iter().all(|row| label_of(row) != Some("Copy text")),
+            "no reading, no row"
+        );
+        assert_eq!(
+            with.len(),
+            without.len()
+                + if koru_workspace_host::reading_file::enabled() {
+                    1
+                } else {
+                    2
+                },
+            "and its rule comes with it when it is the group's only row"
+        );
+
+        let (both, block) = menu_for(true, true, en);
+        let last = both.len() - 1;
+        assert_eq!(label_of(&both[at]), Some("Copy text"));
+        assert_eq!(
+            super::choice_at(at, PillContext::None, None, block),
+            Some(Choice::CopyPictureText)
+        );
+        assert_eq!(
+            super::choice_at(last, PillContext::None, None, block),
+            Some(Choice::ReadAgain)
+        );
+
+        for lang in koru_i18n::Lang::ALL {
+            let (rows, _) = menu_for(false, true, lang);
+            let label = koru_i18n::t(lang, koru_i18n::Key::ReadingCopyText);
+            assert!(
+                rows.iter().any(|row| label_of(row) == Some(label)),
+                "{lang:?}"
             );
         }
     }
