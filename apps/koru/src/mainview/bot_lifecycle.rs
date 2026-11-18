@@ -136,7 +136,9 @@ impl MainView {
         };
         let actions = view.take_actions_request();
         let rows = view.lifecycle_rows();
-        let row_menu = view.take_conversation_menu();
+        let row_menu = view
+            .take_conversation_menu()
+            .map(|(chat, at)| (chat, at, view.can_trash_conversation(chat)));
         let trash = view.take_conversation_trash();
         let mut opened = false;
         if let Some(at) = actions
@@ -152,14 +154,18 @@ impl MainView {
                 .collect();
             opened |= self.open_subject_menu(MenuSubject::Bot { bot, tab }, items, to_window(at));
         }
-        if let Some((chat, at)) = row_menu {
+        if let Some((chat, at, can_trash)) = row_menu {
             // **Rename, as the Chats list offers it** for an ordinary chat —
             // the same entry — and the conversation's Trash.
             let mut menu = ContextMenu::new(
                 &mut self.engine,
                 MenuSubject::BotConversation { bot, chat, tab },
                 to_window(at),
-                vec![MenuAction::RenameAiChat, MenuAction::TrashBotConversation],
+                if can_trash {
+                    vec![MenuAction::RenameAiChat, MenuAction::TrashBotConversation]
+                } else {
+                    vec![MenuAction::RenameAiChat]
+                },
             );
             let enabled = self.enabled_items(&menu);
             menu.step(&enabled, 1);

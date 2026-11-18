@@ -308,8 +308,13 @@ impl BotView {
 
     // ------------------------------------------------- one conversation
 
-    /// **One conversation's Trash confirmation**, in the person's words:
-    /// the main conversation's says the Bot keeps working without it.
+    pub(crate) fn can_trash_conversation(&self, chat: ChatId) -> bool {
+        self.facts
+            .as_ref()
+            .is_some_and(|facts| chat != facts.main_chat && !facts.archived && !facts.trashed)
+    }
+
+    /// **One additional conversation's Trash confirmation**, in the person's words.
     ///
     /// **What it says of running work is what the window knows**, from
     /// the facts the question's default answer is chosen by (`bots::stops`):
@@ -321,15 +326,14 @@ impl BotView {
         chat: ChatId,
         work: WorkNow,
     ) -> Option<(String, String, String)> {
-        let facts = self.facts.as_ref()?;
+        if !self.can_trash_conversation(chat) {
+            return None;
+        }
         let title = self.conversation_title(chat);
-        let body = match (chat == facts.main_chat, work) {
-            (true, WorkNow::Running | WorkNow::NeedsYou) => Words::BotsTrashMainBody,
-            (true, WorkNow::Idle) => Words::BotsTrashMainBodyIdle,
-            (true, WorkNow::Unknown) => Words::BotsTrashMainBodyUnknown,
-            (false, WorkNow::Running | WorkNow::NeedsYou) => Words::BotsTrashConversationBody,
-            (false, WorkNow::Idle) => Words::BotsTrashConversationBodyIdle,
-            (false, WorkNow::Unknown) => Words::BotsTrashConversationBodyUnknown,
+        let body = match work {
+            WorkNow::Running | WorkNow::NeedsYou => Words::BotsTrashConversationBody,
+            WorkNow::Idle => Words::BotsTrashConversationBodyIdle,
+            WorkNow::Unknown => Words::BotsTrashConversationBodyUnknown,
         };
         Some((
             // **Named as a conversation of its Bot**, so it cannot be read
@@ -357,6 +361,9 @@ impl BotView {
     /// nothing was sent: another operation is on its way, which the list
     /// says.
     pub(crate) fn trash_conversation(&mut self, chat: ChatId) -> bool {
+        if !self.can_trash_conversation(chat) {
+            return false;
+        }
         let Some(bot) = self.settings.bot().cloned() else {
             return false;
         };

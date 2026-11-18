@@ -4610,9 +4610,11 @@ impl MainView {
                 _ => false,
             },
             MenuSubject::BotConversation { bot, tab, chat } => match action {
-                MenuAction::TrashBotConversation => self
-                    .asking_bot_tab(*tab, *bot)
-                    .is_some_and(|view| !view.lifecycle_busy()),
+                MenuAction::TrashBotConversation => {
+                    self.asking_bot_tab(*tab, *bot).is_some_and(|view| {
+                        !view.lifecycle_busy() && view.can_trash_conversation(*chat)
+                    })
+                }
                 MenuAction::RenameAiChat => self
                     .asking_bot_tab(*tab, *bot)
                     .is_some_and(|view| view.rename_offered(*chat)),

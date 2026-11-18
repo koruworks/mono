@@ -414,40 +414,22 @@ fn a_conversation_leaves_only_on_the_owners_word_and_the_tab_moves_off_it() {
     assert!(f.view.shows_conversation());
 }
 
-/// **The main conversation to Trash** says the Bot keeps working without
-/// it; with nothing else listed the tab says it is in Trash and offers *New
-/// conversation*.
+/// Main remains available: no question, Delete request or stale confirmation.
 #[test]
-fn the_main_conversation_in_trash_leaves_the_bot_working() {
+fn the_main_conversation_cannot_be_trashed() {
     let mut f = listed(&[]);
     let main = f.bot.main_chat;
-    let (_, body, _) = f
-        .view
-        .conversation_trash_words(main, crate::bots::stops::WorkNow::Unknown)
-        .unwrap();
-    assert!(body.contains("keeps working without it"), "{body}");
-    assert!(f.view.trash_conversation(main));
-    let (request, _) = f.wrote();
-    let bot = f.bot.clone();
-    f.reply(
-        request,
-        progress(
-            &bot,
-            request,
-            BotLifecycleKind::TrashChat,
-            BotLifecycleStage::Completed,
-        ),
-    );
-    assert!(!f.view.shows_conversation());
-    assert_eq!(
-        f.view.lifecycle_said().map(|said| said.words),
-        Some(Words::BotsConversationInTrash)
-    );
-    assert!(f.keys().contains(&list::NEW_CONVERSATION));
     assert!(
-        !f.view.facts().unwrap().trashed,
-        "the Bot itself is not in Trash"
+        f.view
+            .conversation_trash_words(main, crate::bots::stops::WorkNow::Unknown)
+            .is_none()
     );
+    assert!(!f.view.trash_conversation(main));
+    f.view.conversations.surface.ask_delete(main);
+    f.view.shown_pass(None);
+    assert_eq!(f.view.take_conversation_trash(), None);
+    assert!(f.view.shows_conversation());
+    nothing_sent(&f);
 }
 
 /// **A second conversation's Trash waits** while one is on its way: said in
@@ -455,10 +437,14 @@ fn the_main_conversation_in_trash_leaves_the_bot_working() {
 #[test]
 fn a_second_conversation_trash_waits_in_words() {
     let other = ChatId::new();
-    let mut f = listed(&[(other, BotChatPurpose::Additional)]);
+    let second = ChatId::new();
+    let mut f = listed(&[
+        (other, BotChatPurpose::Additional),
+        (second, BotChatPurpose::Additional),
+    ]);
     assert!(f.view.trash_conversation(other));
     f.wrote();
-    f.view.conversations.surface.ask_delete(f.bot.main_chat);
+    f.view.conversations.surface.ask_delete(second);
     f.view.shown_pass(None);
     assert_eq!(f.view.take_conversation_trash(), None);
     assert_eq!(f.view.list_notice(), Some(Words::BotsErrPending));

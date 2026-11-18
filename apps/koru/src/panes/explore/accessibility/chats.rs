@@ -68,6 +68,16 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
             .with_label(t(cx.lang, pin_label))
             .with_bounds(rect)
             .with_action(Action::Click);
+        let mut actions = Vec::new();
+        if chats.row_actions().menu {
+            actions.push(more);
+        }
+        if chats.row_actions().pin {
+            actions.push(pin);
+        }
+        if chats.can_delete(chat) {
+            actions.push(delete);
+        }
         children.push(
             SemanticNode::new(chat_occurrence(cx, chat, ControlPart::ROOT), Role::ListItem)
                 .with_label(name)
@@ -76,7 +86,7 @@ pub(super) fn semantics(chats: &ChatsSurface, cx: &Context, top: f32) -> Semanti
                 .with_position(index)
                 .with_size_of_set(total)
                 .with_actions([Action::Focus, Action::Click, Action::ScrollIntoView])
-                .with_children(vec![more, pin, delete]),
+                .with_children(actions),
         );
     }
     SemanticNode::new(
@@ -106,6 +116,8 @@ pub(super) fn revise(chats: &ChatsSurface, rev: &mut Revision) {
         None => rev.byte(0),
     };
     rev.u64(chats.chats().len() as u64);
+    rev.bool(chats.row_actions().menu)
+        .bool(chats.row_actions().pin);
     for chat in chats.chats() {
         rev.uuid(chat.id.as_uuid())
             .str(&chat.title)
@@ -114,6 +126,7 @@ pub(super) fn revise(chats: &ChatsSurface, rev: &mut Revision) {
             .str(&chat.current_model.requested_model)
             .bool(chats.deleting(chat.id).is_some())
             .bool(chat.pinned_at.is_some())
+            .bool(chats.can_delete(chat.id))
             .byte(chats.status(chat.id) as u8);
     }
     rev.u64(chats.agents().len() as u64);

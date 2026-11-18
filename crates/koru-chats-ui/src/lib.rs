@@ -65,7 +65,7 @@
 //! [`refresh`]: ChatsSurface::refresh
 //! [`poll`]: ChatsSurface::poll
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 /// Re-exported so a host can hold a listed chat without a `koru-ai-core`
@@ -270,6 +270,7 @@ pub struct ChatsSurface {
     /// QUESTIONS O31.3, approved 2026-11-10): every one, unless a host says
     /// otherwise ([`set_row_actions`](Self::set_row_actions)).
     pub(crate) row_actions: RowActions,
+    delete_protected: HashSet<ChatId>,
     reader_link: Option<reader::Reader>,
     seq: u64,
 }
@@ -382,6 +383,7 @@ impl ChatsSurface {
             renaming: None,
             profile: None,
             row_actions: RowActions::ORDINARY,
+            delete_protected: HashSet::new(),
             reader_link: None,
             seq: 0,
         }
@@ -482,6 +484,23 @@ impl ChatsSurface {
     /// Which of a row's own actions this list offers.
     pub fn row_actions(&self) -> RowActions {
         self.row_actions
+    }
+
+    /// Rows whose owner refuses deletion. Other row actions are unchanged.
+    /// Updating host facts also withdraws pending Delete requests for them.
+    pub fn set_delete_protected(&mut self, chats: HashSet<ChatId>) -> bool {
+        if self.delete_protected == chats {
+            return false;
+        }
+        self.delete_protected = chats;
+        self.wants_delete
+            .retain(|id| !self.delete_protected.contains(id));
+        true
+    }
+
+    /// The same predicate for keyboard, host menus and accessibility actions.
+    pub fn can_delete(&self, chat: ChatId) -> bool {
+        self.row_actions.delete && !self.delete_protected.contains(&chat)
     }
 
     /// **Every chat's status, as the host derived it** (D83) — idle chats
@@ -739,6 +758,9 @@ impl ChatsSurface {
     /// chat's agent first; if it cannot, the chat stays and the row says so
     /// (UC13). A second press while one is being sent does nothing.
     pub fn delete(&mut self, chat: ChatId) {
+        if self.delete_protected.contains(&chat) {
+            return;
+        }
         if matches!(self.deleting.get(&chat), Some(Deleting::Sending)) {
             return;
         }
@@ -870,7 +892,7 @@ impl ChatsSurface {
 
     /// Ask to delete `chat` alone — an accessibility client's *Delete chat*.
     pub fn ask_delete(&mut self, chat: ChatId) {
-        if self.row_actions.delete && self.chats.iter().any(|candidate| candidate.id == chat) {
+        if self.can_delete(chat) && self.chats.iter().any(|candidate| candidate.id == chat) {
             self.focus = Some(Focus::Chat(chat));
             self.wants_delete = vec![chat];
         }
@@ -890,7 +912,10 @@ impl ChatsSurface {
             self.selected()
         } else {
             vec![focused]
-        };
+        }
+        .into_iter()
+        .filter(|id| self.can_delete(*id))
+        .collect::<Vec<_>>();
         if chats.is_empty() {
             return false;
         }

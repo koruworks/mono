@@ -16,6 +16,36 @@ fn hovered_first(surface: &mut ChatsSurface) -> (Row, Rect) {
     (row, rect)
 }
 
+#[test]
+fn protected_rows_open_and_keep_menus_but_never_delete() {
+    let mut surface = three();
+    let first = surface.chats()[0].id;
+    let second = surface.chats()[1].id;
+    surface.ask_delete(first);
+    assert!(surface.set_delete_protected(std::collections::HashSet::from([first])));
+    assert!(
+        surface.take_wants_delete().is_empty(),
+        "new facts withdraw the queued request"
+    );
+    assert!(!surface.can_delete(first));
+    assert!(surface.can_delete(second));
+    surface.ask_delete(first);
+    surface.delete(first);
+    assert!(surface.deleting(first).is_none());
+    surface.select_only(first);
+    assert!(!surface.key(tall(), TOP, Press::Delete));
+    assert!(surface.key(tall(), TOP, Press::Menu));
+    assert!(surface.take_wants_menu().is_some());
+    assert!(surface.key(tall(), TOP, Press::Enter));
+    assert_eq!(surface.take_wants_open(), Some(first));
+    surface.selection = vec![first, second];
+    assert!(surface.ask_delete_selected());
+    assert_eq!(surface.take_wants_delete(), [second]);
+    surface.set_delete_protected(Default::default());
+    surface.ask_delete(first);
+    assert_eq!(surface.take_wants_delete(), [first]);
+}
+
 /// **A list no host has told is the ordinary list**: every action, the pin
 /// and ⋯ under the pointer, the menu from a right-click and the menu key,
 /// and Delete from its key.

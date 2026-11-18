@@ -1007,6 +1007,9 @@ impl BotView {
         // the owner refuses it for an archived Bot (`bot_archived`).
         self.conversations
             .offer_trash(!facts.archived && !facts.trashed);
+        self.conversations
+            .surface
+            .set_delete_protected(std::collections::HashSet::from([facts.main_chat]));
         if facts.trashed {
             // Hidden with its conversations: nothing of it is bound or
             // read, and the settings it would refuse are closed.

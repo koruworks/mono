@@ -131,7 +131,7 @@ fn the_menus_rows_are_the_tabs() {
         panic!("a Bot tab");
     };
     assert_eq!(view.lifecycle_rows(), [Ask::Archive, Ask::Trash]);
-    let chat = bot.main_chat;
+    let chat = koru_ai_ui::ChatId::new();
     assert!(view.trash_conversation(chat));
     let menu = crate::mainview::context_menu::ContextMenu::new(
         &mut v.engine,
@@ -624,10 +624,7 @@ fn ask_with(question: Question, known: Known) -> (MainView, Receiver<Command>, B
     let tab = front(&mut v);
     // A whole Bot's question counts any of its conversations — here not the
     // one its tab shows; a conversation's, that conversation alone.
-    let chat = match question {
-        Question::TrashConversation => bot.main_chat,
-        Question::Archive | Question::Trash => koru_ai_ui::ChatId::new(),
-    };
+    let chat = koru_ai_ui::ChatId::new();
     let entries = |state| {
         vec![koru_ai_core::bots::BotActivity {
             waiting: None,
@@ -650,7 +647,7 @@ fn ask_with(question: Question, known: Known) -> (MainView, Receiver<Command>, B
     let asked = match question {
         Question::Archive => v.choose_bot_lifecycle(bot.id, tab, MenuAction::ArchiveBot),
         Question::Trash => v.choose_bot_lifecycle(bot.id, tab, MenuAction::TrashBot),
-        Question::TrashConversation => v.ask_trash_bot_conversation(bot.id, tab, bot.main_chat),
+        Question::TrashConversation => v.ask_trash_bot_conversation(bot.id, tab, chat),
     };
     assert!(asked, "{question:?} {known:?}: it asks");
     (v, commands, bot, tab)
@@ -746,10 +743,12 @@ fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
                 (Question::Trash, Known::Idle) => Words::BotsTrashBodyIdle,
                 (Question::Trash, Known::Unknown) => Words::BotsTrashBodyUnknown,
                 (Question::TrashConversation, Known::Running | Known::NeedsYou) => {
-                    Words::BotsTrashMainBody
+                    Words::BotsTrashConversationBody
                 }
-                (Question::TrashConversation, Known::Idle) => Words::BotsTrashMainBodyIdle,
-                (Question::TrashConversation, Known::Unknown) => Words::BotsTrashMainBodyUnknown,
+                (Question::TrashConversation, Known::Idle) => Words::BotsTrashConversationBodyIdle,
+                (Question::TrashConversation, Known::Unknown) => {
+                    Words::BotsTrashConversationBodyUnknown
+                }
             };
             // A whole Bot's question ends with what happens to its Routines
             // (P4.3): this tab has not read them, so it says any it has.
@@ -775,7 +774,7 @@ fn cancel_is_the_default_when_the_question_would_stop_a_reply_running_now() {
             );
             if conversation {
                 assert!(
-                    dialog.body().contains("keeps working without it"),
+                    dialog.body().contains("other conversations keep running"),
                     "{case}: what always happens is still said"
                 );
             }
@@ -1167,6 +1166,22 @@ fn a_bot_conversation_is_renamed_in_its_row_as_a_chat_is() {
     );
 }
 
+#[test]
+fn the_main_conversation_menu_only_offers_rename() {
+    let (mut v, mut workspace, bot, _other, tab) = renaming_window();
+    let (x, y) = row_centre(&mut v, bot.main_chat);
+    assert!(koru_workspace_host::View::context_menu(
+        &mut v,
+        &mut workspace.ws,
+        x,
+        y
+    ));
+    assert_eq!(v.menu.as_ref().unwrap().items(), [MenuAction::RenameAiChat]);
+    v.menu = None;
+    assert!(!v.ask_trash_bot_conversation(bot.id, tab, bot.main_chat));
+    assert!(v.confirm.is_none());
+}
+
 /// **Not offered, and refused in its sentence if asked**, while the owner
 /// would refuse it: an operation of the Bot moving (`bot_lifecycle_pending`
 /// — the row menu's *Rename…* dims and `F2` says why) and an archived Bot,
@@ -1176,11 +1191,11 @@ fn a_bot_conversation_is_renamed_in_its_row_as_a_chat_is() {
 #[test]
 fn a_rename_the_owner_would_refuse_is_not_offered_and_says_why() {
     use winit::keyboard::NamedKey;
-    let (mut v, mut workspace, bot, other, _tab) = renaming_window();
+    let (mut v, mut workspace, _bot, other, _tab) = renaming_window();
 
-    // An operation of the Bot on its way: the main conversation's Trash.
+    // An operation of the Bot on its way: an additional conversation's Trash.
     // The header says so, which moves the list down: laid out again.
-    assert!(front_bot(&mut v).trash_conversation(bot.main_chat));
+    assert!(front_bot(&mut v).trash_conversation(other));
     lay_out(&mut v, &workspace);
     let ws = &mut workspace.ws;
     let (x, y) = row_centre(&mut v, other);
@@ -1436,14 +1451,14 @@ fn the_tabs_own_idle_conversation_is_asked_about_as_idle_without_the_roster() {
     );
     for (chat, default, body) in [
         (
-            bot.main_chat,
-            Outcome::Confirm,
-            Words::BotsTrashMainBodyIdle,
-        ),
-        (
             other,
             Outcome::Cancel,
             Words::BotsTrashConversationBodyUnknown,
+        ),
+        (
+            other,
+            Outcome::Confirm,
+            Words::BotsTrashConversationBodyIdle,
         ),
     ] {
         lay_out(&mut v, &workspace);
@@ -1453,12 +1468,14 @@ fn the_tabs_own_idle_conversation_is_asked_about_as_idle_without_the_roster() {
         koru_workspace_host::View::mouse_up(&mut v, ws);
         // A click opens the row: the tab moves to it, as it does.
         lay_out(&mut v, &workspace);
-        let ws = &mut workspace.ws;
-        if chat == other {
-            // The tab moved to a conversation it has not read: what it
-            // read was the main one's.
-            assert_eq!(front_bot(&mut v).chat_id(), other);
+        assert_eq!(front_bot(&mut v).chat_id(), other);
+        if default == Outcome::Confirm {
+            front_bot(&mut v)
+                .conversation_mut()
+                .expect("bound")
+                .pretend_read(other);
         }
+        let ws = &mut workspace.ws;
         assert!(press(&mut v, ws, NamedKey::Delete), "{chat:?}");
         lay_out(&mut v, &workspace);
         v.drain_bot_lifecycle_asks();
