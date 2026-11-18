@@ -75,6 +75,24 @@ impl BotDatabase {
         })
         .transpose()
     }
+
+    /// The latest incarnation for this thread and provider. A token from a
+    /// different provider is never handed to the selected adapter.
+    pub fn latest(&self, thread: Uuid, provider: &str) -> Result<Option<AgentState>, Error> {
+        use rusqlite::OptionalExtension;
+        let session: Option<String> = self.connection.query_row(
+            "SELECT session FROM agent_state WHERE thread=?1 AND provider=?2 ORDER BY saved_at_ms DESC,rowid DESC LIMIT 1",
+            rusqlite::params![thread.to_string(), provider], |r| r.get(0)).optional()?;
+        session
+            .map(|session| {
+                self.load(
+                    thread,
+                    Uuid::parse_str(&session).map_err(|_| Error::StorageUnavailable)?,
+                )
+            })
+            .transpose()
+            .map(Option::flatten)
+    }
 }
 
 pub enum JournalEntry<'a> {

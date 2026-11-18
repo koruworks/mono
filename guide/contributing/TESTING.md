@@ -15,6 +15,20 @@ lifetime, registration timeout, wake during shutdown, and nested containment
 with a scripted provider. It opens new engine.db and bot.db files only under
 that fresh root. No Store or account is used; ordinary suite invocation skips it.
 
+The Bots session driver's ordinary tests use in-memory databases and scripted
+providers. Its separate Windows proof is opt-in:
+`python crates/koru-bots-engine/tests/session_process.py --run --root <new-absolute-directory> --program <installed-ACP-wrapper>`.
+Use the qualified wrapper named by the Bots provider matrix and the roadmap's
+bounded build environment. The driver starts an empty synthetic MCP endpoint,
+then runs the `session_process` Cargo target in an owned kill-on-close job.
+It sends synthetic content through two real provider processes and checks
+persisted resume, exact input evidence and replacement MCP authentication.
+It uses the provider's existing signed-in account, with built-in tools and
+inherited settings/MCP configuration disabled. No Store or real page is opened.
+Normal Cargo invocation of that target skips before any I/O. This proves the
+session library and its planned-port fixture, not production Bot admission,
+the tool door, native writes or the UI.
+
 A rejected account repair can preserve the stored credential and immediately
 restore it into a fresh held context, whose legitimate refresh changes those
 bytes. The switching fixture holds that account's existing inspection gate while

@@ -12,12 +12,15 @@ default = []
 active = []
 
 [dependencies]
+blake3.workspace = true
 koru-agent-worker = { path = "../koru-agent-worker" }
 koru-bot-client-wire = { path = "../koru-bot-client-wire" }
 koru-channel = { path = "../koru-channel" }
 koru-ipc = { path = "../koru-ipc" }
 koru-sqlite = { path = "../koru-sqlite" }
 koru-settings = { path = "../koru-settings" }
+koru-session-protocol = { path = "../koru-session-protocol" }
+koru-session-runtime = { path = "../koru-session-runtime" }
 rusqlite.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -27,14 +30,15 @@ uuid.workspace = true
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_System_SystemInformation"] }
 
-[target.'cfg(windows)'.dev-dependencies]
-koru-session-runtime = { path = "../koru-session-runtime" }
-
 [[test]]
 name = "engine_process"
 harness = false
 
 [[test]]
 name = "bot_process"
+harness = false
+
+[[test]]
+name = "session_process"
 harness = false
 

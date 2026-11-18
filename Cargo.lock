@@ -6006,10 +6006,12 @@ dependencies = [
 name = "koru-bots-engine"
 version = "0.0.3"
 dependencies = [
+ "blake3",
  "koru-agent-worker",
  "koru-bot-client-wire",
  "koru-channel",
  "koru-ipc",
+ "koru-session-protocol",
  "koru-session-runtime",
  "koru-settings",
  "koru-sqlite",

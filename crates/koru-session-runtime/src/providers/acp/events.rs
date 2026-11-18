@@ -33,6 +33,17 @@ impl AcpControl {
             return Err(malformed());
         }
         if let Some(method) = frame.get("method").and_then(Value::as_str) {
+            if self.loading_session.is_some() {
+                if let Some(id) = frame.get("id") {
+                    // Loading history is not a live turn. In particular a
+                    // replayed permission request cannot authorize a tool.
+                    return self.transport()?.send(&json!({"jsonrpc":"2.0","id":id,
+                        "error":{"code":-32601,"message":"No active turn"}}));
+                }
+                if method == "session/update" {
+                    return self.replay_update(&frame["params"]);
+                }
+            }
             if let Some(id) = frame.get("id") {
                 if !(id.as_i64().is_some() || id.as_str().is_some_and(valid_native_id)) {
                     return Err(malformed());

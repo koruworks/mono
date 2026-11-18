@@ -214,6 +214,10 @@ impl JsonRpcTransport for FakeAcpPeer {
                 decode::<acp::NewSessionResponse>(&result)?;
                 self.reply(id, result)?;
             }
+            Some("session/load") => {
+                decode::<acp::LoadSessionRequest>(params)?;
+                self.reply(id, json!({}))?;
+            }
             Some("session/prompt") => {
                 self.check_stage(ProviderStage::Submit)?;
                 decode::<acp::PromptRequest>(params)?;

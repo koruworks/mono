@@ -10,6 +10,7 @@ mod database;
 mod error;
 pub mod launcher;
 pub mod messages;
+pub mod sessions;
 mod ownership;
 pub mod worker;
 

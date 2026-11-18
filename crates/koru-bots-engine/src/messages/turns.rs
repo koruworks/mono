@@ -258,6 +258,24 @@ impl Database {
         tx.commit()?;
         Ok(count)
     }
+    /// The session owner has confirmed this provider process ended. This
+    /// cannot interrupt another conversation or a replacement generation.
+    pub fn interrupt_turn(&mut self, turn: Turn) -> Result<(), Error> {
+        let tx = self.connection.transaction()?;
+        let row = turn_row(&tx, turn)?;
+        if row.2 == "running" {
+            tx.execute(
+                "UPDATE deliveries SET state='unknown' WHERE turn=?1 AND state='offered'",
+                [turn.id.to_string()],
+            )?;
+            tx.execute(
+                "UPDATE turns SET state='interrupted' WHERE id=?1",
+                [turn.id.to_string()],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
     /// Only at engine startup, after exclusive binding and parent containment
     /// have established that every previous worker incarnation is gone.
     pub fn recover_interrupted_turns(&mut self) -> Result<usize, Error> {

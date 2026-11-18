@@ -552,6 +552,15 @@ pub trait AgentControl: Send {
         None
     }
 
+    /// BLAKE3 hashes of complete text input blocks observed in qualified
+    /// native history during this start. Never assistant text or tool output.
+    /// Match against the exact submitted input, not a marker substring. A
+    /// missing hash (including split or truncated replay) is no evidence of
+    /// acceptance. Replay itself never enters `next_event` as new activity.
+    fn replayed_input_hashes(&self) -> &[[u8; 32]] {
+        &[]
+    }
+
     /// Performs a bounded orderly shutdown. The owning session worker remains
     /// responsible for forceful process-tree cleanup after an error/timeout.
     fn shutdown(&mut self) -> Result<(), ProviderFailure>;

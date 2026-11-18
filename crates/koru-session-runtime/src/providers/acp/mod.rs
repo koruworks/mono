@@ -12,6 +12,7 @@ mod input;
 mod models;
 mod modes;
 mod probe;
+mod resume;
 mod routes;
 mod steering;
 
@@ -25,7 +26,8 @@ use std::time::{Duration, Instant};
 use agent_client_protocol_schema::v1 as acp;
 use koru_session_protocol::{
     AgentEvent, AgentTurnId, ApprovalDecision, ApprovalId, CapabilityName, CapabilitySet,
-    ErrorCode, ManagedState, SessionFailure, SessionId, ToolCallId, ToolKind, capability,
+    ErrorCode, ManagedState, ProviderResumeToken, SessionFailure, SessionId, ToolCallId, ToolKind,
+    capability,
 };
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -43,6 +45,9 @@ pub struct AcpControl {
     capabilities: Option<AgentCapabilities>,
     session_id: Option<SessionId>,
     native_session: Option<String>,
+    native_resume: bool,
+    loading_session: Option<String>,
+    replayed_inputs: Vec<[u8; 32]>,
     mcp_sse: bool,
     /// The agent advertised the steering extension at initialize
     /// (`_meta.steering.supported`), so text can go into a running turn
@@ -165,6 +170,9 @@ impl AcpControl {
             capabilities: None,
             session_id: None,
             native_session: None,
+            native_resume: false,
+            loading_session: None,
+            replayed_inputs: Vec::new(),
             mcp_sse: false,
             steering: false,
             wrapper_auth: None,
@@ -861,7 +869,7 @@ impl AcpControl {
                 Err(invalid_state(ProviderStage::Initialize))
             };
         }
-        if start.resume.is_some() {
+        if start.resume.is_some() && !self.qualified_resume_route() {
             return Err(failure(
                 ErrorCode::InvalidRequest,
                 ProviderStage::Initialize,
@@ -900,6 +908,14 @@ impl AcpControl {
         }
         if self.config.route.is_claude() {
             claude::validate_handshake(&initialized)?;
+        }
+        self.native_resume = self.qualified_resume_route()
+            && initialized
+                .pointer("/agentCapabilities/loadSession")
+                .and_then(Value::as_bool)
+                == Some(true);
+        if start.resume.is_some() && !self.native_resume {
+            return Err(handshake_rejected());
         }
         if self.config.route.is_antigravity() {
             antigravity::validate_handshake(&initialized, &self.config.executable_version)?;
@@ -979,13 +995,18 @@ impl AcpControl {
         if let Some(meta) = &self.config.route.session_new_meta {
             params["_meta"] = meta.clone();
         }
-        let session = self.call("session/new", params)?;
-        decode::<acp::NewSessionResponse>(&session).map_err(|_| handshake_rejected())?;
-        let native_session = session["sessionId"]
-            .as_str()
-            .filter(|value| valid_native_id(value))
-            .ok_or_else(handshake_rejected)?
-            .to_owned();
+        let (session, native_session) = if let Some(token) = &start.resume {
+            self.load_session(token, params)?
+        } else {
+            let session = self.call("session/new", params)?;
+            decode::<acp::NewSessionResponse>(&session).map_err(|_| handshake_rejected())?;
+            let native = session["sessionId"]
+                .as_str()
+                .filter(|value| valid_native_id(value))
+                .ok_or_else(handshake_rejected)?
+                .to_owned();
+            (session, native)
+        };
         if let Some((early_session, commands)) = self.early_commands.take()
             && early_session == native_session
         {
@@ -1070,6 +1091,9 @@ impl AcpControl {
             names.push(capability::NATIVE_ATTACHMENT_DELIVERY);
         }
         let mut delegation = DelegationFacts::undeclared();
+        if self.native_resume {
+            delegation.resume = ResumeSupport::Native;
+        }
         delegation.starts_in_cwd = true;
         delegation.distinguishes_outcomes = true;
         delegation.follows_up = true;
@@ -1125,6 +1149,18 @@ impl AgentControl for AcpControl {
 
     fn capabilities(&self) -> Option<&AgentCapabilities> {
         self.capabilities.as_ref()
+    }
+
+    fn resume_token(&self) -> Option<ProviderResumeToken> {
+        self.saved_resume_token()
+    }
+
+    fn replayed_input_hashes(&self) -> &[[u8; 32]] {
+        if self.capabilities.is_some() {
+            &self.replayed_inputs
+        } else {
+            &[]
+        }
     }
 
     fn submit(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
