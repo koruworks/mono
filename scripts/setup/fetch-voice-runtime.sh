@@ -176,11 +176,13 @@ place() {
 #
 # archive-dir<TAB>file<TAB>sha256<TAB>bytes — the same row as
 # `koru_read_paddle::artifacts::ONNXRUNTIME`, and a test there fails if they
-# drift. macOS is pinned when a Mac build first links it; Windows on ARM and
-# Linux aarch64 have no TTS-free archive.
+# drift. Apple silicon's comes from the archive Mac voice links (its objects are
+# built for macOS 13.4, the Mac release's minimum); Intel Macs ship no build,
+# and Windows on ARM and Linux aarch64 have no TTS-free archive.
 ORT_LIBRARIES=(
   "sherpa-onnx-v${VERSION}-win-x64-static-MT-Release-no-tts-lib	onnxruntime.lib	fc1f5722dd17cbe8c2131cad2b9da6e004392d45bbe71560ff5e54c9dee26f24	916804662"
   "sherpa-onnx-v${VERSION}-linux-x64-static-no-tts-lib	libonnxruntime.a	9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea	109507520"
+  "sherpa-onnx-v${VERSION}-osx-arm64-static-no-tts-lib	libonnxruntime.a	93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e	69439552"
 )
 
 # Extracted into a directory of its own beside the archive, verified, and only

@@ -40,7 +40,8 @@ path = "src/lib.rs"
 # `cargo check` with it on needs no library at all: `ort-sys` defers the
 # missing library to the link.
 #
-# On a target with no pinned library (Windows on ARM, Linux aarch64) the
+# On a target with no pinned library (Windows on ARM, Linux aarch64, Intel
+# Macs) the
 # feature compiles to nothing more than it is off: the worker reads text layers and
 # reports `recognition: false`.
 [features]

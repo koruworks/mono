@@ -280,15 +280,35 @@ builds_voice_worker() {
 WORKSPACE_EXCLUDES=()
 builds_voice_worker || WORKSPACE_EXCLUDES=(--exclude koru-voice-worker)
 
+# **Where this host's read worker links ONNX Runtime from**, or nothing where
+# no library is pinned: the directory the fetch script extracts it into
+# (koru-read-paddle's artifacts module holds the pins). Linux x86_64 and Apple
+# silicon have one; an Intel Mac or Linux aarch64 builds the read worker
+# without recognition.
+host_ort_lib_dir() {
+  local archive
+  case "$(uname -s)-$(uname -m)" in
+    Linux-x86_64)  archive=sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib ;;
+    Darwin-arm64)  archive=sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib ;;
+    *) return 1 ;;
+  esac
+  echo "$PWD/third-party/sherpa-onnx/1.13.6/$archive/lib"
+}
+
 ensure_voice_runtime() {
   bash scripts/setup/fetch-voice-runtime.sh || return
+  # The script also extracted the ONNX Runtime library the read worker's
+  # recognition links; only a build with `koru-read-worker/recognition` reads
+  # ORT_LIB_PATH, and every other build ignores it.
+  local ort_lib_dir
+  if ort_lib_dir="$(host_ort_lib_dir)"; then
+    export ORT_LIB_PATH="${ORT_LIB_PATH:-$ort_lib_dir}"
+  fi
   # **Linux places the reader's library, not a voice runtime.** The script
-  # placed upstream's TTS-free Linux archive and extracted the ONNX Runtime
-  # library the read worker's recognition links; nothing here builds voice
-  # (D4a), so the CMake and libclang checks below would only fail a command
-  # that does not need them.
+  # placed upstream's TTS-free Linux archive for the library above; nothing
+  # here builds voice (D4a), so the CMake and libclang checks below would only
+  # fail a command that does not need them.
   if ! builds_voice_worker; then
-    export ORT_LIB_PATH="${ORT_LIB_PATH:-$PWD/third-party/sherpa-onnx/1.13.6/sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib/lib}"
     return 0
   fi
   export SHERPA_ONNX_ARCHIVE_DIR="$PWD/third-party/sherpa-onnx/1.13.6"
@@ -487,8 +507,12 @@ run_all_verb() {
   local -a packages=(-p koru-agent -p koru)
   builds_voice_worker && packages+=(-p koru-voice-worker)
   # The read worker is the Store's sibling (resolved beside koru-agent, whose
-  # gateway worker hosts the Store). Pure Rust, so every platform builds it.
+  # gateway worker hosts the Store). Every platform builds it, and where an
+  # ONNX Runtime library is pinned (Linux x86_64, Apple silicon) it builds with
+  # recognition, as run-all.ps1 does on Windows: ensure_voice_runtime below
+  # extracts the library and points ORT_LIB_PATH at it.
   packages+=(-p koru-read-worker)
+  host_ort_lib_dir >/dev/null && packages+=(--features koru-read-worker/recognition)
   local mcp=0
   for arg in "$@"; do
     case "$arg" in

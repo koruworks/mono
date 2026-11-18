@@ -4,7 +4,8 @@
 //! from: the same archive the voice worker links, verified the same way.**
 //!
 //! There is one ONNX Runtime in this tree: 1.27.1, as a single static library
-//! (`lib/onnxruntime.lib` on Windows, `lib/libonnxruntime.a` on Linux) inside
+//! (`lib/onnxruntime.lib` on Windows, `lib/libonnxruntime.a` on Linux and
+//! macOS) inside
 //! the sherpa-onnx 1.13.6 archive `scripts/setup/fetch-voice-runtime.*`
 //! already places and checks against the pin in
 //! `koru_voice_sherpa::artifacts::NAMES` (or, for a target voice does not link
@@ -25,13 +26,16 @@
 //! release checks the bytes it linked (`koru-release`'s `native` module), as it
 //! checks sherpa's.
 //!
-//! On Linux x86_64 the layout is the same, under
-//! `sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib/lib/libonnxruntime.a`.
+//! On Linux x86_64 and macOS on Apple silicon the layout is the same, under
+//! `sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib/lib/libonnxruntime.a` and
+//! `sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib/lib/libonnxruntime.a`.
 //!
-//! **Windows x64 and Linux x86_64, for now.** The macOS archives hold the same
-//! ONNX Runtime; their library is pinned when a Mac build first links it (the
-//! mac branch's catch-up). Windows on ARM and Linux aarch64 have no TTS-free
-//! archive, so no recognition.
+//! **Windows x64, Linux x86_64 and macOS on Apple silicon, for now.** The
+//! Apple silicon library was pinned on 2026-11-18. Its objects are built for
+//! macOS 13.4 (`LC_BUILD_VERSION` minos), which is why the Mac release's
+//! minimum is 13.4. Intel Macs are not pinned: no Intel Mac build ships.
+//! Windows on ARM and Linux aarch64 have no TTS-free archive, so no
+//! recognition.
 //!
 //! **Linux x86_64's archive is the reader's alone, for now.** Voice does not
 //! link on Linux until its own rung (`docs/features/linux/TECHNICAL.final.md`,
@@ -71,7 +75,7 @@ pub struct OrtLibrary {
     /// The library's file name inside the archive's `lib/`.
     pub file_name: &'static str,
     /// Its SHA-256, taken from the pinned archive (Windows 2026-11-11, Linux
-    /// 2026-11-17).
+    /// 2026-11-17, macOS 2026-11-18).
     pub sha256: &'static str,
     /// Its size in bytes.
     pub size: u64,
@@ -149,7 +153,7 @@ impl OrtLibrary {
 
 /// **The pinned libraries.** The same rows live in
 /// `scripts/setup/fetch-voice-runtime.ps1` and `.sh`, and nowhere else.
-pub const ONNXRUNTIME: [OrtLibrary; 2] = [
+pub const ONNXRUNTIME: [OrtLibrary; 3] = [
     OrtLibrary {
         target: "x86_64-pc-windows-msvc",
         target_os: "windows",
@@ -167,6 +171,15 @@ pub const ONNXRUNTIME: [OrtLibrary; 2] = [
         file_name: "libonnxruntime.a",
         sha256: "9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea",
         size: 109_507_520,
+    },
+    OrtLibrary {
+        target: "aarch64-apple-darwin",
+        target_os: "macos",
+        target_arch: "aarch64",
+        archive_stem: "osx-arm64-static-no-tts-lib",
+        file_name: "libonnxruntime.a",
+        sha256: "93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e",
+        size: 69_439_552,
     },
 ];
 

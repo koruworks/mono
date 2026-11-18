@@ -96,11 +96,17 @@ fn the_library_is_extracted_where_ort_lib_path_points() {
 }
 
 /// Windows on ARM and Linux aarch64 have no TTS-free archive, so no library
-/// and no recognition. Linux x86_64 has one.
+/// and no recognition. Linux x86_64 and Apple silicon have one; Intel Macs
+/// ship no build, so none is pinned.
 #[test]
 fn only_pinned_targets_have_a_library() {
     assert!(library_for("windows", "aarch64").is_none());
     assert!(library_for("linux", "aarch64").is_none());
+    assert!(library_for("macos", "x86_64").is_none());
+    assert_eq!(
+        library_for("macos", "aarch64").map(|library| library.target),
+        Some("aarch64-apple-darwin")
+    );
     assert_eq!(
         library_for("linux", "x86_64").map(|library| library.file_name),
         Some("libonnxruntime.a")
@@ -110,6 +116,9 @@ fn only_pinned_targets_have_a_library() {
     }
     if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
         assert_eq!(library_for_this_build(), Some(&ONNXRUNTIME[1]));
+    }
+    if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        assert_eq!(library_for_this_build(), Some(&ONNXRUNTIME[2]));
     }
 }
 
@@ -126,6 +135,22 @@ fn the_linux_library_is_extracted_where_ort_lib_path_points() {
     assert_eq!(
         library.member(),
         "sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib/lib/libonnxruntime.a"
+    );
+}
+
+/// The Mac library comes from the archive Mac voice already links, not a
+/// reader-only one.
+#[test]
+fn the_mac_library_is_extracted_from_voice_s_archive() {
+    use koru_voice_sherpa::artifacts as voice;
+    let library = library_for("macos", "aarch64").unwrap();
+    assert_eq!(
+        voice::artifact_for("macos", "aarch64").map(|archive| archive.stem),
+        Some(library.archive_stem)
+    );
+    assert_eq!(
+        library.member(),
+        "sherpa-onnx-v1.13.6-osx-arm64-static-no-tts-lib/lib/libonnxruntime.a"
     );
 }
 

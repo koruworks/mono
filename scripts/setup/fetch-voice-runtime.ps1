@@ -179,8 +179,10 @@ function Place-Artifact {
 # library is extracted beside the archive, in the archive's own layout, and the
 # launchers point ORT_LIB_PATH at its lib\. One ONNX Runtime in the tree, from
 # one pinned archive. The same row as koru_read_paddle::artifacts::ONNXRUNTIME,
-# and a test there fails if they drift. macOS is pinned when a Mac build first
-# links it; Windows on ARM and Linux aarch64 have no TTS-free archive.
+# and a test there fails if they drift. Apple silicon's comes from the archive
+# Mac voice links (its objects are built for macOS 13.4, the Mac release's
+# minimum); Intel Macs ship no build, and Windows on ARM and Linux aarch64 have
+# no TTS-free archive.
 $OrtLibraries = @(
     [pscustomobject]@{
         Archive = "sherpa-onnx-v$Version-win-x64-static-MT-Release-no-tts-lib"
@@ -195,6 +197,13 @@ $OrtLibraries = @(
         Sha     = '9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea'
         Size    = 109507520
         Host    = 'linux-x86_64'
+    },
+    [pscustomobject]@{
+        Archive = "sherpa-onnx-v$Version-osx-arm64-static-no-tts-lib"
+        File    = 'libonnxruntime.a'
+        Sha     = '93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e'
+        Size    = 69439552
+        Host    = 'macos-aarch64'
     }
 )
 

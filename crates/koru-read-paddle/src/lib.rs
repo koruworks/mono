@@ -21,7 +21,7 @@
 //! With `runtime` off — every ordinary workspace build — [`load`] answers
 //! `unsupported` and nothing native is compiled or linked. With it on, on a
 //! target that has no pinned ONNX Runtime library (Windows on ARM, Linux
-//! aarch64), the same: [`RECOGNITION_BUILT`] says which build this is.
+//! aarch64, Intel Macs), the same: [`RECOGNITION_BUILT`] says which build this is.
 //!
 //! ## The settings, and where they come from
 //!
@@ -44,7 +44,7 @@ pub mod settings;
     any(
         all(target_os = "windows", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "x86_64"),
-        target_os = "macos"
+        all(target_os = "macos", target_arch = "aarch64")
     )
 ))]
 mod engine;
@@ -68,7 +68,7 @@ pub const RECOGNITION_BUILT: bool = cfg!(all(
     any(
         all(target_os = "windows", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "x86_64"),
-        target_os = "macos"
+        all(target_os = "macos", target_arch = "aarch64")
     )
 ));
 
@@ -89,7 +89,7 @@ pub fn load(model: &ModelDir, settings: &Settings) -> Result<Box<dyn Reader>, Re
         any(
             all(target_os = "windows", target_arch = "x86_64"),
             all(target_os = "linux", target_arch = "x86_64"),
-            target_os = "macos"
+            all(target_os = "macos", target_arch = "aarch64")
         )
     ))]
     {
@@ -105,7 +105,7 @@ pub fn load(model: &ModelDir, settings: &Settings) -> Result<Box<dyn Reader>, Re
         any(
             all(target_os = "windows", target_arch = "x86_64"),
             all(target_os = "linux", target_arch = "x86_64"),
-            target_os = "macos"
+            all(target_os = "macos", target_arch = "aarch64")
         )
     )))]
     {

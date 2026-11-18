@@ -27,8 +27,13 @@ fn the_feature_is_on_for_the_read_worker_on_a_pinned_target() {
     );
     assert_eq!(
         features(&packages, &triples(&["aarch64-apple-darwin"])),
+        Some("koru-read-worker/recognition"),
+        "Apple silicon links the library from voice's own archive"
+    );
+    assert_eq!(
+        features(&packages, &triples(&["x86_64-apple-darwin"])),
         None,
-        "macOS is pinned when a Mac build first links it"
+        "no Intel Mac build ships, so none is pinned"
     );
     assert_eq!(
         features(&["koru"], &triples(&["x86_64-pc-windows-msvc"])),
@@ -69,15 +74,18 @@ fn a_refusal_says_what_to_run() {
     assert!(notice(library, &Linked::Canonical).is_none());
 }
 
-/// **What a release builds on this host is what the table says**: Windows x64
-/// and Linux x86_64 turn recognition on and point the build at the fetched
+/// **What a release builds on this host is what the table says**: Windows x64,
+/// Linux x86_64 and Apple silicon turn recognition on and point the build at the fetched
 /// library.
 #[test]
 fn this_host_builds_recognition_where_a_library_is_pinned() {
     let packages = ["koru", "koru-read-worker"];
-    let pinned = cfg!(all(
-        any(target_os = "windows", target_os = "linux"),
-        target_arch = "x86_64"
+    let pinned = cfg!(any(
+        all(
+            any(target_os = "windows", target_os = "linux"),
+            target_arch = "x86_64"
+        ),
+        all(target_os = "macos", target_arch = "aarch64")
     ));
     assert_eq!(
         features_for_this_build(&packages).is_some(),

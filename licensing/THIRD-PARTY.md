@@ -86,8 +86,8 @@ revision we build.
 | --- | --- | --- |
 | whisper.cpp / ggml (vendored by `whisper-rs-sys` 0.15.0) | MIT, © The ggml authors | `koru-voice-worker` |
 | sherpa-onnx 1.13.6 | Apache-2.0 | `koru-voice-worker` |
-| ONNX Runtime 1.27.1 (static), with its own ThirdPartyNotices | MIT, © Microsoft | `koru-voice-worker`; `koru-read-worker` on Windows x64 (the same library from the same archive, through `ort`, 2026-11-11) and on Linux x86_64 (from upstream's TTS-free Linux archive, 2026-11-17) |
-| Oniguruma 6.9.10 (built from C by `onig_sys` 69.9.3, under `tokenizers` under `oar-ocr`) | BSD-2-Clause, © K.Kosako | `koru-read-worker` on Windows x64 (2026-11-11) and Linux x86_64 (2026-11-17) |
+| ONNX Runtime 1.27.1 (static), with its own ThirdPartyNotices | MIT, © Microsoft | `koru-voice-worker`; `koru-read-worker` on Windows x64 (the same library from the same archive, through `ort`, 2026-11-11) and on Linux x86_64 (from upstream's TTS-free Linux archive, 2026-11-17) and macOS on Apple silicon (from the archive Mac voice links, 2026-11-18) |
+| Oniguruma 6.9.10 (built from C by `onig_sys` 69.9.3, under `tokenizers` under `oar-ocr`) | BSD-2-Clause, © K.Kosako | `koru-read-worker` on Windows x64 (2026-11-11), Linux x86_64 (2026-11-17) and macOS on Apple silicon (2026-11-18) |
 | kaldi-native-fbank 1.22.3, kaldi-decoder 0.3.0, OpenFst 1.8.5, simple-sentencepiece 0.7 | Apache-2.0 | `koru-voice-worker` |
 | KISS FFT | BSD-3-Clause | `koru-voice-worker` |
 | piper-phonemize | MIT | **Not linked on any platform** (2026-10-14; the Linux x86_64 archive verified free of it 2026-11-17) |
@@ -237,7 +237,8 @@ kind; `cargo deny check licenses` passes unchanged. In every desktop build
 ## The reader: oar-ocr on ONNX Runtime (2026-11-11)
 
 `koru-read-worker` built with its `recognition` feature — the product build on
-Windows x64 and Linux x86_64, where the ONNX Runtime library is pinned — links
+Windows x64, Linux x86_64 and macOS on Apple silicon, where the ONNX Runtime
+library is pinned — links
 `koru-read-paddle`'s runtime: `oar-ocr` 0.10.2 and `oar-ocr-core` 0.10.2
 (Apache-2.0), `ort` and `ort-sys` 2.0.0-rc.13 (MIT OR Apache-2.0), and what
 they bring: `tokenizers`, `ndarray`, `nalgebra`, `imageproc`, `clipper2-rust`,
@@ -249,7 +250,7 @@ walk turns on the same feature the package build does, so every crate
 recognition brings is attributed exactly where it ships ✅.
 
 Two native components come with it, both in `licences/bundled/`
-(Oniguruma `Platforms: windows, linux`; ONNX Runtime's file already covers
+(Oniguruma `Platforms: windows, macos, linux`; ONNX Runtime's file already covers
 every desktop):
 
 - **ONNX Runtime 1.27.1**, the same static library from the same pinned
@@ -257,7 +258,11 @@ every desktop):
   names the read worker). One ONNX Runtime in the tree; `ort` downloads nothing
   and the executable imports no ONNX Runtime DLL ✅. On Linux x86_64 it is the
   same 1.27.1 from upstream's TTS-free Linux archive of the same release,
-  pinned by the reader alone until Linux voice lands (2026-11-17) ✅. Its
+  pinned by the reader alone until Linux voice lands (2026-11-17) ✅. On
+  Apple silicon it is `lib/libonnxruntime.a` from the osx-arm64 archive Mac
+  voice links (sha256 `93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e`,
+  69,439,552 bytes, its objects built for macOS 13.4, the Mac minimum since
+  2026-11-18) ✅. Its
   ThirdPartyNotices include Eigen (MPL-2.0), compiled in; MPL §3.2(a) asks a
   binary to say where Eigen's source is, so the notice now names
   `https://gitlab.com/libeigen/eigen` ✅.
