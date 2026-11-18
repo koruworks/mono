@@ -80,7 +80,7 @@ impl Database {
         if !allowed {
             return Ok(None);
         }
-        let busy:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM turns WHERE bot=?1 AND thread=?2 AND state IN ('running','needs_you','parked')) OR EXISTS(SELECT 1 FROM operations WHERE bot=?1 AND thread=?2 AND state IN ('leased','unresolved'))",params![bot.to_string(),thread.to_string()],|r|r.get(0))?;
+        let busy:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM turns WHERE bot=?1 AND thread=?2 AND state IN ('running','needs_you','parked')) OR EXISTS(SELECT 1 FROM operations WHERE bot=?1 AND thread=?2 AND (state='leased' OR (state='unresolved' AND json_extract(CAST(recovery AS TEXT),'$.continued_by') IS NULL)))",params![bot.to_string(),thread.to_string()],|r|r.get(0))?;
         if busy {
             return Ok(None);
         }

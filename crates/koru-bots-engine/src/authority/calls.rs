@@ -271,16 +271,27 @@ impl Database {
     ) -> Result<Resolution, Error> {
         call.validate()?;
         let tx = self.connection.transaction()?;
-        let identity = identity(&tx, secret)?;
-        let prior = existing(&tx, identity.session, call)?
-            .filter(|prior| prior.id == binding)
-            .ok_or(Error::BindingConflict)?;
-        let mut resolution = open(&tx, &identity, Some(prior.turn.id))?;
-        if resolution.binding.turn != prior.turn {
-            return Err(Error::BindingConflict);
-        }
-        resolution.binding = prior;
+        let resolution = resolve_on(&tx, secret, binding, call)?;
         tx.commit()?;
         Ok(resolution)
     }
+}
+
+pub(crate) fn resolve_on(
+    connection: &Connection,
+    secret: &Secret,
+    binding: Uuid,
+    call: &Descriptor,
+) -> Result<Resolution, Error> {
+    call.validate()?;
+    let identity = identity(connection, secret)?;
+    let prior = existing(connection, identity.session, call)?
+        .filter(|prior| prior.id == binding)
+        .ok_or(Error::BindingConflict)?;
+    let mut resolution = open(connection, &identity, Some(prior.turn.id))?;
+    if resolution.binding.turn != prior.turn {
+        return Err(Error::BindingConflict);
+    }
+    resolution.binding = prior;
+    Ok(resolution)
 }

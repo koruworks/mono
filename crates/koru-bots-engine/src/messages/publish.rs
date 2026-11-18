@@ -29,6 +29,16 @@ impl Database {
         if state != "running" {
             return Err(Error::StaleTurn);
         }
+        let outputs = crate::operations::outputs::collect(&tx, request.turn)?;
+        // Callers may repeat known references, but cannot invent or alter them.
+        // Empty is normal: the engine derives all output references itself.
+        if request
+            .outputs
+            .iter()
+            .any(|output| !outputs.contains(output))
+        {
+            return Err(Error::InvalidRequest);
+        }
         let message = Uuid::new_v4();
         let thread_id = id(thread.clone())?;
         let content = Content {
@@ -40,27 +50,14 @@ impl Database {
             reply_to: ReplyTo::Thread,
         };
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'published',?6)",params![message.to_string(),thread,next_sequence(&tx,thread_id)?,bot,encode(&content)?,now])?;
-        for output in &request.outputs {
-            let applied:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM operations o JOIN tool_calls c ON c.binding=o.recorded_call WHERE o.id=?1 AND o.bot=?2 AND o.thread=?3 AND o.state='applied' AND c.turn=?4)",params![output.operation.to_string(),bot,thread,request.turn.id.to_string()],|r|r.get(0))?;
-            if !applied {
-                return Err(Error::InvalidRequest);
-            }
-            tx.execute(
-                "INSERT INTO outputs(id,message,operation,kind,reference) VALUES (?1,?2,?3,?4,?5)",
-                params![
-                    output.id.to_string(),
-                    message.to_string(),
-                    output.operation.to_string(),
-                    output.kind.token(),
-                    encode(&output.reference)?
-                ],
-            )?;
+        for output in &outputs {
+            crate::operations::outputs::insert(&tx, message, output)?;
         }
         let answered=tx.execute("UPDATE obligations SET state='answered',answered_by=?1 WHERE state='delivered' AND id IN (SELECT x.obligation FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery WHERE d.turn=?2 AND d.state='accepted')",params![message.to_string(),request.turn.id.to_string()])? as u64;
         tx.execute("DELETE FROM inbox WHERE id IN (SELECT x.obligation FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery JOIN obligations o ON o.id=x.obligation WHERE d.turn=?1 AND o.state IN ('answered','expired'))",[request.turn.id.to_string()])?;
         tx.execute(
-            "UPDATE turns SET state='answered' WHERE id=?1",
-            [request.turn.id.to_string()],
+            "UPDATE turns SET state='answered',details=CAST(json_set(CAST(details AS TEXT),'$.published_message',?2) AS BLOB) WHERE id=?1",
+            params![request.turn.id.to_string(), message.to_string()],
         )?;
         let unfinished:Vec<(String,Vec<u8>)>=tx.prepare("SELECT id,payload FROM deliveries WHERE turn=?1 AND state IN ('offered','unknown')")?.query_map([request.turn.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
         for (id, payload) in unfinished {

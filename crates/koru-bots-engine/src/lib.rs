@@ -14,6 +14,7 @@ mod error;
 pub mod launcher;
 pub mod messages;
 pub mod own_tools;
+pub mod operations;
 #[cfg(any(test, feature = "provider-runtime"))]
 pub mod sessions;
 mod ownership;

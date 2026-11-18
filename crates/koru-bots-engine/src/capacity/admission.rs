@@ -307,7 +307,7 @@ impl Admission {
                AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?2)
                AND (l.bot IS NULL OR l.idle=1) AND (?3=0 OR l.idle=1)
                AND NOT EXISTS(SELECT 1 FROM turns r WHERE r.bot=i.bot AND r.thread=i.thread AND r.state IN ('running','needs_you','parked'))
-               AND NOT EXISTS(SELECT 1 FROM operations w WHERE w.bot=i.bot AND w.thread=i.thread AND w.state IN ('leased','unresolved'))
+               AND NOT EXISTS(SELECT 1 FROM operations w WHERE w.bot=i.bot AND w.thread=i.thread AND (w.state='leased' OR (w.state='unresolved' AND json_extract(CAST(w.recovery AS TEXT),'$.continued_by') IS NULL)))
                AND NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.session=l.session AND d.state IN ('offered','unknown'))
              GROUP BY i.bot,i.thread,t.kind
              ORDER BY t.kind='routine',EXISTS(SELECT 1 FROM live a WHERE a.bot=i.bot AND a.active=1),MIN(i.accepted_at_ms),i.bot,i.thread LIMIT 1",
@@ -348,7 +348,7 @@ impl Admission {
         for (key, provider, since, resumable, saved) in candidates {
             let (blocked, side): (bool, bool) = db.connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM deliveries WHERE session=?1 AND state IN ('offered','unknown'))
-                   OR EXISTS(SELECT 1 FROM operations WHERE bot=?2 AND thread=?3 AND state IN ('leased','unresolved')),
+                   OR EXISTS(SELECT 1 FROM operations WHERE bot=?2 AND thread=?3 AND (state='leased' OR (state='unresolved' AND json_extract(CAST(recovery AS TEXT),'$.continued_by') IS NULL))),
                    EXISTS(SELECT 1 FROM threads WHERE id=?3 AND kind IN ('routine','between_bots'))",
                 params![provider.map(|id| id.to_string()),key.bot.to_string(),key.thread.to_string()], |r| Ok((r.get(0)?,r.get(1)?)),
             )?;

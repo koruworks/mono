@@ -27,7 +27,7 @@ pub struct Person {
     pub owner: String,
 }
 impl Person {
-    fn receipt_subject(&self) -> String {
+    pub(crate) fn receipt_subject(&self) -> String {
         format!("person:{}:{}:{}", self.owner.len(), self.owner, self.sender)
     }
 }
@@ -152,14 +152,14 @@ pub enum Resume {
     },
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
 pub struct Output {
     pub id: Uuid,
     pub operation: Uuid,
     pub kind: OutputKind,
     pub reference: serde_json::Value,
 }
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputKind {
     Page,
@@ -167,7 +167,7 @@ pub enum OutputKind {
     Task,
 }
 impl OutputKind {
-    fn token(self) -> &'static str {
+    pub fn token(self) -> &'static str {
         match self {
             Self::Page => "page",
             Self::Table => "table",
@@ -205,7 +205,7 @@ fn id(value: String) -> Result<Uuid, Error> {
     Uuid::parse_str(&value).map_err(|_| Error::StorageUnavailable)
 }
 
-fn authorize_bot(
+pub(crate) fn authorize_bot(
     connection: &rusqlite::Connection,
     person: &Person,
     bot: Uuid,
@@ -224,7 +224,7 @@ fn authorize_bot(
         Err(Error::NotAllowed)
     }
 }
-fn authorize_thread(
+pub(crate) fn authorize_thread(
     connection: &rusqlite::Connection,
     person: &Person,
     thread: Uuid,
@@ -236,7 +236,7 @@ fn authorize_thread(
         Err(Error::NotAllowed)
     }
 }
-fn next_sequence(connection: &rusqlite::Connection, thread: Uuid) -> Result<u64, Error> {
+pub(crate) fn next_sequence(connection: &rusqlite::Connection, thread: Uuid) -> Result<u64, Error> {
     Ok(connection.query_row(
         "SELECT COALESCE(MAX(sequence),0)+1 FROM messages WHERE thread=?1",
         [thread.to_string()],

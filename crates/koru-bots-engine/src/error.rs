@@ -23,6 +23,10 @@ pub enum Error {
     TurnRunning,
     NoTurn,
     BindingConflict,
+    OperationConflict,
+    LeaseMismatch,
+    OutcomeConflict,
+    RecoveryPending,
 }
 
 impl std::fmt::Display for Error {
@@ -46,6 +50,10 @@ impl std::fmt::Display for Error {
             Self::TurnRunning => "turn_running",
             Self::NoTurn => "no_turn",
             Self::BindingConflict => "binding_conflict",
+            Self::OperationConflict => "operation_conflict",
+            Self::LeaseMismatch => "lease_mismatch",
+            Self::OutcomeConflict => "outcome_conflict",
+            Self::RecoveryPending => "recovery_pending",
         })
     }
 }

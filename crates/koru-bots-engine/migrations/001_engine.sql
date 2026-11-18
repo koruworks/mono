@@ -142,9 +142,15 @@ CREATE TABLE outputs (
     id TEXT PRIMARY KEY,
     message TEXT NOT NULL REFERENCES messages(id),
     operation TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    bot TEXT NOT NULL,
+    thread TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('page', 'table', 'task')),
-    reference BLOB NOT NULL
+    reference BLOB NOT NULL,
+    FOREIGN KEY (scope, bot, thread, operation) REFERENCES operations(scope, bot, thread, id)
 );
+CREATE INDEX native_outputs_for_turn ON operations(json_extract(CAST(lease AS TEXT), '$.binding.turn.id')) WHERE state = 'applied';
+CREATE INDEX operations_for_thread ON operations(thread, state);
 CREATE TABLE receipts (
     sender TEXT NOT NULL,
     id TEXT NOT NULL,

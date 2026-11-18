@@ -336,7 +336,7 @@ fn consecutive_resume_proves_original_delivery_and_reconciles_missing_history() 
 }
 
 #[test]
-fn output_must_belong_to_an_applied_call_of_this_turn() {
+fn unleased_record_cannot_supply_a_native_output() {
     let mut f = Fixture::new();
     f.send("first work");
     let first = f.claim(Resume::Rebuilt);
@@ -353,6 +353,11 @@ fn output_must_belong_to_an_applied_call_of_this_turn() {
     };
     let mut publication = reply(&first);
     publication.outputs.push(output.clone());
+    assert_eq!(
+        f.db.publish_reply(&publication, 3).err(),
+        Some(Error::InvalidRequest)
+    );
+    publication.outputs.clear();
     assert_eq!(
         f.db.publish_reply(&publication, 3).unwrap().answer.answered,
         1

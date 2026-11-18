@@ -22,8 +22,10 @@ blake3.workspace = true
 koru-agent-worker = { path = "../koru-agent-worker" }
 koru-bot-client-wire = { path = "../koru-bot-client-wire" }
 koru-channel = { path = "../koru-channel" }
+koru-delegate-core = { path = "../koru-delegate-core" }
 koru-ipc = { path = "../koru-ipc" }
 koru-sqlite = { path = "../koru-sqlite" }
+koru-store-core = { path = "../koru-store-core" }
 koru-settings = { path = "../koru-settings" }
 koru-session-protocol = { path = "../koru-session-protocol" }
 koru-session-runtime = { path = "../koru-session-runtime", optional = true }
