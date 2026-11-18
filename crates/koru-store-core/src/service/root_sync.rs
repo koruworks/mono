@@ -426,6 +426,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 tracing::info!(relationship = %relationship, "root_sync action=scope_bound");
             }
         }
+        self.enable_linked_defaults()?;
         Ok(scope)
     }
 
@@ -474,7 +475,10 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 Code::CorruptState,
                 "the account binding names a user scope this device does not hold",
             )),
-            Some(_) => Ok(scope),
+            Some(_) => {
+                self.enable_linked_defaults()?;
+                Ok(scope)
+            }
             None => {
                 let binding = AccountScopeBinding {
                     account_id,
@@ -484,6 +488,7 @@ impl<C: Catalog, B: Backend> Store<C, B> {
                 };
                 self.catalog.set_state(K_ACCOUNT_SCOPE, &json(&binding)?)?;
                 tracing::info!(account = %account_id, "root_sync action=account_scope_bound");
+                self.enable_linked_defaults()?;
                 Ok(scope)
             }
         }

@@ -77,6 +77,11 @@ pub(super) enum BackgroundWork {
     /// not once per keystroke, and a coalescing channel would drop it behind
     /// the typing it exists to help.
     ScopeTables(Vec<WorkspaceId>),
+    /// The reader that finds words in pictures: read its state, or carry out
+    /// what was pressed on the line (OCR Plan 2.5). Background for the reason
+    /// everything here is: a download's progress is asked twice a second, and
+    /// none of it may sit in front of a keystroke's query.
+    Reader(super::offer::ReaderCommand),
 }
 
 pub(super) struct NavigationRecord {
@@ -129,6 +134,9 @@ pub(super) enum SearchReadResult {
         tags: Vec<super::TagCompletion>,
         definitions: Vec<crate::filters::FilterDefinition>,
     },
+    /// The reader's state, as the Store answered a [`BackgroundWork::Reader`]
+    /// — every command answers with it.
+    Reader(Result<koru_store_wire::reader::ReaderState>),
 }
 
 pub(super) struct SearchReadResponse {
@@ -339,6 +347,30 @@ impl SearchReader {
                                 break;
                             }
                         }
+                        BackgroundWork::Reader(command) => {
+                            use super::offer::ReaderCommand;
+                            let result = history_store.call(|client| {
+                                let store = client.store();
+                                match &command {
+                                    ReaderCommand::Read => store.reader(),
+                                    ReaderCommand::Install(request) => {
+                                        store.install_reader(request)
+                                    }
+                                    ReaderCommand::Stop => store.stop_reader_install(),
+                                    ReaderCommand::Decline => store.decline_reader(),
+                                }
+                            });
+                            if catalog_tx
+                                .send(SearchReadResponse {
+                                    // Zero: the reader answers no query.
+                                    seq: 0,
+                                    result: SearchReadResult::Reader(result),
+                                })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
                         BackgroundWork::Catalog => {
                             let catalog = super::catalog::Catalog::load(&history_store);
                             if catalog_tx
@@ -389,6 +421,14 @@ impl SearchReader {
     pub(super) fn request_outline(&self, document: DocumentId) -> bool {
         self.background
             .send(BackgroundWork::Outline(document))
+            .is_ok()
+    }
+
+    /// Ask about the reader, or carry out what was pressed on the line, on
+    /// the background channel.
+    pub(super) fn request_reader(&self, command: super::offer::ReaderCommand) -> bool {
+        self.background
+            .send(BackgroundWork::Reader(command))
             .is_ok()
     }
 

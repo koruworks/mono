@@ -86,6 +86,14 @@ const DOCUMENTS_HINT: &str = "Import from the app you use today.";
 
 const FILES_TITLE: &str = "Bring your files in";
 const FILES_HINT: &str = "Drop files or folders here — PDFs, images and more land in {workspace} as nodes you can link to.";
+// **Where files come in is where reading them is offered.** The words say
+// what it does and where it happens, never the acronym: reading is on this
+// computer, and what it read travels only as the rest of the workspace
+// does, when sync is on.
+const FILES_READ_BEFORE: &str = " To search the text inside pictures and scanned PDFs, ";
+const FILES_READ_LINK: &str = "turn on text recognition";
+const FILES_READ_AFTER: &str =
+    ". It runs on this computer; the text leaves it only if you sync the workspace.";
 const FILES_BUTTON: &str = "Choose files\u{2026}";
 
 const LEARN_TITLE: &str = "Learn your way around";
@@ -153,6 +161,8 @@ pub enum WelcomeWant {
     NewDocument,
     /// *set up your mic* — Settings, scrolled to Voice.
     VoiceSettings,
+    /// *turn on text recognition* — Settings, scrolled to that section.
+    ReaderSettings,
     /// One import format's chip, by the format registry's stable id.
     Import(&'static str),
     /// *Choose files…* — the file picker behind `PaneRequest::ImportFiles`.
@@ -199,6 +209,8 @@ pub(crate) enum Target {
     /// A row whose whole surface is the action.
     Row(RowId),
     MicLink,
+    /// *turn on text recognition*, in the files row.
+    ReaderLink,
     Import(&'static str),
     ChooseFiles,
     FeedbackForm,
@@ -399,6 +411,7 @@ impl WelcomeView {
         match target {
             Target::Customize => self.wants.push(WelcomeWant::Settings),
             Target::MicLink => self.wants.push(WelcomeWant::VoiceSettings),
+            Target::ReaderLink => self.wants.push(WelcomeWant::ReaderSettings),
             Target::Import(format) => {
                 self.wants.push(WelcomeWant::Import(format));
                 self.tick(RowId::Documents);

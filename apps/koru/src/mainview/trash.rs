@@ -66,7 +66,14 @@ pub(super) enum ConfirmSubject {
     /// and why it is worth asking. It is here rather than in a dialog of its own
     /// for [`RemoveFromTasks`](Self::RemoveFromTasks)'s reason: one confirm
     /// machinery, one answer to what Escape means.
-    DeleteList(koru_core::ids::ListId),
+    ///
+    /// `inside` is exactly the lists the dialog counted inside it
+    /// (nested-lists D4): those go too, and a list a peer nests in while the
+    /// question is up does not.
+    DeleteList {
+        id: koru_core::ids::ListId,
+        inside: Vec<koru_core::ids::ListId>,
+    },
     /// **The voice consent step.** It carries nothing: what is being agreed to
     /// is the offer the shell is already holding, and a copy of the terms here
     /// would be a second thing that could be out of date by the time somebody
@@ -533,9 +540,19 @@ impl MainView {
         let Some((toast, payload)) = self.toast.as_mut() else {
             return false;
         };
+        // An answer on the toast's line (OCR Plan 3.3) is the line's: the
+        // toast reports which, and this view knows what each one means.
+        if let Some(index) = toast.line_action_at(&mut self.engine, content, floor, x, y) {
+            let _ = ws;
+            return self.press_toast_line(index);
+        }
         let out = toast.mouse_down(&mut self.engine, content, floor, x, y);
         let inside = toast.contains(&mut self.engine, content, floor, x, y);
-        let payload = payload.clone();
+        // A summary carrying the line goes where the plain summary goes.
+        let payload = match payload.clone() {
+            super::ToastPayload::ImportReading { go, .. } => *go,
+            other => other,
+        };
         match out {
             koru_ui::toast::Outcome::Action => {
                 // Move-to undo takes priority when that toast is the one up.
@@ -596,6 +613,21 @@ impl MainView {
                         let _ = ws;
                         return true;
                     }
+                    // The reader's download: Stop, keeping the toast while it
+                    // stops, as voice's does.
+                    super::ToastPayload::ReaderDownload => {
+                        self.stop_reader_download();
+                        let _ = ws;
+                        return true;
+                    }
+                    // A download that ended: Try again, which resumes.
+                    super::ToastPayload::ReaderEnded { terms } => {
+                        self.turn_on_reader(terms);
+                        let _ = ws;
+                        return true;
+                    }
+                    // Normalised to its `go` above.
+                    super::ToastPayload::ImportReading { .. } => {}
                     // Through the trait, so a search-only window still
                     // refuses to grow a Feedback tab it has no room for.
                     super::ToastPayload::ReopenFeedback => {
@@ -617,8 +649,15 @@ impl MainView {
             // The second action — *Undo* on a capture's toast, the only chip
             // that has one today.
             koru_ui::toast::Outcome::Secondary => {
-                if let super::ToastPayload::TaskAdded { document, node, .. } = payload {
-                    self.undo_added_task(document, node);
+                match payload {
+                    super::ToastPayload::TaskAdded { document, node, .. } => {
+                        self.undo_added_task(document, node);
+                    }
+                    // *Not now* after a download that ended.
+                    super::ToastPayload::ReaderEnded { .. } => {
+                        self.decline_reader_from_toast();
+                    }
+                    _ => {}
                 }
                 self.toast = None;
                 let _ = ws;
@@ -654,13 +693,7 @@ impl MainView {
     }
 
     pub(super) fn reveal_imported_file(&mut self, file: koru_core::DocumentId) {
-        if !self.sidebar.is_open() {
-            self.toggle_sidebar();
-        }
-        self.explore.show_files();
-        let node = koru_core::NodeId::from_uuid(file.as_uuid());
-        self.explore.reveal(node);
-        self.explore.set_selected(Some(node));
+        self.reveal_file_in_explorer(file);
     }
 
     /// **Ctrl+Z takes a delete back, while the toast offering it is up.**
@@ -743,6 +776,12 @@ impl MainView {
     pub(super) fn draw_toast(&mut self, scene: &mut Scene, root: Affine, now: Instant) {
         let content = self.regions.content;
         let floor = self.toast_floor();
+        // The keyboard's place on the line, if `F6` put it there, is told to
+        // the chip first: it holds the chip and draws the ring.
+        let line_focus = self.toast_line_focus();
+        if let Some((toast, _)) = self.toast.as_mut() {
+            toast.set_line_focus(line_focus);
+        }
         let Some((toast, _)) = self.toast.as_ref() else {
             return;
         };
@@ -845,10 +884,11 @@ impl MainView {
             // Queued on *yes* and nowhere else, for that same reason — and
             // through `apply_tasks_rail`, so a list's deletion travels the one
             // vocabulary every other list gesture does.
-            ConfirmSubject::DeleteList(id) => {
-                self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::DeleteList(
+            ConfirmSubject::DeleteList { id, inside } => {
+                self.apply_tasks_rail(crate::panes::explore::rail::TasksRailRequest::DeleteList {
                     id,
-                ));
+                    inside,
+                });
             }
             // The whole gesture was agreed to, so every one of them queues —
             // and none asks again, because the question was about the set.

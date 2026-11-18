@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! **Where the bytes live, and the one rule that decides it.**
+//! **Where voice's model bytes live, and the one rule that decides it.**
 //!
 //! ```text
 //! KORU_VOICE_MODELS       <that path>
 //! --root given            <root>/voice/models/<id>/<version>/<digest>/
 //! otherwise               %LOCALAPPDATA%\Koru\models\<id>\<version>\<digest>\
 //! ```
+//!
+//! The rule is voice's and stays here: which variable overrides it, which
+//! subdirectory a `--root` gets. Everything *inside* the cache root — the
+//! layout, the four dotted directories, the channel-independent
+//! `<local data>` base — is `koru-models`' [`koru_models::ModelPaths`], which
+//! this type wraps so that voice's callers can keep naming a model by voice's
+//! own `ModelId` and descriptor.
 //!
 //! **Channel-independent, which is the one deliberate divergence from
 //! `UpdatePaths::updates_dir()`.** An update package is per-channel state; a
@@ -16,44 +23,25 @@
 //! gigabytes — which is why it deliberately points *outside* the profile root
 //! it overrides, and why a test asserts that every path this type answers with
 //! still lands under whichever root won.
-//!
-//! ## Why the `<local data>` rule is written here rather than borrowed
-//!
-//! `koru_channel::channel_root` knows this rule already. It is not reachable:
-//! every answer that crate gives carries a channel segment, and the charter in
-//! `Cargo.toml` excludes `koru-channel` precisely so that a crate which must
-//! never know which channel it is cannot find out. The duplicated body is four
-//! lines and is recorded as a drift hazard in
-//! `docs/features/voice/archive/QUESTIONS.md` Q-V26, rather than being hidden.
-//!
-//! ## Four directories nothing installs into
-//!
-//! `.staging`, `.parts`, `.locks` and `.leases` sit beside the model ids. They
-//! begin with a dot, and [`koru_voice::ModelId`] refuses a leading dot — so an
-//! id can never collide with one of them, and the walk in
-//! [`crate::DiskModelStore::installed`] skips every dotted entry with one rule
-//! rather than four names.
 
 use crate::descriptor::{ModelDescriptor, ModelVersion, Sha256Digest};
 use crate::error::{ModelError, ModelErrorCode};
 use koru_voice::ModelId;
 use std::path::{Path, PathBuf};
 
-/// Where the model cache is, and every path inside it.
+// The suite beside this module predates the extraction and names the four
+// internal directories through `super::*`.
+#[cfg(test)]
+use koru_models::paths::{LEASES, LOCKS, PARTS, STAGING};
+
+/// Where voice's model cache is, and every path inside it.
 ///
 /// A resolved value rather than a function, so that a store which was pointed
 /// somewhere cannot later ask the world again and get a different answer.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ModelPaths {
-    root: PathBuf,
+    inner: koru_models::ModelPaths,
 }
-
-/// The staging directory's name, and the three beside it. Dotted, so no
-/// [`ModelId`] can name one.
-const STAGING: &str = ".staging";
-const PARTS: &str = ".parts";
-const LOCKS: &str = ".locks";
-const LEASES: &str = ".leases";
 
 impl ModelPaths {
     /// **The whole rule**, and it reads the world: `KORU_VOICE_MODELS` first,
@@ -66,7 +54,7 @@ impl ModelPaths {
         ModelPaths::decide(
             koru_env::value(koru_env::name::KORU_VOICE_MODELS).map(PathBuf::from),
             root,
-            local_data_base(),
+            koru_models::paths::local_data_base(),
         )
     }
 
@@ -79,12 +67,10 @@ impl ModelPaths {
         local_data: Option<PathBuf>,
     ) -> Result<ModelPaths, ModelError> {
         if let Some(path) = overridden {
-            return Ok(ModelPaths { root: path });
+            return Ok(ModelPaths::at(path));
         }
         if let Some(root) = root {
-            return Ok(ModelPaths {
-                root: root.join("voice").join("models"),
-            });
+            return Ok(ModelPaths::at(root.join("voice").join("models")));
         }
         let base = local_data.ok_or_else(|| {
             ModelErrorCode::Io.with(
@@ -92,26 +78,35 @@ impl ModelPaths {
                  because a model store may not guess where to write",
             )
         })?;
-        Ok(ModelPaths {
-            root: base.join("Koru").join("models"),
-        })
+        Ok(ModelPaths::at(base.join("Koru").join("models")))
     }
 
     /// A cache root somebody named exactly — a test's temporary directory, or
     /// the value `KORU_VOICE_MODELS` carried. No `voice/models` is appended:
     /// this is the directory itself.
     pub fn at(root: impl Into<PathBuf>) -> ModelPaths {
-        ModelPaths { root: root.into() }
+        ModelPaths {
+            inner: koru_models::ModelPaths::at(root),
+        }
+    }
+
+    /// The generic paths this wraps — what a [`crate::DiskModelStore`] hands
+    /// the store it is built on.
+    pub fn generic(&self) -> &koru_models::ModelPaths {
+        &self.inner
     }
 
     /// The cache root. Everything else this type answers is under it, and
     /// `every_resolved_path_lands_under_the_cache_root` is what says so.
     pub fn root(&self) -> &Path {
-        &self.root
+        self.inner.root()
     }
 
+    /// `<cache>/<id>` — the generic layout, named by voice's `ModelId`. The
+    /// two id types share one charset rule (`descriptor/projection_tests.rs`
+    /// pins that), so the string is the same path component either way.
     pub fn id_dir(&self, id: &ModelId) -> PathBuf {
-        self.root.join(id.as_str())
+        self.inner.root().join(id.as_str())
     }
 
     pub fn version_dir(&self, id: &ModelId, version: &ModelVersion) -> PathBuf {
@@ -125,66 +120,40 @@ impl ModelPaths {
     }
 
     /// Where a download is assembled and where a delete moves a directory
-    /// before it removes it — so a concurrent reader never meets a model that
-    /// is half written or half gone.
+    /// before it removes it.
     pub fn staging_dir(&self) -> PathBuf {
-        self.root.join(STAGING)
+        self.inner.staging_dir()
     }
 
-    /// Where a `.part` survives a restart. **Keyed by digest**, not by URL or
-    /// by process id: the same bytes resumed from a different mirror are still
-    /// the same bytes.
+    /// Where a `.part` survives a restart, keyed by digest.
     pub fn parts_dir(&self) -> PathBuf {
-        self.root.join(PARTS)
+        self.inner.parts_dir()
     }
 
     /// The archive for one digest, once it is complete.
     pub fn archive_path(&self, digest: &Sha256Digest) -> PathBuf {
-        self.parts_dir().join(format!("{digest}.archive"))
+        self.inner.archive_path(digest)
     }
 
-    /// The per-digest install lock's file. One lock per set of bytes rather
-    /// than one for the cache, because two people installing two different
-    /// models have nothing to say to each other.
+    /// The per-digest install lock's file.
     pub fn install_lock(&self, digest: &Sha256Digest) -> PathBuf {
-        self.root.join(LOCKS).join(format!("{digest}.install"))
+        self.inner.install_lock(digest)
     }
 
     /// The directory holding one digest's lease files, one per live holder.
     pub fn leases_dir(&self, digest: &Sha256Digest) -> PathBuf {
-        self.root.join(LEASES).join(digest.as_str())
+        self.inner.leases_dir(digest)
     }
 
-    /// Whether a directory entry's name is one of ours rather than a model id.
-    /// One rule, not four names — see the module note.
+    /// Whether a directory entry's name is one of the store's own rather than a
+    /// model id.
     pub fn is_internal(name: &str) -> bool {
-        name.starts_with('.')
+        koru_models::ModelPaths::is_internal(name)
     }
 }
 
-/// `%LOCALAPPDATA%` on Windows, `~/Library/Application Support` on macOS,
-/// `$XDG_DATA_HOME` (or `~/.local/share`) elsewhere.
-///
-/// The same rule `koru_channel`'s private `local_data_base` applies, restated
-/// rather than borrowed — see the module note and Q-V26.
-fn local_data_base() -> Option<PathBuf> {
-    if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
-    } else if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|home| {
-            PathBuf::from(home)
-                .join("Library")
-                .join("Application Support")
-        })
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .map(|home| PathBuf::from(home).join(".local").join("share"))
-            })
-    }
-}
-
+/// Voice's layout is the generic layout: the two `model_dir`s agree.
+#[cfg(test)]
+mod layout_tests;
 #[cfg(test)]
 mod tests;

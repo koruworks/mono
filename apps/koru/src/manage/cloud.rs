@@ -234,6 +234,8 @@ impl ManageView {
     /// which Profile's progress the poll follows — none unless this page is
     /// in front with a disclosure open.
     pub(super) fn apply_cloud_visibility(&mut self) {
+        self.c
+            .set_sync_visible(self.in_front && matches!(self.page, Some(Page::Profile(_))));
         let showing = self.in_front && self.page == Some(Page::Cloud);
         let disclosed = self.disclosed.filter(|_| showing);
         self.c

@@ -310,6 +310,148 @@ fn the_system_document_is_filtered_out_of_the_listing() {
     assert!(trashed.is_empty());
 }
 
+/// A manifest under `w`, built from `(id, kind, parent)` rows in order.
+fn manifest_of(rows: &[(koru_core::DocumentId, &str, Option<koru_core::DocumentId>)]) -> Workspace {
+    let mut manifest = koru_store_core::manifest::Manifest::create(
+        explore::store_workspace(WorkspaceId::new()),
+        "t",
+        koru_store_core::model::Timestamp::from_millis(1),
+    )
+    .unwrap();
+    for (id, kind, parent) in rows {
+        manifest
+            .add_document(
+                explore::store_document(*id),
+                "",
+                kind,
+                parent.map(explore::store_document),
+            )
+            .unwrap();
+    }
+    let mut w = Workspace::new(doc());
+    w.manifest = Some(manifest);
+    w
+}
+
+fn children_seen(
+    w: &Workspace,
+    parent: Option<koru_core::DocumentId>,
+) -> Vec<koru_core::DocumentId> {
+    w.entries()
+        .into_iter()
+        .filter(|e| e.parent == parent)
+        .map(|e| e.id)
+        .collect()
+}
+
+/// **A sub-page dragged between two others, under a page that has a reading
+/// document, lands where it was dropped** (OCR TECHNICAL §9). The reading
+/// document was registered before the sub-pages, so it is the page's first
+/// child — a hidden child among visible ones — and Explore's drop index counts
+/// only what it shows. Handed to the tree untranslated, the drop landed one
+/// place early, above the sibling it was dropped below.
+#[test]
+fn a_sub_page_dropped_between_two_others_lands_there_past_a_hidden_reading_document() {
+    use koru_core::explore::{KIND_DOCUMENT, KIND_READING};
+    let page = koru_core::DocumentId::new();
+    let reading = koru_core::ids::reading_document_id(page);
+    let (s1, s2, s3) = (
+        koru_core::DocumentId::new(),
+        koru_core::DocumentId::new(),
+        koru_core::DocumentId::new(),
+    );
+    let mut w = manifest_of(&[
+        (page, KIND_DOCUMENT, None),
+        (reading, KIND_READING, Some(page)),
+        (s1, KIND_DOCUMENT, Some(page)),
+        (s2, KIND_DOCUMENT, Some(page)),
+        (s3, KIND_DOCUMENT, Some(page)),
+    ]);
+    assert_eq!(children_seen(&w, Some(page)), vec![s1, s2, s3]);
+    assert_eq!(
+        w.entries()
+            .iter()
+            .filter(|e| e.parent == Some(page))
+            .map(|e| e.ordinal)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "the ordinals a drop counts in are the visible ones"
+    );
+
+    // Dropped below s1, above s2: position 1 among what Explore shows with
+    // s3 lifted out — the coordinate `mainview` computes for a drop.
+    assert!(w.move_entry(s3, Some(page), 1).unwrap());
+    assert_eq!(children_seen(&w, Some(page)), vec![s1, s3, s2]);
+
+    // To the top, and to the end (`usize::MAX` is "drop below everything").
+    assert!(w.move_entry(s2, Some(page), 0).unwrap());
+    assert_eq!(children_seen(&w, Some(page)), vec![s2, s1, s3]);
+    assert!(w.move_entry(s2, Some(page), usize::MAX).unwrap());
+    assert_eq!(children_seen(&w, Some(page)), vec![s1, s3, s2]);
+
+    // Moving down past a sibling within the same parent: s1 below s3.
+    assert!(w.move_entry(s1, Some(page), 1).unwrap());
+    assert_eq!(children_seen(&w, Some(page)), vec![s3, s1, s2]);
+
+    // The reading document stayed the page's child throughout.
+    let manifest = w.manifest.as_ref().unwrap();
+    let entry = manifest
+        .entries()
+        .into_iter()
+        .find(|e| e.id == explore::store_document(reading))
+        .unwrap();
+    assert_eq!(entry.parent, Some(explore::store_document(page)));
+}
+
+/// The same translation at the top level, where the system document has
+/// always sat among the pages, and past a trashed sibling, which the listing
+/// hides as well: both are siblings in the tree and neither is in the list a
+/// drop counts in.
+#[test]
+fn a_top_level_drop_counts_past_the_system_document_and_a_trashed_page() {
+    use koru_core::explore::{KIND_DOCUMENT, KIND_SYSTEM};
+    let (system, binned, a, b, c) = (
+        koru_core::DocumentId::new(),
+        koru_core::DocumentId::new(),
+        koru_core::DocumentId::new(),
+        koru_core::DocumentId::new(),
+        koru_core::DocumentId::new(),
+    );
+    let mut w = manifest_of(&[
+        (system, KIND_SYSTEM, None),
+        (a, KIND_DOCUMENT, None),
+        (binned, KIND_DOCUMENT, None),
+        (b, KIND_DOCUMENT, None),
+        (c, KIND_DOCUMENT, None),
+    ]);
+    w.manifest
+        .as_mut()
+        .unwrap()
+        .trash_document(
+            explore::store_document(binned),
+            koru_store_core::model::Timestamp::from_millis(2),
+            None,
+        )
+        .unwrap();
+    assert_eq!(children_seen(&w, None), vec![a, b, c]);
+    assert_eq!(
+        w.entries()
+            .iter()
+            .filter(|e| e.parent.is_none())
+            .map(|e| e.ordinal)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2],
+        "no hole where the system document or the binned page sits"
+    );
+
+    // c dropped between a and b.
+    assert!(w.move_entry(c, None, 1).unwrap());
+    assert_eq!(children_seen(&w, None), vec![a, c, b]);
+    // a dropped below b — moving down within the same parent.
+    assert!(w.move_entry(a, None, 2).unwrap());
+    assert_eq!(children_seen(&w, None), vec![c, b, a]);
+}
+
 /// A selection selects list *items* and never their invisible container, so a
 /// moved bullet arrived at the destination as a plain paragraph — the first
 /// field report against moving a selection. The style travels beside each

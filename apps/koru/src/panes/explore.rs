@@ -631,9 +631,10 @@ struct RowDrag {
     item_count: usize,
     /// The last drop zone applied, so a relocate only happens when it changes.
     last: Option<DropTarget>,
-    /// A collapsed node the pointer is resting on as a Nest target, and when
-    /// the rest began — held past [`SPRING_OPEN_SECS`] it springs open.
-    spring: Option<(NodeId, Instant)>,
+    /// A collapsed node the pointer is resting on as a Nest target: held past
+    /// [`SPRING_OPEN_SECS`] it springs open. The wait is the shared one
+    /// (`koru_ui::tree_drag`), the tasks rail's too.
+    spring: koru_ui::tree_drag::SpringOpen<NodeId>,
 }
 
 /// The part of `F6`'s focus the column draws a ring for: an apps-row chip
@@ -949,6 +950,9 @@ pub struct ExploreView {
     /// on every change: an index would point at a different node the moment
     /// anything above it expanded.
     focus: Option<NodeId>,
+    /// A focus whose row a rebuild did not hold, waiting for one that does.
+    /// See [`restore_focus`](Self::restore_focus).
+    focus_parked: Option<NodeId>,
 
     // ---------------------------------------------------- header and popovers
     /// **Every** profile on the machine, not only the open one.
@@ -986,6 +990,19 @@ pub struct ExploreView {
     /// The fixed end of the next Shift+click range. A node id rather than an
     /// index because rebuilding the row cache can move every index.
     selection_anchor: Option<NodeId>,
+    /// The quick filter's text, while it is showing (`quick_filter`).
+    quick: Option<String>,
+    /// The field it is typed in: the shared one-line input.
+    quick_input: Option<koru_ui::text_input::TextInput>,
+    /// Whether typing in the sidebar goes to the quick filter.
+    quick_armed: bool,
+    /// Rows the filter kept only because a match is inside them.
+    quick_dim: HashSet<NodeId>,
+    quick_matches: usize,
+    /// The filter moved and the rows have not been built since.
+    quick_stale: bool,
+    /// *Search everywhere* was pressed, with this text.
+    wants_search: Option<String>,
     /// A press on a document row, latent until it moves past `DRAG_ARM_PX`.
     drag: Option<RowDrag>,
     /// The vertical slide rows make into their new slots during a drag. Empty
@@ -1482,9 +1499,14 @@ impl ExploreView {
         if self.mode == mode {
             return;
         }
+        // The quick filter is about the view it was typed over.
+        if self.mode != mode {
+            self.clear_quick_filter();
+        }
         self.mode = mode;
         self.scroll = 0.0;
         self.focus = None;
+        self.focus_parked = None;
         self.selection.clear();
         // **The roster works only while shown**: leaving it marks it stale
         // and lets the keyboard go; coming back asks once, on the
@@ -1693,9 +1715,35 @@ impl ExploreView {
         }
     }
 
+    /// Put the keyboard back on the row it was on, after a rebuild.
+    ///
+    /// A focus naming a node that has gone must not keep the keyboard — the
+    /// arrows would be swallowed. But **a rebuild can be without a row for a
+    /// moment**: opening a document rebuilds the list more than once as the
+    /// document lands, and dropping the focus on the first of those is what
+    /// handed the arrows to the document straight after a click. So a focus
+    /// whose row is missing is *parked*, holds no keyboard while it is, and
+    /// is taken up again by the next rebuild that has the row.
+    fn restore_focus(&mut self, keep: Option<NodeId>) {
+        let has = |id: &NodeId| self.rows.iter().any(|r| r.node == *id);
+        let wanted = keep.or(self.focus_parked);
+        match wanted {
+            Some(id) if has(&id) => {
+                self.focus = Some(id);
+                self.focus_parked = None;
+            }
+            Some(id) => {
+                self.focus = None;
+                self.focus_parked = Some(id);
+            }
+            None => self.focus = None,
+        }
+    }
+
     /// Give the keyboard back. Returns whether the tree had it, so a caller can
     /// decide whether the press that did it was worth a repaint.
     pub fn clear_focus(&mut self) -> bool {
+        self.focus_parked = None;
         let artifacts = self.mode == NavigatorMode::Artifacts
             && self.artifacts.key(
                 Rect::new(0.0, 0.0, 1.0, 1.0),
@@ -1720,6 +1768,8 @@ impl ExploreView {
     /// top of a list you would have to walk back down. Scrolled to, because a
     /// focus ring below the fold is a focus you cannot see.
     pub fn focus_tree(&mut self, area: Rect) -> bool {
+        // Coming in on the keyboard: letters filter.
+        self.quick_armed = true;
         if self.showing_socials() {
             return self.socials.as_ref().is_some_and(|surface| {
                 surface.borrow_mut().navigation_focus();
@@ -1798,6 +1848,28 @@ impl ExploreView {
         mods: winit::keyboard::ModifiersState,
     ) -> Option<Outcome> {
         use winit::keyboard::{Key, NamedKey};
+        // Moving by keyboard is being in the sidebar: letters filter from
+        // here. Enter opens what the keyboard is on, and in the views whose
+        // rows are pages the letters after it are that page's.
+        match key {
+            Key::Named(
+                NamedKey::ArrowUp
+                | NamedKey::ArrowDown
+                | NamedKey::ArrowLeft
+                | NamedKey::ArrowRight
+                | NamedKey::Home
+                | NamedKey::End,
+            ) => self.quick_armed = true,
+            Key::Named(NamedKey::Enter)
+                if matches!(
+                    self.mode,
+                    NavigatorMode::Documents | NavigatorMode::Canvases | NavigatorMode::Chats
+                ) =>
+            {
+                self.quick_armed = false
+            }
+            _ => {}
+        }
         if self.showing_socials() {
             let surface = self.socials.as_ref()?;
             let outcome = surface.borrow_mut().navigation_key(key, mods);
@@ -1839,8 +1911,14 @@ impl ExploreView {
         let i = self.focus_index()?;
         match key {
             Key::Named(NamedKey::ArrowDown) | Key::Named(NamedKey::ArrowUp) => {
-                let next = if matches!(key, Key::Named(NamedKey::ArrowDown)) {
-                    (i + 1).min(self.rows.len().saturating_sub(1))
+                let down = matches!(key, Key::Named(NamedKey::ArrowDown));
+                let n = self.rows.len().max(1);
+                // **Filtered, the answers are a ring**: Down from the last is
+                // the first. The whole tree stops at its ends, as it did.
+                let next = if self.quick.is_some() {
+                    if down { (i + 1) % n } else { (i + n - 1) % n }
+                } else if down {
+                    (i + 1).min(n - 1)
                 } else {
                     i.saturating_sub(1)
                 };
@@ -2051,7 +2129,8 @@ impl ExploreView {
         // [`collapsed`](Self::collapsed).
         self.collapsed.retain(|id| ws.kind_of(*id).is_some());
         self.push_entries(ws, &entries);
-        self.focus = keep.filter(|id| self.rows.iter().any(|r| r.node == *id));
+        self.restore_focus(keep);
+        self.apply_quick_filter();
         // Drop selection entries naming nodes that have left the tree, the way
         // `collapsed` is filtered — a slow leak of ids naming nothing.
         self.selection
@@ -2256,7 +2335,7 @@ impl ExploreView {
                 }
                 skip_below = None;
             }
-            let expanded = !self.collapsed.contains(&node);
+            let expanded = self.quick_opens_folds() || !self.collapsed.contains(&node);
             if !expanded {
                 skip_below = Some(depth);
             }
@@ -2296,7 +2375,8 @@ impl ExploreView {
             });
         }
 
-        self.focus = keep.filter(|id| self.rows.iter().any(|r| r.node == *id));
+        self.restore_focus(keep);
+        self.apply_quick_filter();
         self.selection
             .retain(|id| self.rows.iter().any(|r| r.node == *id));
         self.selection_anchor = self
@@ -3105,7 +3185,8 @@ impl ExploreView {
                 .or_else(|| Some(Instant::now()))
         };
 
-        self.focus = keep.filter(|id| self.rows.iter().any(|r| r.node == *id));
+        self.restore_focus(keep);
+        self.apply_quick_filter();
         self.selection
             .retain(|id| self.rows.iter().any(|r| r.node == *id));
         self.selection_anchor = self
@@ -3155,7 +3236,7 @@ impl ExploreView {
             let Ok(read) = ws.read(*node) else { continue };
             self.document_appearances
                 .insert(*node, DocumentAppearance::from_node(&read));
-            let expanded = !self.collapsed.contains(node);
+            let expanded = self.quick_opens_folds() || !self.collapsed.contains(node);
             if !expanded {
                 skip_below = Some(depth);
             }
@@ -4297,6 +4378,19 @@ impl ExploreView {
         }
     }
 
+    fn open_heading_actions(&mut self, area: Rect) -> Outcome {
+        if self.mode == NavigatorMode::Files {
+            self.close_popover();
+            let button = self.actions_button(area);
+            Outcome::LibraryMenu {
+                at: (button.x, button.y + button.h),
+            }
+        } else {
+            self.toggle_popover(PopoverKind::LibraryActions);
+            Outcome::Consumed
+        }
+    }
+
     fn choose_library_action(&mut self, action: actions::Action) -> Outcome {
         match action {
             actions::Action::Import => match self.mode {
@@ -4566,7 +4660,7 @@ impl ExploreView {
     /// the tab row have, owned by the shell's stack and visible in the
     /// inspector as a `Gap`.
     fn rows_top(&self, area: Rect) -> f32 {
-        self.heading_band(area).y + HEADER_H + theme::NAV_PAD
+        self.heading_band(area).y + HEADER_H + theme::NAV_PAD + self.quick_band()
     }
 
     /// The rail beside this pane: `RAIL_W` wide to its left, under the lane.
@@ -5226,6 +5320,9 @@ impl ExploreView {
             self.close_popover();
             return Outcome::Consumed;
         }
+        if let Some(out) = self.quick_press(area, x, y) {
+            return out;
+        }
         // Match the document scrollbar: the wider invisible gutter claims the
         // press before any row beneath it. The thumb drags from the exact grab
         // point; the track above and below pages by one visible band.
@@ -5257,8 +5354,7 @@ impl ExploreView {
                     Outcome::Consumed
                 };
             }
-            self.toggle_popover(PopoverKind::LibraryActions);
-            return Outcome::Consumed;
+            return self.open_heading_actions(area);
         }
 
         // The pinned rows, before any mode's own surface and before `row_at`:
@@ -5288,10 +5384,17 @@ impl ExploreView {
             {
                 return Outcome::Tasks(rail::TasksRailRequest::ChoosePlace { target, at: (x, y) });
             }
-            return match self
-                .rail
-                .mouse_down(self.above_footer(area), top, x, y, ctrl)
-            {
+            // A queue or a list opens a page with nothing to type in: the
+            // next letters are the filter's.
+            self.quick_armed = true;
+            return match self.rail.mouse_down(
+                self.above_footer(area),
+                top,
+                x,
+                y,
+                mods.ctrl,
+                mods.shift,
+            ) {
                 Some(request) => Outcome::Tasks(request),
                 None => Outcome::Consumed,
             };
@@ -5331,6 +5434,8 @@ impl ExploreView {
                     at: (x, y),
                 };
             }
+            // A press on a chat row is being in the sidebar too.
+            self.quick_armed = true;
             self.chats
                 .mouse_down_with(self.above_footer(area), top, x, y, ctrl, shift);
             return self.chats_outcome();
@@ -5507,7 +5612,7 @@ impl ExploreView {
                     carried_order: Vec::new(),
                     item_count: 1,
                     last: None,
-                    spring: None,
+                    spring: Default::default(),
                 });
                 return Outcome::Consumed;
             }
@@ -5534,6 +5639,11 @@ impl ExploreView {
         // release; files stay selected because opening or saving a file is an
         // explicit action. Non-manifest landmarks open immediately.
         if matches!(row.kind, Kind::Document | Kind::File) {
+            // **A press on a row is being in the sidebar**: the letters that
+            // follow filter it (owner, 2026-11-16, after the first build
+            // gave them to the document a press had opened). A press in the
+            // page gives the keyboard back, as it always has.
+            self.quick_armed = true;
             self.press_selection(i, ctrl, shift);
             self.drag = Some(RowDrag {
                 grab: row.node,
@@ -5554,7 +5664,7 @@ impl ExploreView {
                 carried_order: Vec::new(),
                 item_count: 1,
                 last: None,
-                spring: None,
+                spring: Default::default(),
             });
             return Outcome::Consumed;
         }
@@ -5918,6 +6028,48 @@ impl ExploreView {
     /// A double-click on an image row asks the container to open its rename
     /// field. A double-click on a file whose bytes are here opens it in the
     /// associated app. Document rows already navigated on the first click.
+    /// **A double-click on a row that holds rows opens it, or shuts it** — a
+    /// document with documents inside, or a list with lists inside. Answers
+    /// whether it did, so the caller rebuilds and repaints.
+    ///
+    /// Not on the chevron's own slot: a press there already toggled, twice,
+    /// and a third would undo the gesture.
+    pub fn toggle_fold_at(&mut self, area: Rect, viewport: (f32, f32), x: f32, y: f32) -> bool {
+        if self.popover_at(area, viewport, x, y).is_some() {
+            return false;
+        }
+        if self.showing_tasks() {
+            let top = self.rows_top(area);
+            return self.rail.toggle_fold_at(area, top, x, y);
+        }
+        if self.mode != NavigatorMode::Documents {
+            return false;
+        }
+        let Some(i) = self.row_at(area, x, y) else {
+            return false;
+        };
+        let row = self.rows[i].clone();
+        if !row.has_children {
+            return false;
+        }
+        let on_caret = self
+            .row_rects(area)
+            .into_iter()
+            .find(|(r, _)| *r == i)
+            .is_some_and(|(_, rect)| self.row_parts(&row, rect).caret.contains(x, y));
+        if on_caret {
+            return false;
+        }
+        let opening = self.fold_set_ref().contains(&row.node);
+        if opening {
+            self.fold_set().remove(&row.node);
+        } else {
+            self.fold_set().insert(row.node);
+        }
+        self.start_turn(row.node, opening);
+        true
+    }
+
     pub fn mouse_double_click(&self, area: Rect, viewport: (f32, f32), x: f32, y: f32) -> Outcome {
         // The header and the popover acted on the first click. Without this,
         // the second click of a double-click would re-toggle the popover and it
@@ -5965,11 +6117,15 @@ impl ExploreView {
         // A drag in flight follows the pointer wherever it goes — including out
         // of the column, the way a leaf row-drag does — so it is settled before
         // any hover tracking that would otherwise move a highlight under it.
+        // **Nothing is carried while the quick filter is on**: the rows
+        // shown are not neighbours, and a drop between two of them would
+        // land somewhere the reader cannot see.
+        let filtering = self.quick.is_some();
         if let Some(d) = self.drag.as_mut() {
             d.y = y;
             d.area = area;
             if !d.armed {
-                if (y - d.origin_y).abs() < DRAG_ARM_PX {
+                if filtering || (y - d.origin_y).abs() < DRAG_ARM_PX {
                     // Still latent: track the hover the way a click would, so
                     // the row under the pointer reads as active.
                     let hover = self.row_at(area, x, y);
@@ -6261,19 +6417,17 @@ impl ExploreView {
         // not the Trash footer. `scroll_by` is `scroll -= dy`, so positive dy
         // reveals content above (same sign the wheel uses).
         let bottom = self.rows_bottom(area);
-        let band = theme::AUTO_SCROLL_BAND;
-        let speed = theme::AUTO_SCROLL_MAX_SPEED;
-        let mut dy = 0.0_f32;
         // Only inside the rows' own region: a grab held in the header above, or
         // over the pinned Trash footer below, must not keep the list crawling —
         // the band is the last few library rows at each end, nothing past them.
-        if y >= top && y - top < band {
-            let strength = ((band - (y - top)) / band).clamp(0.0, 1.0);
-            dy += strength * speed * dt;
-        } else if y < bottom && bottom - y < band {
-            let strength = ((band - (bottom - y)) / band).clamp(0.0, 1.0);
-            dy -= strength * speed * dt;
-        }
+        let dy = koru_ui::tree_drag::edge_scroll(
+            y,
+            top,
+            bottom,
+            theme::AUTO_SCROLL_BAND,
+            theme::AUTO_SCROLL_MAX_SPEED,
+            dt,
+        );
         if dy != 0.0 {
             self.scroll_by(area, dy);
             // The list moved under the pointer, so the drop zone may have too.
@@ -6282,21 +6436,14 @@ impl ExploreView {
         }
         // Spring-open: a collapsed Nest target held past the threshold opens in
         // place, so the drag can descend into it.
-        let spring = match self.drag.as_ref().and_then(|d| d.spring) {
-            Some((node, since))
-                if now.duration_since(since).as_secs_f32() >= SPRING_OPEN_SECS
-                    && self.collapsed.contains(&node) =>
-            {
-                Some(node)
-            }
-            _ => None,
-        };
+        let spring = self
+            .drag
+            .as_mut()
+            .and_then(|d| d.spring.due(now, SPRING_OPEN_SECS))
+            .filter(|node| self.collapsed.contains(node));
         if let Some(node) = spring {
             self.collapsed.remove(&node);
             self.rebuild_during_drag(ws, now);
-            if let Some(d) = self.drag.as_mut() {
-                d.spring = None;
-            }
             moved = true;
         }
         moved
@@ -6446,7 +6593,7 @@ impl ExploreView {
                     node,
                     zone: DropZone::Nest,
                 });
-                d.spring = None;
+                d.spring.clear();
             }
             return;
         }
@@ -6458,7 +6605,7 @@ impl ExploreView {
             // spring-open candidate so a later valid one starts fresh.
             if let Some(d) = self.drag.as_mut() {
                 d.last = None;
-                d.spring = None;
+                d.spring.clear();
             }
             return;
         };
@@ -6476,13 +6623,14 @@ impl ExploreView {
             // A Nest target that is collapsed is a spring-open candidate: rest
             // on it past `SPRING_OPEN_SECS` and it opens in place. Anything else
             // cancels the wait.
-            d.spring = match target {
+            let candidate = match target {
                 DropTarget::Row {
                     node,
                     zone: DropZone::Nest,
-                } if self.collapsed.contains(&node) => Some((node, now)),
+                } if self.collapsed.contains(&node) => Some(node),
                 _ => None,
             };
+            d.spring.rest_on(candidate, now);
         }
     }
 
@@ -6504,59 +6652,30 @@ impl ExploreView {
         }
         let top = self.rows_top(area);
         let centre = y - grab_dy + theme::NAV_ROW_H * 0.5;
-        // Dropping past the end of the list appends at the top level (the
-        // library root), however deep the last visible row is — so a tree whose
-        // last node is open still lets a drag land after it at depth 0 rather
-        // than nesting inside the open branch.
-        let last_bottom = top + self.rows.len() as f32 * theme::NAV_ROW_H - self.scroll;
-        if centre > last_bottom {
-            for r in self.rows.iter().rev() {
-                if r.depth == 0 && !carried.contains(&r.node) {
-                    return Some(DropTarget::Row {
-                        node: r.node,
-                        zone: DropZone::After,
-                    });
-                }
-            }
+        // The arithmetic is the shared one (`koru_ui::tree_drag`); what is
+        // this tree's own is which rows may take a child — a document, and
+        // nothing else.
+        let rows: Vec<koru_ui::tree_drag::Row> = self
+            .rows
+            .iter()
+            .map(|r| koru_ui::tree_drag::Row {
+                depth: usize::from(r.depth),
+                carried: carried.contains(&r.node),
+                can_nest: r.kind == Kind::Document,
+            })
+            .collect();
+        use koru_ui::tree_drag::{Target, Zone};
+        match koru_ui::tree_drag::drop_target(&rows, theme::NAV_ROW_H, top - self.scroll, centre)? {
+            Target::Root => Some(DropTarget::Library),
+            Target::Row { index, zone } => Some(DropTarget::Row {
+                node: self.rows[index].node,
+                zone: match zone {
+                    Zone::Before => DropZone::Before,
+                    Zone::After => DropZone::After,
+                    Zone::Nest => DropZone::Nest,
+                },
+            }),
         }
-        // The non-carried row whose slot centre is nearest the grab's centre.
-        // The carried block follows the pointer, so the pointer is always over
-        // one of its own rows; the meaningful question is which *other* row the
-        // block has reached.
-        let mut best: Option<(usize, f32)> = None;
-        for (i, r) in self.rows.iter().enumerate() {
-            if carried.contains(&r.node) {
-                continue;
-            }
-            let slot_c = top + i as f32 * theme::NAV_ROW_H - self.scroll + theme::NAV_ROW_H * 0.5;
-            let dist = (centre - slot_c).abs();
-            match best {
-                Some((_, d)) if dist >= d => {}
-                _ => best = Some((i, dist)),
-            }
-        }
-        let Some((i, _)) = best else {
-            return (!carried.is_empty()).then_some(DropTarget::Library);
-        };
-        let slot_y = top + i as f32 * theme::NAV_ROW_H - self.scroll;
-        let rel = ((centre - slot_y) / theme::NAV_ROW_H).clamp(0.0, 1.0);
-        let zone = if rel < 0.25 {
-            DropZone::Before
-        } else if rel > 0.75 {
-            DropZone::After
-        } else if self.rows[i].kind == Kind::Document {
-            DropZone::Nest
-        } else if rel < 0.5 {
-            // A non-document row cannot take a child, so the middle band falls
-            // back to the nearer edge rather than refusing the drop.
-            DropZone::Before
-        } else {
-            DropZone::After
-        };
-        Some(DropTarget::Row {
-            node: self.rows[i].node,
-            zone,
-        })
     }
 
     /// The project group an Agents drag is resting on: the group row itself,
@@ -7266,6 +7385,7 @@ impl ExploreView {
             );
             self.paint_heading_elements(scene, root, engine, area);
         }
+        self.draw_quick_filter(scene, root, engine, area);
         if area.w > 0.0 {
             let top = self.rows_top(area);
             let _gap = koru_draw::inspect::scope(
@@ -7684,11 +7804,13 @@ impl ExploreView {
         if self.mode == NavigatorMode::Agents && row.node == Self::agent_projects_header_node() {
             return RowTreatment::Heading;
         }
-        // Open **or** picked. One treatment, because a multi-selection and the
-        // document you have open are the same claim on this column; splitting
-        // them put a chosen row in the hover's clothes, and then `draw_carried`
-        // promoted the very same set to cards the instant a drag armed.
-        if self.selected == Some(row.node) || self.selection.contains(&row.node) {
+        // Files have one selection: the explicit picked set. A search/reveal
+        // must not leave the active-tab marker painting a second, untoggleable
+        // selection after the person picks another file. Documents still show
+        // which tab is open as well as the rows selected for a batch gesture.
+        if self.selection.contains(&row.node)
+            || (row.kind != Kind::File && self.selected == Some(row.node))
+        {
             return RowTreatment::Card;
         }
         if self.hover == Some(i) {
@@ -7872,8 +7994,12 @@ impl ExploreView {
         } else {
             // Every row under Canvases is a canvas; its row wears the glyph the
             // section's icon and the canvas's tab wear.
+            // **A document that holds documents wears the stacked glyph**, so
+            // a group reads as one before its chevron is found by hovering.
             let glyph = if self.mode == NavigatorMode::Canvases {
                 icons::CANVAS
+            } else if row.kind == Kind::Document && row.has_children {
+                icons::FILES
             } else {
                 icon_for(row.kind)
             };
@@ -7895,7 +8021,32 @@ impl ExploreView {
             FileState::Present if emphasised => p.text,
             FileState::Present => p.text_dim,
         };
-        scene::draw_layout_first_line(scene, root, &label, text_x, label_y, Some(label_colour));
+        // While the quick filter is on: a row kept only for what is inside
+        // it is dim, and a match wears its highlight.
+        let label_colour = if self.quick_dim.contains(&row.node) {
+            p.placeholder
+        } else {
+            label_colour
+        };
+        let quick = self.quick_spans(&row.label);
+        if quick.is_empty() {
+            scene::draw_layout_first_line(scene, root, &label, text_x, label_y, Some(label_colour));
+        } else {
+            koru_ui::highlighted_text::draw_highlighted_line(
+                scene,
+                root,
+                engine,
+                &row.label,
+                quick,
+                text_x,
+                label_y,
+                parts.label.w,
+                theme::role::row(),
+                label_colour,
+                p.text,
+                p.highlights[0].1,
+            );
+        }
         // The note marker is **always** drawn on a row that has one, not
         // hover-only like the `…`: it says something true about the file, and
         // it is the way into the note. Dim like the type glyph — it is an
@@ -8643,6 +8794,7 @@ mod canvases;
 mod heading_elements;
 pub mod home_nav;
 pub(crate) mod organization_sync;
+pub(crate) mod quick_filter;
 pub mod rail;
 mod rail_overflow;
 mod slides;

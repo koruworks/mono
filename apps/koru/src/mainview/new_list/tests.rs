@@ -8,7 +8,7 @@ use super::*;
 
 fn field(color: &str) -> (NewList, TextEngine) {
     let mut e = TextEngine::new();
-    let f = NewList::new(&mut e, color);
+    let f = NewList::new(&mut e, color, None);
     (f, e)
 }
 

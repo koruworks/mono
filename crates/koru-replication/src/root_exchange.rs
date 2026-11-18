@@ -432,6 +432,18 @@ pub fn admit_peer_subject<C: Catalog, B: Backend>(
     admit(store, TransportSubject::Workspace(workspace))
 }
 
+/// First contact has no Workspace policy row until its inventory provisions
+/// the replica. This gate only admits requesting that inventory, never serving
+/// or importing content under a missing policy.
+pub fn admit_peer_inventory_request<C: Catalog, B: Backend>(
+    store: &Store<C, B>,
+    workspace: WorkspaceId,
+) -> Result<(), StoreFailure> {
+    store
+        .admit_peer_inventory_request(workspace)
+        .map_err(map_root_error)
+}
+
 /// The same gate for a Profile's own units.
 pub fn admit_peer_profile<C: Catalog, B: Backend>(
     store: &Store<C, B>,

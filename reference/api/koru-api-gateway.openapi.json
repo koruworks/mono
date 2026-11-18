@@ -11329,6 +11329,20 @@
             "nullable": true,
             "type": "string"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**How far reading the pictures and files in this query's workspaces\nhas got, and whether to offer the reader** — the Store page's\n[`koru_store_wire::search::SearchPage::reading`], carried through the\ngateway unchanged (OCR Plan 2.4). `None` from a Store that predates\nreading or counts nothing, which a surface reads as \"say nothing\".\nAdditive: absent on the wire when `None`, so an older client parses a\nnewer answer and a newer client an older one."
+          },
           "request_seq": {
             "format": "uint64",
             "minimum": 0,
@@ -11383,6 +11397,11 @@
           },
           "include_facets": {
             "default": false,
+            "type": "boolean"
+          },
+          "include_lists": {
+            "default": false,
+            "description": "Answer with task lists too: a list whose name matches is a hit of its\nown, ahead of every other result in every sort. **Off by default**, and\nwith it off no list is a candidate and no list's name changes a typo\ncorrection: the answer is what it was before lists were indexed.",
             "type": "boolean"
           },
           "kinds": {
@@ -11457,6 +11476,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "task_results": {
+            "default": false,
+            "description": "Answer with tasks as tasks: a hit on a task carries\n[`SearchHit::task`], a task's own text ranks like a title, and text\nread from pictures and files keeps one result per task rather than one\nper document. **Off by default**; with it off hits, scores, order and\npage membership are unchanged.",
+            "type": "boolean"
           },
           "text": {
             "type": "string"
@@ -13459,6 +13483,31 @@
         },
         "required": [
           "families"
+        ],
+        "type": "object"
+      },
+      "ListHit": {
+        "description": "What a list result carries beyond its name.",
+        "properties": {
+          "color": {
+            "description": "Its swatch, as an accent token; absent for a list wearing no color.",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "description": "The list's id, in storage form.",
+            "type": "string"
+          },
+          "path": {
+            "description": "The names of the lists it is inside, outermost first, as the rail\ndraws them. Empty for a top-level list.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id"
         ],
         "type": "object"
       },
@@ -16270,6 +16319,47 @@
           "title",
           "total_messages",
           "messages"
+        ],
+        "type": "object"
+      },
+      "ReadingCounts": {
+        "description": "**How far reading has got, for the workspaces a query is about.**\n\nScoped to the query's workspaces on purpose: a search in a workspace with\nfive pictures says five, however many thousands another workspace holds.\nCounts only — no name, no hash, no path.\n\nAn item is one readable blob referenced by a live entry: a file, or a\npicture in a page. `unread` counts those with no finished reading at the\ncurrent generation; `needs_reader` and `not_here` say why some of them are\nwaiting, and are each part of `unread`.",
+        "properties": {
+          "needs_reader": {
+            "description": "Of `unread`, those waiting for the reader to be installed.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "not_here": {
+            "description": "Of `unread`, those whose bytes are not on this computer.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "offer": {
+            "description": "Whether a surface should offer the reader now: something waits for it,\nit is not installed, and the person has not said *Not now* since the\nlast import that brought a picture or a scanned PDF. Every surface asks\nthis one place.",
+            "type": "boolean"
+          },
+          "total": {
+            "description": "Readable items in scope.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "unread": {
+            "description": "Readable items with no finished reading.",
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "unread",
+          "total",
+          "needs_reader",
+          "not_here",
+          "offer"
         ],
         "type": "object"
       },
@@ -19747,6 +19837,20 @@
           "lifecycle": {
             "$ref": "#/components/schemas/Lifecycle"
           },
+          "list": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ListHit"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**This hit is a task list**, not a document: `kind` is `task_list`,\n`document` is absent and `title` is the list's name. Only in an answer\nto a query that set [`SearchQuery::include_lists`]."
+          },
           "mime": {
             "default": null,
             "description": "MIME type of an opaque file, when the manifest recorded one.",
@@ -19763,6 +19867,18 @@
             "nullable": true,
             "type": "integer"
           },
+          "page": {
+            "description": "The page the words were found on, counting from 1, when the hit is a\n[`field::READ`] fragment of a file with more than one page.\n\n**Absent for everything else** — any other field, a picture, a one-page\nPDF, a plain-text file — and absent from an answer written before this\nfield existed, which is why it defaults rather than being required.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "picture_name": {
+            "description": "The name a person gave the picture the words were read from, when the\nhit is a [`field::READ`] fragment of a picture inside a document and\nsomebody named it (OCR EXPERIENCE §3: the picture mark, then its name\nonly when a person gave it one).\n\n**Absent for a picture nobody named**, for a file, for every other\nfield, and from an answer written before this field existed.",
+            "nullable": true,
+            "type": "string"
+          },
           "score": {
             "format": "double",
             "type": "number"
@@ -19775,6 +19891,20 @@
               "$ref": "#/components/schemas/MatchSpan"
             },
             "type": "array"
+          },
+          "task": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TaskHit"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "**This hit is a task**: a node carrying `koru.task` or `koru.due`, or\nthe title of a page that is itself one. Only in an answer to a query\nthat set [`SearchQuery::task_results`]. A surface opens Tasks on\n`task.node`; the hit's own `node` is what it always was (absent for a\ntitle)."
           },
           "title": {
             "description": "The document's name, from the listing.",
@@ -19836,6 +19966,20 @@
             "nullable": true,
             "type": "integer"
           },
+          "reading": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReadingCounts"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "How far reading the pictures and files **in this query's workspaces**\nhas got, and whether to offer the reader.\n\n`None` when the store says nothing about it: a store that predates\nreading, or one that does not count. A surface then shows no line —\nabsence is never read as \"everything is read\"."
+          },
           "request_seq": {
             "format": "uint64",
             "minimum": 0,
@@ -19882,6 +20026,11 @@
           "include_facets": {
             "default": false,
             "description": "Also return the workspaces the index knows, for a scope picker.",
+            "type": "boolean"
+          },
+          "include_lists": {
+            "default": false,
+            "description": "Answer with task lists too: a list whose name matches is a hit of its\nown, ahead of every other result in every sort. **Off by default**, and\nwith it off no list is a candidate and no list's name changes a typo\ncorrection: the answer is what it was before lists were indexed.",
             "type": "boolean"
           },
           "kinds": {
@@ -19943,6 +20092,11 @@
               "type": "string"
             },
             "type": "array"
+          },
+          "task_results": {
+            "default": false,
+            "description": "Answer with tasks as tasks: a hit on a task carries\n[`SearchHit::task`], a task's own text ranks like a title, and text\nread from pictures and files keeps one result per task rather than one\nper document. **Off by default**; with it off hits, scores, order and\npage membership are unchanged.",
+            "type": "boolean"
           },
           "text": {
             "type": "string"
@@ -22202,6 +22356,24 @@
         ],
         "type": "object"
       },
+      "TaskHit": {
+        "description": "What a task result carries: which node is the task, and whether it is done.",
+        "properties": {
+          "node": {
+            "description": "The task's node. For a node hit, the hit's own node; for the title of\na page that is a task, that page's root node.",
+            "type": "string"
+          },
+          "state": {
+            "description": "The task's lifecycle token as indexed — `open` when none is recorded.\nA hint for drawing; where the task is opened is decided from the task\nas it is at that moment, never from this.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "node",
+          "state"
+        ],
+        "type": "object"
+      },
       "TaskQuery": {
         "description": "`POST /v1/tasks/query`.\n\nEvery filter is optional and absent means \"no constraint\". Filters compose\nwith AND; the values inside `tags` compose with OR (any of). The base set is\n**derived, never marked in a second table**: a node is a task when it\ncarries the `koru.task` marker or a due date, which is the whole derivation\n([ADR-285]).\n\n[ADR-285]: ../../../docs/decisions/ADR-276-300.md#adr-285-taskmodel--a-task-is-a-marked-node-and-the-marker-or-a-due-date-is-the-whole-derivation",
         "properties": {
@@ -22311,6 +22483,14 @@
             "description": "Only tasks **not** carrying this key.",
             "nullable": true,
             "type": "string"
+          },
+          "only": {
+            "description": "**Exactly these tasks**, and nothing else. Absent means no selector.\n\nFor opening one task from somewhere that already knows which: the\nanswer is that task **as it is now**, whatever page it is on — open or\ncompleted, however long ago it was finished.\n\n**The selector is exclusive, not a filter that quietly wins.** With it\npresent:\n\n- `workspaces` must name exactly one workspace;\n- 1 to [`MAX_ONLY`] entries, each a node id that parses;\n- `bucket`, `list`, `due`, `priority`, `min_priority`, `tags`, `has`,\n  `missing`, `after` and `group_by` are refused (400);\n- `lifecycle`, `completed_on_or_after` and `recently_completed_since`\n  are not applied, and neither is `limit` — the selector bounds the\n  answer;\n- `include_trashed` applies as always;\n- `bucket_windows` is allowed, and fills [`TaskRow::bucket`].\n\nA reference that is not in that workspace, or is not a task, is simply\nnot in the answer. That is not an error.",
+            "items": {
+              "$ref": "#/components/schemas/TaskRef"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "overdue": {
             "anyOf": [
@@ -22444,6 +22624,23 @@
         ],
         "type": "object"
       },
+      "TaskRef": {
+        "description": "One task, named exactly: the document it is written in and its node.",
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "node": {
+            "description": "The task's node id, in storage form.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "document",
+          "node"
+        ],
+        "type": "object"
+      },
       "TaskRow": {
         "description": "One task. The identity is `(workspace, document, node)`, carried together —\nnever a node id on its own — and [`task`](Self::task) is the same triple as\nthe one string that is also its pagination key and its activity subject.",
         "properties": {
@@ -22456,6 +22653,11 @@
           },
           "breadcrumb": {
             "description": "Where the task lives: the workspace, then the document path, then the\nancestor rows, joined by `\" / \"` — one rule, computed the same way by\nthe desktop from an open document and by the store from the projection.",
+            "type": "string"
+          },
+          "bucket": {
+            "description": "**The task's natural bucket**: one of the five tokens, placed by the\nsame ordered rule the rail's counts use, so the five are a partition.\nA task pinned to Today with a later due keeps its natural bucket here\n(`upcoming`, say); the pin is the row's own `koru.today` attribute.\n\nPresent only in an answer to a query that named tasks with\n[`TaskQuery::only`] **and** sent\n[`bucket_windows`](TaskQuery::bucket_windows). Without the windows the\nstore does not know what *today* is and never guesses a day or a zone.",
+            "nullable": true,
             "type": "string"
           },
           "document": {

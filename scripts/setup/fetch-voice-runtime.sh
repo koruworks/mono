@@ -161,6 +161,72 @@ place() {
   echo "[voice] placed ${final}"
 }
 
+# **The ONNX Runtime static library the read worker links**, taken out of the
+# archive above once that has verified, and verified itself. `ort-sys` links a
+# static ONNX Runtime only from the directory `ORT_LIB_PATH` names, so the one
+# library is extracted beside the archive, in the archive's own layout, and the
+# launchers point `ORT_LIB_PATH` at its `lib/`. One ONNX Runtime in the tree,
+# from one pinned archive.
+#
+# archive-dir<TAB>file<TAB>sha256<TAB>bytes — the same row as
+# `koru_read_paddle::artifacts::ONNXRUNTIME`, and a test there fails if they
+# drift. macOS is pinned when a Mac build first links it; Linux and Windows on
+# ARM have no archive.
+ORT_LIBRARIES=(
+  "sherpa-onnx-v${VERSION}-win-x64-static-MT-Release-no-tts-lib	onnxruntime.lib	fc1f5722dd17cbe8c2131cad2b9da6e004392d45bbe71560ff5e54c9dee26f24	916804662"
+)
+
+# Extracted into a directory of its own beside the archive, verified, and only
+# then moved into place: an interrupted extraction must not leave a library
+# the build will happily link.
+place_ort_library() {
+  local archive="$1" file="$2" want_hash="$3" want_size="$4"
+  local lib_dir="${DEST}/${archive}/lib"
+  local final="${lib_dir}/${file}"
+
+  if [ -f "${final}" ]; then
+    local have_hash
+    have_hash="$(sha256_of "${final}")"
+    if [ "$(size_of "${final}")" = "${want_size}" ] && [ "${have_hash}" = "${want_hash}" ]; then
+      echo "[read] ${file} is already extracted and verified"
+      return 0
+    fi
+    echo "[read] ${final} does NOT match the pinned hash" >&2
+    echo "[read]   want ${want_hash}" >&2
+    echo "[read]   have ${have_hash}" >&2
+    echo "[read] refusing to use it; delete it to extract it again" >&2
+    return 1
+  fi
+  if [ "${VERIFY_ONLY}" = "1" ]; then
+    echo "[read] ${file} is not extracted" >&2
+    return 1
+  fi
+
+  local part="${DEST}/${archive}.part"
+  rm -rf "${part}"
+  mkdir -p "${part}"
+  echo "[read] extracting ${file} from ${archive}.tar.bz2"
+  if ! tar -xjf "${DEST}/${archive}.tar.bz2" -C "${part}" "${archive}/lib/${file}"; then
+    rm -rf "${part}"
+    echo "[read] tar could not extract ${file}" >&2
+    return 1
+  fi
+  local extracted="${part}/${archive}/lib/${file}" have_size have_hash
+  have_size="$(size_of "${extracted}")"
+  have_hash="$(sha256_of "${extracted}")"
+  if [ "${have_size}" != "${want_size}" ] || [ "${have_hash}" != "${want_hash}" ]; then
+    rm -rf "${part}"
+    echo "[read] the extracted ${file} does not match its pin" >&2
+    echo "[read]   want ${want_hash}, ${want_size} bytes" >&2
+    echo "[read]   have ${have_hash}, ${have_size} bytes" >&2
+    return 1
+  fi
+  mkdir -p "${lib_dir}"
+  mv "${extracted}" "${final}"
+  rm -rf "${part}"
+  echo "[read] placed ${final}"
+}
+
 WANT_ALL=0
 VERIFY_ONLY=0
 for arg in "$@"; do
@@ -194,8 +260,28 @@ for row in "${ARTIFACTS[@]}"; do
   place "${name}" "${hash}" "${size}" || status=1
 done
 
+ORT_LIB_DIR=""
+if [ "${status}" = "0" ]; then
+  for row in "${ORT_LIBRARIES[@]}"; do
+    archive="$(printf '%s' "${row}" | cut -f1)"
+    file="$(printf '%s' "${row}" | cut -f2)"
+    hash="$(printf '%s' "${row}" | cut -f3)"
+    size="$(printf '%s' "${row}" | cut -f4)"
+    if [ "${WANT_ALL}" = "0" ] && [[ "${archive}" != *"${WANTED}" ]]; then
+      continue
+    fi
+    place_ort_library "${archive}" "${file}" "${hash}" "${size}" || status=1
+    if [[ "${archive}" == *"${WANTED}" ]]; then
+      ORT_LIB_DIR="${DEST}/${archive}/lib"
+    fi
+  done
+fi
+
 if [ "${status}" = "0" ]; then
   echo
   echo "[voice] now:  export SHERPA_ONNX_ARCHIVE_DIR=\"${DEST}\""
+  if [ -n "${ORT_LIB_DIR}" ]; then
+    echo "[read]  and:  export ORT_LIB_PATH=\"${ORT_LIB_DIR}\""
+  fi
 fi
 exit "${status}"

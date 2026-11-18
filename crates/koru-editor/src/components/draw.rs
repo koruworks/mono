@@ -164,7 +164,7 @@ pub fn draw_overlay(
                     .map(|row| match row {
                         crate::components::list_picker::ListRow::Clear => ListFace::Clear,
                         crate::components::list_picker::ListRow::List(t) => ListFace::List {
-                            name: l.table[t].name.clone(),
+                            name: l.table[t].label(),
                             color: l.table[t].color.clone(),
                             checked: l.current == Some(l.table[t].id),
                         },

@@ -205,6 +205,7 @@ fn wire_row(i: usize) -> TaskRow {
         breadcrumb: "Acme / Projects / Q3".to_owned(),
         title: format!("Task {:05} with a reasonable amount of text on it", i + 1),
         attributes,
+        bucket: None,
     }
 }
 

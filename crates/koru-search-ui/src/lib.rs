@@ -32,8 +32,10 @@ mod due_picker;
 mod entity_search;
 mod filters;
 mod modal;
+mod offer;
 mod reader;
 mod result_layout;
+mod row_text;
 mod scope;
 mod state;
 mod store;
@@ -41,6 +43,11 @@ mod store;
 use catalog::Catalog;
 pub use entity_search::{EntityDocument, EntitySearch, EntitySearchUpdate, EntityWorkspace};
 pub use modal::SearchModal;
+/// **The line about pictures and scans, for a host that shows it elsewhere**:
+/// an import's summary words its line, and a download started there its
+/// progress, with the sentences and answers the line in search uses (OCR Plan
+/// 3.3). Pure wording over the Store's `ReaderState`; nothing here dials.
+pub use offer::{LineAction, LineView, import_summary, install_line};
 #[cfg(test)]
 use reader::SearchReadResponse;
 use reader::{SearchReadKind, SearchReadResult, SearchReader};
@@ -48,13 +55,13 @@ use result_layout::ResultContent;
 use scope::SearchScope;
 pub use state::persist_choices_in;
 use state::{
-    DEFAULT_SORT, FilterState, SearchMenu, drop_hidden_kinds, hit_key, keep_top_hit_per_document,
+    DEFAULT_SORT, FilterState, SearchMenu, drop_hidden_kinds, hit_key, keep_top_hit_per_target,
 };
 
 use koru_ai_core::{ChatId, MessageBlockId, MessageId};
 use koru_draw::geometry::Rect;
 use koru_draw::text::TextEngine;
-use koru_draw::{icons, scene, split_leading_emoji, theme};
+use koru_draw::{icons, inspect, scene, split_leading_emoji, theme};
 use koru_store_core::ids::{DocumentId, ProfileId, WorkspaceId};
 // **The store's vocabulary, not the app's.** These used to come from
 // the app's own search crate, since deleted: an index it owned became an
@@ -120,6 +127,29 @@ pub enum Target {
         match_text: Option<String>,
         disposition: Disposition,
     },
+    /// A task list, to be opened as its page in Tasks.
+    List {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        /// The list's id in storage form. A string because this crate names
+        /// no list model; the host parses it and refuses what does not parse.
+        list: String,
+        disposition: Disposition,
+    },
+    /// A task, to be opened **in Tasks, on the page where it is now** — which
+    /// the host decides from the task as it is when it is opened, never from
+    /// the hit. `document` and `node` are where the task is written, which is
+    /// also where a host falls back to when the task is gone.
+    Task {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        /// The task's node: the hit's own, or the root of a page that is
+        /// itself a task.
+        node: String,
+        match_text: Option<String>,
+        disposition: Disposition,
+    },
     Chat {
         chat: ChatId,
         message: MessageId,
@@ -156,6 +186,59 @@ pub struct CreateRow {
     pub subtitle: String,
 }
 
+/// **A place the host can open that is in no index**: a built-in page with a
+/// name, such as one of a task app's standing queues. The host names them;
+/// the surface lists the ones whose name the query spells, first, as it
+/// lists a task list, and hands the host back the `id` it was given
+/// ([`Target::List`]'s `list`). The surface knows nothing of what they are.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Place {
+    /// The host's own name for it, returned untouched when it is chosen.
+    pub id: String,
+    /// The workspace it belongs to: offered while that workspace is searched.
+    pub workspace: WorkspaceId,
+    pub name: String,
+    /// Drawn where a list draws its color square.
+    pub glyph: char,
+}
+
+/// Where `query` spells `name`: every word typed begins a word of the name,
+/// whatever the case. `None` when it does not, or nothing was typed.
+fn place_spans(name: &str, query: &str) -> Option<Vec<koru_store_wire::search::MatchSpan>> {
+    let mut words = Vec::new();
+    let mut start = None;
+    for (at, ch) in name.char_indices().chain([(name.len(), ' ')]) {
+        match (ch.is_alphanumeric(), start) {
+            (true, None) => start = Some(at),
+            (false, Some(from)) => {
+                words.push((from, &name[from..at]));
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    let mut spans = Vec::new();
+    for word in query.split(|ch: char| !ch.is_alphanumeric()) {
+        if word.is_empty() {
+            continue;
+        }
+        let wanted = word.to_lowercase();
+        let (from, _) = words
+            .iter()
+            .find(|(_, candidate)| candidate.to_lowercase().starts_with(&wanted))?;
+        let len: usize = name[*from..]
+            .chars()
+            .take(word.chars().count())
+            .map(char::len_utf8)
+            .sum();
+        spans.push(koru_store_wire::search::MatchSpan {
+            start: *from,
+            end: from + len,
+        });
+    }
+    (!spans.is_empty()).then_some(spans)
+}
+
 /// One chip of a host's footer line — a key and what it does. When a host
 /// supplies any, they stand **in place of** the surface's own hint line.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -187,26 +270,36 @@ const QUERY_ICON_SIZE: f32 = 16.0;
 const HEADER_CONTROL_SIZE: f32 = 26.0;
 /// Wide enough for the icon and the longest sort label, and constant so the
 /// header does not reshuffle when the sort changes. See `sort_rect`.
-const SORT_CHIP_W: f32 = 116.0;
+const SORT_CHIP_W: f32 = 28.0;
+/// The footer's scope chip: a workspace's name, elided, or the workspaces
+/// filter.
+const SCOPE_CHIP_W: f32 = 150.0;
+/// **Profile selection is off for now** (owner, 2026-11-16): search looks in
+/// the profile it was opened in, and widening the scope changes which
+/// workspaces of that profile are searched, never the profile. The picker,
+/// its menu and its key are kept behind this, so turning it back on is one
+/// word; nothing draws or answers for it while it is false.
+const PROFILE_PICKER: bool = false;
 
 /// The sort menu, in the order it is shown: the variant, the row's label, and
-/// the shorter one the chip has room for.
+/// the initials the chip shows — the chip is a control beside the query, and a
+/// spelled-out order took a third of the field's width to say what the menu
+/// and the tooltip already say in full.
 ///
 /// **One table.** The rows were built in one `match`, the click on row *n* was
 /// resolved in another, and the chip's label in a third — three places agreeing
 /// by hand about an order none of them named. The same idiom as `cli.rs`'s
 /// `FLAGS` and `koru-i18n`'s `ROWS`.
-const SORTS: [(SearchSort, &str, &str); 3] = [
-    (SearchSort::Relevance, "Relevance", "Relevance"),
-    (
-        SearchSort::ObservedModified,
-        "Last modified",
-        "Last modified",
-    ),
+///
+/// The third column is the header chip's glyph: the chip is an icon and
+/// nothing else, and its tooltip and the menu say the name.
+const SORTS: [(SearchSort, &str, char); 3] = [
+    (SearchSort::Relevance, "Relevance", icons::STAR),
+    (SearchSort::ObservedModified, "Last modified", icons::DATE),
     (
         SearchSort::LastUsedWorkspace,
         "Last used workspace",
-        "Last used",
+        icons::CLOCK,
     ),
 ];
 
@@ -219,7 +312,17 @@ fn pin_parts(title: &str) -> (Option<&str>, &str) {
     }
 }
 
-fn sort_label(sort: SearchSort) -> &'static str {
+/// A sort's full name, as its menu row says it: what the chip's tooltip adds
+/// to its initials.
+fn sort_name(sort: SearchSort) -> &'static str {
+    SORTS
+        .iter()
+        .find(|(candidate, ..)| *candidate == sort)
+        .map(|(_, name, _)| *name)
+        .unwrap_or_default()
+}
+
+fn sort_glyph(sort: SearchSort) -> char {
     SORTS
         .iter()
         .find(|(candidate, ..)| *candidate == sort)
@@ -248,6 +351,13 @@ const PIN_CHIP_GAP: f32 = 6.0;
 const PIN_CHIP_PAD_X: f32 = 8.0;
 const PIN_ICON_SIZE: f32 = 16.0;
 const PIN_TITLE_MAX_W: f32 = 140.0;
+/// The picture mark before a snippet read from a picture: the meta line's
+/// size, so it sits in the line rather than above it, and the air before
+/// what follows it.
+const PICTURE_MARK_SIZE: f32 = 13.0;
+/// A list result's color square: the tasks rail's own swatch, at its size.
+const LIST_SWATCH: f32 = 9.0;
+const PICTURE_MARK_GAP: f32 = 4.0;
 
 fn initial_session_state() -> state::SearchSessionState {
     // Unit tests construct many independent surfaces on reused worker threads;
@@ -336,6 +446,9 @@ pub struct SearchSurface {
     /// Global search normally leaves archived workspaces out. The no-result
     /// action flips this to search exactly those live archived workspaces.
     archived_only: bool,
+    /// The one-workspace scope this search was widened from, so Ctrl+Space
+    /// and the scope chip can narrow it again.
+    scope_home: Option<SearchScope>,
     facets: SearchFacets,
     /// Which workspaces exist and whose they are.
     ///
@@ -368,7 +481,6 @@ pub struct SearchSurface {
     selected_pin: Option<usize>,
     pin_cursor: usize,
     filters: FilterState,
-    filters_visible: bool,
     sort: SearchSort,
     menu: SearchMenu,
     menu_scroll: f32,
@@ -413,6 +525,8 @@ pub struct SearchSurface {
     create_rows: Vec<CreateRow>,
     /// The host's footer chips, drawn instead of the hint line when any.
     footer_chips: Vec<FooterChip>,
+    /// The host's places ([`Place`]).
+    places: Vec<Place>,
     /// The CREATE row the keyboard is on, if it is on one rather than a hit.
     selected_create: Option<usize>,
     hover_create: Option<usize>,
@@ -433,6 +547,9 @@ pub struct SearchSurface {
     pending_catalog: bool,
     selection_restore: Option<state::SearchSessionSelection>,
     reader: Option<SearchReader>,
+    /// The one line about pictures and scans: the reader's state as last
+    /// fetched, and where the keyboard and pointer are on it (OCR Plan 2.5).
+    offer: offer::Offer,
     target: Option<Target>,
     window_request: Option<WindowRequest>,
 }
@@ -589,6 +706,7 @@ impl SearchSurface {
                 next_offset: None,
                 updating_workspaces: Vec::new(),
                 corrected_query: None,
+                reading: None,
                 request_seq: 0,
             },
             next_cursor: None,
@@ -602,6 +720,7 @@ impl SearchSurface {
             scope,
             lifecycle: LifecycleFilter::Live,
             archived_only: false,
+            scope_home: None,
             facets: SearchFacets::default(),
             catalog: Catalog::default(),
             catalog_ready,
@@ -614,7 +733,6 @@ impl SearchSurface {
             selected_pin: None,
             pin_cursor: 0,
             filters: FilterState::default(),
-            filters_visible: false,
             sort: session.sort,
             menu: SearchMenu::None,
             tags: Vec::new(),
@@ -629,6 +747,7 @@ impl SearchSurface {
             menu_selected: None,
             create_rows: Vec::new(),
             footer_chips: Vec::new(),
+            places: Vec::new(),
             selected_create: None,
             hover_create: None,
             create: None,
@@ -643,6 +762,7 @@ impl SearchSurface {
             pending_catalog: reader.is_some(),
             selection_restore: session.selection,
             reader,
+            offer: offer::Offer::default(),
             target: None,
             window_request: None,
         };
@@ -694,15 +814,6 @@ impl SearchSurface {
         preferred.max(ResultContent::minimum_row_height())
     }
 
-    fn filter_rect(&self) -> Rect {
-        Rect::new(
-            self.sort_rect().x - 32.0,
-            (HEADER_H - HEADER_CONTROL_SIZE) * 0.5,
-            HEADER_CONTROL_SIZE,
-            HEADER_CONTROL_SIZE,
-        )
-    }
-
     fn sort_rect(&self) -> Rect {
         // **One width, whatever the sort.** It used to collapse to the icon
         // alone on relevance, so choosing a sort moved the filter icon and
@@ -730,50 +841,31 @@ impl SearchSurface {
     fn tooltip_at(&self, x: f32, y: f32) -> Option<TooltipContent> {
         use koru_keys::{Hinted, Section, show_hint};
         let hint = |text| show_hint(Hinted::Literal(text), Section::Tooltip);
-        if self.filter_rect().contains(x, y) {
+        if self.scope_chip_rect().contains(x, y)
+            && (matches!(self.scope, SearchScope::Workspace { .. }) || self.scope_home.is_some())
+        {
+            let label = if matches!(self.scope, SearchScope::Workspace { .. }) {
+                "Search all workspaces"
+            } else {
+                "Search this workspace only"
+            };
             return Some(
-                TooltipContent::new(
-                    1,
-                    self.filter_rect(),
-                    if self.filters_visible {
-                        "Hide filters"
-                    } else {
-                        "Show filters"
-                    },
-                )
-                .with_optional_shortcut(hint("Ctrl+F")),
+                TooltipContent::new(1, self.scope_chip_rect(), label)
+                    .above()
+                    .with_optional_shortcut(hint("Ctrl+Space")),
             );
         }
         if self.sort_rect().contains(x, y) {
             return Some(
-                TooltipContent::new(2, self.sort_rect(), "Sort")
-                    .with_optional_shortcut(hint("Ctrl+O")),
+                TooltipContent::new(
+                    2,
+                    self.sort_rect(),
+                    format!("Sort: {}", sort_name(self.sort)),
+                )
+                .with_optional_shortcut(hint("Ctrl+O")),
             );
         }
         None
-    }
-
-    fn filter_line_visible(&self) -> bool {
-        self.filters_visible
-            || self.filters.active()
-            || self.archived_only
-            || self.lifecycle != LifecycleFilter::Live
-    }
-
-    fn filter_line_h(&self) -> f32 {
-        if self.filter_line_visible() {
-            38.0
-        } else {
-            0.0
-        }
-    }
-
-    fn correction_h(&self) -> f32 {
-        if self.page.corrected_query.is_some() {
-            24.0
-        } else {
-            0.0
-        }
     }
 
     fn warning_h(&self) -> f32 {
@@ -820,12 +912,30 @@ impl SearchSurface {
         Rect::new(PAD, self.viewport.1 - FOOTER_H + 3.0, 180.0, 28.0)
     }
 
-    fn workspaces_chip_rect(&self) -> Rect {
-        Rect::new(15.0, HEADER_H + 4.0, 126.0, 26.0)
+    /// **Where the search is looking**, at the footer's left: the workspace's
+    /// name while the search is in one workspace, and the workspaces filter
+    /// once it has been widened to all of them. After the profile chip, which
+    /// only the wide scope shows.
+    fn scope_chip_rect(&self) -> Rect {
+        // In one place whatever the scope, so pressing it changes its words
+        // and nothing else on the surface.
+        let x = if PROFILE_PICKER && matches!(self.scope, SearchScope::Global) {
+            let profile = self.profiles_chip_rect();
+            profile.x + profile.w + 8.0
+        } else {
+            PAD
+        };
+        Rect::new(x, self.viewport.1 - FOOTER_H + 3.0, SCOPE_CHIP_W, 28.0)
     }
 
+    /// *Reset*, beside the scope chip, while a filter is on.
     fn reset_filters_rect(&self) -> Rect {
-        Rect::new(self.results_width() - 68.0, HEADER_H + 4.0, 54.0, 26.0)
+        let chip = self.scope_chip_rect();
+        Rect::new(chip.x + chip.w + 4.0, chip.y, 54.0, chip.h)
+    }
+
+    fn filters_resettable(&self) -> bool {
+        self.filters.active() || self.archived_only || self.lifecycle != LifecycleFilter::Live
     }
 
     fn popover(&self) -> Option<PopoverShell> {
@@ -860,7 +970,7 @@ impl SearchSurface {
                 PopoverAlign::Start,
             ),
             SearchMenu::Workspaces => (
-                self.workspaces_chip_rect(),
+                self.scope_chip_rect(),
                 16.0 + (self.workspace_facets().count() + 1) as f32 * 32.0,
                 PopoverAlign::Start,
             ),
@@ -1755,7 +1865,14 @@ impl SearchSurface {
         // Compared against the constants, not literals: a token renamed in the
         // wire crate is then a compile error here rather than a row that
         // silently stops rendering as a title.
-        matches!(hit.field.as_str(), field::TITLE | field::WORKSPACE)
+        //
+        // A list's name is its title. So is a task's own text: the store
+        // titles a task hit with it, and when that is also what matched, one
+        // highlighted line says it rather than two lines saying it twice.
+        matches!(
+            hit.field.as_str(),
+            field::TITLE | field::WORKSPACE | field::TASK_LIST
+        ) || (hit.task.is_some() && hit.snippet == hit.title)
     }
 
     fn edit_query(&mut self, key: &Key, text: Option<&str>, mods: ModifiersState) {
@@ -1806,12 +1923,28 @@ impl SearchSurface {
         self.refresh();
     }
 
+    /// The row's context line. See [`row_text::context_line`].
     fn result_context(hit: &SearchHit) -> String {
-        if hit.lifecycle == Lifecycle::Trashed {
-            format!("{} · In Trash", hit.breadcrumb)
-        } else {
-            hit.breadcrumb.clone()
-        }
+        row_text::context(hit)
+    }
+
+    /// **What a screen reader should hear for result `index`**: its title,
+    /// where it is, and for a match inside, the words — with the page they
+    /// were read from said in words. `None` past the end.
+    ///
+    /// Public for the host that publishes this surface to accessibility. None
+    /// does yet: the in-app modal is published as one named dialog with no
+    /// contents (`apps/koru/src/mainview/accessibility/menus.rs`), and the
+    /// dedicated window publishes no tree. The sentence is settled here, beside
+    /// the row it describes, so the day a host lists the rows it reads it
+    /// rather than assembling one of its own.
+    pub fn result_accessible_name(&self, index: usize) -> Option<String> {
+        let hit = self.page.hits.get(index)?;
+        Some(row_text::spoken(
+            koru_i18n::current(),
+            hit,
+            Self::is_title_match(hit),
+        ))
     }
 
     fn result_card_rect(&self, y: f32) -> Rect {
@@ -1857,7 +1990,9 @@ impl SearchSurface {
     }
 
     fn results_height(&self) -> f32 {
-        (self.viewport.1 - self.results_top() - FOOTER_H).max(0.0)
+        // The line about pictures and scans sits below the list and the list
+        // gives it its band, so the last row is never drawn under it.
+        (self.viewport.1 - self.results_top() - FOOTER_H - self.offer_below_results_h()).max(0.0)
     }
 
     /// The host's CREATE rows. Replacing them drops the keyboard off whatever
@@ -1868,7 +2003,77 @@ impl SearchSurface {
         self.hover_create = None;
     }
 
+    /// The host's places: listed first among the results while the query
+    /// spells their name. See [`Place`].
+    pub fn set_places(&mut self, places: Vec<Place>) {
+        self.places = places;
+    }
+
+    /// Put the places the query names at the head of a fresh page.
+    fn lead_with_places(&mut self) {
+        let query = self.query.raw_text().to_owned();
+        let scoped = match &self.scope {
+            SearchScope::Workspace { workspace, .. } => Some(*workspace),
+            SearchScope::Global => None,
+        };
+        let mut found = Vec::new();
+        for place in &self.places {
+            if scoped.is_some_and(|workspace| workspace != place.workspace) {
+                continue;
+            }
+            let Some(spans) = place_spans(&place.name, &query) else {
+                continue;
+            };
+            found.push(SearchHit {
+                workspace: place.workspace.to_storage(),
+                workspace_name: String::new(),
+                document: None,
+                node: None,
+                document_kind: String::new(),
+                mime: None,
+                kind: field::TASK_LIST.to_owned(),
+                field: field::TASK_LIST.to_owned(),
+                title: place.name.clone(),
+                breadcrumb: String::new(),
+                breadcrumb_spans: Vec::new(),
+                snippet: place.name.clone(),
+                spans,
+                lifecycle: Lifecycle::Live,
+                trashed_at: None,
+                trashed_by: None,
+                score: f64::MAX,
+                observed_modified_at_ms: None,
+                workspace_last_used_at_ms: None,
+                page: None,
+                picture_name: None,
+                list: Some(koru_store_wire::search::ListHit {
+                    id: place.id.clone(),
+                    color: None,
+                    path: Vec::new(),
+                }),
+                task: None,
+            });
+        }
+        if !found.is_empty() {
+            found.append(&mut self.page.hits);
+            self.page.hits = found;
+        }
+    }
+
+    /// The glyph of the place a hit stands for, if it stands for one.
+    fn place_glyph(&self, hit: &SearchHit) -> Option<char> {
+        let list = hit.list.as_ref()?;
+        self.places
+            .iter()
+            .find(|place| place.id == list.id)
+            .map(|place| place.glyph)
+    }
+
     /// The host's footer chips, drawn in place of the hint line.
+    ///
+    /// **Kept, and not drawn**: the footer shows the search's scope only. A
+    /// host may still hand its chips over; they are where they were if the
+    /// hints come back.
     pub fn set_footer_chips(&mut self, chips: Vec<FooterChip>) {
         self.footer_chips = chips;
     }
@@ -1929,7 +2134,7 @@ impl SearchSurface {
     }
 
     fn results_top(&self) -> f32 {
-        let base = HEADER_H + self.filter_line_h() + self.correction_h() + self.warning_h();
+        let base = HEADER_H + self.warning_h();
         if self.query.is_empty() {
             base + LANDING_INSET
         } else {
@@ -2036,6 +2241,11 @@ impl SearchSurface {
             // person typing `#` is what would fill this in.
             tags: Vec::new(),
             attributes,
+            // **This surface asks for both.** A list is a result of its own,
+            // above everything, and a task is a task. Agents and the entity
+            // picker ask for neither and are answered as they always were.
+            include_lists: true,
+            task_results: true,
             sort: self.sort,
             page_size: if self.query.is_empty() { 3 } else { 50 },
             offset,
@@ -2284,6 +2494,7 @@ impl SearchSurface {
         let mut changed = false;
         let mut continue_selection_restore = false;
         let mut refresh_after_catalog = false;
+        let mut refresh_after_install = false;
         let Some(reader) = &self.reader else {
             return false;
         };
@@ -2305,6 +2516,11 @@ impl SearchSurface {
                     changed = true;
                     self.refresh();
                 }
+                continue;
+            }
+            if let SearchReadResult::Reader(result) = response.result {
+                refresh_after_install |= self.reader_answered(result);
+                changed = true;
                 continue;
             }
             if let SearchReadResult::Catalog(catalog) = response.result {
@@ -2363,13 +2579,17 @@ impl SearchSurface {
                         self.page.hits.append(&mut page.hits);
                         self.page.next_offset = page.next_offset;
                         self.page.updating_workspaces = page.updating_workspaces;
+                        self.page.reading = page.reading;
                         self.page.request_seq = response.seq;
                     } else {
                         self.page = page;
                         self.pending_replace = None;
                     }
-                    keep_top_hit_per_document(&mut self.page.hits);
+                    keep_top_hit_per_target(&mut self.page.hits);
                     drop_hidden_kinds(&mut self.page.hits);
+                    if !append {
+                        self.lead_with_places();
+                    }
                     if self.selection_restore.is_some() {
                         continue_selection_restore = self.apply_selection_restore();
                     } else {
@@ -2446,9 +2666,15 @@ impl SearchSurface {
                     self.page.next_offset = None;
                     self.page.updating_workspaces = answer.page.updating_workspaces;
                     self.page.corrected_query = answer.page.corrected_query;
+                    // The counts are about the workspaces this query named:
+                    // the profile's, or the one workspace (OCR Plan 2.4).
+                    self.page.reading = answer.page.reading;
                     self.page.request_seq = response.seq;
-                    keep_top_hit_per_document(&mut self.page.hits);
+                    keep_top_hit_per_target(&mut self.page.hits);
                     drop_hidden_kinds(&mut self.page.hits);
+                    if !append {
+                        self.lead_with_places();
+                    }
                     if self.selection_restore.is_some() {
                         continue_selection_restore = self.apply_selection_restore();
                     } else {
@@ -2488,14 +2714,19 @@ impl SearchSurface {
                 // Handled above, before the `seq` match, for the same reason
                 // the catalog is: it answers no query.
                 SearchReadResult::ScopeTables { .. } => {}
+                // Handled above, before the `seq` match: it answers no query.
+                SearchReadResult::Reader(_) => {}
             }
         }
         if continue_selection_restore && self.pending_read.is_none() {
             self.load_more();
         }
-        if refresh_after_catalog {
+        if refresh_after_catalog || refresh_after_install {
             self.refresh();
         }
+        // A new answer's counts may put the line on screen; it needs the
+        // reader's state to say what (its size, a download's progress).
+        self.ask_reader_state();
         changed
     }
 
@@ -2522,7 +2753,6 @@ impl SearchSurface {
         self.selected_recent_query = None;
         self.clear_selection_memory();
         self.filters.clear();
-        self.filters_visible = false;
         self.menu = SearchMenu::None;
         self.refresh();
     }
@@ -2781,6 +3011,10 @@ impl SearchSurface {
                 .iter()
                 .position(|(id, _)| Some(*id) == selected)
                 .or_else(|| (!profiles.is_empty()).then_some(0))
+        } else if menu == SearchMenu::Sort {
+            // The keyboard is in the menu the moment it opens, on the
+            // ordering that is on.
+            SORTS.iter().position(|(sort, ..)| *sort == self.sort)
         } else {
             None
         };
@@ -2910,6 +3144,13 @@ impl SearchSurface {
     }
 
     fn request_open(&mut self, disposition: Disposition) {
+        self.open_selected(disposition, false);
+    }
+
+    /// Open the selected result. `in_document` asks for a task's **source
+    /// document at its line** rather than its page in Tasks — the result
+    /// menu's *Open in document*. It changes nothing for any other result.
+    fn open_selected(&mut self, disposition: Disposition, in_document: bool) {
         // Rows retained during a replacement read belong to the last complete
         // query. They remain visible to avoid a blank-frame flicker but cannot
         // be activated as though they matched the new input.
@@ -3019,6 +3260,17 @@ impl SearchSurface {
             document.map(|id| id.to_storage()).as_deref().unwrap_or("-"),
             hit.node.as_deref().unwrap_or("-"),
         );
+        // **A list opens as its page in Tasks.** It is in no document, so
+        // there is nothing to record as a document navigation.
+        if let Some(list) = &hit.list {
+            self.target = Some(Target::List {
+                profile,
+                workspace,
+                list: list.id.clone(),
+                disposition,
+            });
+            return;
+        }
         if let Some(reader) = &self.reader {
             reader.record_navigation(
                 self.request_seq,
@@ -3028,6 +3280,22 @@ impl SearchSurface {
                 self.query.value(),
             );
         }
+        // **A task opens in Tasks**, unless its document is in the bin — a
+        // binned task is found under the trash filter and opens the bin, as
+        // every binned result does — or the person asked for the document.
+        if let (Some(task), Some(document), false, false) =
+            (&hit.task, document, trashed, in_document)
+        {
+            self.target = Some(Target::Task {
+                profile,
+                workspace,
+                document,
+                node: task.node.clone(),
+                match_text,
+                disposition,
+            });
+            return;
+        }
         self.target = Some(Target::Store {
             profile,
             workspace,
@@ -3036,7 +3304,15 @@ impl SearchSurface {
             // has to say where it lives or the node resolves to nothing and the
             // result opens nothing at all.
             document,
-            node: hit.node.clone(),
+            // *Open in document* on a page that is itself a task lands on
+            // that page's own line: the task's node, which a title hit does
+            // not otherwise name.
+            node: hit.node.clone().or_else(|| {
+                hit.task
+                    .as_ref()
+                    .filter(|_| in_document)
+                    .map(|t| t.node.clone())
+            }),
             trashed,
             match_text,
             disposition,
@@ -3097,21 +3373,10 @@ impl SearchSurface {
             caret_on,
         );
         self.paint_header_controls(canvas, root);
-        if self.filter_line_visible() {
-            self.paint_filter_line(canvas, root);
-        }
-        if let Some(corrected) = self.page.corrected_query.as_deref() {
-            let text = format!("Showing results for {corrected}");
-            let layout = self.engine.simple_layout(&text, theme::role::hint());
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &layout,
-                PAD,
-                HEADER_H + self.filter_line_h() + 4.0,
-                Some(p.text_dim),
-            );
-        }
+        // **No *Showing results for …* line** (owner, 2026-11-16). A typo's
+        // correction shows in the results themselves, where the corrected
+        // word is highlighted; a line announcing it pushed the list down as
+        // it came and went with each keystroke.
 
         if self.warning_message().is_some() {
             self.paint_availability_warning(canvas, root);
@@ -3127,13 +3392,22 @@ impl SearchSurface {
             self.paint_landing(canvas, root);
         } else if self.page.hits.is_empty() {
             if let Some(heading) = self.indexing_heading() {
-                self.paint_indexing(canvas, root, &heading);
+                self.paint_indexing(
+                    canvas,
+                    root,
+                    &heading,
+                    "No matches yet — results appear as the index catches up.",
+                );
+            } else if let Some((heading, detail)) = self.reading_heading() {
+                self.paint_indexing(canvas, root, &heading, &detail);
             } else {
                 self.paint_empty_results(canvas, root);
             }
         } else {
             self.paint_results(canvas, root);
         }
+        // At most one line, in whichever of its two positions fits.
+        self.paint_offer(canvas, root);
         if self.menu != SearchMenu::None {
             self.paint_popover(canvas, root);
         }
@@ -3152,7 +3426,7 @@ impl SearchSurface {
             return;
         };
         let p = theme::p();
-        let y = HEADER_H + self.filter_line_h() + self.correction_h();
+        let y = HEADER_H;
         scene::fill(
             canvas,
             root,
@@ -3182,30 +3456,6 @@ impl SearchSurface {
 
     fn paint_header_controls(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
-        let filter = self.filter_rect();
-        let filter_active = self.filters_visible || self.filters.active();
-        if filter_active || filter.contains(self.pointer.0, self.pointer.1) {
-            scene::fill(
-                canvas,
-                root,
-                if filter_active {
-                    p.chip_bg
-                } else {
-                    p.hover_tint
-                },
-                &scene::rrect(filter.x, filter.y, filter.w, filter.h, 7.0),
-            );
-        }
-        let filter_icon = self.engine.icon_layout(icons::LIST_CHECKS, 15.0);
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &filter_icon,
-            filter.x + 5.5,
-            filter.y + 5.5,
-            Some(if filter_active { p.text } else { p.text_dim }),
-        );
-
         let sort = self.sort_rect();
         // **Named always, tinted only when it was chosen.** The chip says what
         // the order is even at the default, because "last modified" is a claim
@@ -3222,73 +3472,92 @@ impl SearchSurface {
             );
         }
         let sort_ink = if sort_chosen { p.text } else { p.text_dim };
-        let sort_icon = self.engine.icon_layout(icons::UNFOLD_ALL, 14.0);
+        // One glyph, centred: which ordering is on. No initials beside it.
+        let sort_icon = self.engine.icon_layout(sort_glyph(self.sort), 14.0);
         scene::draw_layout_first_line(
             canvas,
             root,
             &sort_icon,
-            sort.x + 6.0,
-            sort.y + 6.0,
-            Some(sort_ink),
-        );
-        let label = self
-            .engine
-            .simple_layout(sort_label(self.sort), theme::role::hint());
-        scene::draw_layout_first_line(
-            canvas,
-            root,
-            &label,
-            sort.x + 27.0,
-            sort.y + 6.0,
+            sort.x + (sort.w - 14.0) * 0.5,
+            sort.y + (sort.h - 14.0) * 0.5,
             Some(sort_ink),
         );
     }
 
-    fn paint_filter_line(&mut self, canvas: &mut Scene, root: Affine) {
+    /// The footer's scope chip: where this search is looking, and the way
+    /// to change it. In one workspace it names the workspace and a press
+    /// widens the search to every workspace (what `Ctrl+Space` does); widened,
+    /// it is the workspaces filter, with *Reset* beside it while one is on.
+    fn paint_footer_scope(&mut self, canvas: &mut Scene, root: Affine) {
         let p = theme::p();
-        let workspaces = self.workspaces_chip_rect();
-        scene::fill(
-            canvas,
-            root,
-            if self.filters.active() {
-                p.row_selected
-            } else {
-                p.chip_bg
-            },
-            &scene::rrect(workspaces.x, workspaces.y, workspaces.w, workspaces.h, 7.0),
-        );
-        let workspace_total = self.workspace_facets().count();
-        // A workspace is on unless it was explicitly excluded within the
-        // selected profile scope.
-        let excluded = self.excluded_workspace_ids();
-        let workspace_on = self
-            .workspace_facets()
-            .filter(|facet| {
-                WorkspaceId::parse(&facet.workspace).is_none_or(|id| !excluded.contains(&id))
-            })
-            .count();
-        let workspaces_label = if workspace_on == workspace_total {
-            "Workspaces".to_owned()
-        } else {
-            format!("Workspaces {workspace_on}/{workspace_total}")
+        let chip = self.scope_chip_rect();
+        let hot = chip.contains(self.pointer.0, self.pointer.1);
+        let (label, ink) = match &self.scope {
+            SearchScope::Workspace { name, .. } => (name.clone(), p.text_dim),
+            SearchScope::Global => {
+                let total = self.workspace_facets().count();
+                // A workspace is on unless it was explicitly excluded within
+                // the selected profile scope.
+                let excluded = self.excluded_workspace_ids();
+                let on = self
+                    .workspace_facets()
+                    .filter(|facet| {
+                        WorkspaceId::parse(&facet.workspace)
+                            .is_none_or(|id| !excluded.contains(&id))
+                    })
+                    .count();
+                if on == total {
+                    ("All workspaces".to_owned(), p.text_dim)
+                } else {
+                    (format!("Workspaces {on}/{total}"), p.text)
+                }
+            }
         };
-        let dot = scene::rrect(workspaces.x + 8.0, workspaces.y + 10.0, 6.0, 6.0, 3.0);
-        scene::fill(canvas, root, p.accent, &dot);
-        let label = self.engine.elided(
-            &workspaces_label,
-            theme::role::hint(),
-            (workspaces.w - 28.0).max(1.0),
+        let _scope = inspect::scope(
+            "Search scope chip",
+            "component",
+            root,
+            scene::rect(chip.x, chip.y, chip.w, chip.h),
+            |record| {
+                record.property("width", SCOPE_CHIP_W, "SCOPE_CHIP_W");
+                record.property(
+                    "scope",
+                    if matches!(self.scope, SearchScope::Global) {
+                        "all workspaces"
+                    } else {
+                        "one workspace"
+                    },
+                    "SearchScope",
+                );
+            },
         );
+        if hot || self.menu == SearchMenu::Workspaces || self.filters.active() {
+            scene::fill(
+                canvas,
+                root,
+                if self.filters.active() {
+                    p.chip_bg
+                } else {
+                    p.hover_tint
+                },
+                &scene::rrect(chip.x, chip.y, chip.w, chip.h, 6.0),
+            );
+        }
+        let dot = scene::rrect(chip.x + 8.0, chip.y + 11.0, 6.0, 6.0, 3.0);
+        scene::fill(canvas, root, p.accent, &dot);
+        let label = self
+            .engine
+            .elided(&label, theme::role::hint(), (chip.w - 28.0).max(1.0));
         let layout = self.engine.simple_layout(&label, theme::role::hint());
         scene::draw_layout_first_line(
             canvas,
             root,
             &layout,
-            workspaces.x + 20.0,
-            workspaces.y + 6.0,
-            Some(p.text),
+            chip.x + 20.0,
+            scene::centre_y_in(&layout, chip),
+            Some(ink),
         );
-        if self.filters.active() || self.archived_only || self.lifecycle != LifecycleFilter::Live {
+        if self.filters_resettable() {
             let reset = self.reset_filters_rect();
             let layout = self.engine.simple_layout("Reset", theme::role::hint());
             scene::draw_layout_first_line(
@@ -3296,7 +3565,7 @@ impl SearchSurface {
                 root,
                 &layout,
                 reset.x + 9.0,
-                reset.y + 6.0,
+                scene::centre_y_in(&layout, reset),
                 Some(p.accent),
             );
         }
@@ -3516,7 +3785,7 @@ impl SearchSurface {
                 shell.rect.w - 12.0,
                 30.0,
             );
-            if row.contains(self.pointer.0, self.pointer.1) {
+            if row.contains(self.pointer.0, self.pointer.1) || self.menu_selected == Some(index) {
                 scene::fill(
                     canvas,
                     root,
@@ -3524,18 +3793,39 @@ impl SearchSurface {
                     &scene::rrect(row.x, row.y, row.w, row.h, 7.0),
                 );
             }
+            // **The row's own glyph leads, the check trails**: the glyph
+            // is what the header chip shows for that ordering, so the menu
+            // teaches the chip.
+            if self.menu == SearchMenu::Sort
+                && let Some(&(_, _, glyph)) = SORTS.get(index)
+            {
+                let icon = self.engine.icon_layout(glyph, 14.0);
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &icon,
+                    row.x + 7.0,
+                    row.y + 8.0,
+                    Some(p.text_dim),
+                );
+            }
+            let lead = self.menu == SearchMenu::Sort;
             if *checked {
                 let check = self.engine.icon_layout(icons::CHECK, 13.0);
                 scene::draw_layout_first_line(
                     canvas,
                     root,
                     &check,
-                    row.x + 7.0,
+                    if lead {
+                        row.x + row.w - 22.0
+                    } else {
+                        row.x + 7.0
+                    },
                     row.y + 8.0,
                     Some(p.text),
                 );
             }
-            let text = self.engine.elided(label, theme::role::row(), row.w - 38.0);
+            let text = self.engine.elided(label, theme::role::row(), row.w - 58.0);
             let text = self.engine.simple_layout(&text, theme::role::row());
             scene::draw_layout_first_line(
                 canvas,
@@ -3662,7 +3952,35 @@ impl SearchSurface {
         }
     }
 
-    fn paint_indexing(&mut self, canvas: &mut Scene, root: Affine, heading: &str) {
+    /// **The other empty page that is not an answer** (OCR Plan 3.3): while
+    /// pictures and PDFs in this query's scope are still being read on this
+    /// computer, no hits is *Still reading N of M pictures and PDFs. Results
+    /// appear as they are read.* — the same rule as
+    /// [`indexing_heading`](Self::indexing_heading), for the same reason. The
+    /// heading and the line under it, in the surface's language; `None` once
+    /// nothing in scope is left to read here, which is when the real verdict
+    /// takes over. What `N` counts is [`offer::left`].
+    fn reading_heading(&self) -> Option<(String, String)> {
+        if self.query.is_empty() || self.warning_message().is_some() {
+            return None;
+        }
+        offer::empty_progress(
+            koru_i18n::current(),
+            self.page.reading.as_ref(),
+            self.offer.reader.as_ref(),
+        )
+    }
+
+    /// Whether an empty page is the verdict, with its places left to look —
+    /// and so whether those links are there to be pressed. Not while a
+    /// workspace is indexing or something is still being read.
+    fn empty_page_is_verdict(&self) -> bool {
+        self.indexing_heading().is_none() && self.reading_heading().is_none()
+    }
+
+    /// One painter for both progress pages: the heading, and under it the
+    /// line saying the page will change on its own.
+    fn paint_indexing(&mut self, canvas: &mut Scene, root: Affine, heading: &str, detail: &str) {
         let p = theme::p();
         let title = self.engine.simple_layout(
             heading,
@@ -3678,10 +3996,7 @@ impl SearchSurface {
         );
         // Says the two things the single line did not: that nothing has matched
         // *yet*, and that the page will change on its own.
-        let detail = self.engine.simple_layout(
-            "No matches yet — results appear as the index catches up.",
-            theme::role::meta(),
-        );
+        let detail = self.engine.simple_layout(detail, theme::role::meta());
         scene::draw_layout_first_line(
             canvas,
             root,
@@ -3734,10 +4049,19 @@ impl SearchSurface {
                 Some(p.text_dim),
             );
         } else if self.lifecycle == LifecycleFilter::Live {
+            // **Search looks in the workspace you are in.** When that finds
+            // nothing, say how to look further, with the key.
+            let widen_copy = match koru_keys::show_hint(
+                koru_keys::Hinted::Literal("Ctrl+Space"),
+                koru_keys::Section::Tooltip,
+            ) {
+                Some(chord) => format!("Press {chord} to search all your workspaces."),
+                None => "Search all your workspaces, or include deleted pages.".to_owned(),
+            };
             let context_copy = if self.archived_only {
                 "Some results may be in your deleted pages."
             } else if matches!(&self.scope, SearchScope::Workspace { .. }) {
-                "Look in this profile, or include deleted pages."
+                widen_copy.as_str()
             } else if self.archived_workspaces_rect().is_some() {
                 "Some results may be in archived workspaces or deleted pages."
             } else {
@@ -3755,7 +4079,7 @@ impl SearchSurface {
             if let Some(rect) = self.profile_workspaces_rect() {
                 let action = self
                     .engine
-                    .simple_layout("Search this profile", theme::role::row());
+                    .simple_layout("Search all workspaces", theme::role::row());
                 scene::draw_layout_first_line(
                     canvas,
                     root,
@@ -3891,6 +4215,22 @@ impl SearchSurface {
             if y + self.list.row_height <= viewport.y || y >= viewport.y + viewport.h {
                 continue;
             }
+            // **One record per row in the inspector**, so the card, the icon
+            // and the three lines read as one result's parts in F12 rather
+            // than as loose runs under the modal.
+            let row = self.result_card_rect(y);
+            let _row = inspect::scope(
+                "Search result",
+                "part",
+                root,
+                scene::rect(row.x, row.y, row.w, row.h),
+                |record| {
+                    record.property("field", hit.field.clone(), "store hit");
+                    if let Some(page) = hit.page {
+                        record.property("page", page, "store hit");
+                    }
+                },
+            );
             if index == self.list.selected
                 && self.selected_pin.is_none()
                 && self.selected_recent_query.is_none()
@@ -3923,6 +4263,10 @@ impl SearchSurface {
             let content = ResultContent::new(self.list.row_height, title_match);
             let glyph = if self.ai_targets.contains_key(&hit_key(&hit)) {
                 icons::SPARKLE
+            } else if hit.task.is_some() {
+                // A task wears the Tasks icon, so it reads as a task before
+                // a word of it is read.
+                icons::CHECK_SQUARE_OFFSET
             } else if hit.kind == "workspace" {
                 icons::FOLDER
             } else if hit.document_kind == "file" {
@@ -3930,15 +4274,70 @@ impl SearchSurface {
             } else {
                 icons::DOCUMENT
             };
-            let icon = self.engine.icon_layout(glyph, 16.0);
-            scene::draw_layout_first_line(
-                canvas,
-                root,
-                &icon,
-                PAD,
-                y + content.title,
-                Some(p.text_dim),
-            );
+            if let Some(place) = self.place_glyph(&hit) {
+                // A place the host named draws the glyph the host gave it.
+                let icon = self.engine.icon_layout(place, 16.0);
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &icon,
+                    PAD,
+                    y + content.title,
+                    Some(p.text_dim),
+                );
+            } else if let Some(list) = &hit.list {
+                // **A list draws its color square**, the rail's own mark for
+                // a list, in the slot a document's glyph takes.
+                let color = list
+                    .color
+                    .as_deref()
+                    .and_then(theme::accent_tone)
+                    .map(|tone| tone.swatch)
+                    .unwrap_or(p.text_dim);
+                let line = self.engine.simple_layout(" ", theme::role::row());
+                let side = LIST_SWATCH;
+                let _mark = koru_draw::inspect::scope(
+                    "SearchListSwatch",
+                    "part",
+                    root,
+                    scene::rect(
+                        PAD,
+                        y + content.title,
+                        16.0,
+                        scene::first_line_height(&line),
+                    ),
+                    |record| {
+                        record.property("side", "LIST_SWATCH", "koru-search-ui");
+                        record.property(
+                            "color",
+                            list.color.clone().unwrap_or_else(|| "none".to_owned()),
+                            "the list's accent token",
+                        );
+                    },
+                );
+                scene::fill(
+                    canvas,
+                    root,
+                    color,
+                    &scene::rrect(
+                        PAD + (16.0 - side) * 0.5,
+                        y + content.title + (scene::first_line_height(&line) - side) * 0.5,
+                        side,
+                        side,
+                        side * 0.25,
+                    ),
+                );
+            } else {
+                let icon = self.engine.icon_layout(glyph, 16.0);
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    &icon,
+                    PAD,
+                    y + content.title,
+                    Some(p.text_dim),
+                );
+            }
             let content_x = PAD + 26.0;
             let content_width = (text_width - 26.0).max(0.0);
             if title_match {
@@ -3988,10 +4387,15 @@ impl SearchSurface {
                 root,
                 &mut self.engine,
                 &context,
-                hit.breadcrumb_spans.iter().map(|span| Span {
-                    start: span.start + context_offset,
-                    end: span.end + context_offset,
-                }),
+                // A list's path is this surface's own sentence, so the
+                // store's spans over its breadcrumb do not index into it.
+                hit.breadcrumb_spans
+                    .iter()
+                    .filter(|_| hit.list.is_none())
+                    .map(|span| Span {
+                        start: span.start + context_offset,
+                        end: span.end + context_offset,
+                    }),
                 content_x,
                 context_y,
                 content_width,
@@ -4001,22 +4405,13 @@ impl SearchSurface {
                 p.highlights[0].1,
             );
             if !title_match {
-                draw_highlighted_line(
+                self.paint_snippet_line(
                     canvas,
                     root,
-                    &mut self.engine,
-                    &hit.snippet,
-                    hit.spans.iter().map(|span| Span {
-                        start: span.start,
-                        end: span.end,
-                    }),
+                    &hit,
                     content_x,
                     y + content.snippet,
                     content_width,
-                    theme::role::meta(),
-                    p.text_dim,
-                    p.text,
-                    p.highlights[0].1,
                 );
             }
         }
@@ -4061,6 +4456,125 @@ impl SearchSurface {
         }
     }
 
+    /// A content match's third line: the page its words were read from, when
+    /// the hit names one, then the snippet.
+    ///
+    /// **The snippet is drawn exactly as it came**, its highlight ranges
+    /// untouched, in the width the page leaves. The page is its own run ahead
+    /// of it, never text glued onto the snippet — `row_text`'s note says why.
+    /// Returns where the snippet began, which is what a test asks.
+    fn paint_snippet_line(
+        &mut self,
+        canvas: &mut Scene,
+        root: Affine,
+        hit: &SearchHit,
+        x: f32,
+        y: f32,
+        width: f32,
+    ) -> f32 {
+        let p = theme::p();
+        let style = theme::role::meta();
+        let mut snippet_x = x;
+        let mut snippet_width = width;
+        if row_text::is_picture(hit) {
+            // **The picture mark**: a small muted glyph, then the picture's
+            // name only when a person gave it one. Its own runs, ahead of the
+            // snippet, for the reason the page is (`row_text`'s note): the
+            // snippet's ranges stay the store's.
+            let icon = self.engine.icon_layout(icons::IMAGE, PICTURE_MARK_SIZE);
+            let named = row_text::picture_name(hit).map(str::to_owned);
+            let mark_width = icon.width() + PICTURE_MARK_GAP;
+            let name = named.as_deref().map(|name| {
+                let name = self
+                    .engine
+                    .elided(name, style, (width - mark_width).max(1.0) * 0.5);
+                (
+                    self.engine.simple_layout(&name, style),
+                    self.engine.simple_layout(row_text::SEPARATOR, style),
+                )
+            });
+            let lead = mark_width
+                + name.as_ref().map_or(0.0, |(name, separator)| {
+                    name.full_width() + separator.full_width()
+                });
+            let _mark = inspect::scope(
+                "Picture mark",
+                "part",
+                root,
+                scene::rect(x, y, lead.min(width), style.metrics.line_height),
+                |record| {
+                    record.property("named", named.is_some(), "store hit");
+                    record.property("glyph", "icons::IMAGE", "koru_draw::icons");
+                    record.property("color", "text_dim", "theme::p().text_dim");
+                    record.property("text role", "meta", "theme::role::meta()");
+                },
+            );
+            scene::draw_layout_first_line(canvas, root, &icon, x, y, Some(p.text_dim));
+            if let Some((name, separator)) = &name {
+                let name_x = x + mark_width;
+                scene::draw_layout_first_line(canvas, root, name, name_x, y, Some(p.text_dim));
+                scene::draw_layout_first_line(
+                    canvas,
+                    root,
+                    separator,
+                    name_x + name.full_width(),
+                    y,
+                    Some(p.text_dim),
+                );
+            }
+            let lead = lead.min(width);
+            snippet_x = x + lead;
+            snippet_width = (width - lead).max(0.0);
+        } else if let Some(label) = row_text::page_label(koru_i18n::current(), hit) {
+            let label = self.engine.elided(&label, style, width);
+            let label = self.engine.simple_layout(&label, style);
+            let separator = self.engine.simple_layout(row_text::SEPARATOR, style);
+            // `full_width`, not `width`: the separator's trailing space is
+            // part of the gap before the snippet, and `width` drops it.
+            let label_width = label.full_width();
+            let lead = label_width + separator.full_width();
+            let _prefix = inspect::scope(
+                "Page prefix",
+                "part",
+                root,
+                scene::rect(x, y, lead.min(width), style.metrics.line_height),
+                |record| {
+                    record.property("page", hit.page.unwrap_or_default(), "store hit");
+                    record.property("text role", "meta", "theme::role::meta()");
+                },
+            );
+            scene::draw_layout_first_line(canvas, root, &label, x, y, Some(p.text_dim));
+            scene::draw_layout_first_line(
+                canvas,
+                root,
+                &separator,
+                x + label_width,
+                y,
+                Some(p.text_dim),
+            );
+            snippet_x = x + lead;
+            snippet_width = (width - lead).max(0.0);
+        }
+        draw_highlighted_line(
+            canvas,
+            root,
+            &mut self.engine,
+            &hit.snippet,
+            hit.spans.iter().map(|span| Span {
+                start: span.start,
+                end: span.end,
+            }),
+            snippet_x,
+            y,
+            snippet_width,
+            style,
+            p.text_dim,
+            p.text,
+            p.highlights[0].1,
+        );
+        snippet_x
+    }
+
     fn paint_scrollbar(&self, canvas: &mut Scene, root: Affine) {
         if let Some(thumb) = self.scrollbar_rect() {
             scene::fill(
@@ -4092,61 +4606,15 @@ impl SearchSurface {
             root,
             &scene::rect(PAD, y, (self.viewport.0 - PAD * 2.0).max(0.0), FOOTER_H),
         );
-        let mut x = PAD;
-        if matches!(self.scope, SearchScope::Global) {
+        if PROFILE_PICKER && matches!(self.scope, SearchScope::Global) {
             self.paint_footer_profile(canvas, root);
-            let profile = self.profiles_chip_rect();
-            x = profile.x + profile.w + 12.0;
         }
-        if self.footer_shows_chips() {
-            // The host's chips stand in for the hint line: a key in a small
-            // pill, what it does beside it.
-            let chips = self.footer_chips.clone();
-            for chip in &chips {
-                let key = self.engine.simple_layout(&chip.key, theme::role::hint());
-                let pill_w = key.width() + 10.0;
-                let pill = Rect::new(x, y + 7.0, pill_w, 20.0);
-                scene::stroke(
-                    canvas,
-                    root,
-                    p.panel_border,
-                    theme::BORDER_W,
-                    &scene::rrect(pill.x, pill.y, pill.w, pill.h, 4.0),
-                );
-                scene::draw_layout_first_line(
-                    canvas,
-                    root,
-                    &key,
-                    pill.x + 5.0,
-                    scene::centre_y_in(&key, pill),
-                    Some(p.text_dim),
-                );
-                x += pill_w + 5.0;
-                let label = self.engine.simple_layout(&chip.label, theme::role::hint());
-                scene::draw_layout_first_line(canvas, root, &label, x, y + 9.0, Some(p.text_dim));
-                x += label.width() + 14.0;
-            }
-            canvas.pop_layer();
-            return;
-        }
-        let hints: &[(char, &str)] = if self.replacing_results() {
-            &[(icons::SEARCH, " Searching…")]
-        } else {
-            &[]
-        };
-        for (icon, label) in hints {
-            let glyph = self.engine.icon_layout(*icon, 13.0);
-            scene::draw_layout_first_line(canvas, root, &glyph, x, y + 7.0, Some(p.text_dim));
-            x += glyph.width();
-            let text = self.engine.simple_layout(label, theme::role::hint());
-            scene::draw_layout_first_line(canvas, root, &text, x, y + 7.0, Some(p.text_dim));
-            x += text.width();
-        }
-        if hints.is_empty() && matches!(self.scope, SearchScope::Workspace { .. }) {
-            let label = "Ctrl+Space  Switch to global scope";
-            let text = self.engine.simple_layout(label, theme::role::hint());
-            scene::draw_layout_first_line(canvas, root, &text, x, y + 9.0, Some(p.text_dim));
-        }
+        // **The footer holds where the search is looking, and nothing that
+        // changes while you type.** It used to swap its contents for a
+        // *Searching…* status on every keystroke, and carried key hints for
+        // moving and opening that nobody needs to be told (owner,
+        // 2026-11-16).
+        self.paint_footer_scope(canvas, root);
         canvas.pop_layer();
     }
 
@@ -4215,6 +4683,322 @@ impl SearchSurface {
     }
 }
 
+/// The band the line about pictures and scans sits in: two meta lines and
+/// their air, the same height in both positions so nothing under it moves
+/// as its words change.
+const OFFER_BAND_H: f32 = 68.0;
+const OFFER_GAP: f32 = 12.0;
+
+/// **The one line in search about pictures and scans** (OCR Plan 2.5): which
+/// line, where it sits, one geometry for drawing and hit-testing, and what
+/// pressing it asks. What it says is [`offer::view`]'s.
+impl SearchSurface {
+    /// The line this page shows, or `None`. Never over the landing page,
+    /// a warning, or a page still being replaced; below *No results* only on
+    /// the real verdict, not while a workspace is still indexing.
+    fn offer_view(&self) -> Option<offer::LineView> {
+        if self.query.is_empty() || self.warning_message().is_some() || self.replacing_results() {
+            return None;
+        }
+        let with_results = !self.page.hits.is_empty();
+        if !with_results && self.indexing_heading().is_some() {
+            return None;
+        }
+        offer::view(
+            koru_i18n::current(),
+            self.page.reading.as_ref(),
+            self.offer.reader.as_ref(),
+            with_results,
+        )
+    }
+
+    /// The band's height when the line sits below the results, which the
+    /// results give up; zero otherwise.
+    fn offer_below_results_h(&self) -> f32 {
+        if !self.page.hits.is_empty() && self.offer_view().is_some() {
+            OFFER_BAND_H
+        } else {
+            0.0
+        }
+    }
+
+    /// Where the line is: directly above the footer, always.
+    fn offer_band(&self) -> Option<Rect> {
+        self.offer_view()?;
+        // **One place, whatever the page holds.** It used to sit under the
+        // *No results* text and above the footer otherwise, so it jumped
+        // between the two as a query gained and lost its results.
+        let y = self.viewport.1 - FOOTER_H - OFFER_BAND_H;
+        Some(Rect::new(0.0, y, self.results_width(), OFFER_BAND_H))
+    }
+
+    /// **The line's one geometry**: the band, the sentence's box, and each
+    /// action's button, right-aligned in the band. Drawing and hit-testing
+    /// both ask this, so a button is pressable exactly where it is drawn.
+    fn offer_layout(&mut self) -> Option<(offer::LineView, Rect, Rect, Vec<Rect>)> {
+        let view = self.offer_view()?;
+        let band = self.offer_band()?;
+        let lang = koru_i18n::current();
+        let widths: Vec<f32> = view
+            .actions
+            .iter()
+            .map(|action| {
+                koru_ui::ActionButton::new(action.label(lang), offer_style(*action), None)
+                    .width(&mut self.engine)
+            })
+            .collect();
+        let right = band.x + band.w - PAD - theme::SCROLLBAR_W;
+        let button_y = band.y + (band.h - koru_ui::ActionButton::H) * 0.5;
+        let mut x = right;
+        let mut buttons: Vec<Rect> = Vec::with_capacity(widths.len());
+        for width in widths.iter().rev() {
+            x -= width;
+            buttons.push(Rect::new(x, button_y, *width, koru_ui::ActionButton::H));
+            x -= koru_ui::ActionButton::GAP;
+        }
+        buttons.reverse();
+        let text_right = buttons.first().map_or(right, |first| first.x - OFFER_GAP);
+        let text = Rect::new(PAD, band.y, (text_right - PAD).max(1.0), band.h);
+        Some((view, band, text, buttons))
+    }
+
+    /// The action under `(x, y)`, by the line's own geometry.
+    fn offer_action_at(&mut self, x: f32, y: f32) -> Option<usize> {
+        let (_, _, _, buttons) = self.offer_layout()?;
+        buttons.iter().position(|rect| rect.contains(x, y))
+    }
+
+    /// The keyboard's action on the line, while it is one the line still has.
+    fn offer_focus(&self) -> Option<usize> {
+        let focus = self.offer.focus?;
+        let count = self.offer_view().map_or(0, |view| view.actions.len());
+        (focus < count).then_some(focus)
+    }
+
+    /// **Press an action.** *Not now* takes the line away in both positions at
+    /// once; the Store's answer keeps it away. Everything goes to the Store on
+    /// the background channel and comes back as the reader's state.
+    fn press_offer(&mut self, index: usize) -> bool {
+        let Some(view) = self.offer_view() else {
+            return false;
+        };
+        let Some(&action) = view.actions.get(index) else {
+            return false;
+        };
+        if action == offer::LineAction::NotNow {
+            if let Some(reading) = self.page.reading.as_mut() {
+                reading.offer = false;
+            }
+            self.offer.focus = None;
+        }
+        if let Some(command) = self.offer.command(action)
+            && self
+                .reader
+                .as_ref()
+                .is_some_and(|reader| reader.request_reader(command))
+        {
+            self.offer.asked();
+        }
+        true
+    }
+
+    /// Ask for the reader's state when the last answer could put the line on
+    /// screen and none is in hand. Never on the frame loop's time: a send on
+    /// an unbounded channel.
+    fn ask_reader_state(&mut self) {
+        if !self
+            .offer
+            .wants_state(self.page.reading.as_ref(), Instant::now())
+        {
+            return;
+        }
+        if self
+            .reader
+            .as_ref()
+            .is_some_and(|reader| reader.request_reader(offer::ReaderCommand::Read))
+        {
+            self.offer.asked();
+        }
+    }
+
+    /// The Store answered about the reader. Returns whether the search should
+    /// be asked again, because a download just finished and the counts it
+    /// carried are no longer true.
+    fn reader_answered(
+        &mut self,
+        result: koru_store_core::errors::Result<koru_store_wire::reader::ReaderState>,
+    ) -> bool {
+        match result {
+            Ok(state) => self.offer.answered(state, Instant::now()),
+            Err(error) => {
+                self.offer.failed();
+                crate::search_debug!(
+                    "[Koru][search-reader][pid={}] the reader did not answer: {}",
+                    std::process::id(),
+                    error.code().as_str(),
+                );
+                // The terms changed under the line, or the reader cannot be
+                // used after all: read the state again and draw what it says.
+                if matches!(
+                    error.code(),
+                    koru_store_core::errors::Code::ReaderTermsChanged
+                        | koru_store_core::errors::Code::ReaderUnavailable
+                ) && self
+                    .reader
+                    .as_ref()
+                    .is_some_and(|reader| reader.request_reader(offer::ReaderCommand::Read))
+                {
+                    self.offer.asked();
+                }
+                false
+            }
+        }
+    }
+
+    /// The line's keys while the keyboard is on it. `None` hands the key
+    /// back to the surface, having left the line.
+    fn offer_key(&mut self, key: &Key, mods: ModifiersState) -> Option<bool> {
+        let focus = self.offer_focus()?;
+        let count = self.offer_view().map_or(0, |view| view.actions.len());
+        match key {
+            Key::Named(NamedKey::Tab) => {
+                let next = if mods.shift_key() {
+                    focus.checked_sub(1)
+                } else {
+                    Some(focus + 1).filter(|next| *next < count)
+                };
+                self.offer.focus = next;
+                Some(true)
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                self.offer.focus = Some((focus + 1).min(count - 1));
+                Some(true)
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                self.offer.focus = Some(focus.saturating_sub(1));
+                Some(true)
+            }
+            Key::Named(NamedKey::Enter | NamedKey::Space) => Some(self.press_offer(focus)),
+            Key::Named(NamedKey::Escape) => {
+                self.offer.focus = None;
+                Some(true)
+            }
+            _ => {
+                self.offer.focus = None;
+                None
+            }
+        }
+    }
+
+    /// Tab from the results reaches the line's first action (Shift+Tab its
+    /// last), when the line has any.
+    fn enter_offer(&mut self, backwards: bool) -> bool {
+        let count = self.offer_view().map_or(0, |view| view.actions.len());
+        if count == 0 {
+            return false;
+        }
+        self.offer.focus = Some(if backwards { count - 1 } else { 0 });
+        true
+    }
+
+    fn paint_offer(&mut self, canvas: &mut Scene, root: Affine) {
+        let Some((view, band, text_box, buttons)) = self.offer_layout() else {
+            return;
+        };
+        let p = theme::p();
+        let below_results = !self.page.hits.is_empty();
+        let _line = inspect::scope(
+            "Reading offer",
+            "component",
+            root,
+            scene::rect(band.x, band.y, band.w, band.h),
+            |record| {
+                record.property(
+                    "position",
+                    if below_results {
+                        "below results"
+                    } else {
+                        "below no results"
+                    },
+                    "SearchSurface::offer_band",
+                );
+                record.property("actions", view.actions.len(), "offer::view");
+                record.property("height", OFFER_BAND_H, "OFFER_BAND_H");
+                record.property("text role", "meta", "theme::role::meta()");
+            },
+        );
+        // **A band of its own**: the page's ground and a hairline above it.
+        // Without the line the offer read as part of the last result, cut off.
+        scene::fill(
+            canvas,
+            root,
+            p.panel_bg,
+            &scene::rect(band.x, band.y, band.w, band.h),
+        );
+        scene::fill(
+            canvas,
+            root,
+            p.panel_border,
+            &scene::rect(band.x, band.y, band.w, 1.0),
+        );
+        let style = theme::role::meta();
+        let sentence = self
+            .engine
+            .simple_layout_wrapped(&view.sentence, style, text_box.w);
+        let bar_h = if view.fraction.is_some() { 7.0 } else { 0.0 };
+        let text_h = sentence.height().min(band.h);
+        let text_y = band.y + ((band.h - text_h - bar_h) * 0.5).max(0.0);
+        canvas.push_clip_layer(
+            Fill::NonZero,
+            root,
+            &scene::rect(text_box.x, band.y, text_box.w, band.h),
+        );
+        scene::draw_layout(
+            canvas,
+            root,
+            &sentence,
+            text_box.x,
+            text_y,
+            Some(p.text_dim),
+        );
+        canvas.pop_layer();
+        if let Some(fraction) = view.fraction {
+            koru_ui::ProgressBar::new(koru_ui::ProgressMode::Determinate(fraction), Instant::now())
+                .draw(
+                    canvas,
+                    root,
+                    Rect::new(text_box.x, text_y + text_h + 4.0, text_box.w, 3.0),
+                    Instant::now(),
+                    1.0,
+                );
+        }
+        let lang = koru_i18n::current();
+        let focus = self.offer_focus();
+        for (index, (action, rect)) in view.actions.iter().zip(&buttons).enumerate() {
+            koru_ui::ActionButton::new(action.label(lang), offer_style(*action), None)
+                .draw_focused(
+                    canvas,
+                    root,
+                    &mut self.engine,
+                    *rect,
+                    self.offer.hover == Some(index),
+                    focus == Some(index),
+                );
+        }
+    }
+}
+
+/// The primary answer filled, the others quiet — the dialog convention.
+fn offer_style(action: offer::LineAction) -> koru_ui::ActionStyle {
+    if action.primary() {
+        koru_ui::ActionStyle::Primary
+    } else if action == offer::LineAction::Stop {
+        koru_ui::ActionStyle::Secondary
+    } else {
+        koru_ui::ActionStyle::Ghost
+    }
+}
+
 fn ai_display_hit(hit: &koru_ai_core::AiSearchHit) -> SearchHit {
     SearchHit {
         workspace: format!("ai:chat:{}", hit.chat_id),
@@ -4243,6 +5027,10 @@ fn ai_display_hit(hit: &koru_ai_core::AiSearchHit) -> SearchHit {
         score: f64::from(hit.score),
         observed_modified_at_ms: None,
         workspace_last_used_at_ms: None,
+        page: None,
+        picture_name: None,
+        list: None,
+        task: None,
     }
 }
 
@@ -4310,6 +5098,14 @@ impl SearchSurface {
                 self.query.raw_text().len(),
             ));
         }
+        // **The line's keys while the keyboard is on it** — before Escape's
+        // usual meaning, which would clear the query instead of leaving the
+        // line.
+        if self.menu == SearchMenu::None
+            && let Some(handled) = self.offer_key(key, mods)
+        {
+            return handled;
+        }
         if matches!(key, Key::Named(NamedKey::Escape)) {
             if self.menu == SearchMenu::Tags {
                 // Its own close, so the token and the hits go with the panel.
@@ -4356,7 +5152,7 @@ impl SearchSurface {
             && !mods.shift_key()
             && !mods.alt_key()
             && matches!(key, Key::Named(NamedKey::Space))
-            && self.switch_to_profile_scope()
+            && self.toggle_scope()
         {
             return true;
         }
@@ -4398,6 +5194,32 @@ impl SearchSurface {
                 _ => {}
             }
         }
+        // **The sort and workspaces menus take the keyboard while open**:
+        // the arrows move, round the ends, and Enter chooses. They used to
+        // answer the pointer only, so Ctrl+O opened a menu the keyboard
+        // could not use.
+        if matches!(self.menu, SearchMenu::Sort | SearchMenu::Workspaces) {
+            let rows = self.menu_row_count();
+            match key {
+                Key::Named(NamedKey::ArrowDown) if rows > 0 => {
+                    let current = self.menu_selected.unwrap_or(rows - 1);
+                    self.menu_selected = Some((current + 1) % rows);
+                    return true;
+                }
+                Key::Named(NamedKey::ArrowUp) if rows > 0 => {
+                    let current = self.menu_selected.unwrap_or(0);
+                    self.menu_selected = Some((current + rows - 1) % rows);
+                    return true;
+                }
+                Key::Named(NamedKey::Enter) => {
+                    if let Some(row) = self.menu_selected {
+                        self.activate_popover_row(row);
+                    }
+                    return true;
+                }
+                _ => {}
+            }
+        }
         if self.menu == SearchMenu::Profiles {
             match key {
                 Key::Named(NamedKey::ArrowDown) => {
@@ -4425,14 +5247,18 @@ impl SearchSurface {
             }
             return true;
         }
+        // The workspaces filter, where there is one to open: a search in one
+        // workspace has nothing to filter until it is widened.
         if control_letter == Some('f') && !mods.shift_key() {
-            self.filters_visible = !self.filters_visible;
-            if !self.filters_visible {
-                self.reset_filters();
+            if matches!(self.scope, SearchScope::Global) {
+                self.open_menu(SearchMenu::Workspaces);
             }
             return true;
         }
         if control_letter == Some('p') && mods.alt_key() && !mods.shift_key() {
+            if !PROFILE_PICKER {
+                return true;
+            }
             self.open_menu(SearchMenu::Profiles);
             return true;
         }
@@ -4458,7 +5284,12 @@ impl SearchSurface {
                 self.request_open(disposition);
                 true
             }
-            Key::Named(NamedKey::Tab) if !command_modifier => true,
+            // Tab reaches the line's actions, the surface's only buttons a
+            // keyboard has to get to; with no line it changes nothing.
+            Key::Named(NamedKey::Tab) if !command_modifier => {
+                self.enter_offer(mods.shift_key());
+                true
+            }
             _ => {
                 self.edit_query(key, text, mods);
                 true
@@ -4507,31 +5338,27 @@ impl SearchSurface {
             }
             return true;
         }
-        if self.filter_rect().contains(x, y) {
-            self.filters_visible = !self.filters_visible;
-            if !self.filters_visible {
-                self.reset_filters();
-            }
-            return true;
-        }
         if self.sort_rect().contains(x, y) {
             self.open_menu(SearchMenu::Sort);
             return true;
         }
-        if matches!(self.scope, SearchScope::Global) && self.profiles_chip_rect().contains(x, y) {
+        if PROFILE_PICKER
+            && matches!(self.scope, SearchScope::Global)
+            && self.profiles_chip_rect().contains(x, y)
+        {
             self.open_menu(SearchMenu::Profiles);
             return true;
         }
-        if self.filter_line_visible() && self.workspaces_chip_rect().contains(x, y) {
-            self.open_menu(SearchMenu::Workspaces);
+        if self.scope_chip_rect().contains(x, y) {
+            // The chip is Ctrl+Space under the pointer: this workspace only,
+            // or every workspace, and back. A search that was opened wide has
+            // nowhere to narrow to, and the chip is its workspaces filter.
+            if !self.toggle_scope() {
+                self.open_menu(SearchMenu::Workspaces);
+            }
             return true;
         }
-        if self.filter_line_visible()
-            && (self.filters.active()
-                || self.archived_only
-                || self.lifecycle != LifecycleFilter::Live)
-            && self.reset_filters_rect().contains(x, y)
-        {
+        if self.filters_resettable() && self.reset_filters_rect().contains(x, y) {
             self.reset_filters();
             return true;
         }
@@ -4539,10 +5366,15 @@ impl SearchSurface {
         if self.query.click(&mut self.engine, query_rect, x, y) {
             return true;
         }
+        if let Some(action) = self.offer_action_at(x, y) {
+            self.offer.focus = None;
+            return self.press_offer(action);
+        }
         if self.lifecycle == LifecycleFilter::Live
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .profile_workspaces_rect()
                 .is_some_and(|rect| rect.contains(x, y))
@@ -4591,6 +5423,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .archived_workspaces_rect()
                 .is_some_and(|rect| rect.contains(x, y))
@@ -4602,6 +5435,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self.deleted_pages_rect().contains(x, y)
         {
             self.toggle_deleted_pages();
@@ -4692,12 +5526,15 @@ impl SearchSurface {
         };
         let changed = next != self.hover;
         self.hover = next;
+        let next_offer = self.offer_action_at(x, y);
+        let offer_changed = next_offer != self.offer.hover;
+        self.offer.hover = next_offer;
         let next_create = self
             .create_row_at(y)
             .filter(|row| self.create_row_rect(*row).contains(x, y));
         let create_changed = next_create != self.hover_create;
         self.hover_create = next_create;
-        changed || create_changed || tooltip_changed
+        changed || create_changed || tooltip_changed || offer_changed
     }
 
     pub fn mouse_up(&mut self) -> bool {
@@ -4786,6 +5623,9 @@ impl SearchSurface {
             sliding,
             self.exiting.deadline(),
             self.tooltip.maintenance_deadline(),
+            // A download's progress, or a catalog being read; nothing else
+            // about the line is polled.
+            self.offer.poll_deadline(),
         ]
         .into_iter()
         .flatten()
@@ -4797,6 +5637,16 @@ impl SearchSurface {
             .temporal
             .as_ref()
             .is_some_and(|picker| picker.animating(now));
+        if self.offer.poll_deadline().is_some_and(|due| due <= now) {
+            self.offer.poll_taken();
+            if self
+                .reader
+                .as_ref()
+                .is_some_and(|reader| reader.request_reader(offer::ReaderCommand::Read))
+            {
+                self.offer.asked();
+            }
+        }
         let changed = self.apply_ready_reads() || self.tooltip.maintain(now) || sliding;
         if self.exiting.maintain(now) {
             self.exiting_hits.clear();
@@ -4828,6 +5678,7 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .deleted_pages_rect()
                 .contains(self.pointer.0, self.pointer.1);
@@ -4835,22 +5686,23 @@ impl SearchSurface {
             && !self.filters.active()
             && self.page.hits.is_empty()
             && !self.query.is_empty()
+            && self.empty_page_is_verdict()
             && self
                 .profile_workspaces_rect()
                 .is_some_and(|rect| rect.contains(self.pointer.0, self.pointer.1));
-        let control = self.filter_rect().contains(self.pointer.0, self.pointer.1)
-            || self.sort_rect().contains(self.pointer.0, self.pointer.1)
-            || (matches!(self.scope, SearchScope::Global)
+        let control = self.sort_rect().contains(self.pointer.0, self.pointer.1)
+            || (PROFILE_PICKER
+                && matches!(self.scope, SearchScope::Global)
                 && self
                     .profiles_chip_rect()
                     .contains(self.pointer.0, self.pointer.1))
-            || (self.filter_line_visible()
-                && (self
-                    .workspaces_chip_rect()
-                    .contains(self.pointer.0, self.pointer.1)
-                    || self
-                        .reset_filters_rect()
-                        .contains(self.pointer.0, self.pointer.1)))
+            || self
+                .scope_chip_rect()
+                .contains(self.pointer.0, self.pointer.1)
+            || (self.filters_resettable()
+                && self
+                    .reset_filters_rect()
+                    .contains(self.pointer.0, self.pointer.1))
             || self
                 .popover()
                 .is_some_and(|popover| popover.contains(self.pointer.0, self.pointer.1))
@@ -4871,6 +5723,7 @@ impl SearchSurface {
         if self.scroll_drag.is_some() || self.in_scrollbar_gutter(self.pointer.0, self.pointer.1) {
             CursorIcon::NsResize
         } else if (self.hover.is_some() && !self.replacing_results())
+            || self.offer.hover.is_some()
             || deleted
             || profile_workspaces
             || control
@@ -4957,6 +5810,10 @@ mod tests {
             score: 1.0,
             observed_modified_at_ms: None,
             workspace_last_used_at_ms: None,
+            page: None,
+            picture_name: None,
+            list: None,
+            task: None,
         }
     }
 
@@ -5857,18 +6714,30 @@ mod tests {
         );
     }
 
+    /// The workspaces filter is the footer's scope chip now: nothing sits
+    /// between the query and the results, and the chip is at the bottom left.
     #[test]
-    fn active_filters_push_the_recents_heading_below_the_filter_row() {
+    fn the_scope_chip_is_at_the_footers_left_and_takes_no_row_of_its_own() {
         let mut surface = SearchSurface::new();
         surface.pending_read = None;
         surface.pending_replace = None;
-        let without_filters = surface.landing_heading_y();
+        surface.viewport = (600.0, 400.0);
 
-        surface.filters_visible = true;
-        let with_filters = surface.landing_heading_y();
+        // Widened or not, it is in the one place: pressing it changes its
+        // words and moves nothing.
+        let chip = surface.scope_chip_rect();
+        assert_eq!(chip.x, PAD);
+        assert!(chip.y >= surface.viewport.1 - FOOTER_H);
+        assert!(chip.y + chip.h <= surface.viewport.1);
+        assert_eq!(surface.results_top(), HEADER_H + LANDING_INSET);
 
-        assert_eq!(with_filters - without_filters, surface.filter_line_h());
-        assert!(with_filters > surface.workspaces_chip_rect().y + surface.workspaces_chip_rect().h);
+        // In one workspace there is no profile chip, and it leads the footer.
+        surface.scope = SearchScope::Workspace {
+            profile: ProfileId::new(),
+            workspace: WorkspaceId::new(),
+            name: "Koru".into(),
+        };
+        assert_eq!(surface.scope_chip_rect().x, PAD);
     }
 
     #[test]
@@ -5880,10 +6749,10 @@ mod tests {
         assert_eq!(profile.x, PAD);
         assert!(profile.y >= surface.viewport.1 - FOOTER_H);
         assert!(profile.y + profile.h <= surface.viewport.1);
-        assert_eq!(surface.filter_line_h(), 0.0);
     }
 
     #[test]
+    #[ignore = "profile selection is off for now (PROFILE_PICKER)"]
     fn footer_profile_control_opens_the_shared_picker_above_results() {
         let profile = ProfileId::new();
         let mut surface = SearchSurface::new();
@@ -5916,6 +6785,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "profile selection is off for now (PROFILE_PICKER)"]
     fn ctrl_alt_p_opens_the_footer_profile_picker() {
         let mut surface = SearchSurface::new();
         let mods = ModifiersState::CONTROL | ModifiersState::ALT;
@@ -6586,8 +7456,7 @@ mod tests {
         let query_right = surface.query_rect().x + surface.query_rect().w;
         for (sort, _, chip) in SORTS {
             surface.sort = sort;
-            assert!(!chip.is_empty());
-            assert_eq!(sort_label(sort), chip);
+            assert_eq!(sort_glyph(sort), chip);
             assert_eq!(surface.sort_rect().w, width);
             assert_eq!(surface.query_rect().x + surface.query_rect().w, query_right);
         }
@@ -6835,7 +7704,9 @@ mod tests {
             Some(" "),
             ModifiersState::CONTROL,
         ));
-        assert_eq!(surface.workspace_scope(), None);
+        // Pressed again it narrows back: the chord is a toggle.
+        assert!(surface.workspace_scope().is_some());
+        assert_eq!(surface.query.raw_text(), "emoji");
     }
 
     #[test]
@@ -6913,20 +7784,38 @@ mod tests {
         assert_eq!(surface.query.value(), "hello");
     }
 
+    /// The chip and Ctrl+Space are one toggle: this workspace only, every
+    /// workspace, and back.
     #[test]
-    fn pressing_filter_clears_its_tooltip_before_layout_changes() {
+    fn the_scope_chip_and_ctrl_space_toggle_the_scope() {
         let mut surface = SearchSurface::new();
-        let filter = surface.filter_rect();
-        let now = Instant::now();
-        surface
-            .tooltip
-            .set_focus(surface.tooltip_at(filter.x, filter.y), now);
-        assert!(surface.tooltip.is_present());
+        surface.viewport = (600.0, 400.0);
+        surface.scope = SearchScope::Workspace {
+            profile: ProfileId::new(),
+            workspace: WorkspaceId::new(),
+            name: "Koru".into(),
+        };
+        let chip = surface.scope_chip_rect();
+        surface.mouse_down(chip.x + 4.0, chip.y + 4.0, false);
+        assert_eq!(surface.scope, SearchScope::Global);
+        assert_eq!(surface.menu, SearchMenu::None);
 
-        surface.mouse_down(filter.x + filter.w * 0.5, filter.y + filter.h * 0.5, false);
+        // Pressed again it narrows back to where it was opened, as
+        // Ctrl+Space does.
+        let chip = surface.scope_chip_rect();
+        surface.mouse_down(chip.x + 4.0, chip.y + 4.0, false);
+        assert!(matches!(surface.scope, SearchScope::Workspace { .. }));
+        assert!(surface.key(&Key::Named(NamedKey::Space), None, ModifiersState::CONTROL));
+        assert_eq!(surface.scope, SearchScope::Global);
+        assert!(surface.key(&Key::Named(NamedKey::Space), None, ModifiersState::CONTROL));
+        assert!(matches!(surface.scope, SearchScope::Workspace { .. }));
 
-        assert!(!surface.tooltip.is_present());
-        assert!(surface.filters_visible);
+        // Opened wide, there is nowhere to narrow to: the chip is the filter.
+        let mut wide = SearchSurface::new();
+        wide.viewport = (600.0, 400.0);
+        let chip = wide.scope_chip_rect();
+        wide.mouse_down(chip.x + 4.0, chip.y + 4.0, false);
+        assert_eq!(wide.menu, SearchMenu::Workspaces);
     }
 
     #[test]
@@ -6941,7 +7830,6 @@ mod tests {
         ] {
             surface.key(&Key::Character(key.into()), None, mods);
             assert_eq!(surface.menu, SearchMenu::None);
-            assert!(!surface.filters_visible);
             assert_eq!(surface.query.raw_text(), "hello");
         }
     }
@@ -7068,6 +7956,7 @@ mod tests {
                             next_offset: None,
                             updating_workspaces: Vec::new(),
                             corrected_query: None,
+                            reading: None,
                             request_seq: 1,
                         },
                         facets: None,
@@ -7111,6 +8000,7 @@ mod tests {
                             next_offset: None,
                             updating_workspaces: Vec::new(),
                             corrected_query: None,
+                            reading: None,
                             request_seq: 2,
                         },
                         facets: None,
@@ -7158,6 +8048,7 @@ mod tests {
                                 next_offset: None,
                                 updating_workspaces: Vec::new(),
                                 corrected_query: None,
+                                reading: None,
                                 request_seq: 3,
                             },
                             facets: None,
@@ -7229,6 +8120,7 @@ mod tests {
                             updating_workspaces: Vec::new(),
                             request_seq: 7,
                             corrected_query: None,
+                            reading: None,
                         },
                         facets: None,
                         recent_queries: None,

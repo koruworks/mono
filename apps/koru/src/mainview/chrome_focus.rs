@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//! `F6`'s stops over the sidebar's chrome: the lane and the rail.
+//! `F6`'s stops over the sidebar's chrome: the lane and the rail — and,
+//! while it is up, the answers of a toast's line (an import's summary
+//! offering to read its pictures, OCR Plan 3.3), which come first because
+//! that stop goes away on its own.
 //!
 //! The rotation was two stops — a failed reminder pill and the bell — and
 //! [ADR-348](../../../../docs/decisions/ADR-326-350.md) made it a rotation
@@ -47,6 +50,10 @@ pub(super) enum ChromeStop {
     /// and the profile square. `MainView::rail_focus` is the one reading of
     /// it, for the ring and for Enter alike.
     Apps(usize),
+    /// An index along the answers of the toast's line — an import's summary
+    /// offering to read its pictures, *Turn on · Not now* (OCR Plan 3.3).
+    /// Standing only while that toast is up.
+    Toast(usize),
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -60,9 +67,11 @@ pub(super) enum LaneControl {
 /// The rotation's order, as the eye reads the chrome: the reminder pill and
 /// the bell (when reminders are shown), then the lane, the visible rail and
 /// the column's list, then the header of the tab in front when it has
-/// controls of its own.
+/// controls of its own. A toast with a line to answer comes first while it is
+/// up: it is the one stop that goes away on its own.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 enum Stop {
+    Toast,
     Pill,
     Bell,
     Lane,
@@ -95,7 +104,10 @@ impl MainView {
         if self.bot_context_current() && self.bot_context.floating {
             return vec![Stop::Library];
         }
-        let mut out = Vec::with_capacity(5);
+        let mut out = Vec::with_capacity(6);
+        if self.toast_line_count() > 0 {
+            out.push(Stop::Toast);
+        }
         if koru_features::reminders() {
             if self.reminder_creation.has_failed_pill() {
                 out.push(Stop::Pill);
@@ -130,6 +142,7 @@ impl MainView {
             return Some(match stop {
                 ChromeStop::Lane(_) => Stop::Lane,
                 ChromeStop::Apps(_) => Stop::Apps,
+                ChromeStop::Toast(_) => Stop::Toast,
             });
         }
         if self.sidebar.is_open() && self.explore.has_focus() {
@@ -225,6 +238,10 @@ impl MainView {
             Stop::Library => moved |= self.focus_bot_context(),
             // Landed above, as the loop found it.
             Stop::Column => {}
+            Stop::Toast => {
+                self.chrome_focus = Some(ChromeStop::Toast(0));
+                moved = true;
+            }
             Stop::Pill => moved |= self.reminder_creation.focus_first_failed_pill(),
             Stop::Bell => moved |= self.reminder_shell.focus_bell(),
             Stop::Lane => {
@@ -277,6 +294,12 @@ impl MainView {
         let Some(stop) = self.chrome_focus else {
             return false;
         };
+        // The toast it was on went (it faded, was replaced or answered): the
+        // stop goes with it, and the key is not this stop's.
+        if matches!(stop, ChromeStop::Toast(_)) && self.toast_line_count() == 0 {
+            self.chrome_focus = None;
+            return false;
+        }
         // An open switcher owns the keyboard (its own Esc, arrows and Enter)
         // until it shuts; the stop takes over again after.
         if self.explore.popover_open() {
@@ -379,6 +402,15 @@ impl MainView {
                     (i + n - 1) % n
                 })
             }
+            ChromeStop::Toast(i) => {
+                // The line's answers, as drawn: Turn on, then Not now.
+                let n = self.toast_line_count().max(1);
+                ChromeStop::Toast(if forward {
+                    (i + 1) % n
+                } else {
+                    (i + n - 1) % n
+                })
+            }
         }
     }
 
@@ -428,6 +460,11 @@ impl MainView {
                 }
                 ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
             },
+            // What a press on that answer does; the keyboard leaves with it,
+            // since the line it was on is gone once answered.
+            ChromeStop::Toast(i) => {
+                self.press_toast_line(i);
+            }
         }
         let _ = ws;
     }
@@ -437,7 +474,7 @@ impl MainView {
     pub(super) fn explore_chrome_focus(&self) -> Option<ExploreChromeFocus> {
         match self.chrome_focus? {
             ChromeStop::Apps(i) => Some(self.rail_focus(i)),
-            ChromeStop::Lane(_) => None,
+            ChromeStop::Lane(_) | ChromeStop::Toast(_) => None,
         }
     }
 

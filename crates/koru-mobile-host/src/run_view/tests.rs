@@ -650,6 +650,64 @@ fn the_inventory_hides_runs_and_schedules_and_counts_them() {
     assert_eq!(inventory.hidden_runs, 2);
 }
 
+/// **The phone lists by the desktop's rule** (`koru_core::explore::listed`,
+/// OCR TECHNICAL §12). The hand-written filter it replaced named notes, runs
+/// and schedules and nothing else, so the workspace's system document and
+/// its tasks document went out as rows — and a reading document per file
+/// would have joined them. Now none of the three is a row, none is counted
+/// among the documents the workspace card shows, and none opens; only runs
+/// and schedules are counted as hidden, as before.
+#[test]
+fn the_inventory_lists_by_the_shared_rule_and_hides_internal_documents() {
+    let (_root, host) = host();
+    let ws = a_workspace(&host);
+    let page = seed_page(&host, ws, 1);
+    seed_run(&host, ws, &a_run(&a_header(DeviceId::new()), 1, |_| {}));
+    let (system, tasks, reading) = with_store(&host, move |store| {
+        let (system, _) = store
+            .create_document(ws, "", koru_core::explore::KIND_SYSTEM, None, None, at(3))
+            .unwrap();
+        let (tasks, _) = store
+            .create_document(
+                ws,
+                "Tasks",
+                koru_core::explore::KIND_TASK_LIST,
+                None,
+                None,
+                at(3),
+            )
+            .unwrap();
+        let reading = store.ensure_reading(ws, page, at(4)).unwrap().id;
+        (system, tasks, reading)
+    });
+    assert_eq!(
+        reading,
+        DocumentId::from_uuid(
+            koru_core::ids::reading_document_id(koru_core::DocumentId::from_uuid(page.as_uuid()))
+                .as_uuid()
+        ),
+        "the store and the app derive the same id"
+    );
+
+    let inventory = host.inventory().unwrap();
+    let listed: Vec<String> = inventory
+        .documents
+        .iter()
+        .map(|row| row.id.clone())
+        .collect();
+    assert_eq!(listed, vec![page.to_storage()], "one row: the page");
+    assert_eq!(inventory.hidden_runs, 1, "the run, and only the run");
+
+    for hidden in [system, tasks, reading] {
+        assert_eq!(
+            host.view_document(&hidden.to_storage()).err().as_deref(),
+            Some("document_not_listed"),
+        );
+    }
+    host.view_document(&page.to_storage())
+        .expect("the page still opens");
+}
+
 /// **Proposal §3.2–3.3.** The pill P1.15 writes — a document reference under
 /// the `koru.run` role — reads back through `koru-core` as the typed
 /// `AttrValue::Document` now that the reader's normalization covers that role,

@@ -57,6 +57,45 @@ fn a_run_is_skipped_before_the_fork_and_never_followed() {
     );
 }
 
+/// **A reading document is never walked** (OCR TECHNICAL D14): fifty pages
+/// of words committed to one fork nothing, project nothing and reach the
+/// source's activity log — the door to automatic history — zero times, and a
+/// sweep never compares it. The page beside it is still followed.
+#[test]
+fn a_reading_document_is_skipped_before_the_fork_and_never_reaches_activity() {
+    let store = FakeStore::default();
+    let ws = WorkspaceId::new();
+    let page = store.add(ws, "a paragraph");
+    let reading = store.add_reading(ws);
+    store.announce_manifest(ws);
+    let mut p = projector_for(&store, ws);
+    settle(&mut p, 0);
+    assert!(
+        !store.forks.borrow().contains(&reading),
+        "the sweep forked the reading document"
+    );
+
+    for page_number in 1..=50 {
+        store.read_page(reading, page_number);
+    }
+    store.write(page, "another paragraph");
+    settle(&mut p, 1_000);
+
+    assert!(
+        !store.forks.borrow().contains(&reading),
+        "a commit forked the reading document"
+    );
+    assert_eq!(p.stats().skipped, 50);
+    assert!(p.projections().revision(reading).unwrap().is_none());
+    let activity = store.activity.borrow();
+    assert_eq!(
+        activity.iter().filter(|c| c.document == reading).count(),
+        0,
+        "the reading document reached the activity log"
+    );
+    assert_eq!(activity.iter().filter(|c| c.document == page).count(), 1);
+}
+
 /// A sweep over a workspace that holds a run compares every page and never
 /// the run — a run has no projection to be stale against, so comparing it
 /// would fork it on every sweep for good.

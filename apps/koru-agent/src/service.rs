@@ -1355,6 +1355,8 @@ pub fn resolve_link(
                     // A link reuses a window. Opening a new one for every click
                     // in a browser is how a person ends up with nine.
                     new_window: false,
+                    kind: koru_agent_wire::TargetKind::Document,
+                    list: None,
                 })
             })();
             match resolved {

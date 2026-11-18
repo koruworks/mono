@@ -273,5 +273,33 @@ strict_v4_id_type!(
     "ract"
 );
 
+/// The UUIDv5 namespace of every reading-document id (OCR TECHNICAL §7,
+/// "Identity and registration"). A fixed constant whose stability is the
+/// whole point; generated as a v4 UUID on 2026-11-11.
+///
+/// **Declared twice.** `koru_core::ids::READING_DOCUMENT_NS_V1` is the same
+/// value on the application's side; the store cannot link that crate
+/// (ADR-80), so each crate pins the same independently computed vector.
+pub const READING_DOCUMENT_NS_V1: Uuid = Uuid::from_bytes([
+    0x05, 0x79, 0x3a, 0x5c, 0x5b, 0x98, 0x4d, 0x2a, 0xa3, 0xf2, 0x4a, 0xc0, 0xb5, 0x64, 0xad, 0x87,
+]);
+
+/// The id of `parent`'s one reading document:
+/// `UUIDv5(READING_DOCUMENT_NS_V1, parent's 16 uuid bytes)`.
+///
+/// **The one exception to "never derived" this file's module note states**,
+/// and it is the same exception `koru_core::ids::page_document_id` is: derived
+/// from another immutable id and nothing else — no path, folder, machine or
+/// name. Every desktop that sees a file registers its reading document, so two
+/// devices routinely do it before they meet; a derived id is what makes both
+/// write into one document rather than leave one orphaned
+/// ([`crate::Store::ensure_reading`]).
+pub fn reading_document_id(parent: DocumentId) -> DocumentId {
+    DocumentId::from_uuid(Uuid::new_v5(
+        &READING_DOCUMENT_NS_V1,
+        parent.as_uuid().as_bytes(),
+    ))
+}
+
 #[cfg(test)]
 mod tests;

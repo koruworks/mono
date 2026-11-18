@@ -677,6 +677,11 @@ fn a_typed_payload_builds_a_valid_envelope() {
             size_mb_bucket: bucket(648),
         }
         .into(),
+        crate::ReadingReaderInstalled {
+            size_mb_bucket: bucket(26),
+        }
+        .into(),
+        crate::ReadingReaderRemoved.into(),
         AccountOperationCompleted {
             client: AccountClient::Native,
             provider: AccountProvider::Google,

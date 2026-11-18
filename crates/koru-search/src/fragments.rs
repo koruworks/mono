@@ -47,9 +47,12 @@
 //! workspace. A node with no text and no name produces **no fragment**, and the
 //! filter went with it.
 
+use std::collections::HashMap;
+
 use koru_projection::model::{DocumentProjection, ProjectedAttr, ProjectedNode};
 
 use crate::model::{AttrRow, Fragment, field};
+use crate::readings::ReadingText;
 use crate::tags::{TAG_ROLE, TagTable};
 
 /// Everything the **node walk** contributes. The title is not here; see
@@ -91,6 +94,7 @@ pub fn fragments(
                 kind: node.kind.clone(),
                 field: primary_field(node),
                 text: text.to_owned(),
+                page: None,
             });
         }
 
@@ -107,6 +111,7 @@ pub fn fragments(
                 kind: node.kind.clone(),
                 field: field::LEVEL_NAME.into(),
                 text: level.to_owned(),
+                page: None,
             });
         }
 
@@ -131,10 +136,103 @@ pub fn fragments(
                 kind: node.kind.clone(),
                 field: field::attr(&attr.role),
                 text: text.to_owned(),
+                page: None,
             });
         }
     }
     out
+}
+
+/// The node kinds whose `blob` can have a reading: a picture and a file.
+///
+/// Spelled here for the reason `fragments.rs`' other kind strings are: they are
+/// stable storage tokens (`Kind::Image`, `Kind::File`), and this crate links no
+/// node model to ask.
+pub const READ_KINDS: [&str; 2] = ["image", "file"];
+
+/// What makes a node a task, as the task model says it: the marker, or a due.
+pub const TASK_ROLES: [&str; 2] = ["koru.task", "koru.due"];
+
+/// The first character of the kind of a row the index writes for itself.
+pub const GENERATED_KIND_PREFIX: char = '@';
+
+/// The kind — and, for want of anything truer, the role — of the generated
+/// row that marks a document's root as a task. **Readers test the kind.**
+/// Roles are not reserved: a workspace may define an attribute spelled
+/// `@root-task`, and it is copied as an authored row with an authored kind,
+/// neither read as this marker nor removed.
+pub const ROOT_TASK_KIND: &str = "@root-task";
+
+/// The distinct blob hashes of a document's **live** pictures and files — what
+/// the indexer asks the [`Readings`](crate::Readings) seam about when it
+/// indexes this document. In document order, each once.
+pub fn read_hashes(projection: &DocumentProjection) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for node in &projection.nodes {
+        if let Some(hash) = readable_blob(node)
+            && !out.iter().any(|h| h == hash)
+        {
+            out.push(hash.to_owned());
+        }
+    }
+    out
+}
+
+/// The words read out of a document's pictures and files: **one fragment per
+/// non-empty page** (TECHNICAL D13, §7 "The index").
+///
+/// `readings` is keyed by hash and holds what the seam answered for this
+/// document's [`read_hashes`]; a hash it does not hold has no reading and
+/// contributes nothing.
+///
+/// - `stable_key` is `node:<document>:<node>:read:<page>`, so two pages of one
+///   file are two rows, and a multi-word query — whose every term must already
+///   co-occur in one fragment — matches **within one page** with no query logic
+///   of its own.
+/// - `page` is the page number only when the reading has more than one page;
+///   a picture, a one-page PDF and a plain-text file carry none, so a result
+///   row is not numbered "Page 1" of something that has no pages.
+/// - A binned node is skipped, as every other walk here skips it. A binned
+///   *document* is not: its rows stay, and answer the Trash filter through the
+///   listing, exactly as its other fragments do.
+pub fn reading_fragments(
+    projection: &DocumentProjection,
+    readings: &HashMap<String, ReadingText>,
+) -> Vec<Fragment> {
+    let workspace = projection.workspace.to_storage();
+    let document = projection.document.to_storage();
+    let mut out = Vec::new();
+    for (seq, node) in projection.nodes.iter().enumerate() {
+        let Some(reading) = readable_blob(node).and_then(|hash| readings.get(hash)) else {
+            continue;
+        };
+        let numbered = reading.page_count > 1;
+        for (page, text) in &reading.pages {
+            if text.trim().is_empty() {
+                continue;
+            }
+            out.push(Fragment {
+                key: format!("node:{document}:{}:read:{page}", node.id),
+                workspace: workspace.clone(),
+                document: Some(document.clone()),
+                node: Some(node.id.clone()),
+                seq: seq as i64 + 1,
+                kind: node.kind.clone(),
+                field: field::READ.into(),
+                text: text.clone(),
+                page: numbered.then_some(*page),
+            });
+        }
+    }
+    out
+}
+
+/// A live picture's or file's hash, or `None` for any other node.
+fn readable_blob(node: &ProjectedNode) -> Option<&str> {
+    if node.in_trash || !READ_KINDS.contains(&node.kind.as_str()) {
+        return None;
+    }
+    node.blob.as_deref().filter(|hash| !hash.trim().is_empty())
 }
 
 /// Every attribute of every node, **in the type it was declared with**.
@@ -160,12 +258,49 @@ pub fn attr_values(
     projection: &DocumentProjection,
 ) -> Vec<AttrRow> {
     let mut out = Vec::new();
+    // **The one generated row.** A hit on a document's title names no node,
+    // and the index does not otherwise record which node is a document's
+    // root — so a page that is itself a task could not say so. For a live
+    // root carrying `koru.task` or `koru.due`, one row marks it. Emitted for
+    // the root only and at most once, in the same pass and the same
+    // transaction as the document's other rows, so marking, unmarking or
+    // trashing the root replaces or removes it with everything else.
+    let root = projection
+        .nodes
+        .first()
+        .filter(|node| node.kind == "document" && !node.in_trash);
+    if let Some(root) = root
+        && root
+            .attrs
+            .iter()
+            .any(|attr| TASK_ROLES.contains(&attr.role.as_str()) && !attr.value.trim().is_empty())
+    {
+        out.push(AttrRow {
+            workspace: workspace.to_owned(),
+            document: document.to_owned(),
+            node: root.id.clone(),
+            role: ROOT_TASK_KIND.to_owned(),
+            kind: ROOT_TASK_KIND.to_owned(),
+            value: "1".to_owned(),
+            num: None,
+            zone: None,
+        });
+    }
     for node in &projection.nodes {
         if node.in_trash {
             continue;
         }
         for attr in &node.attrs {
             if attr.value.trim().is_empty() {
+                continue;
+            }
+            // **An authored row never carries a kind beginning with `@`**:
+            // that prefix is how the index tells its own rows from a
+            // person's. A projected attribute's kind is one of the declared
+            // value kinds, so this drops nothing today; it is here so the
+            // guarantee is the index's own and not an assumption about the
+            // projection.
+            if attr.kind.starts_with(GENERATED_KIND_PREFIX) {
                 continue;
             }
             out.push(AttrRow {
@@ -220,6 +355,7 @@ pub fn title_fragment(workspace: &str, document: &str, title: &str) -> Option<Fr
         kind: "document".to_owned(),
         field: field::TITLE.to_owned(),
         text: title.to_owned(),
+        page: None,
     })
 }
 
@@ -227,6 +363,23 @@ pub fn title_fragment(workspace: &str, document: &str, title: &str) -> Option<Fr
 ///
 /// It belongs to no document, which is also what keeps
 /// `DELETE FROM fragments WHERE document_id = ?` from ever touching it.
+/// One task list's name. No document: the list lives in the system document's
+/// registry. Its node is the list's id, so a hit names the list and two lists'
+/// evidence never mix; its key is what the list path owns it by.
+pub fn list_fragment(workspace: &str, list: &str, name: &str) -> Option<Fragment> {
+    (!name.trim().is_empty()).then(|| Fragment {
+        key: format!("list:{workspace}:{list}"),
+        workspace: workspace.to_owned(),
+        document: None,
+        node: Some(list.to_owned()),
+        seq: 0,
+        kind: field::TASK_LIST.into(),
+        field: field::TASK_LIST.into(),
+        text: name.to_owned(),
+        page: None,
+    })
+}
+
 pub fn workspace_fragment(workspace: &str, name: &str) -> Option<Fragment> {
     (!name.trim().is_empty()).then(|| Fragment {
         key: format!("workspace:{workspace}"),
@@ -237,6 +390,7 @@ pub fn workspace_fragment(workspace: &str, name: &str) -> Option<Fragment> {
         kind: field::WORKSPACE.into(),
         field: field::WORKSPACE.into(),
         text: name.to_owned(),
+        page: None,
     })
 }
 

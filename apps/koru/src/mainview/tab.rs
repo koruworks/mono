@@ -87,6 +87,7 @@ pub enum TabView {
     /// strip by its own name. It has no rows and no `Body`, so
     /// `Editing::parts` could only panic down in [`Leaf`].
     Result(crate::result_view::ResultView),
+    Ocr(crate::ocr_view::OcrView),
     /// A running shell or agent session — an ordinary tab, mixing freely with
     /// document tabs (TERMINATAB Q-E4). The view wraps the extracted
     /// `koru_agents_ui::SessionSurface`; the container owns the launch, the
@@ -177,6 +178,7 @@ impl TabView {
             // follows the pointer out of the band exactly as it does in the
             // library's own pages (ADR-372).
             Self::Result(r) => r.is_dragging(),
+            Self::Ocr(r) => r.is_dragging(),
             // A row held on a Tasks page follows the pointer out of the page:
             // it can be dropped on a list in the sidebar.
             Self::Tasks(t) => t.holding_rows(),
@@ -259,7 +261,7 @@ impl TabView {
             // A run view shows a run, which is its own document read
             // through the gateway; the open workspace document is not it.
             // A result is an artifact version, which is immutable.
-            Self::Run(_) | Self::Result(_) => {}
+            Self::Run(_) | Self::Result(_) | Self::Ocr(_) => {}
             // The Leaf arm's guard, for the Leaf arm's reason: a store swap
             // hands a background tab a stranger document, and a canvas must
             // not take in changes to a tree it is not rooted in.
@@ -311,6 +313,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             // A canvas reads its document again when its version has moved —
             // one comparison when nothing has.
@@ -358,6 +361,7 @@ impl TabView {
             Self::Session(s) => koru_workspace_host::View::reseat(s, ws),
             Self::Run(r) => koru_workspace_host::View::reseat(r, ws),
             Self::Result(r) => koru_workspace_host::View::reseat(r, ws),
+            Self::Ocr(r) => koru_workspace_host::View::reseat(r, ws),
             Self::Canvas(c) => koru_workspace_host::View::reseat(c, ws),
             Self::Leaf(l) => koru_workspace_host::View::reseat(l, ws),
         }
@@ -470,6 +474,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => None,
             Self::Canvas(c) => Some(c.root()),
             Self::Leaf(l) => View::document_root(l),
@@ -499,6 +504,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             // A canvas lands on the object: centred and selected.
             Self::Canvas(c) => c.reveal(id),
@@ -523,6 +529,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             // A canvas lands on the object: centred and selected.
             Self::Canvas(c) => c.reveal(id),
@@ -546,6 +553,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             // A canvas lands on the object: centred and selected.
             Self::Canvas(c) => c.reveal(id),
@@ -570,6 +578,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Canvas(_)
             | Self::Feedback(_) => false,
             Self::Leaf(l) => l.start_image_rename(ws, id),
@@ -594,6 +603,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             // The canvas answers with the same name prompt, writing its root's
             // text — so F2, the tab's Rename… and Explore's all rename it.
@@ -626,6 +636,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             // The name prompt, the text dialog or the agent menu.
             Self::Canvas(c) => c.is_prompting(),
@@ -659,6 +670,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Feedback(_) => false,
             Self::Canvas(c) => c.is_renaming(),
             Self::Leaf(l) => l.view().overlay.trigger().is_some_and(|trigger| {
@@ -688,6 +700,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Canvas(_)
             | Self::Feedback(_) => None,
             Self::Leaf(l) => l.editing_title().then(|| View::document_root(l)).flatten(),
@@ -713,6 +726,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Canvas(_)
             | Self::Feedback(_) => false,
             Self::Leaf(l) => l
@@ -749,6 +763,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Canvas(_)
             | Self::Feedback(_) => None,
             Self::Leaf(l) => l.take_wants_open_where(),
@@ -772,6 +787,7 @@ impl TabView {
             | Self::Session(_)
             | Self::Run(_)
             | Self::Result(_)
+            | Self::Ocr(_)
             | Self::Canvas(_)
             | Self::Feedback(_) => 0.0,
             Self::Leaf(l) => l.view().scroll,
@@ -803,6 +819,7 @@ impl TabView {
     /// fast-wake loop runs while any visible view reports this.
     pub fn is_animating(&self) -> bool {
         match self {
+            Self::Ocr(o) => View::animating(o),
             Self::Welcome(_)
             | Self::Manage(_)
             | Self::Settings(_)
@@ -827,6 +844,7 @@ impl TabView {
 
     pub fn maintenance_deadline(&self) -> Option<std::time::Instant> {
         match self {
+            Self::Ocr(o) => View::maintenance_deadline(o),
             Self::Welcome(_)
             | Self::Trash(_)
             | Self::Diff(_)
@@ -862,6 +880,7 @@ impl TabView {
 
     pub fn maintain(&mut self, ws: &mut WorkspaceDoc, now: std::time::Instant) -> bool {
         match self {
+            Self::Ocr(o) => View::maintain(o, ws, now),
             Self::Welcome(_)
             | Self::Trash(_)
             | Self::Diff(_)
@@ -952,6 +971,7 @@ pub struct WhatsNewTab {
 /// The pages a tab can host over a private workspace.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PrivatePage {
+    /// An extracted reading, never a disposable draft or a saved workspace page.
     /// This build's release notes.
     WhatsNew,
     /// The who/where popover's sync control: a page that says only its name
@@ -1508,6 +1528,16 @@ impl Tab {
         Self::private_page(PrivatePage::SyncSettings, title, &[])
     }
 
+    pub(super) fn ocr(
+        file: koru_core::DocumentId,
+        workspace: Option<koru_core::WorkspaceId>,
+    ) -> Self {
+        let mut tab = Self::welcome();
+        tab.view = TabView::Ocr(crate::ocr_view::OcrView::new(file, workspace));
+        tab.label = "ocr:…".to_owned();
+        tab
+    }
+
     /// The sample document. See [`PrivatePage::SampleDocument`].
     ///
     /// **Built by the Markdown importer, not pasted.** The paste path spells a
@@ -1698,6 +1728,7 @@ impl Tab {
                     | TabView::Session(_)
                     | TabView::AiChat(_)
                     | TabView::Bot(_)
+                    | TabView::Ocr(_)
             )
     }
 
@@ -1808,6 +1839,7 @@ impl Tab {
             TabView::Session(s) => View::set_viewport(s, w, h),
             TabView::Run(r) => View::set_viewport(r, w, h),
             TabView::Result(r) => View::set_viewport(r, w, h),
+            TabView::Ocr(r) => View::set_viewport(r, w, h),
             TabView::Feedback(v) => View::set_viewport(v, w, h),
             TabView::Canvas(c) => View::set_viewport(c, w, h),
             TabView::Leaf(l) => Leaf::set_viewport(l, w, h),

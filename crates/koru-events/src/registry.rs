@@ -490,6 +490,11 @@ pub const AREAS: &[&str] = &[
     // emitter is the AI worker (with the gateway's Bot ingress for a stream
     // it turns away), which publishes no `delegate.*` row.
     "bots",
+    // Reading the words out of pictures and PDFs (OCR TECHNICAL §10): the
+    // reader's download installed and removed. Its own area rather than a
+    // corner of `search`, whose one event is deliberately `search.opened`;
+    // the emitter is the Store's reader installer, not a search surface.
+    "reading",
 ];
 
 /// Which speech runtime ran — `voice.dictation.completed`'s and
@@ -2994,6 +2999,37 @@ pub const REGISTRY: &[EventSpec] = &[
               third-party entries, so a closed vocabulary for it does not \
               exist and inventing one would freeze a list that lives on a \
               server.",
+    },
+    EventSpec {
+        name: "reading.reader.installed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[bucket_attr(
+            "size_mb_bucket",
+            "The installed download's size in megabytes, bucketed — never \
+             a path, and never the model cache's directory.",
+        )],
+        doc: "The reader that finds words in pictures and scanned PDFs \
+              finished downloading, verifying and installing on this \
+              computer, after a person agreed (OCR TECHNICAL §10). Emitted \
+              once per successful install by the Store's reader installer, \
+              where it logs the same news. A failed or stopped download says \
+              nothing here. No model id (an open remote vocabulary, as \
+              voice.model.installed explains) and nothing about any file. \
+              Local only: exporting it is a decision for the ADR-166 review.",
+    },
+    EventSpec {
+        name: "reading.reader.removed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The reader's download was removed from this computer — Turn \
+              off or Remove in Settings. Readings already made stay: they \
+              are workspace documents. Emitted once per removal by the \
+              Store's reader installer, where it logs the same news. Local \
+              only, like reading.reader.installed.",
     },
     EventSpec {
         name: "account.operation.completed",

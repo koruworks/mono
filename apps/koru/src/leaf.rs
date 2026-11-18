@@ -970,7 +970,7 @@ impl View for Leaf {
         }
     }
 
-    fn set_list_table(&mut self, lists: &[koru_core::system::ListEntry]) -> bool {
+    fn set_list_table(&mut self, lists: &[koru_core::system::ListNode]) -> bool {
         match self {
             Self::Document(d) => View::set_list_table(d, lists),
         }
@@ -985,6 +985,34 @@ impl View for Leaf {
     fn take_wants_copy_image(&mut self) -> Option<String> {
         match self {
             Self::Document(d) => View::take_wants_copy_image(d),
+        }
+    }
+
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        match self {
+            Self::Document(d) => View::take_wants_save_reading(d),
+        }
+    }
+
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        match self {
+            Self::Document(d) => View::take_wants_reading_offers(d),
+        }
+    }
+
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        match self {
+            Self::Document(d) => View::take_wants_read_again(d),
+        }
+    }
+
+    fn set_reading_offers(
+        &mut self,
+        target: &koru_workspace_host::reading_file::ReadingTarget,
+        offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+    ) -> bool {
+        match self {
+            Self::Document(d) => View::set_reading_offers(d, target, offers),
         }
     }
 

@@ -472,6 +472,7 @@ fn tab_kind(v: &MainView) -> &'static str {
         TabView::Session(_) => "session",
         TabView::Run(_) => "run",
         TabView::Result(_) => "result",
+        TabView::Ocr(_) => "ocr",
         TabView::Canvas(_) => "canvas",
         TabView::Leaf(_) => "leaf",
     }
@@ -548,6 +549,10 @@ fn table() -> String {
 /// composer, `escape` and `arrow-down` are the composer's, and `enter` opens
 /// the model picker — all four `handled=Y`. `ctrl-t` and `f13` route as
 /// before.
+///
+/// **Moved a fifth time, deliberately, for the sidebar's quick filter**
+/// (2026-11-16). With the sidebar holding the keyboard after a press on a
+/// row, `char-x` is the filter's: the document no longer gains the `x`.
 const EXPECTED: &str = include_str!("routing.table");
 
 #[test]

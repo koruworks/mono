@@ -58,6 +58,7 @@ Write-Host "[Koru] stopping every Koru process on this machine..."
 Stop-KoruProcessGroup "koru" "Koru" $true
 Stop-KoruProcessGroup "koru-agent" "Agent" $false
 Stop-KoruProcessGroup "koru-voice-worker" "Voice worker" $false
+Stop-KoruProcessGroup "koru-read-worker" "Read worker" $false
 Stop-KoruProcessGroup "koru-com-notification" "notification COM broker" $false
 # **Retired image names, kept on purpose.** The API Gateway and the session
 # host are worker roles of koru-agent.exe now, so a current stack has no process

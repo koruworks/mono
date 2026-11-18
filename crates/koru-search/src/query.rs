@@ -35,15 +35,24 @@
 //!
 //! Everything below `candidates` therefore sees exactly what it saw before, so
 //! ranking, dedup and `next_offset` are unchanged for a query with no tag in it.
+//!
+//! ## A file contributes one `read` hit, chosen before the page is cut
+//!
+//! Words read out of a file are one fragment per page, so a word on every page
+//! of a long PDF is hundreds of hits for one row. [`READ_BEST`] keeps each
+//! document's best `read` fragment and drops the rest of its `read` fragments
+//! before `LIMIT`, so paging counts what is left — the tag filter's rule.
+//! Nothing that is not a `read` fragment is touched.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::LazyLock;
 
-use rusqlite::{Connection, params, params_from_iter, types::Value};
+use rusqlite::{Connection, OptionalExtension, params, params_from_iter, types::Value};
 
+use crate::lists::ListRow;
 use crate::model::{
-    AttrFilter, AttrOp, Lifecycle, LifecycleFilter, SearchHit, SearchPage, SearchQuery,
-    SearchResult, SearchSort, field,
+    AttrFilter, AttrOp, Lifecycle, LifecycleFilter, ListHit, SearchHit, SearchPage, SearchQuery,
+    SearchResult, SearchSort, TaskHit, field,
 };
 use crate::normalize::{EvidenceTerm, matching_evidence_spans, normalize, query_terms, snippet};
 use crate::storage::{Listed, SearchIndex};
@@ -314,6 +323,7 @@ pub(crate) fn search(
             next_offset: None,
             updating_workspaces: updating.to_vec(),
             corrected_query: None,
+            reading: None,
             request_seq: query.request_seq,
         });
     }
@@ -322,8 +332,10 @@ pub(crate) fn search(
     // side immediately before its commit and releases it after, so evidence and
     // fragment rows are one coherent generation even across two WAL
     // connections.
+    let started = std::time::Instant::now();
     let vocabulary = index.vocabulary.read();
-    prepare_evidence(connection, &vocabulary, &terms)?;
+    prepare_evidence(connection, &vocabulary, &terms, query.include_lists)?;
+    let evidence_ms = started.elapsed().as_secs_f64() * 1e3;
 
     let mut values = vec![
         Value::Integer(lifecycle_code(query.lifecycle)),
@@ -393,6 +405,12 @@ pub(crate) fn search(
                )"
         ));
     }
+    // **A filter never sees a generated row.** The index writes rows of its
+    // own into `attr_values` (the root-task marker), told apart by a kind
+    // beginning with `@` — which no authored attribute can carry. Whatever
+    // role or kind a caller names, `has` and `missing` answer from authored
+    // rows alone.
+    //
     // **The typed half of the same idea**, and the same shape: correlated on
     // the node, in `candidates` alone, so coverage and scoring are untouched
     // and no hit is duplicated.
@@ -430,7 +448,7 @@ pub(crate) fn search(
             "EXISTS (
                  SELECT 1 FROM attr_values v
                  WHERE v.document_id=f.document_id AND v.node_id=f.node_id
-                   AND v.role=?{key} AND ({body})
+                   AND v.role=?{key} AND v.kind NOT LIKE '@%' AND ({body})
                )"
         );
         if filter.op == AttrOp::Missing {
@@ -463,6 +481,31 @@ pub(crate) fn search(
     } else {
         COVERAGE
     };
+    // **Two request flags, and with both off the answer is what it was.**
+    // Lists are candidates, and lead every sort, only when asked for. Tasks
+    // are named as tasks, weighted like titles and kept one per task among
+    // read text only when asked for; without the flag the statement's
+    // scoring and its read collapse are the strings they always were.
+    let (score, read_best) = if query.task_results {
+        (TASK_SCORE.as_str(), TASK_READ_BEST.as_str())
+    } else {
+        (SCORE, READ_BEST.as_str())
+    };
+    let lists = if query.include_lists {
+        ""
+    } else {
+        " AND f.field<>'task-list'"
+    };
+    let lists_first = if query.include_lists {
+        "CASE WHEN f.field='task-list' THEN 0 ELSE 1 END,"
+    } else {
+        ""
+    };
+    let task_node = if query.task_results {
+        TASK_NODE
+    } else {
+        "NULL"
+    };
 
     let sql = format!(
         "WITH candidates AS (
@@ -471,14 +514,421 @@ pub(crate) fn search(
            LEFT JOIN listing l ON l.document_id=f.document_id
            WHERE ({LIFECYCLE})
              {scope}
+             {lists}
              {kinds}
              {tags}
              {attrs}
          ),
-         {qualified}
+         {qualified},
+         {read_best}
          SELECT f.workspace_id, f.document_id, f.node_id, f.kind, f.field, f.text,
                 f.stable_key, d.observed_modified_at_ms, recent.last_used_at_ms,
-                (CASE
+                {score} AS score,
+                f.page,
+                {task_node} AS task_node
+         FROM qualified q
+         JOIN fragments f ON f.id=q.candidate_id
+         LEFT JOIN documents d ON d.document_id=f.document_id
+         LEFT JOIN (
+           SELECT workspace_id, MAX(opened_at_ms) AS last_used_at_ms
+           FROM recent_targets GROUP BY workspace_id
+         ) recent ON recent.workspace_id=f.workspace_id
+         LEFT JOIN (
+           SELECT workspace_id, MAX(observed_modified_at_ms) AS observed_modified_at_ms
+           FROM documents GROUP BY workspace_id
+         ) ws_change ON ws_change.workspace_id=f.workspace_id
+         WHERE {READ_KEPT}
+         ORDER BY
+           {lists_first}
+           CASE WHEN ?4=1
+             THEN COALESCE(d.observed_modified_at_ms,
+                           ws_change.observed_modified_at_ms, 0) END DESC,
+           CASE WHEN ?4=2 THEN COALESCE(recent.last_used_at_ms,0) END DESC,
+           score DESC, f.text COLLATE NOCASE, f.stable_key
+         LIMIT ?{limit} OFFSET ?{offset}"
+    );
+
+    let statement_started = std::time::Instant::now();
+    let mut statement = connection.prepare(&sql)?;
+    let raw = statement
+        .query_map(params_from_iter(values), |r| {
+            Ok(RawHit {
+                workspace: r.get(0)?,
+                document: r.get(1)?,
+                node: r.get(2)?,
+                kind: r.get(3)?,
+                field: r.get(4)?,
+                text: r.get(5)?,
+                observed_modified_at_ms: r.get(7)?,
+                workspace_last_used_at_ms: r.get(8)?,
+                score: r.get(9)?,
+                page: r.get(10)?,
+                task_node: r.get(11)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    let statement_ms = statement_started.elapsed().as_secs_f64() * 1e3;
+    let hits_started = std::time::Instant::now();
+
+    let workspaces: Vec<String> = {
+        let mut all: Vec<String> = raw.iter().map(|r| r.workspace.clone()).collect();
+        all.sort();
+        all.dedup();
+        all
+    };
+    let listing = index.listing_of(&workspaces)?;
+    let names = index.workspace_names()?;
+    // Read once, and only when a list is on the page: a list hit's path is
+    // assembled from the mirrored table, as a document's is from the listing.
+    let task_lists = if raw.iter().any(|row| row.field == field::TASK_LIST) {
+        index.lists_of(&workspaces)?
+    } else {
+        HashMap::new()
+    };
+
+    let mut hits = Vec::with_capacity(raw.len());
+    let mut corrected = terms.clone();
+    let mut has_correction = false;
+    for row in raw {
+        let evidence = evidence_for(connection, &row, terms.len())?;
+        if hits.is_empty() {
+            for term in evidence.direct.iter().chain(evidence.scope.iter()) {
+                if term.fuzzy
+                    && let Some(original) = corrected.get_mut(term.ordinal as usize)
+                    && *original != term.text
+                {
+                    *original = term.text.clone();
+                    has_correction = true;
+                }
+            }
+        }
+        let listed = row.document.as_ref().and_then(|d| listing.get(d));
+        let workspace_name = names.get(&row.workspace).cloned().unwrap_or_default();
+        // **A list hit.** Its title is the list's name and its path is the
+        // lists it is inside, read from the mirrored table.
+        let list = (row.field == field::TASK_LIST)
+            .then(|| row.node.clone())
+            .flatten()
+            .map(|id| {
+                let stored = task_lists.get(&(row.workspace.clone(), id.clone()));
+                ListHit {
+                    path: list_path(&row.workspace, &id, &task_lists),
+                    color: stored.and_then(|list| list.color.clone()),
+                    id,
+                }
+            });
+        // **A task hit.** `task_node` is the hit's own node, or the root of a
+        // page whose title matched and which is itself a task.
+        let task = match (&row.task_node, &row.document) {
+            (Some(node), Some(document)) => Some(TaskHit {
+                state: task_state(connection, document, node)?,
+                node: node.clone(),
+            }),
+            _ => None,
+        };
+        let path = match &list {
+            Some(list) => {
+                let mut names = vec![workspace_name.clone()];
+                names.extend(list.path.iter().cloned());
+                names.push(row.text.clone());
+                names.join(" / ")
+            }
+            None => breadcrumb(&workspace_name, listed, &listing),
+        };
+        let direct = matching_evidence_spans(
+            &row.text,
+            evidence.direct.iter().map(|t| EvidenceTerm {
+                text: &t.text,
+                whole_token: t.fuzzy,
+            }),
+        );
+        let (snippet_text, spans) = snippet(&row.text, &direct, 70);
+        let picture_name = picture_name(connection, &row)?;
+        let breadcrumb_spans = matching_evidence_spans(
+            &path,
+            evidence.scope.iter().map(|t| EvidenceTerm {
+                text: &t.text,
+                whole_token: t.fuzzy,
+            }),
+        );
+        let title = if list.is_some() || (query.entity_picker && row.node.is_some()) {
+            row.text.clone()
+        } else if let (Some(task), Some(document), Some(_)) = (&task, &row.document, &row.node) {
+            // The task's own words, as the entity picker titles it — not the
+            // attribute or the page of read text that happened to match.
+            task_text(connection, document, &task.node)?.unwrap_or_else(|| {
+                listed
+                    .map(|l| l.title.clone())
+                    .unwrap_or_else(|| workspace_name.clone())
+            })
+        } else {
+            listed
+                .map(|l| l.title.clone())
+                .unwrap_or_else(|| workspace_name.clone())
+        };
+        hits.push(SearchHit {
+            title,
+            workspace_name,
+            workspace: row.workspace,
+            document: row.document,
+            node: row.node,
+            document_kind: listed.map(|l| l.kind.clone()).unwrap_or_default(),
+            mime: listed.and_then(|l| l.mime.clone()),
+            // The wire's word for a list result; the index's own token is the
+            // field's.
+            kind: if list.is_some() {
+                KIND_TASK_LIST.to_owned()
+            } else {
+                row.kind
+            },
+            field: row.field,
+            breadcrumb: path,
+            breadcrumb_spans,
+            snippet: snippet_text,
+            spans,
+            lifecycle: listed.map(Listed::lifecycle).unwrap_or_default(),
+            trashed_at: listed.and_then(|l| l.trashed_at),
+            trashed_by: listed.and_then(|l| l.trashed_by.clone()),
+            score: row.score,
+            observed_modified_at_ms: row.observed_modified_at_ms,
+            workspace_last_used_at_ms: row.workspace_last_used_at_ms,
+            // Straight from the winning row: one fragment is one page, so
+            // there is nothing to decide here (TECHNICAL D13).
+            page: row.page,
+            picture_name,
+            list,
+            task,
+        });
+    }
+    // **Where a query's time went**, in three parts: matching the words
+    // (the evidence table), choosing and ordering the page (the statement),
+    // and dressing each hit. Counts and milliseconds only — never a word of
+    // the query. Said out loud when a query is slow enough to be felt while
+    // typing; otherwise at debug.
+    let hits_ms = hits_started.elapsed().as_secs_f64() * 1e3;
+    let total_ms = started.elapsed().as_secs_f64() * 1e3;
+    let shortest_term = terms.iter().map(|t| t.chars().count()).min().unwrap_or(0);
+    let evidence_rows: i64 = if total_ms >= SLOW_QUERY_MS {
+        connection
+            .query_row("SELECT COUNT(*) FROM search_query_evidence", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(-1)
+    } else {
+        -1
+    };
+    if total_ms >= SLOW_QUERY_MS {
+        tracing::warn!(
+            target: "koru_search",
+            terms = terms.len(),
+            shortest_term,
+            evidence_rows,
+            hits = hits.len(),
+            evidence_ms,
+            statement_ms,
+            hits_ms,
+            total_ms,
+            "a search query was slow"
+        );
+    } else {
+        tracing::debug!(
+            target: "koru_search",
+            terms = terms.len(),
+            shortest_term,
+            hits = hits.len(),
+            evidence_ms,
+            statement_ms,
+            hits_ms,
+            total_ms,
+            "search query answered"
+        );
+    }
+    index.last_timing.set(Some(crate::storage::QueryTiming {
+        evidence_ms,
+        statement_ms,
+        hits_ms,
+        evidence_rows,
+    }));
+    let has_more = hits.len() > page_size;
+    hits.truncate(page_size);
+    Ok(SearchPage {
+        hits,
+        next_offset: has_more.then_some(query.offset + page_size),
+        updating_workspaces: updating.to_vec(),
+        corrected_query: has_correction.then(|| corrected.join(" ")),
+        reading: None,
+        request_seq: query.request_seq,
+    })
+}
+
+/// A query slower than this is felt between keystrokes, and is logged with
+/// where its time went.
+const SLOW_QUERY_MS: f64 = 100.0;
+
+/// `SearchHit::kind` for a task list.
+pub const KIND_TASK_LIST: &str = "task_list";
+
+/// The names of the lists `id` is inside, outermost first.
+///
+/// Bounded by the table's own size, the breadcrumb's rule: the host hands
+/// over a repaired tree, but a hung query is worse than a short path.
+fn list_path(workspace: &str, id: &str, lists: &HashMap<(String, String), ListRow>) -> Vec<String> {
+    let mut path = Vec::new();
+    let key = |id: &str| (workspace.to_owned(), id.to_owned());
+    let mut at = lists.get(&key(id)).and_then(|list| list.parent.clone());
+    for _ in 0..lists.len() {
+        let Some(parent) = at.and_then(|id| lists.get(&key(&id))) else {
+            break;
+        };
+        path.push(parent.name.clone());
+        at = parent.parent.clone();
+    }
+    path.reverse();
+    path
+}
+
+/// A task's lifecycle token as indexed, `open` when none is recorded.
+fn task_state(connection: &Connection, document: &str, node: &str) -> SearchResult<String> {
+    let state: Option<String> = connection
+        .query_row(
+            "SELECT value FROM attr_values
+             WHERE document_id = ?1 AND node_id = ?2 AND role = 'koru.task_state'
+               AND kind NOT LIKE '@%'
+             LIMIT 1",
+            [document, node],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(state.unwrap_or_else(|| "open".to_owned()))
+}
+
+/// A task's own text: its node's primary fragment.
+fn task_text(connection: &Connection, document: &str, node: &str) -> SearchResult<Option<String>> {
+    let key = format!("node:{document}:{node}:primary");
+    let text: Option<String> = connection
+        .query_row(
+            "SELECT text FROM fragments WHERE stable_key = ?1",
+            [key],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(text.filter(|text| !text.trim().is_empty()))
+}
+
+/// **Which node makes a hit a task**, or NULL.
+///
+/// - *A node hit* whose node carries `koru.task` or `koru.due`: that node.
+/// - *A title hit* — which names no node — of a document whose root is a
+///   task: that root. The index does not record which node is a document's
+///   root, so the document walk writes one generated row for it, told apart
+///   by its **kind** (`@root-task`), never its role: a workspace may define an
+///   attribute spelled anything at all, and an authored row never carries a
+///   kind beginning with `@`.
+///
+/// A scalar subquery with `LIMIT 1`, so a title row can never be multiplied.
+const TASK_NODE: &str = "CASE
+                   WHEN f.node_id IS NOT NULL AND f.document_id IS NOT NULL AND EXISTS (
+                        SELECT 1 FROM attr_values t
+                        WHERE t.document_id=f.document_id AND t.node_id=f.node_id
+                          AND t.role IN ('koru.task','koru.due'))
+                     THEN f.node_id
+                   WHEN f.node_id IS NULL AND f.field='title'
+                     THEN (SELECT root.node_id FROM attr_values root
+                           WHERE root.document_id=f.document_id
+                             AND root.kind='@root-task' LIMIT 1)
+                 END";
+
+/// [`SCORE`] for a query that asked for tasks: **a task's own text ranks
+/// like a title** (700), wherever its kind would have put it — a marked
+/// paragraph is `body`, a native task `task`, a marked picture's name `name`.
+/// Everything else scores exactly as [`SCORE`] scores it.
+static TASK_SCORE: LazyLock<String> = LazyLock::new(|| {
+    const TITLE_TIER: &str = "WHEN f.field IN ('workspace','title') THEN 700";
+    assert!(SCORE.contains(TITLE_TIER));
+    SCORE.replacen(
+        TITLE_TIER,
+        &format!(
+            "{TITLE_TIER}
+                   WHEN f.stable_key LIKE 'node:%:primary' AND EXISTS (
+                        SELECT 1 FROM attr_values t
+                        WHERE t.document_id=f.document_id AND t.node_id=f.node_id
+                          AND t.role IN ('koru.task','koru.due')) THEN 700"
+        ),
+        1,
+    )
+});
+
+/// [`READ_BEST`] for a query that asked for tasks: **one `read` hit per
+/// task**, and one for everything else in the document.
+///
+/// A marked picture or file is a task, and two of them in one document that
+/// both match are two results. So a marked node is its own partition and
+/// keeps its own best page; every unmarked node of the document shares one,
+/// and an ordinary PDF's pages still collapse to one row.
+///
+/// It stays where [`READ_BEST`] is — after `candidates` and `qualified`, read
+/// through [`READ_KEPT`]'s `IN`, `CROSS JOIN` fixing the order — and the
+/// `EXISTS` is a point lookup on `attr_values_node`. **A separate string
+/// chosen by the flag**, so the statement without the flag is today's, byte
+/// for byte, and its measured plan cannot move. This variant's own plan and
+/// timings on the large measured index are still owed.
+static TASK_READ_BEST: LazyLock<String> = LazyLock::new(|| {
+    let score = TASK_SCORE.as_str();
+    format!(
+        "read_best AS (
+           SELECT id FROM (
+             SELECT f.id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY f.document_id,
+                                   CASE WHEN EXISTS (
+                                          SELECT 1 FROM attr_values t
+                                          WHERE t.document_id=f.document_id
+                                            AND t.node_id=f.node_id
+                                            AND t.role IN ('koru.task','koru.due'))
+                                        THEN f.node_id END
+                      ORDER BY {score} DESC, f.seq, f.page, f.stable_key
+                    ) AS place
+             FROM qualified q
+             CROSS JOIN fragments f ON f.id=q.candidate_id
+             WHERE f.field='read'
+           ) WHERE place=1
+         )"
+    )
+});
+
+/// The one fragment that holds a picture's authored name: its node's primary
+/// fragment, which is a `name` field exactly when somebody named the picture
+/// (`fragments::primary_field`). One point lookup on the unique `stable_key`.
+const PICTURE_NAME_SQL: &str =
+    "SELECT text FROM fragments WHERE stable_key = ?1 AND field = 'name'";
+
+/// **The name a person gave the picture a `read` hit's words came from**, or
+/// `None` — for a file, any other field, or a picture nobody named (OCR
+/// EXPERIENCE §3). Read from the picture's own `name` fragment rather than
+/// stored beside the words, so naming a picture renames its results without
+/// re-indexing its reading, and the index's schema does not change.
+fn picture_name(connection: &Connection, row: &RawHit) -> SearchResult<Option<String>> {
+    if row.field != field::READ || row.kind != "image" {
+        return Ok(None);
+    }
+    let (Some(document), Some(node)) = (row.document.as_deref(), row.node.as_deref()) else {
+        return Ok(None);
+    };
+    let key = format!("node:{document}:{node}:primary");
+    let name: Option<String> = connection
+        .query_row(PICTURE_NAME_SQL, [key], |r| r.get(0))
+        .optional()?;
+    Ok(name.filter(|name| !name.trim().is_empty()))
+}
+
+/// How good a hit is: the lexical tier, then the field, then how well the
+/// fragment's own text matches, less the fuzzy edits.
+///
+/// **One expression, read in two places** — the score a hit is ordered by and
+/// the score [`READ_BEST`] picks a file's best page with — so the page that
+/// survives is the one the ordering would have put first.
+const SCORE: &str = "(CASE
                    WHEN q.max_distance=0 AND q.direct_count=?2 THEN 4000
                    WHEN q.max_distance=0 THEN 3000
                    WHEN q.direct_count=?2 THEN 2000
@@ -494,6 +944,10 @@ pub(crate) fn search(
                    WHEN f.field IN ('name','list-name','contact','level-name') THEN 400
                    WHEN f.field='task' THEN 300
                    WHEN f.field='body' THEN 200
+                   -- Words read out of a picture or a file rank with tables
+                   -- and properties, below every kind of typed text: what
+                   -- somebody wrote is a better answer than what was read.
+                   WHEN f.field='read' THEN 100
                    ELSE 100
                  END)
                 + (CASE
@@ -503,126 +957,73 @@ pub(crate) fn search(
                    WHEN q.direct_count=?2 THEN 5
                    ELSE 0
                  END)
-                - q.total_distance*10 AS score
-         FROM qualified q
-         JOIN fragments f ON f.id=q.candidate_id
-         LEFT JOIN documents d ON d.document_id=f.document_id
-         LEFT JOIN (
-           SELECT workspace_id, MAX(opened_at_ms) AS last_used_at_ms
-           FROM recent_targets GROUP BY workspace_id
-         ) recent ON recent.workspace_id=f.workspace_id
-         LEFT JOIN (
-           SELECT workspace_id, MAX(observed_modified_at_ms) AS observed_modified_at_ms
-           FROM documents GROUP BY workspace_id
-         ) ws_change ON ws_change.workspace_id=f.workspace_id
-         ORDER BY
-           CASE WHEN ?4=1
-             THEN COALESCE(d.observed_modified_at_ms,
-                           ws_change.observed_modified_at_ms, 0) END DESC,
-           CASE WHEN ?4=2 THEN COALESCE(recent.last_used_at_ms,0) END DESC,
-           score DESC, f.text COLLATE NOCASE, f.stable_key
-         LIMIT ?{limit} OFFSET ?{offset}"
-    );
+                - q.total_distance*10";
 
-    let mut statement = connection.prepare(&sql)?;
-    let raw = statement
-        .query_map(params_from_iter(values), |r| {
-            Ok(RawHit {
-                workspace: r.get(0)?,
-                document: r.get(1)?,
-                node: r.get(2)?,
-                kind: r.get(3)?,
-                field: r.get(4)?,
-                text: r.get(5)?,
-                observed_modified_at_ms: r.get(7)?,
-                workspace_last_used_at_ms: r.get(8)?,
-                score: r.get(9)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    drop(statement);
+/// The SQL below spells the `read` field as a literal, like every other field
+/// in [`SCORE`]; this is what keeps the literal and the token one word.
+const _: () = assert!(matches!(field::READ.as_bytes(), b"read"));
 
-    let workspaces: Vec<String> = {
-        let mut all: Vec<String> = raw.iter().map(|r| r.workspace.clone()).collect();
-        all.sort();
-        all.dedup();
-        all
-    };
-    let listing = index.listing_of(&workspaces)?;
-    let names = index.workspace_names()?;
+/// **One `read` hit per document**, chosen before the page is cut.
+///
+/// A file's words are one fragment per page, and every matching page is a
+/// hit. Without this, a word on every page of one 300-page PDF filled the
+/// whole page of 50, and the surface — one row per document — showed that file
+/// alone while five others held the word too. So among a document's `read`
+/// candidates only the best survives: the highest [`SCORE`], then the earliest
+/// node in the document, then the lowest page. It keeps its own page, text
+/// and evidence, so its snippet and highlight are that page's.
+///
+/// - **Per document, not per node.** The row is per document, so a page with
+///   three pictures that all hold the word would otherwise spend three slots
+///   of the page on one row the surface shows once — the same defect, smaller.
+/// - **Only `read` fragments.** A title, a heading, a picture's name or a
+///   typed line in the same document is a hit of its own, as before; the
+///   surface's own rule picks the row among them.
+/// - **After `candidates` and `qualified`**, so the trash filter, a `#tag`, a
+///   typed filter and the workspace scope have already narrowed what it picks
+///   from, and `next_offset` counts what is left after the collapse — the rule
+///   a tag filter follows.
+///
+/// **What it costs, and why it is shaped this way.** Search runs as a person
+/// types, so this was measured against the statement without it, on a
+/// 211,000-fragment index holding a 300-page file; the commit that added it
+/// records the plans and timings:
+///
+/// - It is read only through [`READ_KEPT`]'s `IN`, a non-correlated list
+///   subquery that SQLite builds once, the first time a `read` row reaches it.
+///   `f.field<>'read'` is tested first, so a query no `read` fragment matches
+///   never builds it.
+/// - It reads `qualified` rather than computing coverage again, which is why
+///   [`COVERAGE`] marks `qualified` `MATERIALIZED`: computed once, read by the
+///   page and by this. A second, inlined copy of the coverage was planned
+///   differently from the first — an automatic index over every title in the
+///   index, rebuilt per query — and made a `read` query seven to ten times
+///   slower than the statement without the collapse.
+/// - `CROSS JOIN` fixes the join order. Left to itself the planner walked
+///   `fragments_document` — every fragment in the index — to save sorting the
+///   partition, which is the wrong-plan trap `task_kind_sql` in
+///   `koru-projection` records. From `qualified` it touches only the
+///   candidates, by primary key, and sorts only the `read` ones.
+static READ_BEST: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "read_best AS (
+           SELECT id FROM (
+             SELECT f.id,
+                    ROW_NUMBER() OVER (
+                      PARTITION BY f.document_id
+                      ORDER BY {SCORE} DESC, f.seq, f.page, f.stable_key
+                    ) AS place
+             FROM qualified q
+             CROSS JOIN fragments f ON f.id=q.candidate_id
+             WHERE f.field='read'
+           ) WHERE place=1
+         )"
+    )
+});
 
-    let mut hits = Vec::with_capacity(raw.len());
-    let mut corrected = terms.clone();
-    let mut has_correction = false;
-    for row in raw {
-        let evidence = evidence_for(connection, &row)?;
-        if hits.is_empty() {
-            for term in evidence.direct.iter().chain(evidence.scope.iter()) {
-                if term.fuzzy
-                    && let Some(original) = corrected.get_mut(term.ordinal as usize)
-                    && *original != term.text
-                {
-                    *original = term.text.clone();
-                    has_correction = true;
-                }
-            }
-        }
-        let listed = row.document.as_ref().and_then(|d| listing.get(d));
-        let workspace_name = names.get(&row.workspace).cloned().unwrap_or_default();
-        let path = breadcrumb(&workspace_name, listed, &listing);
-        let direct = matching_evidence_spans(
-            &row.text,
-            evidence.direct.iter().map(|t| EvidenceTerm {
-                text: &t.text,
-                whole_token: t.fuzzy,
-            }),
-        );
-        let (snippet_text, spans) = snippet(&row.text, &direct, 70);
-        let breadcrumb_spans = matching_evidence_spans(
-            &path,
-            evidence.scope.iter().map(|t| EvidenceTerm {
-                text: &t.text,
-                whole_token: t.fuzzy,
-            }),
-        );
-        hits.push(SearchHit {
-            title: if query.entity_picker && row.node.is_some() {
-                row.text.clone()
-            } else {
-                listed
-                    .map(|l| l.title.clone())
-                    .unwrap_or_else(|| workspace_name.clone())
-            },
-            workspace_name,
-            workspace: row.workspace,
-            document: row.document,
-            node: row.node,
-            document_kind: listed.map(|l| l.kind.clone()).unwrap_or_default(),
-            mime: listed.and_then(|l| l.mime.clone()),
-            kind: row.kind,
-            field: row.field,
-            breadcrumb: path,
-            breadcrumb_spans,
-            snippet: snippet_text,
-            spans,
-            lifecycle: listed.map(Listed::lifecycle).unwrap_or_default(),
-            trashed_at: listed.and_then(|l| l.trashed_at),
-            trashed_by: listed.and_then(|l| l.trashed_by.clone()),
-            score: row.score,
-            observed_modified_at_ms: row.observed_modified_at_ms,
-            workspace_last_used_at_ms: row.workspace_last_used_at_ms,
-        });
-    }
-    let has_more = hits.len() > page_size;
-    hits.truncate(page_size);
-    Ok(SearchPage {
-        hits,
-        next_offset: has_more.then_some(query.offset + page_size),
-        updating_workspaces: updating.to_vec(),
-        corrected_query: has_correction.then(|| corrected.join(" ")),
-        request_seq: query.request_seq,
-    })
-}
+/// Which rows of the page survive [`READ_BEST`]: everything that is not a
+/// `read` fragment, untouched, and each document's best `read` fragment.
+const READ_KEPT: &str = "f.field<>'read' OR f.id IN (SELECT id FROM read_best)";
 
 /// A workspace fragment has no document and is therefore never in the trash;
 /// everything else follows its document's listing row.
@@ -635,7 +1036,20 @@ const LIFECYCLE: &str = "?1=2
 /// A candidate qualifies only by covering **all** of them — `?2` is the count —
 /// from its own text, its workspace's name, or its document's title, in that
 /// order of preference.
-const COVERAGE: &str = "coverage_raw AS (
+///
+/// **"Its workspace's name" is said as `field='workspace'`**, not as *a
+/// fragment of this workspace with no document*. A task list's fragment has no
+/// document either, and under the old spelling a list named *Backlog* lent
+/// that word to every candidate in its workspace: *backlog budget* would have
+/// matched a paragraph holding only *budget*. The predicate is the one
+/// `fragments_workspace(workspace_id, field)` already indexes.
+///
+/// **The materialization hints are the plan, not decoration.** `qualified` is
+/// read twice — by the page and by [`READ_BEST`] — so it is `MATERIALIZED`:
+/// computed once. `coverage_raw` and `term_coverage` are `NOT MATERIALIZED` so
+/// that inside it they stay the co-routines they were when `qualified` had one
+/// reader; without the hint SQLite materializes them too.
+const COVERAGE: &str = "coverage_raw AS NOT MATERIALIZED (
            SELECT c.id AS candidate_id, e.term_ordinal, e.distance, 0 AS scope
            FROM candidates c
            JOIN search_query_evidence e ON e.fragment_id=c.id
@@ -644,7 +1058,7 @@ const COVERAGE: &str = "coverage_raw AS (
            FROM candidates c
            JOIN fragments target ON target.id=c.id
            JOIN fragments ws
-             ON ws.workspace_id=target.workspace_id AND ws.document_id IS NULL
+             ON ws.workspace_id=target.workspace_id AND ws.field='workspace'
            JOIN search_query_evidence e ON e.fragment_id=ws.id
            UNION ALL
            SELECT c.id, e.term_ordinal, e.distance, 2
@@ -654,12 +1068,12 @@ const COVERAGE: &str = "coverage_raw AS (
              ON doc.document_id=target.document_id AND doc.field='title'
            JOIN search_query_evidence e ON e.fragment_id=doc.id
          ),
-         term_coverage AS (
+         term_coverage AS NOT MATERIALIZED (
            SELECT candidate_id, term_ordinal, MIN(distance) AS distance,
                   MAX(CASE WHEN scope=0 THEN 1 ELSE 0 END) AS direct
            FROM coverage_raw GROUP BY candidate_id, term_ordinal
          ),
-         qualified AS (
+         qualified AS MATERIALIZED (
            SELECT candidate_id, COUNT(*) AS covered, SUM(direct) AS direct_count,
                   MAX(distance) AS max_distance, SUM(distance) AS total_distance
            FROM term_coverage GROUP BY candidate_id HAVING covered=?2
@@ -670,7 +1084,10 @@ const COVERAGE: &str = "coverage_raw AS (
 /// Nothing to cover, so `candidates` is already the answer. The zeros are what
 /// the scoring reads, and they are the values a fully, exactly covered
 /// candidate would have carried: nothing is fuzzy, nothing is missing.
-const UNCOVERED: &str = "qualified AS (
+///
+/// `NOT MATERIALIZED` because it is a plain projection of `candidates`, which
+/// is materialized once for both readers; copying it again would buy nothing.
+const UNCOVERED: &str = "qualified AS NOT MATERIALIZED (
            SELECT c.id AS candidate_id, 0 AS covered, 0 AS direct_count,
                   0 AS max_distance, 0 AS total_distance
            FROM candidates c
@@ -680,6 +1097,7 @@ fn prepare_evidence(
     connection: &Connection,
     vocabulary: &crate::fuzzy::Vocabulary,
     terms: &[String],
+    include_lists: bool,
 ) -> SearchResult<()> {
     connection.execute_batch(
         "CREATE TEMP TABLE IF NOT EXISTS search_query_evidence (
@@ -696,9 +1114,37 @@ fn prepare_evidence(
            term_ordinal, fragment_id, matched_term, distance
          ) SELECT ?1, rowid, ?2, ?3 FROM fragment_fts WHERE fragment_fts MATCH ?4",
     )?;
+    // **Before there is enough typed to rank, match names only.** One or two
+    // letters begin a word in nearly every paragraph there is: on a
+    // 47,000-fragment index `b` matched 9,544 fragments, and scoring and
+    // ordering them all to show fifty took a tenth of a second a keystroke —
+    // for a page nobody could have meant. So while every word of the query
+    // is that short, it is looked for in what things are *called* (titles,
+    // headings, names, tasks, lists, the workspace) and not in body text or
+    // in words read from files. From three letters on, everything is searched
+    // and ranked as before.
+    //
+    // Only for scripts that spell words out: two characters are a whole word
+    // in Chinese or Japanese, and are searched everywhere.
+    let names_only = !terms.is_empty() && terms.iter().all(|term| is_short_prefix(term));
+    let mut insert_names = connection.prepare_cached(
+        "INSERT OR IGNORE INTO search_query_evidence(
+           term_ordinal, fragment_id, matched_term, distance
+         ) SELECT ?1, f.id, ?2, ?3
+           FROM fragment_fts
+           CROSS JOIN fragments f ON f.id=fragment_fts.rowid
+          WHERE fragment_fts MATCH ?4
+            AND (f.field IN ('workspace','title','task-list','task','name',
+                             'list-name','contact','level-name')
+                 OR f.field LIKE 'heading-%')",
+    )?;
     for (ordinal, term) in terms.iter().enumerate() {
+        if names_only {
+            insert_names.execute(params![ordinal as i64, term, 0_i64, fts_term(term, true)])?;
+            continue;
+        }
         insert.execute(params![ordinal as i64, term, 0_i64, fts_term(term, true)])?;
-        for candidate in vocabulary.candidates(term) {
+        for candidate in vocabulary.candidates(term, include_lists) {
             insert.execute(params![
                 ordinal as i64,
                 candidate.term,
@@ -708,6 +1154,16 @@ fn prepare_evidence(
         }
     }
     Ok(())
+}
+
+/// How many letters a word needs before body text is searched for it.
+const RANKED_FROM_CHARS: usize = 3;
+
+/// A word too short to rank on: one or two characters of a script that
+/// spells its words out. Ideographs, kana and hangul are whole words at that
+/// length and never count as short.
+fn is_short_prefix(term: &str) -> bool {
+    term.chars().count() < RANKED_FROM_CHARS && term.chars().all(|ch| (ch as u32) < 0x2E80)
 }
 
 fn fts_term(term: &str, prefix: bool) -> String {
@@ -732,35 +1188,97 @@ struct SelectedTerm {
     fuzzy: bool,
 }
 
-fn evidence_for(connection: &Connection, hit: &RawHit) -> SearchResult<HitEvidence> {
-    let mut evidence = HitEvidence::default();
-    let mut direct = connection.prepare(
-        "SELECT e.term_ordinal, e.matched_term, e.distance
-         FROM search_query_evidence e
-         JOIN fragments f ON f.id=e.fragment_id
-         WHERE f.workspace_id=?1
-           AND ((?2 IS NULL AND f.document_id IS NULL) OR f.document_id=?2)
-           AND ((?3 IS NULL AND f.node_id IS NULL) OR f.node_id=?3)
-           AND f.field=?4
-         ORDER BY e.term_ordinal, e.distance, e.matched_term",
-    )?;
-    evidence.direct = select_best_terms(direct.query_map(
-        params![hit.workspace, hit.document, hit.node, hit.field],
-        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-    )?)?;
-
-    let mut scope = connection.prepare(
-        "SELECT e.term_ordinal, e.matched_term, e.distance
-         FROM search_query_evidence e
-         JOIN fragments f ON f.id=e.fragment_id
-         WHERE f.workspace_id=?1
-           AND (f.document_id IS NULL OR (f.document_id=?2 AND f.field='title'))
-         ORDER BY e.term_ordinal, e.distance, e.matched_term",
-    )?;
-    evidence.scope =
-        select_best_terms(scope.query_map(params![hit.workspace, hit.document], |r| {
-            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-        })?)?;
+/// **A hit's highlights**: the words that matched its own fragment, and the
+/// ones its workspace's name or its document's title explain.
+///
+/// **Each lookup finds the hit's fragment first and then seeks its matches
+/// by the evidence table's own key** (`term_ordinal`, `fragment_id`), one
+/// term at a time. It used to join the other way round, and for every one of
+/// a page's fifty hits walked every match the query had: 23 ms a hit and over
+/// a second a page for a one-letter prefix on a 47,000-fragment index, which
+/// is what made the first keystrokes of any search slow. The index each
+/// lookup uses is named, because left to choose the planner took
+/// `fragments_workspace` and read every paragraph of the workspace instead.
+///
+/// The rows and their order are what they were: by term, then distance, then
+/// spelling.
+fn evidence_for(connection: &Connection, hit: &RawHit, terms: usize) -> SearchResult<HitEvidence> {
+    const MATCHES: &str = "SELECT e.term_ordinal, e.matched_term, e.distance";
+    const SEEK: &str = "CROSS JOIN search_query_evidence e
+                          ON e.term_ordinal=?1 AND e.fragment_id=f.id";
+    // One file's pages are one node's fragments under one field; the page
+    // tells them apart, so a hit's highlights are its own page's.
+    let direct_sql = match (&hit.document, &hit.node) {
+        (Some(_), Some(_)) => format!(
+            "{MATCHES} FROM fragments f INDEXED BY fragments_node {SEEK}
+             WHERE f.document_id=?3 AND f.node_id=?4 AND f.workspace_id=?2
+               AND f.field=?5 AND f.page IS ?6
+             ORDER BY e.distance, e.matched_term"
+        ),
+        (Some(_), None) => format!(
+            "{MATCHES} FROM fragments f INDEXED BY fragments_document {SEEK}
+             WHERE f.document_id=?3 AND f.node_id IS ?4 AND f.workspace_id=?2
+               AND f.field=?5 AND f.page IS ?6
+             ORDER BY e.distance, e.matched_term"
+        ),
+        // No document: the workspace's own name, or a task list.
+        (None, _) => format!(
+            "{MATCHES} FROM fragments f INDEXED BY fragments_workspace {SEEK}
+             WHERE f.workspace_id=?2 AND f.field=?5 AND f.document_id IS ?3
+               AND f.node_id IS ?4 AND f.page IS ?6
+             ORDER BY e.distance, e.matched_term"
+        ),
+    };
+    let workspace_sql = format!(
+        "{MATCHES} FROM fragments f INDEXED BY fragments_workspace {SEEK}
+         WHERE f.workspace_id=?2 AND f.field='workspace'
+         ORDER BY e.distance, e.matched_term"
+    );
+    let title_sql = format!(
+        "{MATCHES} FROM fragments f INDEXED BY fragments_document {SEEK}
+         WHERE f.document_id=?3 AND f.field='title' AND f.workspace_id=?2
+         ORDER BY e.distance, e.matched_term"
+    );
+    let mut direct_rows: Vec<(i64, String, i64)> = Vec::new();
+    let mut scope_rows: Vec<(i64, String, i64)> = Vec::new();
+    let row = |r: &rusqlite::Row<'_>| Ok((r.get(0)?, r.get(1)?, r.get(2)?));
+    {
+        let mut direct = connection.prepare_cached(&direct_sql)?;
+        let mut workspace = connection.prepare_cached(&workspace_sql)?;
+        let mut title = connection.prepare_cached(&title_sql)?;
+        for ordinal in 0..terms as i64 {
+            for found in direct.query_map(
+                params![
+                    ordinal,
+                    hit.workspace,
+                    hit.document,
+                    hit.node,
+                    hit.field,
+                    hit.page
+                ],
+                row,
+            )? {
+                direct_rows.push(found?);
+            }
+            // The scope's two sources for one term, in one order, as the
+            // single statement had them.
+            let mut scoped: Vec<(i64, String, i64)> = Vec::new();
+            for found in workspace.query_map(params![ordinal, hit.workspace], row)? {
+                scoped.push(found?);
+            }
+            if hit.document.is_some() {
+                for found in title.query_map(params![ordinal, hit.workspace, hit.document], row)? {
+                    scoped.push(found?);
+                }
+            }
+            scoped.sort_by(|a, b| a.2.cmp(&b.2).then_with(|| a.1.cmp(&b.1)));
+            scope_rows.extend(scoped);
+        }
+    }
+    let mut evidence = HitEvidence {
+        direct: select_best_terms(direct_rows.into_iter().map(Ok))?,
+        scope: select_best_terms(scope_rows.into_iter().map(Ok))?,
+    };
     // A term explained directly is not also explained by the path.
     evidence
         .scope
@@ -793,7 +1311,14 @@ struct RawHit {
     observed_modified_at_ms: Option<i64>,
     workspace_last_used_at_ms: Option<i64>,
     score: f64,
+    page: Option<u32>,
+    /// The node that makes this hit a task, when the query asked for tasks
+    /// and it is one ([`TASK_NODE`]).
+    task_node: Option<String>,
 }
+
+#[cfg(test)]
+mod read_collapse_tests;
 
 /// Keeps the tokens in [`field`] and the boosts above from drifting apart.
 #[cfg(test)]
@@ -808,6 +1333,30 @@ mod tests {
     fn split(text: &str) -> (String, Vec<String>) {
         let facets = split_tag_filters(&normalize(text.trim()).text);
         (facets.text, facets.tags)
+    }
+
+    /// **The picture's name is one point lookup**: SQLite answers
+    /// [`PICTURE_NAME_SQL`] from the unique `stable_key` index, never a scan
+    /// of `fragments` — it runs once per picture hit on a page (OCR Plan
+    /// 2.5; ROADMAP §8 "every new query states its plan").
+    #[test]
+    fn the_picture_name_lookup_uses_the_stable_key_index() {
+        let index = crate::storage::SearchIndex::in_memory().unwrap();
+        let plan: Vec<String> = index
+            .connection
+            .prepare(&format!("EXPLAIN QUERY PLAN {PICTURE_NAME_SQL}"))
+            .unwrap()
+            .query_map(["node:d:n:primary"], |r| r.get::<_, String>(3))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let plan = plan.join(" | ");
+        assert!(
+            plan.contains("USING INDEX sqlite_autoindex_fragments")
+                && plan.contains("stable_key=?"),
+            "{plan}"
+        );
+        assert!(!plan.contains("SCAN"), "{plan}");
     }
 
     #[test]
@@ -903,6 +1452,7 @@ mod tests {
                 kind: "paragraph".to_owned(),
                 field: field::BODY.to_owned(),
                 text: (*text).to_owned(),
+                page: None,
             });
             for (i, tag) in tags.iter().enumerate() {
                 fragments.push(Fragment {
@@ -914,6 +1464,7 @@ mod tests {
                     kind: "paragraph".to_owned(),
                     field: field::attr(TAG_ROLE),
                     text: (*tag).to_owned(),
+                    page: None,
                 });
             }
         }
@@ -978,6 +1529,7 @@ mod tests {
                 kind: "paragraph".to_owned(),
                 field: field::BODY.to_owned(),
                 text: (*text).to_owned(),
+                page: None,
             });
             for (role, kind, value) in attrs.iter() {
                 values.push(crate::model::AttrRow {
@@ -1123,6 +1675,7 @@ mod tests {
             kind: "paragraph".into(),
             field: field::BODY.into(),
             text: "Ship café".into(),
+            page: None,
         };
         fragment.text = "Launch runway".into();
         let marker = crate::model::AttrRow {
@@ -1197,6 +1750,7 @@ mod tests {
                 kind: "paragraph".into(),
                 field: field::BODY.into(),
                 text: "Ship release".into(),
+                page: None,
             };
             let marker = crate::model::AttrRow {
                 workspace: workspace_id.clone(),

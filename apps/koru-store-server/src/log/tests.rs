@@ -43,6 +43,31 @@ fn a_root_that_cannot_be_created_is_not_fatal() {
     let _logging = init(&blocked, false);
 }
 
+/// **The reading lines reach the file, in every launch mode.** Their target
+/// is `koru_readings`, which no `koru_store` directive covers: before it was
+/// named, "the reader was installed" and every `KORU_READ_DEBUG` job line were
+/// filtered out of every log (OCR TECHNICAL §14 says they are unconditional).
+#[test]
+fn the_reading_lines_reach_every_filter() {
+    for filter in [
+        DEFAULT_FILTER,
+        DEFAULT_FILTER_SYNC_DEBUG,
+        CONSOLE_FILTER,
+        CONSOLE_FILTER_SYNC_DEBUG,
+        GATEWAY_FILTER,
+        GATEWAY_CONSOLE_FILTER,
+        GATEWAY_FILTER_SYNC_DEBUG,
+        GATEWAY_CONSOLE_FILTER_SYNC_DEBUG,
+    ] {
+        assert!(
+            filter
+                .split(',')
+                .any(|directive| directive == "koru_readings=info"),
+            "{filter}"
+        );
+    }
+}
+
 #[test]
 fn the_guard_must_be_held() {
     // The trap this type exists for: `tracing-appender`'s worker is what puts

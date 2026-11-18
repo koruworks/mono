@@ -1370,3 +1370,112 @@ fn a_bundle_that_is_not_a_bundle_is_refused() {
         assert_eq!(body["code"], "invalid_request");
     }
 }
+
+/// **`/v1/readings/reader…` and `/v1/readings/{workspace}/{hash}` do not
+/// shadow each other** (OCR Plans 1.8, 2.4 and 3.5 meet here): each request
+/// reaches its own handler, told apart by what answers.
+#[test]
+fn the_reader_routes_and_one_reading_reach_their_own_handlers() {
+    let (_dir, daemon) = Daemon::start();
+    let profile = daemon
+        .post(
+            "/v1/profiles",
+            &serde_json::json!({ "name": "Owner", "locale": "en" }),
+        )
+        .json::<serde_json::Value>()
+        .unwrap();
+    let workspace = daemon
+        .post(
+            "/v1/workspaces",
+            &serde_json::json!({ "owner": profile["id"], "name": "W" }),
+        )
+        .json::<serde_json::Value>()
+        .unwrap();
+    let ws = workspace["id"].as_str().unwrap().to_owned();
+    let hash = format!("b3:{}", "ab".repeat(32));
+
+    // The reader's state: a `ReaderState`, not a reading.
+    let state = daemon.json("/v1/readings/reader");
+    assert!(
+        state.get("catalog").is_some() && state.get("counts").is_some(),
+        "{state}"
+    );
+
+    // One reading: the reading port's own answer, `null` for nothing read.
+    let one = daemon.get(&format!("/v1/readings/{ws}/{hash}"));
+    assert_eq!(one.status().as_u16(), 200);
+    assert_eq!(
+        one.json::<serde_json::Value>().unwrap(),
+        serde_json::Value::Null
+    );
+
+    // A reader verb reaches the reader, never the two-segment reading route.
+    let declined = daemon.post("/v1/readings/reader/decline", &serde_json::json!({}));
+    assert_eq!(declined.status().as_u16(), 200);
+    let declined: serde_json::Value = declined.json().unwrap();
+    assert_eq!(declined["offer_declined"], true);
+    let stopped = daemon.post("/v1/readings/reader/stop", &serde_json::json!({}));
+    assert_eq!(stopped.status().as_u16(), 200);
+    assert!(
+        stopped
+            .json::<serde_json::Value>()
+            .unwrap()
+            .get("counts")
+            .is_some()
+    );
+
+    // Off and on (OCR Plan 3.5) reach the reader too — never the reading
+    // route taking `reader` for a workspace and `off` for a hash. With nothing
+    // installed there is nothing to turn off, and the answer says so.
+    for verb in ["off", "on"] {
+        let answered = daemon.post(
+            &format!("/v1/readings/reader/{verb}"),
+            &serde_json::json!({}),
+        );
+        assert_eq!(answered.status().as_u16(), 200, "{verb}");
+        let answered: serde_json::Value = answered.json().unwrap();
+        assert!(answered.get("counts").is_some(), "{verb}: {answered}");
+        assert_eq!(answered["turned_off"], false, "{verb}: {answered}");
+        let got = daemon.get(&format!("/v1/readings/reader/{verb}"));
+        assert_eq!(got.status().as_u16(), 405, "{verb}");
+    }
+
+    // The reader's static paths own their segments: a GET on a reader verb
+    // is that verb's route refusing the method, never the reading route
+    // taking `reader` for a workspace. And a POST on a reading's path is the
+    // reading route refusing it, never a reader verb.
+    let crossed = daemon.get("/v1/readings/reader/install");
+    assert_eq!(crossed.status().as_u16(), 405);
+    let wrong = daemon.post(&format!("/v1/readings/{ws}/{hash}"), &serde_json::json!({}));
+    assert_eq!(wrong.status().as_u16(), 405);
+
+    // A person's two requests (OCR Plan 3.2) reach the reading port, which
+    // answers for nothing read here with its own refusal — never the reader's
+    // routes, never a 404 for an unknown path. A GET on them is refused.
+    for verb in ["read-all", "read-again"] {
+        let asked = daemon.post(
+            &format!("/v1/readings/{ws}/{hash}/{verb}"),
+            &serde_json::json!({}),
+        );
+        assert_eq!(asked.status().as_u16(), 400, "{verb}");
+        let body: serde_json::Value = asked.json().unwrap();
+        assert_eq!(body["code"], "invalid_request", "{verb}: {body}");
+        let got = daemon.get(&format!("/v1/readings/{ws}/{hash}/{verb}"));
+        assert_eq!(got.status().as_u16(), 405, "{verb}");
+    }
+    // Still a reading's answer, with nothing offered: nothing was read.
+    let one = daemon.get(&format!("/v1/readings/{ws}/{hash}"));
+    assert_eq!(
+        one.json::<serde_json::Value>().unwrap(),
+        serde_json::Value::Null
+    );
+    // An unknown workspace is the catalog's 404, as for the reading itself.
+    let nowhere = daemon.post(
+        &format!(
+            "/v1/readings/{}/{hash}/read-all",
+            koru_store_core::ids::WorkspaceId::new()
+        ),
+        &serde_json::json!({}),
+    );
+    assert_eq!(nowhere.status().as_u16(), 404);
+}

@@ -1875,6 +1875,8 @@ fn activation_validation_is_worker_side_and_open_reuses_the_exact_router_target(
         trashed: false,
         match_text: None,
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     };
     assert!(matches!(
         crate::route::Router::new().open(
@@ -2038,6 +2040,8 @@ fn worker_queues_activations_in_order_and_only_routes_content_free_results_on_wi
         trashed: false,
         match_text: None,
         new_window: false,
+        kind: koru_agent_wire::TargetKind::Document,
+        list: None,
     };
     assert!(matches!(
         crate::route::Router::new().open(

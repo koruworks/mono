@@ -323,6 +323,8 @@ impl Body {
     /// node id rather than row index, so a remote insert above the caret does
     /// not move it.
     pub fn rebuild(&mut self, ws: &WorkspaceDoc) {
+        self.settle_local(ws);
+        self.pending = Pending::default();
         self.structure_dirty = true;
         self.rebuild_reusing(ws, None);
     }
@@ -842,6 +844,20 @@ impl Body {
     /// Whether this body is behind the document.
     pub fn is_stale(&self) -> bool {
         self.pending.structural || !self.pending.touched.is_empty()
+    }
+
+    /// Acknowledge that this body's rows already reflect the current document.
+    ///
+    /// Local edits update the edited row (or rebuild the body) in place, while
+    /// the Loro subscription still records those same ops into `tracker`.
+    /// Draining the tracker here keeps `known` current and discards the
+    /// already-applied batch so a later [`defer_pending`](Self::defer_pending)
+    /// sees only changes made outside this view.
+    pub fn settle_local(&mut self, ws: &WorkspaceDoc) {
+        if let Some(tracker) = self.tracker.as_ref() {
+            let _ = tracker.drain(ws);
+        }
+        self.synced_version = Some(ws.version().encode());
     }
 
     /// Mark every row as needing a fresh read, without touching the tracker.
@@ -3586,5 +3602,36 @@ mod sync_tests {
         body.title_row = true;
         body.rebuild(&ws);
         (ws, body, doc)
+    }
+
+    /// **A local rebuild settles the view's own tracker.**
+    ///
+    /// Without draining `tracker` on `rebuild`, a local `Enter` left
+    /// `structure_dirty` armed inside the author's own subscription — so a
+    /// later `defer_pending` (triggered by an edit in another document or
+    /// another split pane) mistook the author's old edit for a fresh structural
+    /// change and rebuilt the body again.
+    #[test]
+    fn a_local_rebuild_leaves_nothing_pending_in_the_authors_tracker() {
+        let (mut ws, one, two) = two_documents(2);
+        let mut body = body_over(&ws, one);
+        assert!(!body.is_stale());
+
+        // Local structural edit on `one`, followed by `body.rebuild(&ws)` —
+        // the exact sequence `split_focused` and `append_row` run.
+        ws.insert(Parent::Node(one), Node::paragraph("local").unwrap())
+            .unwrap();
+        body.rebuild(&ws);
+        assert!(!body.is_stale());
+
+        // An edit in `two` now triggers `defer_pending` on `body`. Because
+        // `rebuild` settled `one`'s tracker, `body` stays clean.
+        ws.insert(Parent::Node(two), Node::paragraph("elsewhere").unwrap())
+            .unwrap();
+        body.defer_pending(&ws);
+        assert!(
+            !body.is_stale(),
+            "a local rebuild must not leave its own structural flag in the tracker"
+        );
     }
 }

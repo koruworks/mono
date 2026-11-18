@@ -275,6 +275,10 @@ impl EmbeddedStore for ScriptedStore {
                 score: 1.0,
                 observed_modified_at_ms: None,
                 workspace_last_used_at_ms: None,
+                page: None,
+                picture_name: None,
+                list: None,
+                task: None,
             };
             if entry.title.to_lowercase().contains(&wanted) {
                 hits.push(hit(field::TITLE, &entry.title));
@@ -295,6 +299,7 @@ impl EmbeddedStore for ScriptedStore {
                 updating_workspaces: Vec::new(),
                 request_seq: 0,
                 corrected_query: None,
+                reading: None,
             },
             facets: None,
             recent_queries: None,

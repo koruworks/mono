@@ -7,6 +7,8 @@
 //! knows what a row is.
 
 mod delegate_folder;
+mod file_paste;
+mod image_file;
 mod inspector_window;
 mod key_release;
 mod modifiers;
@@ -15,6 +17,7 @@ mod profile_delivery;
 mod profile_removal;
 mod profile_switch;
 mod profile_wait;
+mod reading_rescan;
 mod recording;
 mod trash;
 mod zoom;
@@ -1155,6 +1158,10 @@ enum ImportMessage {
     Inspected(Result<InspectedImport, String>),
     Imported(Result<koru_store_core::model::Workspace, String>),
     ContentImported(Result<ContentImportSummary, koru_import::ImportError>),
+    /// The Store answered an answer on the line in an import's summary, or a
+    /// download it started moved on (OCR Plan 3.3). `Err` is the code of a
+    /// Store that did not answer.
+    ReaderAnswered(Result<koru_store_wire::reader::ReaderState, String>),
     Exported {
         id: WorkspaceId,
         name: String,
@@ -1193,9 +1200,32 @@ enum ImportMessage {
         destination: PathBuf,
         result: Result<(), String>,
     },
+    /// An item's reading was fetched for the debug-only *Save reading*: the
+    /// suggested file name and the text, ready for the dialog.
+    ReadingFetchedForSave {
+        result: Result<(String, String), String>,
+    },
+    ReadingInspected {
+        source: WindowId,
+        file: koru_core::DocumentId,
+        result: Result<crate::reading_details::ReadingDetails, String>,
+    },
+    /// What the Store says may be asked of one item's reading now, for its
+    /// right-click menu (OCR Plan 3.2). `None`: nothing offered.
+    ReadingOffers {
+        target: crate::reading_file::ReadingTarget,
+        offers: Option<crate::reading_requests::ReadingOffers>,
+    },
+    ReadingRescanFinished(Result<reading_rescan::Summary, ()>),
     FileOpened {
         name: String,
         result: Result<(), String>,
+    },
+    FileImageOpened {
+        source: WindowId,
+        file: koru_core::DocumentId,
+        name: String,
+        image: Arc<koru_ui::media_viewer::ViewerImage>,
     },
     FilesSaved {
         count: usize,
@@ -1350,6 +1380,10 @@ struct ContentImportSummary {
     had_failures: bool,
     /// Only populated when even the FAILED child could not be stored.
     warnings: Vec<String>,
+    /// What an import through an importer told the reader and what the Store
+    /// answered; `None` for added or pasted files, and when the Store did not
+    /// answer (OCR Plan 3.3).
+    reading: Option<crate::reader_offer::ImportReading>,
 }
 
 /// Report progress to the visible import toast and existing non-Evernote
@@ -1586,6 +1620,33 @@ fn import_error_key(code: koru_import::ImportErrorCode) -> koru_i18n::Key {
     }
 }
 
+/// **What an import's summary notice says**, in the person's language (OCR
+/// Plan 3.5: the notice no longer mixes an English sentence with the
+/// localized reading line under it). Whole sentences, never assembled around
+/// a number; `FAILED` is the title of the page the import writes.
+pub(crate) fn import_notice_message(
+    lang: koru_i18n::Lang,
+    imported: usize,
+    already_known: usize,
+    had_failures: bool,
+) -> String {
+    use koru_i18n::{Key, fill, number, t};
+    let count = |n: usize| number::decimal(lang, n as u64);
+    match (imported, already_known, had_failures) {
+        (0, 1, false) => t(lang, Key::ImportNoticeKnownOne).to_owned(),
+        (0, known, false) if known > 1 => fill(t(lang, Key::ImportNoticeKnown), &[&count(known)]),
+        (_, 0, false) => t(lang, Key::ImportNoticeSucceeded).to_owned(),
+        (_, 1, false) => t(lang, Key::ImportNoticeSucceededKnownOne).to_owned(),
+        (_, known, false) => fill(t(lang, Key::ImportNoticeSucceededKnown), &[&count(known)]),
+        (_, 0, true) => t(lang, Key::ImportNoticeSucceededFailed).to_owned(),
+        (_, 1, true) => t(lang, Key::ImportNoticeSucceededKnownOneFailed).to_owned(),
+        (_, known, true) => fill(
+            t(lang, Key::ImportNoticeSucceededKnownFailed),
+            &[&count(known)],
+        ),
+    }
+}
+
 fn rendered_import_warning(lang: koru_i18n::Lang, warning: &koru_import::ImportWarning) -> String {
     let Some(key) = warning.code.and_then(crate::formats::import_warning_key) else {
         return warning.message.clone();
@@ -1707,6 +1768,18 @@ fn workspace_file_bytes(
     file: koru_store_core::ids::DocumentId,
 ) -> Result<Vec<u8>, String> {
     let client = client_at_segment(segment, root).map_err(|e| e.to_string())?;
+    let hash = workspace_file_hash(&client, workspace, file)?;
+    client.get_blob(workspace, &hash).map_err(|e| e.to_string())
+}
+
+/// The blob address behind an opaque workspace file: its document's root
+/// node. The one reading of a file entry, shared by Save as, Open in app and
+/// the debug-only *Save reading*.
+fn workspace_file_hash(
+    client: &koru_api_client::Client,
+    workspace: koru_store_core::ids::WorkspaceId,
+    file: koru_store_core::ids::DocumentId,
+) -> Result<koru_store_core::model::BlobHash, String> {
     let snapshot = client
         .snapshot(workspace, file)
         .map_err(|e| e.to_string())?;
@@ -1722,8 +1795,81 @@ fn workspace_file_bytes(
     let koru_core::node::Content::Blob { hash, .. } = node.content else {
         return Err("the file entry does not contain blob data".into());
     };
-    let hash = koru_store_core::model::BlobHash::parse(&hash.0).map_err(|e| e.to_string())?;
-    client.get_blob(workspace, &hash).map_err(|e| e.to_string())
+    koru_store_core::model::BlobHash::parse(&hash.0).map_err(|e| e.to_string())
+}
+
+/// **Which workspace and bytes a reading's item names**, on a worker: a file
+/// finds its own workspace, as *Save as…* does; a picture is in `workspace`,
+/// the current one. With the client that answered, and a file's title.
+fn locate_reading_item(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<
+    (
+        koru_api_client::Client,
+        koru_store_core::ids::WorkspaceId,
+        koru_store_core::model::BlobHash,
+        Option<String>,
+    ),
+    String,
+> {
+    use crate::reading_file::ReadingTarget;
+    let client = client_at_segment(segment, root).map_err(|e| e.to_string())?;
+    let (workspace, hash, name) = match target {
+        ReadingTarget::File(id) => {
+            let store_id = koru_store_core::ids::DocumentId::from_uuid(id.as_uuid());
+            let (workspace, entry) = locate_workspace_file(segment, root, store_id)?;
+            let hash = workspace_file_hash(&client, workspace, store_id)?;
+            (workspace, hash, Some(entry.title))
+        }
+        ReadingTarget::Picture { hash } => {
+            let workspace = workspace.ok_or_else(|| "no workspace is open".to_owned())?;
+            let hash = koru_store_core::model::BlobHash::parse(hash).map_err(|e| e.to_string())?;
+            (workspace, hash, None)
+        }
+    };
+    Ok((client, workspace, hash, name))
+}
+
+/// **What may be asked of one item's reading now** (OCR Plan 3.2), on a
+/// worker. `None` when nothing has been read of it, or anything on the way
+/// failed: a menu then offers nothing, which is the honest answer.
+fn fetch_offers(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Option<crate::reading_requests::ReadingOffers> {
+    let (client, workspace, hash, _) =
+        locate_reading_item(segment, root, target, workspace).ok()?;
+    client
+        .reading(workspace, &hash)
+        .ok()
+        .flatten()
+        .map(|answer| answer.offers)
+}
+
+/// **Fetch one item's reading and turn it into the file's text**, on a
+/// worker: the suggested file name and the text, for the dialog the event
+/// thread then opens. `workspace` is the current one, which is where a
+/// picture lives; a file finds its own, as *Save as…* does.
+fn fetch_reading_text(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<(String, String), String> {
+    use crate::reading_file::{file_name, text};
+    let (client, workspace, hash, name) = locate_reading_item(segment, root, target, workspace)?;
+    let answer = client
+        .reading(workspace, &hash)
+        .map_err(|e| e.to_string())?;
+    Ok((
+        file_name(target, name.as_deref()),
+        text(hash.as_str(), answer.as_ref()),
+    ))
 }
 
 /// Turn a hydration failure into the sentence a person needs.
@@ -2606,6 +2752,10 @@ struct App<H: Host> {
     /// may begin.
     import_cancel_hide_due: Option<Instant>,
     import_cancel_worker_done: bool,
+    /// Whether a thread is already watching a download Turn on started from
+    /// an import's summary, so a second press does not start a second watch
+    /// (OCR Plan 3.3).
+    reader_watch: Arc<std::sync::atomic::AtomicBool>,
     pending_import: Option<InspectedImport>,
     /// Workspaces with a durable soft-delete request running off the UI thread.
     /// Prevents a double click from issuing competing Store mutations.
@@ -2615,6 +2765,7 @@ struct App<H: Host> {
     pending_ai_import: Option<(WindowId, uuid::Uuid)>,
     /// A Tasks page whose `+` chose files: attached once the import lands.
     pending_page_attachment: Option<koru_core::ids::PageKey>,
+    pending_file_paste: Option<(koru_core::WorkspaceId, koru_core::DocumentId)>,
     /// Importable paths coalesced from winit's one-event-per-file drop stream.
     /// Batches wait here while any other import is active rather than being
     /// silently discarded by `import_busy`.
@@ -2732,7 +2883,7 @@ struct App<H: Host> {
     /// the same rule — the tasks rail resolves a `koru.list` value to a name
     /// and a swatch without ever reaching the store, because names are the
     /// workspace's and only counts come off the wire.
-    list_table: Vec<koru_core::system::ListEntry>,
+    list_table: Vec<koru_core::system::ListNode>,
     /// When [`poll_pane_context`] last requested the Store catalog. `None` until
     /// the first poll, so a window shows its cached switcher rows immediately.
     ///
@@ -5860,11 +6011,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
             import_cancel: None,
             import_cancel_hide_due: None,
             import_cancel_worker_done: false,
+            reader_watch: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             pending_import: None,
             deleting_workspaces: HashSet::new(),
             pending_attachment: None,
             pending_ai_import: None,
             pending_page_attachment: None,
+            pending_file_paste: None,
             pending_content_drops: VecDeque::new(),
             // Due once at startup: the share that opened this window was
             // staged before the process existed, so nothing will focus-event
@@ -6633,7 +6786,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .filter_map(|(_, pane)| pane.view.take_wants_join_new_list())
             .collect();
         for (nodes, name, color) in joins {
-            let Some(list) = self.runtime.workspace.create_list(&name, color.as_deref()) else {
+            // At the top level, first (nested-lists D8, Q17): the picker has
+            // no parent chooser. A top-level list that already has the name
+            // answers, and the rows join that one.
+            let Some(list) = self
+                .runtime
+                .workspace
+                .create_list_under(None, &name, color.as_deref())
+                .map(koru_core::system::ListCreation::id)
+            else {
                 continue;
             };
             let mut host = crate::tasks::TaskHost::default();
@@ -6663,13 +6824,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
         // The rail's "+ New list", committed. Nothing is applied to a node:
         // a list is a filter, so creating one only adds a row to the table,
         // and membership is set later on a task like any other attribute.
-        let wanted: Vec<(String, Option<String>)> = self
+        let wanted: Vec<crate::tasks::ListCreate> = self
             .panes
             .iter_mut()
             .filter_map(|(_, pane)| pane.view.take_wants_create_list())
             .collect();
-        for (name, color) in wanted {
-            self.runtime.workspace.create_list(&name, color.as_deref());
+        for list in wanted {
+            self.runtime.workspace.create_list_under(
+                list.parent,
+                &list.name,
+                list.color.as_deref(),
+            );
         }
         // ...and the rail's management of the lists that already exist. Renames
         // and recolours touch the registry alone; a delete tombstones the record
@@ -6842,7 +7007,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
             crate::spelling::set_workspace_words(self.runtime.workspace.workspace_dictionary());
         }
         if self.runtime.workspace.take_lists_changed() {
-            self.list_table = self.runtime.workspace.lists_snapshot();
+            self.list_table = self.runtime.workspace.list_tree_snapshot().nodes().to_vec();
         }
         // Pushed every turn, compared inside the view: a pane or tab opened
         // since the last change still has to be given the table, and the
@@ -6896,21 +7061,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 file_actions.len()
             );
         }
-        for (_id, file, action) in file_actions {
+        for (source, file, action) in file_actions {
             crate::attach_debug!(
                 "shell service_images leftover FileAction::{action:?} file={} — MainView did not intercept",
                 file.to_storage()
             );
             match action {
                 crate::FileAction::Open => {
-                    self.open_file(file);
+                    self.open_file(source, file, false);
                 }
                 crate::FileAction::Save => {
                     self.save_file(file);
                 }
                 crate::FileAction::Reveal => {
                     // MainView intercepts Reveal; fallback open for bare views.
-                    self.open_file(file);
+                    self.open_file(source, file, false);
                 }
                 crate::FileAction::Restore => {
                     // MainView intercepts Restore via PaneRequest; no-op here.
@@ -6945,6 +7110,38 @@ Nothing was written. The store starts on demand, so this usually means it could 
             .collect();
         for (id, request) in diagram_copies {
             self.copy_diagram(id, &request);
+        }
+        // *Save reading to file…* on a picture (`KORU_READ_DEBUG` only), the
+        // same way: the view names the bytes, the shell does the rest.
+        let reading_saves: Vec<String> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(_, pane)| pane.view.take_wants_save_reading())
+            .collect();
+        for hash in reading_saves {
+            self.save_reading(crate::reading_file::ReadingTarget::Picture { hash });
+        }
+        // A picture's menu opened, or *Read again* was chosen on one (OCR
+        // Plan 3.2): the view names the bytes, the shell asks the Store off
+        // this thread.
+        let offer_asks: Vec<String> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(_, pane)| pane.view.take_wants_reading_offers())
+            .collect();
+        for hash in offer_asks {
+            self.fetch_reading_offers(crate::reading_file::ReadingTarget::Picture { hash });
+        }
+        let read_agains: Vec<String> = self
+            .panes
+            .iter_mut()
+            .filter_map(|(_, pane)| pane.view.take_wants_read_again())
+            .collect();
+        for hash in read_agains {
+            self.request_reading(
+                crate::reading_file::ReadingTarget::Picture { hash },
+                crate::reading_requests::ReadRequestKind::ReadAgain,
+            );
         }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
@@ -8415,6 +8612,8 @@ Nothing was written. The store starts on demand, so this usually means it could 
         trash_root: Option<NodeId>,
         match_text: Option<&str>,
         source_only: bool,
+        // A list or a task to open in Tasks instead of a document.
+        tasks: Option<crate::TasksTarget>,
     ) -> bool {
         let started = Instant::now();
         tracing::info!(
@@ -8466,7 +8665,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 );
                 continue;
             };
-            let accepted = if file {
+            let accepted = if let Some(tasks) = tasks {
+                pane.view.open_tasks_target(tasks, match_text)
+            } else if file {
                 document.is_some_and(|file| pane.view.open_file_search_target(file))
             } else {
                 pane.view.open_search_target(
@@ -8745,6 +8946,110 @@ Nothing was written. The store starts on demand, so this usually means it could 
         self.navigate_with_retry(event_loop, source, target, match_text, disposition, true);
     }
 
+    /// Open a list or a task in Tasks, when this process can. Answers `None`
+    /// when it did, and otherwise **the target to open instead**: the target
+    /// itself when it was never a Tasks one, the list's workspace, or the
+    /// task's own document at its line.
+    ///
+    /// **What this process can do** is the profile it already has open: the
+    /// workspace is switched to if it is another one, and a new window is a
+    /// second pane of this process. A workspace in a profile this process
+    /// does not hold, or one that will not switch, is handed on as its
+    /// fallback — a real place, and for a task the same place a landing that
+    /// cannot find the task ends up.
+    fn navigate_to_tasks(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        source: WindowId,
+        target: crate::NavigationTarget,
+        match_text: &Option<String>,
+        disposition: SearchTargetDisposition,
+    ) -> Option<crate::NavigationTarget> {
+        let (profile, workspace, tasks, fallback) = match target {
+            crate::NavigationTarget::TaskList {
+                profile,
+                workspace,
+                list,
+            } => (
+                profile,
+                workspace,
+                crate::TasksTarget::List(list),
+                crate::NavigationTarget::Workspace { profile, workspace },
+            ),
+            crate::NavigationTarget::TaskQueue {
+                profile,
+                workspace,
+                bucket,
+            } => (
+                profile,
+                workspace,
+                crate::TasksTarget::Queue(bucket),
+                crate::NavigationTarget::Workspace { profile, workspace },
+            ),
+            crate::NavigationTarget::Task { document, node } => {
+                let fallback = crate::NavigationTarget::Document {
+                    document,
+                    node: Some(node),
+                };
+                let located = self.runtime.workspace.store_client().and_then(|client| {
+                    client
+                        .locate_document(koru_store_core::ids::DocumentId::from_uuid(
+                            document.as_uuid(),
+                        ))
+                        .ok()
+                });
+                // Not located: the document path below says so, in its words.
+                let Some(location) = located else {
+                    return Some(fallback);
+                };
+                (
+                    koru_core::ProfileId::from_uuid(location.profile.as_uuid()),
+                    WorkspaceId::from_uuid(location.workspace.as_uuid()),
+                    crate::TasksTarget::Task { document, node },
+                    fallback,
+                )
+            }
+            other => return Some(other),
+        };
+        if self.runtime.profile.id() != Some(profile) {
+            tasks_debug_log(format_args!(
+                "search landing handed on: another profile, list={}",
+                !matches!(tasks, crate::TasksTarget::Task { .. })
+            ));
+            return Some(fallback);
+        }
+        if self.runtime.current != workspace {
+            self.switch_workspace(workspace);
+        }
+        if self.runtime.current != workspace {
+            return Some(fallback);
+        }
+        if disposition == SearchTargetDisposition::NewWindow {
+            let mut view = self.host.duplicate(&self.runtime.workspace.ws);
+            if !view.open_tasks_target(tasks, match_text.as_deref()) {
+                return Some(fallback);
+            }
+            let title = self.app_window_title();
+            let id = self.open_pane(event_loop, view, &title);
+            self.reveal_pane(id);
+            if let Some(pane) = self.panes.get(&id) {
+                pane.window.focus_window();
+            }
+            self.request_redraw(id);
+            return None;
+        }
+        let opened = self.open_search_target_in_panes(
+            source,
+            None,
+            None,
+            None,
+            match_text.as_deref(),
+            disposition == SearchTargetDisposition::SourceWindow,
+            Some(tasks),
+        );
+        if opened { None } else { Some(fallback) }
+    }
+
     fn navigate_with_retry(
         &mut self,
         event_loop: &ActiveEventLoop,
@@ -8755,7 +9060,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
         retry_moved_document: bool,
     ) {
         let started = Instant::now();
+        // A list or a task opens in Tasks; where that cannot be done from
+        // this process it opens the workspace or the task's own document,
+        // through everything below.
+        let target =
+            match self.navigate_to_tasks(event_loop, source, target, &match_text, disposition) {
+                Some(fallback) => fallback,
+                None => return,
+            };
         match &target {
+            crate::NavigationTarget::TaskList { .. }
+            | crate::NavigationTarget::TaskQueue { .. }
+            | crate::NavigationTarget::Task { .. } => {}
             crate::NavigationTarget::Workspace { profile, workspace } => tracing::info!(
                 target: "koru::navigation",
                 profile = %profile.to_storage(),
@@ -8770,6 +9086,13 @@ Nothing was written. The store starts on demand, so this usually means it could 
             ),
         }
         let resolved = match target {
+            // Both were turned into one of the two below by
+            // `navigate_to_tasks`.
+            crate::NavigationTarget::TaskList { .. }
+            | crate::NavigationTarget::TaskQueue { .. }
+            | crate::NavigationTarget::Task { .. } => {
+                return;
+            }
             crate::NavigationTarget::Workspace { profile, workspace } => {
                 Ok((profile, workspace, None, None))
             }
@@ -8962,6 +9285,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         None,
                         match_text.as_deref(),
                         disposition == SearchTargetDisposition::SourceWindow,
+                        None,
                     )
                 };
                 crate::search_debug!(
@@ -9784,9 +10108,24 @@ Nothing was written. The store starts on demand, so this usually means it could 
             PaneRequest::ImportFiles(selection) => {
                 self.import_content(source, "files", selection);
             }
+            PaneRequest::ImportFileAttachments { paths, document } => {
+                if !self.import_busy
+                    && let Some(workspace) = self.runtime.workspace.current()
+                {
+                    self.import_content(
+                        source,
+                        "files",
+                        crate::ImportSourceSelection::Files(paths),
+                    );
+                    if self.import_busy {
+                        self.pending_file_paste = Some((workspace, document));
+                    }
+                }
+            }
             PaneRequest::CancelImport => self.cancel_content_import(),
             PaneRequest::VoiceConsent(accepted) => self.answer_voice_consent(accepted),
             PaneRequest::CancelVoiceDownload => self.stop_voice_download(),
+            PaneRequest::ReaderAnswer(answer) => self.answer_reader(answer),
             PaneRequest::SetUpVoice => self.offer_voice_model(source),
             PaneRequest::RemoveVoiceModels => self.remove_voice_models(),
             PaneRequest::AskVoiceDevices => self.ask_voice_devices(),
@@ -9803,13 +10142,19 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 self.save_file(id);
             }
             PaneRequest::SaveFiles(ids) => self.save_files(ids),
+            PaneRequest::SaveReading(target) => self.save_reading(target),
+            PaneRequest::InspectFileReading(file) => self.inspect_file_reading(source, file),
+            PaneRequest::ReadingOffers(target) => self.fetch_reading_offers(target),
+            PaneRequest::ReadRequest(target, kind) => self.request_reading(target, kind),
+            PaneRequest::RescanWorkspaceFiles(workspace) => self.rescan_workspace_files(workspace),
             PaneRequest::SaveDiagram(request) => self.save_diagram(source, request),
             PaneRequest::CopyDiagram(request) => self.copy_diagram(source, &request),
             PaneRequest::OpenFile(id) => {
                 crate::attach_debug!("shell drain PaneRequest::OpenFile id={}", id.to_storage());
-                self.open_file(id);
+                self.open_file(source, id, false);
             }
-            PaneRequest::OpenFiles(ids) => self.open_files(ids),
+            PaneRequest::OpenFileExternally(id) => self.open_file(source, id, true),
+            PaneRequest::OpenFiles(ids) => self.open_files(source, ids),
             PaneRequest::OpenFileNote(id) => self.open_file_note(event_loop, source, id),
             PaneRequest::RenameFile(id, title) => {
                 if let Err(error) = self.runtime.workspace.rename_document(id, &title) {
@@ -9996,10 +10341,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .into_iter()
                         .map(|entry| entry.title)
                         .collect();
-                    let blobs = StoreBlobSink {
+                    let store_blobs = StoreBlobSink {
                         client: client.clone(),
                         workspace: store_workspace,
                     };
+                    // Every byte the importer keeps goes through here, so the
+                    // count of pictures and PDFs it brought is taken here
+                    // (OCR Plan 3.3) — a number, never a name.
+                    let blobs = crate::reader_offer::CountingBlobSink::new(&store_blobs);
                     let tags = StoreTagSink::new(
                         segment,
                         root.clone(),
@@ -10037,6 +10386,12 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         content.documents.len(),
                         content.warnings.len()
                     );
+                    // Every blob is stored by now. If any was a picture or a
+                    // PDF, ask the reader's state once so the Store reads its
+                    // catalog while the documents are written, and the
+                    // summary can say the real size.
+                    let pictures_and_scans = blobs.count();
+                    crate::reader_offer::prime(format, pictures_and_scans, &client);
                     let mut succeeded = 0usize;
                     let mut already_known = 0usize;
                     let mut files = Vec::new();
@@ -10204,6 +10559,17 @@ Nothing was written. The store starts on demand, so this usually means it could 
                             }
                         }
                     }
+                    // **Once, at the end, with the count**: an import through
+                    // an importer tells the reader how many pictures and
+                    // scanned PDFs it brought, which is what lets Koru offer
+                    // once more after a *Not now*. Never for added or pasted
+                    // files (`reports_to_reader`).
+                    let reading = crate::reader_offer::report_import(
+                        format,
+                        pictures_and_scans,
+                        &client,
+                        &std::thread::sleep,
+                    );
                     Ok(ContentImportSummary {
                         root,
                         files,
@@ -10211,16 +10577,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         already_known,
                         had_failures,
                         warnings,
+                        reading,
                     })
                 })();
                 match &result {
                     Ok(summary) => println!(
-                        "[Koru][import] completed format={format} root={} files={} imported={} already_known={} partial_failures={}",
+                        "[Koru][import] completed format={format} root={} files={} imported={} already_known={} partial_failures={} pictures_and_scans={}",
                         summary.root.id().to_storage(),
                         summary.files.len(),
                         summary.imported,
                         summary.already_known,
-                        summary.had_failures
+                        summary.had_failures,
+                        summary
+                            .reading
+                            .as_ref()
+                            .map_or(0, |reading| reading.pictures_and_scans)
                     ),
                     Err(_) => println!("[Koru][import] failed format={format}"),
                 }
@@ -10439,6 +10810,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 );
             }
             ImportMessage::Inspected(Ok(inspected)) => self.confirm_import(inspected),
+            ImportMessage::ReaderAnswered(result) => self.reader_answered(result),
             ImportMessage::Imported(Err(error)) => {
                 self.import_busy = false;
                 self.import_source = None;
@@ -10519,18 +10891,21 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         crate::events_host::ImportOutcome::Failed,
                     );
                 }
-                let body = error
-                    .code()
-                    .map(import_error_key)
-                    .map(|key| {
-                        let lang = koru_i18n::Lang::for_system(
-                            koru_window::system_locale::system_locale().as_deref(),
-                        );
-                        koru_i18n::t(lang, key)
-                    })
-                    .unwrap_or("No empty documents were left behind.");
+                let lang = koru_i18n::Lang::for_system(
+                    koru_window::system_locale::system_locale().as_deref(),
+                );
+                let body = koru_i18n::t(
+                    lang,
+                    error
+                        .code()
+                        .map(import_error_key)
+                        .unwrap_or(koru_i18n::Key::ImportContentFailedBody),
+                );
                 self.report(
-                    ErrorReport::new("The content could not be imported", body)
+                    ErrorReport::new(
+                        koru_i18n::t(lang, koru_i18n::Key::ImportContentFailedTitle),
+                        body,
+                    )
                         .with_details(error),
                 );
             }
@@ -10567,6 +10942,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     already_known,
                     had_failures,
                     warnings,
+                    reading,
                 } = summary;
                 self.answer_ai_import(
                     files
@@ -10608,6 +10984,29 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         self.runtime.workspace.attach_files_to_page(page, &ids);
                     }
                 }
+                if let Some((workspace, document)) = self.pending_file_paste.take()
+                    && !files.is_empty()
+                {
+                    // Only edit the captured open document. Never reopen a closed
+                    // document or attach into whichever tab is active now.
+                    let result = if self.runtime.workspace.current() == Some(workspace)
+                        && self.runtime.workspace.document(document).is_some()
+                    {
+                        file_paste::attachment_cuttings(workspace, &files)
+                            .map_err(|error| error.to_string())
+                            .and_then(|cuttings| self.runtime.workspace
+                                .plant_into_document(workspace, document, None, &cuttings, None)
+                                .map_err(|error| error.to_string()))
+                    } else {
+                        Err(koru_i18n::t(koru_i18n::current(), koru_i18n::Key::PasteFilesDestinationClosed).to_owned())
+                    };
+                    if let Err(error) = result {
+                        self.report(ErrorReport::new(
+                            koru_i18n::t(koru_i18n::current(), koru_i18n::Key::PasteFilesAttachFailed),
+                            error,
+                        ));
+                    }
+                }
                 if let Some((window, node)) = self.pending_attachment.take()
                     && let Some(pane) = self.panes.get_mut(&window)
                 {
@@ -10624,28 +11023,16 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     }
                 }
                 self.invalidate_everywhere();
-                let message = match (imported, already_known, had_failures) {
-                    (0, 1, false) => "File is already known.".into(),
-                    (0, known, false) if known > 1 => {
-                        format!("{known} files are already known.")
+                let message =
+                    import_notice_message(koru_i18n::current(), imported, already_known, had_failures);
+                match reading {
+                    // The summary gains its line when the reader's state
+                    // says to offer; the window decides from the state.
+                    Some(reading) => {
+                        self.notice_import_reading(message, root.notice_target(), reading)
                     }
-                    (_, 0, false) => "Import succeeded.".into(),
-                    (_, known, false) => format!(
-                        "Import succeeded. {known} {} already known.",
-                        if known == 1 { "file was" } else { "files were" }
-                    ),
-                    (_, 0, true) => {
-                        "Import succeeded. See FAILED for items that need attention.".into()
-                    }
-                    (_, known, true) => format!(
-                        "Import succeeded. {known} {} already known. See FAILED for items that need attention.",
-                        if known == 1 { "file was" } else { "files were" }
-                    ),
-                };
-                self.notice_import(
-                    message,
-                    root.notice_target(),
-                );
+                    None => self.notice_import(message, root.notice_target()),
+                }
                 if !warnings.is_empty() {
                     self.report(
                         ErrorReport::new(
@@ -10769,6 +11156,40 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 Ok((workspace, entry)) => self.save_located_file(id, workspace, entry.title),
                 Err(error) => self.report(ErrorReport::new("File not found", "It may have been removed in another window.").with_details(error)),
             },
+            ImportMessage::ReadingFetchedForSave { result } => match result {
+                Ok((name, text)) => self.save_fetched_reading(name, text),
+                Err(error) => self.report(
+                    ErrorReport::new("The reading could not be fetched", "Nothing was written.")
+                        .with_details(error),
+                ),
+            },
+            ImportMessage::ReadingOffers { target, offers } => {
+                for pane in self.panes.values_mut() {
+                    if pane.view.set_reading_offers(&target, offers) {
+                        pane.needs_frame.set(true);
+                        pane.window.request_redraw();
+                    }
+                }
+            }
+            ImportMessage::ReadingInspected { source, file, result } => {
+                if let Some(pane) = self.panes.get_mut(&source)
+                    && pane.view.show_file_reading(file, result)
+                {
+                    pane.needs_frame.set(true);
+                    pane.window.request_redraw();
+                }
+            }
+            ImportMessage::ReadingRescanFinished(result) => {
+                let lang = crate::accessibility::ui_lang();
+                let message = match result {
+                    Ok(summary) => koru_i18n::t(lang, koru_i18n::Key::FilesRescanSummary)
+                        .replace("{queued}", &summary.queued.to_string())
+                        .replace("{skipped}", &summary.skipped.to_string())
+                        .replace("{failed}", &summary.failed.to_string()),
+                    Err(()) => koru_i18n::t(lang, koru_i18n::Key::FilesRescanFailed).to_owned(),
+                };
+                self.notice(message);
+            }
             ImportMessage::FileSaved {
                 name,
                 destination,
@@ -10780,6 +11201,14 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .with_details(error),
                 ),
             },
+            ImportMessage::FileImageOpened { source, file, name, image } => {
+                if let Some(pane) = self.panes.get_mut(&source)
+                    && pane.view.show_file_image(file, name, image)
+                {
+                    pane.needs_frame.set(true);
+                    pane.window.request_redraw();
+                }
+            }
             ImportMessage::FileOpened { name, result } => match result {
                 Ok(()) => self.notice(format!("Opened \u{201c}{name}\u{201d}.")),
                 Err(error) if blob_is_waiting_for_a_device(&error) => match waiting_device_names(&error) {
@@ -10962,6 +11391,187 @@ Nothing was written. The store starts on demand, so this usually means it could 
         {
             self.report(
                 ErrorReport::new("Couldn't start saving the file", "Nothing was written.")
+                    .with_details(error),
+            );
+        }
+    }
+
+    /// Reading details and View extracted text are available in normal builds.
+    /// Fetch on a worker, then show the result in the requesting window.
+    fn inspect_file_reading(&mut self, source: WindowId, file: koru_core::DocumentId) {
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let lang = crate::accessibility::ui_lang();
+        let spawned = std::thread::Builder::new()
+            .name("koru-inspect-reading".into())
+            .spawn(move || {
+                let result = (|| {
+                    let target = crate::reading_file::ReadingTarget::File(file);
+                    let (client, ws, hash, name) =
+                        locate_reading_item(&segment, root.as_deref(), &target, None)?;
+                    let answer = client.reading(ws, &hash).map_err(|e| e.to_string())?;
+                    let mut details = crate::reading_details::format(
+                        name.unwrap_or_default(),
+                        answer.as_ref(),
+                        lang,
+                    );
+                    details.target = Some((ws, hash));
+                    Ok(details)
+                })();
+                let _ = tx.send(ImportMessage::ReadingInspected {
+                    source,
+                    file,
+                    result,
+                });
+                let _ = proxy.send_event(Wake::Import);
+            });
+        if let Err(error) = spawned {
+            if let Some(pane) = self.panes.get_mut(&source) {
+                pane.view.show_file_reading(file, Err(error.to_string()));
+                pane.needs_frame.set(true);
+                pane.window.request_redraw();
+            }
+        }
+    }
+
+    /// Files export from their OCR tab; inline pictures keep the debug-only entry.
+    fn save_reading(&mut self, target: crate::reading_file::ReadingTarget) {
+        if matches!(target, crate::reading_file::ReadingTarget::Picture { .. })
+            && !crate::reading_file::enabled()
+        {
+            return;
+        }
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let workspace = self
+            .runtime
+            .workspace
+            .current()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()));
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-fetch-reading".into())
+            .spawn(move || {
+                let result = fetch_reading_text(&segment, root.as_deref(), &target, workspace);
+                let _ = tx.send(ImportMessage::ReadingFetchedForSave { result });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the reading", "Nothing was written.")
+                    .with_details(error),
+            );
+        }
+    }
+
+    /// **Ask the Store what may be asked of one item's reading** — for its
+    /// right-click menu (OCR Plan 3.2, `reading_requests`). On a worker, as
+    /// *Save reading* fetches; the answer reaches every view through
+    /// `View::set_reading_offers`.
+    fn fetch_reading_offers(&mut self, target: crate::reading_file::ReadingTarget) {
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let workspace = self.current_store_workspace();
+        let spawned = std::thread::Builder::new()
+            .name("koru-reading-offers".into())
+            .spawn(move || {
+                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
+                let _ = proxy.send_event(Wake::Import);
+            });
+        if let Err(error) = spawned {
+            // Nothing is offered, which is what an unanswered question shows.
+            tracing::debug!(%error, "the reading offers could not be asked for");
+        }
+    }
+
+    /// **Send *Read all pages* or *Read again*** (OCR Plan 3.2) on a worker,
+    /// then ask again what is offered, so the next menu does not offer the
+    /// same request twice. A refusal says nothing to the person: the entry was
+    /// offered because the Store would accept it, and a refusal now is a
+    /// moment's race (the bytes or the reader went), which the next menu
+    /// reflects by not offering it.
+    fn request_reading(
+        &mut self,
+        target: crate::reading_file::ReadingTarget,
+        kind: crate::reading_requests::ReadRequestKind,
+    ) {
+        use crate::reading_requests::ReadRequestKind;
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let workspace = self.current_store_workspace();
+        let spawned = std::thread::Builder::new()
+            .name("koru-read-request".into())
+            .spawn(move || {
+                if let Ok((client, ws, hash, _)) =
+                    locate_reading_item(&segment, root.as_deref(), &target, workspace)
+                {
+                    let sent = match kind {
+                        ReadRequestKind::ReadAll => client.read_all(ws, &hash).map(|_| ()),
+                        ReadRequestKind::ReadAgain => client.read_again(ws, &hash).map(|_| ()),
+                        ReadRequestKind::ForceOcr => client.force_ocr(ws, &hash).map(|_| ()),
+                    };
+                    if let Err(error) = sent {
+                        tracing::debug!(code = %error.code(), "a reading request was refused");
+                    }
+                }
+                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
+                let _ = proxy.send_event(Wake::Import);
+            });
+        if let Err(error) = spawned {
+            tracing::debug!(%error, "a reading request could not be sent");
+        }
+    }
+
+    /// The current workspace, as the Store names it: where a picture lives.
+    fn current_store_workspace(&self) -> Option<koru_store_core::ids::WorkspaceId> {
+        self.runtime
+            .workspace
+            .current()
+            .map(|id| koru_store_core::ids::WorkspaceId::from_uuid(id.as_uuid()))
+    }
+
+    /// The reading is here: ask where it goes, then write it off this thread.
+    fn save_fetched_reading(&mut self, name: String, text: String) {
+        let Some(destination) = crate::dialogs::pick_save_file(
+            crate::reading_file::LABEL,
+            &name,
+            &[],
+            self.runtime.settings.last_export_dir.as_deref(),
+            None,
+        ) else {
+            return;
+        };
+        if let Some(dir) = destination.parent() {
+            self.remember_export_dir(dir.to_path_buf());
+        }
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let worker_destination = destination.clone();
+        if let Err(error) = std::thread::Builder::new()
+            .name("koru-save-file".into())
+            .spawn(move || {
+                let result =
+                    koru_export_markdown::write_bytes_atomic(&worker_destination, text.as_bytes())
+                        .map_err(|error| error.to_string());
+                let _ = tx.send(ImportMessage::FileSaved {
+                    name,
+                    destination: worker_destination,
+                    result,
+                });
+                let _ = proxy.send_event(Wake::Import);
+            })
+        {
+            self.report(
+                ErrorReport::new("Couldn't start saving the reading", "Nothing was written.")
                     .with_details(error),
             );
         }
@@ -11183,10 +11793,15 @@ Nothing was written. The store starts on demand, so this usually means it could 
         }
     }
 
-    /// Open an opaque workspace file through its OS association. The Store read
-    /// and disk write stay off the event thread; the cache keeps one bounded
-    /// copy per stable file id rather than leaking a new temp file per click.
-    fn open_file(&mut self, id: koru_core::DocumentId) {
+    /// Open images in the requesting pane's viewer; other files use their OS
+    /// association. Store reads, image decoding and disk writes stay off the
+    /// event thread. Explicit external opening bypasses the viewer.
+    fn open_file(&mut self, source: WindowId, id: koru_core::DocumentId, external: bool) {
+        let internal = !external
+            && self
+                .panes
+                .get_mut(&source)
+                .is_some_and(|pane| pane.view.begin_file_image_open(id));
         let tx = self.import_tx.clone();
         let proxy = self.wake_proxy.clone();
         let root = self.gateway_root.clone();
@@ -11202,9 +11817,23 @@ Nothing was written. The store starts on demand, so this usually means it could 
                     name = entry.title;
                     let bytes =
                         workspace_file_bytes(&segment, root.as_deref(), workspace, store_id)?;
-                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes)
+                    if internal && let Some(image) = image_file::decode(&bytes)? {
+                        let _ = tx.send(ImportMessage::FileImageOpened {
+                            source,
+                            file: id,
+                            name: name.clone(),
+                            image: Arc::new(image),
+                        });
+                        return Ok(true);
+                    }
+                    open_file_bytes(store_id, &name, entry.mime.as_deref(), &bytes).map(|_| false)
                 })();
-                let _ = tx.send(ImportMessage::FileOpened { name, result });
+                if !matches!(result, Ok(true)) {
+                    let _ = tx.send(ImportMessage::FileOpened {
+                        name,
+                        result: result.map(|_| ()),
+                    });
+                }
                 let _ = proxy.send_event(Wake::Import);
             })
         {
@@ -11384,9 +12013,9 @@ Nothing was written. The store starts on demand, so this usually means it could 
     }
 
     /// Open every selected file through the associated OS application.
-    fn open_files(&mut self, ids: Vec<koru_core::DocumentId>) {
+    fn open_files(&mut self, source: WindowId, ids: Vec<koru_core::DocumentId>) {
         if ids.len() == 1 {
-            self.open_file(ids[0]);
+            self.open_file(source, ids[0], false);
             return;
         }
         let Some(workspace_id) = self.runtime.workspace.current() else {
@@ -12051,6 +12680,7 @@ Nothing was written. The store starts on demand, so this usually means it could 
     /// Clear a pending `/attach`. When `cancelled`, restore the trigger row so
     /// the literal `/attach` text is not left behind.
     fn finish_pending_attachment(&mut self, cancelled: bool) {
+        self.pending_file_paste = None;
         self.pending_page_attachment = None;
         let Some((window, node)) = self.pending_attachment.take() else {
             return;
@@ -12110,6 +12740,125 @@ Nothing was written. The store starts on demand, so this usually means it could 
             if pane.view.show_import_notice(message.clone(), target) {
                 pane.window.request_redraw();
                 return;
+            }
+        }
+    }
+
+    /// An importer's summary, with what it told the reader (OCR Plan 3.3).
+    fn notice_import_reading(
+        &mut self,
+        message: String,
+        target: crate::ImportNoticeTarget,
+        reading: crate::reader_offer::ImportReading,
+    ) {
+        for pane in self.panes.values_mut() {
+            if pane
+                .view
+                .show_import_notice_reading(message.clone(), target, reading.clone())
+            {
+                pane.window.request_redraw();
+                return;
+            }
+        }
+    }
+
+    /// **Carry out an answer on the line in an import's summary**, off the
+    /// event loop (OCR Plan 3.3). Every answer comes back as the reader's
+    /// state, through the import channel, and goes to every pane.
+    ///
+    /// **Turn on** installs with the terms the person was shown, then asks
+    /// about the download every [`INSTALL_POLL`] until it has ended — one
+    /// such watch at a time, however often Turn on or Try again is pressed.
+    /// **Stop** and **Not now** are one call each; a running watch reports
+    /// what Stop did.
+    ///
+    /// [`INSTALL_POLL`]: crate::reader_offer::INSTALL_POLL
+    fn answer_reader(&mut self, answer: crate::reader_offer::ReaderAnswer) {
+        use crate::reader_offer::{INSTALL_POLL, ReaderAnswer, installing};
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let watching = Arc::clone(&self.reader_watch);
+        let spawned = std::thread::Builder::new()
+            .name("koru-reader-answer".into())
+            .spawn(move || {
+                let send = |result: Result<koru_store_wire::reader::ReaderState, String>| {
+                    let _ = tx.send(ImportMessage::ReaderAnswered(result));
+                    let _ = proxy.send_event(Wake::Import);
+                };
+                let client = match client_at(root.as_deref()) {
+                    Ok(client) => client,
+                    Err(error) => {
+                        send(Err(error.code().as_str().to_owned()));
+                        return;
+                    }
+                };
+                let store = client.store();
+                let answered = match &answer {
+                    ReaderAnswer::TurnOn(request) => {
+                        store.install_reader(request).or_else(|error| {
+                            // The terms changed under the line, or the reader
+                            // cannot be used after all: the state says which.
+                            match error.code() {
+                                koru_store_core::errors::Code::ReaderTermsChanged
+                                | koru_store_core::errors::Code::ReaderUnavailable => {
+                                    store.reader()
+                                }
+                                _ => Err(error),
+                            }
+                        })
+                    }
+                    ReaderAnswer::Stop => store.stop_reader_install(),
+                    ReaderAnswer::NotNow => store.decline_reader(),
+                };
+                let mut state = match answered {
+                    Ok(state) => state,
+                    Err(error) => {
+                        send(Err(error.code().as_str().to_owned()));
+                        return;
+                    }
+                };
+                let watch = matches!(answer, ReaderAnswer::TurnOn(_))
+                    && installing(&state)
+                    && !watching.swap(true, std::sync::atomic::Ordering::AcqRel);
+                send(Ok(state.clone()));
+                if !watch {
+                    return;
+                }
+                while installing(&state) {
+                    std::thread::sleep(INSTALL_POLL);
+                    match store.reader() {
+                        Ok(next) => {
+                            state = next;
+                            send(Ok(state.clone()));
+                        }
+                        Err(error) => {
+                            send(Err(error.code().as_str().to_owned()));
+                            break;
+                        }
+                    }
+                }
+                watching.store(false, std::sync::atomic::Ordering::Release);
+            });
+        if let Err(error) = spawned {
+            println!("[Koru][reader] could not start the answer's thread: {error}");
+        }
+    }
+
+    /// The Store's answer, to every pane: the one carrying the line or the
+    /// download updates it.
+    fn reader_answered(&mut self, result: Result<koru_store_wire::reader::ReaderState, String>) {
+        let state = match result {
+            Ok(state) => Some(state),
+            Err(code) => {
+                // Rare and about the person's own answer: worth one line.
+                println!("[Koru][reader] the Store did not answer: {code}");
+                None
+            }
+        };
+        for pane in self.panes.values_mut() {
+            if pane.view.reader_answered(state.as_ref()) {
+                pane.window.request_redraw();
             }
         }
     }
@@ -17612,6 +18361,9 @@ impl<H: Host> ApplicationHandler<Wake> for App<H> {
                         for pane in self.panes.values_mut() {
                             pane.view.set_mods(mods);
                         }
+                        // A view may act on a modifier let go (the quick
+                        // switch goes to its tab when Control comes up).
+                        self.wake(id);
                     }
                     for pane in self.panes.values_mut() {
                         pane.quarantine.released(event.physical_key);
@@ -19813,6 +20565,12 @@ mod tests {
         assert_eq!(document_count(&kinds, true), 6);
         assert_eq!(document_count(&kinds, false), 4);
         assert_eq!(document_count(&std::collections::BTreeMap::new(), true), 0);
+        // **A reading document counts as neither** (OCR TECHNICAL §12): one
+        // per file and per page with pictures, and the manager's document and
+        // file columns are exactly what they were without them.
+        kinds.insert(koru_core::explore::KIND_READING.to_owned(), 9);
+        assert_eq!(document_count(&kinds, true), 6);
+        assert_eq!(kinds.get(koru_core::explore::KIND_FILE).copied(), Some(7));
         // The call site reads the flag: all-off hides canvases.
         koru_features::testing::with(koru_features::Features::ALL_OFF, || {
             assert_eq!(document_count(&kinds, koru_features::canvas()), 4);
@@ -20791,6 +21549,64 @@ mod tests {
         for lang in koru_i18n::Lang::ALL {
             assert!(!koru_i18n::t(lang, import_error_key(error.code().unwrap())).is_empty());
         }
+    }
+
+    /// **An import's summary is in the person's language** (OCR Plan 3.5):
+    /// every form of it, with the count written the language's way and the
+    /// page `FAILED` named as it is titled.
+    #[test]
+    fn the_import_summary_is_worded_in_every_language() {
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 3, 0, false),
+            "Import succeeded."
+        );
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 0, 1, false),
+            "File is already known."
+        );
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 2, 1, true),
+            "Import succeeded. One file was already known. See FAILED for items that need attention."
+        );
+        assert_eq!(
+            import_notice_message(koru_i18n::Lang::En, 2, 1_204, false),
+            "Import succeeded. 1,204 files were already known."
+        );
+        for lang in koru_i18n::Lang::ALL {
+            let forms = [
+                (3, 0, false),
+                (0, 1, false),
+                (0, 1_204, false),
+                (3, 1, false),
+                (3, 1_204, false),
+                (3, 0, true),
+                (3, 1, true),
+                (3, 1_204, true),
+            ];
+            for (imported, known, failed) in forms {
+                let message = import_notice_message(lang, imported, known, failed);
+                assert!(!message.contains("{}"), "{}: {message}", lang.tag());
+                if known > 1 {
+                    assert!(
+                        message.contains(&koru_i18n::number::decimal(lang, 1_204)),
+                        "{}: {message}",
+                        lang.tag()
+                    );
+                }
+                if failed {
+                    assert!(message.contains("FAILED"), "{}: {message}", lang.tag());
+                }
+            }
+            assert_ne!(
+                import_notice_message(lang, 3, 0, false),
+                import_notice_message(lang, 3, 0, true)
+            );
+        }
+        assert_ne!(
+            import_notice_message(koru_i18n::Lang::De, 3, 0, false),
+            "Import succeeded.",
+            "not English under a German line"
+        );
     }
 
     #[test]

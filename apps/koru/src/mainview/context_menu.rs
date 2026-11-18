@@ -259,6 +259,9 @@ pub enum MenuAction {
     ClearRecents,
     /// Select the existing Welcome tab, or reopen it.
     OpenWelcome,
+    /// *View open tabs*: the quick switch, from the New menu, with its
+    /// chord beside it so the menu teaches it.
+    ViewOpenTabs,
     ImportAs,
     /// One registered import format's row, carrying the format's stable id.
     /// The label comes from the format's descriptor — the registry decides
@@ -327,6 +330,8 @@ pub enum MenuAction {
     /// *Import files…* — the file picker, files kept as files. The first
     /// row of the New… launcher's Import list, above the content formats.
     ImportFiles,
+    OcrSettings(Option<bool>),
+    RescanAllFiles,
     /// **One of a run's results**, by its position in the snapshot the menu
     /// opened with. Picking it opens that version as a tab — the same
     /// primitive the run's own Result view and the Artifacts column reach.
@@ -483,6 +488,18 @@ pub enum MenuAction {
     AddNote,
     /// Open the note the file already has. Shown for one file that has one.
     OpenNote,
+    /// Save what was read out of the file to a text file — OCR TECHNICAL §9's
+    /// debugging entry, **shown only with `KORU_READ_DEBUG=1`**, for one file
+    /// under Explore → Files ([`explore_file_items`]).
+    ViewExtractedText,
+    /// *Read all pages* (OCR Plan 3.2, EXPERIENCE §4): read the rest of a
+    /// file that stopped at the page limit. Shown for one file under Explore
+    /// → Files where the Store offers it ([`explore_file_items`]).
+    ReadAllPages,
+    /// *Read again*: read one file's words once more. Shown where the Store
+    /// offers it — the file has been read, or reading it failed.
+    ReadAgain,
+    ForceOcr,
     Restore,
     DeletePermanently,
     EmptyTrash,
@@ -568,6 +585,12 @@ pub enum MenuAction {
     // Borrowing the row would print a shortcut that does something else.
     /// Rename the list, in a field over the row it is already on.
     ListRename,
+    /// Make a list inside this one: the row's hover `+`, reachable without a
+    /// pointer.
+    ListNewInside,
+    /// Take a nested list out to the top level. Only on a list that is
+    /// inside another.
+    ListMoveToTop,
     /// Parent of the swatch submenu. No ellipsis: it opens rows rather than a
     /// picker, which is the difference `ExportAs` already draws.
     ListColor,
@@ -1067,6 +1090,8 @@ impl MenuAction {
             | Self::TaskList
             | Self::TaskRemove
             | Self::ListRename
+            | Self::ListNewInside
+            | Self::ListMoveToTop
             | Self::ListColor
             | Self::ListSwatch(_)
             | Self::ListDelete
@@ -1098,6 +1123,18 @@ impl MenuAction {
                 });
             }
             MenuAction::MoveNodesToTrash(_) => return Cow::Borrowed("Move to trash"),
+            MenuAction::ReadAllPages => {
+                return Cow::Borrowed(koru_workspace_host::reading_requests::label(
+                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAll,
+                    crate::format::lang(),
+                ));
+            }
+            MenuAction::ReadAgain => {
+                return Cow::Borrowed(koru_workspace_host::reading_requests::label(
+                    koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain,
+                    crate::format::lang(),
+                ));
+            }
             // The token as it is written in the swatch set, with its first
             // letter raised. One source, so a colour added to `ACCENT_TOKENS`
             // gets a row here without a second table to keep in step.
@@ -1146,6 +1183,7 @@ impl MenuAction {
             MenuAction::Divider => "",
             MenuAction::Documents => "Documents",
             MenuAction::OpenWelcome => "Welcome",
+            MenuAction::ViewOpenTabs => "View open tabs",
             MenuAction::Socials => {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
@@ -1304,6 +1342,17 @@ impl MenuAction {
             MenuAction::ClearRecents => "Clear recents",
             MenuAction::ImportAs => "Import\u{2026}",
             MenuAction::ImportFiles => "Import files\u{2026}",
+            MenuAction::OcrSettings(enabled) => koru_i18n::t(
+                crate::format::lang(),
+                match enabled {
+                    Some(true) => koru_i18n::Key::FilesOcrSettingsOn,
+                    Some(false) => koru_i18n::Key::FilesOcrSettingsOff,
+                    None => koru_i18n::Key::FilesOcrSettings,
+                },
+            ),
+            MenuAction::RescanAllFiles => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::FilesRescanAll)
+            }
             MenuAction::ImportFormat(id) => {
                 koru_workspace_host::formats::import_menu_name(id, crate::format::lang())
                     .unwrap_or(id)
@@ -1396,6 +1445,13 @@ impl MenuAction {
             MenuAction::OpenFileInApp => "Open in app",
             MenuAction::SaveFileAs => "Save as\u{2026}",
             MenuAction::AddNote => "Add note",
+            MenuAction::ForceOcr => koru_workspace_host::reading_requests::label(
+                koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr,
+                crate::format::lang(),
+            ),
+            MenuAction::ViewExtractedText => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReadingViewText)
+            }
             MenuAction::OpenNote => "Open note",
             MenuAction::Restore => "Restore",
             MenuAction::DeletePermanently => "Delete permanently",
@@ -1414,6 +1470,12 @@ impl MenuAction {
             MenuAction::TaskDue => "Due",
             MenuAction::TaskPriority => "Priority",
             MenuAction::TaskList => "List",
+            MenuAction::ListNewInside => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListNewInside)
+            }
+            MenuAction::ListMoveToTop => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TaskListMoveToTop)
+            }
             MenuAction::ListColor => "Color",
             MenuAction::ListDelete => "Delete list\u{2026}",
             MenuAction::PageDescription { shown: false } => {
@@ -1511,6 +1573,9 @@ impl MenuAction {
             // **Windows' own window-management chords**, which exist only there:
             // the rows carrying them are `#[cfg(windows)]` for the same reason
             // (`snap::place` is a no-op elsewhere).
+            // Literal Control on every platform: the chord is resolved from
+            // the physical key by the shell and is not in the registry.
+            MenuAction::ViewOpenTabs => Some("Ctrl+Tab".to_string()),
             MenuAction::WindowSnapLeft => cfg!(windows).then(|| "Win+Left".to_string()),
             MenuAction::WindowSnapRight => cfg!(windows).then(|| "Win+Right".to_string()),
             _ => self.shortcut_id().map(koru_keys::label_of),
@@ -1582,6 +1647,7 @@ impl MenuAction {
             MenuAction::OpenInChat => Some(koru_draw::icons::SPARKLE),
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
+            MenuAction::ViewOpenTabs => Some(koru_draw::icons::TABS),
             MenuAction::NewTaskIn(crate::panes::explore::rail::RailTarget::Bucket(bucket)) => {
                 Some(crate::panes::explore::rail::bucket_glyph(bucket))
             }
@@ -1615,6 +1681,8 @@ impl MenuAction {
             MenuAction::TaskGoToList => Some(koru_draw::icons::LIST),
             MenuAction::TaskCreateDocument => Some(koru_draw::icons::DOCUMENT),
             MenuAction::ListColor => Some(koru_draw::icons::PALETTE),
+            MenuAction::ListNewInside => Some(koru_draw::icons::PLUS),
+            MenuAction::ListMoveToTop => Some(koru_draw::icons::ARROW_UP),
             MenuAction::PageDescription { .. } => Some(koru_draw::icons::NOTE),
             MenuAction::PageAttach => Some(koru_draw::icons::PAPERCLIP),
             MenuAction::PageAddExisting => Some(koru_draw::icons::LINK),
@@ -2042,6 +2110,50 @@ pub fn file_items(count: usize, note: Option<bool>) -> Vec<MenuAction> {
     }
 }
 
+/// The Files view's menu: [`file_items`] and View extracted text for one file,
+/// independently of the last reading status. Reading export lives in the OCR tab.
+///
+/// **Then, for one file, *Read all pages* and *Re-scan* where the Store
+/// offers them** (OCR Plan 3.2; `koru_workspace_host::reading_requests`):
+/// `offers` is the Store's last answer for the file, kept by the view —
+/// `None` when nothing is known yet, which shows neither. They are a group of
+/// their own at the menu's very end, so a menu corrected in place when a
+/// fresh answer arrives moves no row above them.
+pub fn explore_file_items(
+    count: usize,
+    note: Option<bool>,
+    offers: Option<koru_workspace_host::reading_requests::ReadingOffers>,
+) -> Vec<MenuAction> {
+    let mut items = file_items(count, note);
+    if count == 1 {
+        // The Files menu has one way to re-scan: explicit recognition. Keep
+        // automatic retries available to the Settings failed-item workflow.
+        let entries: Vec<_> = koru_workspace_host::reading_requests::entries(offers, false)
+            .into_iter()
+            .filter(|kind| {
+                *kind != koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain
+            })
+            .collect();
+        items.push(MenuAction::Divider);
+        items.push(MenuAction::ViewExtractedText);
+        if !entries.is_empty() {
+            items.push(MenuAction::Divider);
+            items.extend(entries.into_iter().map(|kind| match kind {
+                koru_workspace_host::reading_requests::ReadRequestKind::ReadAll => {
+                    MenuAction::ReadAllPages
+                }
+                koru_workspace_host::reading_requests::ReadRequestKind::ReadAgain => {
+                    MenuAction::ReadAgain
+                }
+                koru_workspace_host::reading_requests::ReadRequestKind::ForceOcr => {
+                    MenuAction::ForceOcr
+                }
+            }));
+        }
+    }
+    items
+}
+
 /// Formats behind *Export*. Each format is backed by its own exporter crate,
 /// registered in `koru_workspace_host::formats` — the menu is a projection of it.
 pub fn export_items() -> Vec<MenuAction> {
@@ -2069,6 +2181,7 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::Socials,
         MenuAction::Divider,
         MenuAction::ImportAs,
+        MenuAction::ViewOpenTabs,
     ]
 }
 
@@ -2456,15 +2569,24 @@ pub fn document_items() -> Vec<MenuAction> {
 /// gesture when it grows one, and *Open* is what the row already does on a plain
 /// click. The divider is what keeps the red row from sitting flush against the
 /// two that change a label.
-pub fn list_items() -> Vec<MenuAction> {
-    vec![
+pub fn list_items(nested: bool) -> Vec<MenuAction> {
+    let mut items = vec![
         MenuAction::RailOpenInNewTab,
+        MenuAction::Divider,
+        MenuAction::ListNewInside,
+    ];
+    // Only a list that is inside another has somewhere to be moved out to.
+    if nested {
+        items.push(MenuAction::ListMoveToTop);
+    }
+    items.extend([
         MenuAction::Divider,
         MenuAction::ListRename,
         MenuAction::ListColor,
         MenuAction::Divider,
         MenuAction::ListDelete,
-    ]
+    ]);
+    items
 }
 
 /// A queue row's menu: one row, because a computed queue has nothing to rename,

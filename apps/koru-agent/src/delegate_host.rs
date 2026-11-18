@@ -260,6 +260,14 @@ fn delegate_spec(
             generation = %event.generation,
             "the delegate child is serving"
         ),
+        // Never reported: this role sets no memory limit. Spelled out rather
+        // than wildcarded so a new event is a compile error here, as it was.
+        WorkerEventKind::MemoryLimitReached { limit_bytes } => tracing::error!(
+            target: "koru::delegate_host",
+            generation = %event.generation,
+            limit_bytes,
+            "the delegate child reached its memory limit"
+        ),
         WorkerEventKind::Exited { code } => tracing::warn!(
             target: "koru::delegate_host",
             generation = %event.generation,

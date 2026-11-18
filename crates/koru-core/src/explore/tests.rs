@@ -364,24 +364,55 @@ fn titles_survive_every_script_byte_for_byte() {
     );
 }
 
-/// The system document, the tasks document, a delegated run and a schedule
-/// are store-listed but never person-listed: one predicate decides, so no
-/// surface filters any of them by hand. An unknown token — a future build's
-/// — stays listed, because hiding what we do not understand would make newer
-/// documents silently invisible here.
+/// **`listed` is an allowlist** (OCR TECHNICAL §12): a page, a file, a note
+/// and a canvas, and nothing else. Every kind token the tree writes into a
+/// manifest is on the side it was on when the predicate was a list of what to
+/// hide — the table below is that survey, one row per token — and the only
+/// tokens that moved are the ones no build of this tree writes: the reading
+/// document, which is new, and a kind some future build invents, which is now
+/// hidden here rather than shown as a row this build cannot open.
 #[test]
-fn the_hidden_kinds_are_not_listed_and_unknown_kinds_are() {
-    assert!(!listed(KIND_SYSTEM));
-    assert!(!listed(KIND_TASK_LIST), "SPEC §8, ADR-272's amendment");
+fn listed_is_an_allowlist_and_every_kind_in_the_tree_keeps_its_side() {
+    // (token, listed before the allowlist, why)
+    let tree: [(&str, bool, &str); 10] = [
+        (KIND_DOCUMENT, true, "a page"),
+        (KIND_FILE, true, "a file"),
+        (KIND_NOTE, true, "ADR-277: listed, hidden by presentation"),
+        (KIND_CANVAS, true, "Explore gives canvases a section"),
+        (KIND_SYSTEM, false, "ADR-176"),
+        (KIND_TASK_LIST, false, "SPEC §8, ADR-272's amendment"),
+        (
+            KIND_RUN,
+            false,
+            "P1.0 proposal F6: reached through its pill",
+        ),
+        (KIND_SCHEDULE, false, "P1.0 proposal §2"),
+        (KIND_SOCIAL_POST, false, "its own surface"),
+        (KIND_SOCIAL_CHANNEL, false, "its own surface"),
+    ];
+    for (kind, before, why) in tree {
+        assert_eq!(listed(kind), before, "{kind} changed side ({why})");
+    }
+    assert_eq!(LISTED_KINDS.len(), 4, "one row per listed kind above");
+
+    assert!(!listed(KIND_READING), "OCR TECHNICAL D9: never a row");
     assert!(
-        !listed(KIND_RUN),
-        "P1.0 proposal F6: reached through its pill"
+        !listed("some-future-kind"),
+        "an unknown kind is no longer listed: it would be a row nobody can open"
     );
-    assert!(!listed(KIND_SCHEDULE), "P1.0 proposal §2");
-    assert!(listed(KIND_DOCUMENT));
-    assert!(listed(KIND_FILE));
-    assert!(listed(KIND_NOTE));
-    assert!(listed("some-future-kind"));
+    assert!(
+        !listed(""),
+        "an entry with no kind is not something to browse"
+    );
+}
+
+/// **The reading token is declared twice**, as the file and note tokens are:
+/// `koru-store-core` registers reading documents (`Store::ensure_reading`)
+/// and cannot link this crate. A literal, so a change to either side is a
+/// deliberate edit here as well as there.
+#[test]
+fn the_reading_token_matches_the_stores_duplicate() {
+    assert_eq!(KIND_READING, "koru-reading");
 }
 
 /// **The run and schedule tokens are declared twice too**, for the same

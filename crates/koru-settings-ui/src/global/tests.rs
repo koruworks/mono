@@ -84,6 +84,37 @@ fn the_first_minutes_link_opens_the_voice_card() {
     assert!((title_top - surface.scroll - crate::page::TOP).abs() < 0.01);
 }
 
+#[test]
+fn files_ocr_menu_link_reveals_the_reader_card() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.set_viewport(1000.0, 400.0);
+    surface.set_reader(Some(crate::ReaderRow {
+        status: crate::ReaderStatus::NotDownloaded {
+            megabytes: None,
+            offline: false,
+            ended: None,
+        },
+        languages: Vec::new(),
+        items: Vec::new(),
+        more: 0,
+        partly: Vec::new(),
+        partly_more: 0,
+        not_here: 0,
+    }));
+    surface.scroll_to_reader();
+    assert_eq!(surface.page(), PageId::Editor);
+    let anchor = surface
+        .laid
+        .anchors
+        .iter()
+        .find(|(anchor, _)| *anchor == crate::page::Anchor::Reader)
+        .unwrap()
+        .1;
+    let title_top = anchor - crate::Card::TITLE_H - crate::Card::TITLE_GAP;
+    assert!((title_top - surface.scroll - crate::page::TOP).abs() < 0.01);
+}
+
 // ------------------------------------------------ the live-global rows persist
 //
 // Each of these writes the same process global welcome wrote, which is what the

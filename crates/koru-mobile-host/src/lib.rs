@@ -1096,16 +1096,28 @@ impl MobileHost {
                         trashed_documents += 1;
                         continue;
                     }
-                    if document.kind == koru_core::explore::KIND_NOTE {
-                        // A note is reached through its file's `note_id`, not
-                        // as a row of its own.
-                        continue;
-                    }
-                    if document.kind == RUN_KIND || document.kind == SCHEDULE_KIND {
+                    if !koru_core::explore::listed(&document.kind) {
+                        // The desktop's rule, not a list of our own: only the
+                        // kinds a person browses are rows. This used to name
+                        // runs, schedules and notes by hand and nothing else,
+                        // so the system document and the tasks document went
+                        // out as rows nobody could make sense of; a reading
+                        // document per file would have joined them.
+                        //
                         // A run is reached through its pill and the Run
                         // screen, a schedule through its own surface (M2);
-                        // neither is a row a person browses (proposal F6).
-                        hidden_runs += 1;
+                        // those two are still counted (proposal F6), so a run
+                        // that "disappeared" can be told from one that never
+                        // arrived.
+                        if document.kind == RUN_KIND || document.kind == SCHEDULE_KIND {
+                            hidden_runs += 1;
+                        }
+                        continue;
+                    }
+                    if document.kind == koru_core::explore::KIND_NOTE {
+                        // Listed, and drawn by no surface as a row of its own:
+                        // a note is reached through its file's `note_id`
+                        // (ADR-277-filenote).
                         continue;
                     }
                     let (leading, display) = koru_title::split_leading_emoji(&document.title);
@@ -1182,6 +1194,14 @@ impl MobileHost {
             }
             if entry.kind == SCHEDULE_KIND {
                 return Err("document_is_schedule".to_owned());
+            }
+            // Anything else the listing hides — the system document, the
+            // tasks document, a reading document, a kind this build does not
+            // know — is not something a person opens here: the same rule the
+            // inventory filters by, and the answer an id that no listing
+            // names already gets.
+            if !koru_core::explore::listed(&entry.kind) {
+                return Err("document_not_listed".to_owned());
             }
             let revision = store
                 .version(workspace, document)

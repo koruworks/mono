@@ -297,6 +297,9 @@ impl MainView {
                     TabView::Result(r) => {
                         View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
                     }
+                    TabView::Ocr(r) => {
+                        View::draw(r, scene, workspace, images, leaf_root, caret_on, local)
+                    }
                     TabView::Canvas(c) => {
                         View::draw(c, scene, workspace, images, leaf_root, caret_on, local)
                     }
@@ -617,7 +620,15 @@ impl MainView {
         // Above the update banner, below the modals: a toast is transient and a
         // dialog is not, so a dialog must never end up behind one.
         self.draw_toast(scene, root, now);
+        if let Some(switch) = self.quick_switch.as_mut() {
+            switch.draw(scene, root, &mut self.engine, self.viewport);
+        }
         self.draw_confirm(scene, root);
+        if let Some(offer) = &self.file_paste {
+            offer
+                .dialog
+                .draw(scene, root, &mut self.engine, self.viewport);
+        }
         self.draw_workspace_confirmation(scene, root);
         self.draw_import_dialog(scene, root);
         self.draw_updates_modal(scene, root);
@@ -724,6 +735,11 @@ impl MainView {
     fn draw_lifted_viewer(&mut self, scene: &mut Scene, root: Affine) {
         self.sync_viewer_lift();
         match self.lifted_viewer() {
+            Some(super::LiftedViewer::FileImage) => {
+                if let Some(viewer) = self.file_images.viewer.as_ref() {
+                    viewer.draw(scene, root, &mut self.engine);
+                }
+            }
             Some(super::LiftedViewer::Document(_)) => {
                 if let TabView::Leaf(leaf) = self.active_view() {
                     leaf.draw_lifted_viewer(scene, root);

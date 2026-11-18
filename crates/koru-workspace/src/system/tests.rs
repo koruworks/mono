@@ -329,7 +329,10 @@ fn without_a_store_lists_are_empty_and_create_declines() {
         .expect("workspace");
     let mut workspace = Workspace::new(ws);
     assert!(workspace.lists_snapshot().is_empty());
-    assert_eq!(workspace.create_list("Wedding", Some("pink")), None);
+    assert_eq!(
+        workspace.create_list_under(None, "Wedding", Some("pink")),
+        None
+    );
     assert!(!workspace.rename_list(koru_core::ids::ListId::new(), "Bike"));
     assert!(!workspace.set_list_color(koru_core::ids::ListId::new(), Some("teal")));
     assert!(!workspace.delete_list(koru_core::ids::ListId::new()));

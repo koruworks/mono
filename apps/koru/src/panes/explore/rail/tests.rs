@@ -8,6 +8,8 @@
 
 use super::*;
 
+mod tree;
+
 fn area() -> Rect {
     Rect::new(0.0, theme::CAPTION_H, theme::SIDEBAR_W, 600.0)
 }
@@ -19,13 +21,12 @@ fn top() -> f32 {
 }
 
 fn list(name: &str, color: Option<&str>, count: usize, overdue: usize) -> RailList {
-    RailList {
-        id: ListId::new(),
-        name: name.to_owned(),
-        color: color.map(str::to_owned),
-        count,
-        overdue,
-    }
+    RailList::flat(ListId::new(), name, color, count, overdue)
+}
+
+/// The rail's lists in the order it holds them, depth first.
+fn order(rail: &TasksRail) -> Vec<ListId> {
+    rail.lists().iter().map(|l| l.id).collect()
 }
 
 fn rail(lists: usize) -> TasksRail {
@@ -70,8 +71,9 @@ fn every_rail_row_hit_tests_back_to_itself() {
 }
 
 /// The order the design draws: the four queues with Reminders under Upcoming,
-/// the Lists heading, the lists, the new-list row, and Completed last under
-/// its rule.
+/// the Lists heading, the lists, and Completed last under its rule. There is
+/// no "+ New list" row at the foot of the section any more: the heading's `+`
+/// is the way in.
 #[test]
 fn the_rail_reads_top_to_bottom_with_completed_last() {
     let rail = rail(2);
@@ -88,7 +90,6 @@ fn the_rail_reads_top_to_bottom_with_completed_last() {
             RailRow::ListsHeading,
             RailRow::List(0),
             RailRow::List(1),
-            RailRow::NewList,
             RailRow::Bucket(Bucket::Completed),
         ]
     );
@@ -155,15 +156,15 @@ fn the_completed_rule_is_a_named_part_in_the_band_that_carries_it() {
             })
             .unwrap_or_else(|| panic!("{want:?} is captured"))
     };
-    let new_list = row_index(RailRow::NewList);
+    let last_list = row_index(RailRow::List(0));
     let completed_row = row_index(RailRow::Bucket(Bucket::Completed));
     let divider_at = records
         .iter()
         .position(|r| r.name == "ExploreDivider")
         .unwrap();
     assert!(
-        new_list < divider_at && divider_at < completed_row,
-        "divider at {divider_at}, rows at {new_list} and {completed_row}"
+        last_list < divider_at && divider_at < completed_row,
+        "divider at {divider_at}, rows at {last_list} and {completed_row}"
     );
 }
 
@@ -181,7 +182,7 @@ fn pressing_a_bucket_opens_it_and_selects_it() {
         .unwrap();
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenBucket {
             bucket: Bucket::Upcoming,
             new_tab: false
@@ -204,7 +205,7 @@ fn pressing_reminders_opens_the_page_and_moves_the_card() {
         .expect("Reminders");
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenReminders { new_tab: false })
     );
     assert_eq!(rail.selected(), Some(RailTarget::Reminders));
@@ -222,7 +223,7 @@ fn ctrl_clicking_reminders_asks_for_a_new_tab_and_leaves_the_card() {
         .find(|(row, _)| *row == RailRow::Bucket(Bucket::Today))
         .expect("Today");
     let (x, y) = today.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     assert_eq!(rail.selected(), Some(RailTarget::Bucket(Bucket::Today)));
 
     let (_, r) = rail
@@ -232,7 +233,7 @@ fn ctrl_clicking_reminders_asks_for_a_new_tab_and_leaves_the_card() {
         .expect("Reminders");
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, true),
+        rail.mouse_down(a, t, x, y, true, false),
         Some(TasksRailRequest::OpenReminders { new_tab: true })
     );
     assert_eq!(
@@ -269,7 +270,7 @@ fn pressing_a_list_names_its_id() {
         .unwrap();
     let (x, y) = r.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenList {
             id: id,
             new_tab: false
@@ -278,10 +279,12 @@ fn pressing_a_list_names_its_id() {
     assert_eq!(rail.selected(), Some(RailTarget::List(id)));
 }
 
-/// Two ways in, one request: the `+` beside the heading and the "+ New list"
-/// row both open the inline field. The word "Lists" itself is furniture.
+/// The `+` beside the heading opens the inline field for a top-level list; the
+/// word "Lists" itself is furniture. There is no second "+ New list" row at the
+/// foot of the section: the field opens **first under the heading**, where the
+/// new list will be.
 #[test]
-fn both_new_list_affordances_ask_for_the_field_and_the_heading_does_not() {
+fn the_heading_plus_asks_for_the_field_and_it_opens_under_the_heading() {
     let mut rail = rail(1);
     let (a, t) = (area(), top());
     let rows = rail.rows(a, t);
@@ -292,26 +295,38 @@ fn both_new_list_affordances_ask_for_the_field_and_the_heading_does_not() {
     let plus = rail.row_parts(RailRow::ListsHeading, *heading).trailing;
     let (px, py) = plus.centre();
     assert_eq!(
-        rail.mouse_down(a, t, px, py, false),
-        Some(TasksRailRequest::BeginNewList)
+        rail.mouse_down(a, t, px, py, false, false),
+        Some(TasksRailRequest::BeginNewList { parent: None })
     );
     let label = rail.row_parts(RailRow::ListsHeading, *heading).label;
     let (lx, ly) = label.centre();
     assert_eq!(
-        rail.mouse_down(a, t, lx, ly, false),
+        rail.mouse_down(a, t, lx, ly, false, false),
         None,
         "the word is furniture"
     );
 
-    let (_, new) = rows
+    // The bottom row is gone: the last list is followed directly by Completed.
+    let order: Vec<RailRow> = rows.iter().map(|(row, _)| *row).collect();
+    let last_list = order
         .iter()
-        .find(|(row, _)| *row == RailRow::NewList)
+        .position(|row| *row == RailRow::List(0))
         .unwrap();
-    let (nx, ny) = new.centre();
     assert_eq!(
-        rail.mouse_down(a, t, nx, ny, false),
-        Some(TasksRailRequest::BeginNewList)
+        order.get(last_list + 1),
+        Some(&RailRow::Bucket(Bucket::Completed))
     );
+    assert!(!order.contains(&RailRow::Compose), "no field, no row");
+
+    // ...and the field, once open, is the first row under the heading.
+    rail.begin_new_list(None);
+    let order: Vec<RailRow> = rail.rows(a, t).into_iter().map(|(row, _)| row).collect();
+    let heading_at = order
+        .iter()
+        .position(|row| *row == RailRow::ListsHeading)
+        .unwrap();
+    assert_eq!(order.get(heading_at + 1), Some(&RailRow::Compose));
+    assert_eq!(order.get(heading_at + 2), Some(&RailRow::List(0)));
 }
 
 /// The field the container draws sits after the swatch, inside the row the
@@ -321,15 +336,15 @@ fn both_new_list_affordances_ask_for_the_field_and_the_heading_does_not() {
 fn the_field_covers_the_new_list_row_after_its_swatch() {
     let mut rail = rail(1);
     let (a, t) = (area(), top());
-    rail.begin_new_list();
-    assert!(rail.composing());
+    rail.begin_new_list(None);
+    assert_eq!(rail.composing(), Some(None));
     let row = rail.new_list_rect(a, t).unwrap();
     let field = rail.new_list_field_rect(a, t).unwrap();
     assert!(field.x > row.x, "the swatch keeps the head of the row");
     assert!(field.x + field.w <= row.x + row.w);
     assert_eq!(field.y, row.y);
     rail.end_new_list();
-    assert!(!rail.composing());
+    assert_eq!(rail.composing(), None);
 }
 
 /// "5 · 3 overdue": one quiet number, one warm one, the separator between them,
@@ -426,7 +441,10 @@ fn nothing_is_hit_in_a_collapsed_column() {
     let shut = Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0);
     assert!(rail.rows(shut, top()).is_empty());
     assert_eq!(rail.at(shut, top(), 0.0, top() + 4.0), None);
-    assert_eq!(rail.mouse_down(shut, top(), 0.0, top() + 4.0, false), None);
+    assert_eq!(
+        rail.mouse_down(shut, top(), 0.0, top() + 4.0, false, false),
+        None
+    );
     assert_eq!(rail.new_list_rect(shut, top()), None);
 }
 
@@ -516,14 +534,15 @@ fn the_reminders_row_has_the_queues_one_row_menu() {
     );
 }
 
-/// The furniture answers *nothing to open*: the heading and the `+` row name
-/// no page. The caller swallows the press rather than passing it to the view
-/// behind the column.
+/// The furniture answers *nothing to open*: the heading and the row a new
+/// list's name is typed on name no page. The caller swallows the press rather
+/// than passing it to the view behind the column.
 #[test]
 fn the_rails_furniture_has_no_menu() {
-    let rail = rail(2);
+    let mut rail = rail(2);
+    rail.begin_new_list(None);
     let (a, t) = (area(), top());
-    for row in [RailRow::ListsHeading, RailRow::NewList] {
+    for row in [RailRow::ListsHeading, RailRow::Compose] {
         let (_, r) = rail
             .rows(a, t)
             .into_iter()
@@ -549,7 +568,7 @@ fn ctrl_clicking_a_row_asks_for_a_new_tab_and_leaves_the_card() {
         .find(|(row, _)| *row == RailRow::Bucket(Bucket::Today))
         .expect("Today");
     let (x, y) = today.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     assert_eq!(rail.selected(), Some(RailTarget::Bucket(Bucket::Today)));
 
     let (_, later) = rail
@@ -559,7 +578,7 @@ fn ctrl_clicking_a_row_asks_for_a_new_tab_and_leaves_the_card() {
         .expect("Later");
     let (x, y) = later.centre();
     assert_eq!(
-        rail.mouse_down(a, t, x, y, true),
+        rail.mouse_down(a, t, x, y, true, false),
         Some(TasksRailRequest::OpenBucket {
             bucket: Bucket::Later,
             new_tab: true
@@ -616,10 +635,10 @@ fn a_list_that_has_gone_has_no_rename_field() {
 fn a_rename_and_a_new_list_are_never_both_open() {
     let mut rail = rail(1);
     let id = rail.lists()[0].id;
-    rail.begin_new_list();
-    assert!(rail.composing());
+    rail.begin_new_list(None);
+    assert_eq!(rail.composing(), Some(None));
     rail.begin_rename(id);
-    assert!(!rail.composing(), "the + row's field went");
+    assert_eq!(rail.composing(), None, "the + row's field went");
     assert_eq!(rail.renaming(), Some(id));
     rail.end_rename();
     assert_eq!(rail.renaming(), None);
@@ -639,18 +658,20 @@ fn list_rect(rail: &TasksRail, i: usize) -> Rect {
 /// **A press opens; a press that travels reorders.** The library's gesture on
 /// a flat section: under the threshold the release asks for nothing, because
 /// the press already opened the list; past it the rows reorder here and the
-/// release asks the container to write the order down.
+/// release asks the container to write the move down. The drop is on the
+/// **bottom quarter** of the last row — the tree drag's *after* zone — since
+/// the middle of a row now means *into* it.
 #[test]
 fn dragging_a_list_row_reorders_the_section_and_asks_for_the_write() {
     let mut rail = rail(3);
     let (a, t) = (area(), top());
-    let was: Vec<ListId> = rail.list_order();
+    let was: Vec<ListId> = order(&rail);
 
     // A press that never travels: the open it already made is the whole of it.
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
     assert!(matches!(
-        rail.mouse_down(a, t, x, y, false),
+        rail.mouse_down(a, t, x, y, false, false),
         Some(TasksRailRequest::OpenList { .. })
     ));
     assert!(rail.dragging(), "and a drag is armed behind it");
@@ -659,25 +680,63 @@ fn dragging_a_list_row_reorders_the_section_and_asks_for_the_write() {
     assert!(!rail.drag_armed(), "one pixel is not a drag");
     assert_eq!(rail.mouse_up(), None, "so the release asks for nothing");
     assert!(!rail.dragging());
-    assert_eq!(rail.list_order(), was, "and nothing moved");
+    assert_eq!(order(&rail), was, "and nothing moved");
 
-    // ...and one that travels past the second row's top carries it there.
+    // ...and one that travels to the last row's bottom edge carries it there.
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
-    rail.mouse_move(a, t, x, third.y + third.h * 0.5);
+    rail.mouse_move(a, t, x, after_edge(third));
     assert!(rail.drag_armed());
     assert_eq!(
-        rail.list_order(),
+        order(&rail),
         vec![was[1], was[2], was[0]],
         "the row is carried to the end as the pointer passes"
     );
     assert_eq!(
         rail.mouse_up(),
-        Some(TasksRailRequest::ReorderList { id: was[0], to: 2 })
+        Some(TasksRailRequest::MoveList {
+            ids: vec![was[0]],
+            parent: None,
+            before: None
+        })
     );
     assert!(!rail.dragging());
+}
+
+/// The bottom quarter of a row: the tree drag's *after* zone.
+fn after_edge(r: Rect) -> f32 {
+    r.y + r.h * 0.9
+}
+
+/// The top quarter of a row: the tree drag's *before* zone.
+fn before_edge(r: Rect) -> f32 {
+    r.y + r.h * 0.1
+}
+
+/// Dropping on a row's **top edge** puts the carried row immediately before
+/// it, and the release names that sibling.
+#[test]
+fn dropping_on_a_rows_top_edge_puts_the_list_before_it() {
+    let mut rail = rail(3);
+    let (a, t) = (area(), top());
+    let was = order(&rail);
+    let r = list_rect(&rail, 2);
+    let (x, y) = r.centre();
+    rail.mouse_down(a, t, x, y, false, false);
+    let second = list_rect(&rail, 1);
+    rail.mouse_move(a, t, x, before_edge(second));
+    assert!(rail.drag_armed());
+    assert_eq!(order(&rail), vec![was[0], was[2], was[1]]);
+    assert_eq!(
+        rail.mouse_up(),
+        Some(TasksRailRequest::MoveList {
+            ids: vec![was[2]],
+            parent: None,
+            before: Some(was[1])
+        })
+    );
 }
 
 /// **The pushed table is refused while a row is being carried**, or the
@@ -687,79 +746,78 @@ fn dragging_a_list_row_reorders_the_section_and_asks_for_the_write() {
 fn the_table_is_refused_while_a_row_is_carried_and_taken_again_after() {
     let mut rail = rail(3);
     let (a, t) = (area(), top());
-    let was = rail.list_order();
+    let was = order(&rail);
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
-    rail.mouse_move(a, t, x, third.y + third.h * 0.5);
+    rail.mouse_move(a, t, x, after_edge(third));
     assert!(rail.drag_armed());
 
     let pushed: Vec<RailList> = (0..3)
         .map(|i| list(&format!("pushed {i}"), None, 0, 0))
         .collect();
     assert!(!rail.set_lists(pushed.clone()), "refused mid-carry");
-    assert_eq!(rail.list_order(), vec![was[1], was[2], was[0]]);
+    assert_eq!(order(&rail), vec![was[1], was[2], was[0]]);
 
     rail.mouse_up();
     assert!(rail.set_lists(pushed.clone()), "and taken once it ends");
     assert_eq!(
-        rail.list_order(),
+        order(&rail),
         pushed.iter().map(|l| l.id).collect::<Vec<_>>()
     );
 }
 
-/// A cancelled gesture commits nothing, and the frames it asked for stop.
+/// A cancelled gesture commits nothing, and the frames it asked for stop. The
+/// rows go back to where they were when the carry began, and the container's
+/// next push is the truth again, which `set_lists` now accepts.
 #[test]
 fn cancelling_a_carry_writes_nothing() {
     let mut rail = rail(3);
     let (a, t) = (area(), top());
-    let was = rail.list_order();
+    let was = order(&rail);
     let r = list_rect(&rail, 0);
     let (x, y) = r.centre();
-    rail.mouse_down(a, t, x, y, false);
+    rail.mouse_down(a, t, x, y, false, false);
     let third = list_rect(&rail, 2);
-    rail.mouse_move(a, t, x, third.y + third.h * 0.5);
+    rail.mouse_move(a, t, x, after_edge(third));
+    assert_eq!(order(&rail), vec![was[1], was[2], was[0]], "carried");
     assert!(rail.animating(), "a carried row keeps the frames coming");
     assert!(rail.cancel_drag());
     assert!(!rail.dragging());
     assert_eq!(rail.mouse_up(), None);
-    // The local order is left as it was carried; the container's next push is
-    // the truth again, which `set_lists` now accepts.
-    assert!(
-        rail.set_lists(
-            was.iter()
-                .enumerate()
-                .map(|(i, id)| RailList {
-                    id: *id,
-                    name: format!("list {i}"),
-                    color: None,
-                    count: i,
-                    overdue: 0,
-                })
-                .collect()
-        )
+    assert_eq!(order(&rail), was, "the carry is put back");
+    let pushed: Vec<RailList> = (0..3)
+        .map(|i| list(&format!("pushed {i}"), None, 0, 0))
+        .collect();
+    assert!(rail.set_lists(pushed.clone()));
+    assert_eq!(
+        order(&rail),
+        pushed.iter().map(|l| l.id).collect::<Vec<_>>()
     );
-    assert_eq!(rail.list_order(), was);
 }
 
-/// The index arithmetic the slide reads: after a row moves from `from` to
-/// `to`, which slot each row came from.
+/// The middle of a row means **into** it: a flat row dropped there becomes
+/// that list's child, and the release says so.
 #[test]
-fn the_old_index_of_each_slot_follows_the_move() {
-    // 0 1 2 3, moving 0 to 2 → 1 2 0 3
+fn dropping_on_the_middle_of_a_row_nests_the_list_inside_it() {
+    let mut rail = rail(3);
+    let (a, t) = (area(), top());
+    let was = order(&rail);
+    let r = list_rect(&rail, 0);
+    let (x, y) = r.centre();
+    rail.mouse_down(a, t, x, y, false, false);
+    let third = list_rect(&rail, 2);
+    rail.mouse_move(a, t, x, third.y + third.h * 0.5);
+    assert!(rail.drag_armed());
     assert_eq!(
-        (0..4).map(|i| old_index(i, 0, 2)).collect::<Vec<_>>(),
-        vec![1, 2, 0, 3]
+        rail.mouse_up(),
+        Some(TasksRailRequest::MoveList {
+            ids: vec![was[0]],
+            parent: Some(was[2]),
+            before: None
+        })
     );
-    // 0 1 2 3, moving 3 to 1 → 0 3 1 2
-    assert_eq!(
-        (0..4).map(|i| old_index(i, 3, 1)).collect::<Vec<_>>(),
-        vec![0, 3, 1, 2]
-    );
-    // Standing still is the identity.
-    assert_eq!(
-        (0..4).map(|i| old_index(i, 2, 2)).collect::<Vec<_>>(),
-        vec![0, 1, 2, 3]
-    );
+    let moved = rail.lists().iter().find(|l| l.id == was[0]).unwrap();
+    assert_eq!((moved.parent, moved.depth), (Some(was[2]), 1));
 }

@@ -47,6 +47,8 @@ pub(crate) struct Rows<'a> {
     pub(crate) spelling_languages: &'a [(LanguageChoice, String)],
     pub(crate) spelling_note: Option<&'a str>,
     pub(crate) dictionary: Option<&'a DictionaryRow>,
+    /// The *Recognize text and images in PDFs* card; `None` draws none.
+    pub(crate) reader: Option<&'a crate::ReaderRow>,
     /// How many words the personal dictionary holds, once the host has read it.
     pub(crate) personal_words: Option<usize>,
     /// *Apply to all* was pressed this session; the link says so.
@@ -408,6 +410,11 @@ pub(crate) fn editor(b: &mut Builder<'_>, rows: &Rows<'_>) {
     documents(b, lang, rows.layout_applied);
     spelling(b, rows);
     voice(b, rows);
+    // Beside the other downloads — the dictionaries and voice's model
+    // (OCR EXPERIENCE §4).
+    if let Some(reader) = rows.reader {
+        crate::reader::lay_out(b, lang, reader);
+    }
 }
 
 /// Page width for new documents, *Apply to all*, and the Page-only background.

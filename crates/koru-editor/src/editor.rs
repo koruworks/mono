@@ -495,12 +495,20 @@ pub trait Editing {
     /// Make the transcript real: one logical edit and one undo step. An empty
     /// final transcript cancels rather than deleting the selection.
     fn commit_dictation(&mut self, ws: &mut WorkspaceDoc, text: &str) {
+        let before = ws.version();
         crate::dictation::commit(self.body_mut(), ws, text);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
     }
 
     /// Throw the composition away: no edit, no undo entry, no trace.
     fn cancel_dictation(&mut self, ws: &mut WorkspaceDoc) {
+        let before = ws.version();
         crate::dictation::cancel(self.body_mut(), ws);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
     }
 
     /// Where the provisional text is, in **view** coordinates. `None` when
@@ -635,6 +643,7 @@ pub trait Editing {
             return false;
         }
         self.body_mut().refresh(ws, pending.identity.node);
+        self.body_mut().settle_local(ws);
         self.body_mut().focus_on(pending.identity.node);
         self.place_caret(start);
         self.reflow();
@@ -1825,6 +1834,22 @@ pub trait Editing {
     fn reveal_search_match(&mut self, id: NodeId, match_text: &str) -> bool {
         if !self.reveal(id) {
             return false;
+        }
+        // **A picture's result lands on the picture** (OCR EXPERIENCE §3):
+        // `reveal` has already selected it — an image is selected, never
+        // edited — and the words that matched were read from its pixels, so
+        // there is no text to find and light. The cue is its frame instead,
+        // flashed for the same deadline a matched sentence is lit for; the
+        // draw path outlines an image row whose node the flash names.
+        if self.body().row(id).is_some_and(|row| row.image.is_some()) {
+            let i = self.body().focus;
+            self.center_row_in_view(i);
+            self.view_mut().search_flash = Some(SearchFlash {
+                node: id,
+                range: 0..0,
+                until: Instant::now() + SEARCH_FLASH_DURATION,
+            });
+            return true;
         }
         if match_text.is_empty() {
             let range = self
@@ -4034,6 +4059,7 @@ pub trait Editing {
         }
 
         self.body_mut().refresh(ws, id);
+        self.body_mut().settle_local(ws);
         // Past the gap either way, so re-picking a pill that already had one
         // does not stack up spaces or strand the caret behind them.
         self.place_caret(after + 1);
@@ -4387,6 +4413,21 @@ pub trait Editing {
     }
 
     fn key(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        key: &Key,
+        text: Option<&str>,
+        mods: ModifiersState,
+    ) -> bool {
+        let before = ws.version();
+        let handled = self.key_inner(ws, key, text, mods);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn key_inner(
         &mut self,
         ws: &mut WorkspaceDoc,
         key: &Key,
@@ -6178,15 +6219,16 @@ pub trait Editing {
     /// The list picker over `nodes`: the workspace's lists as the container
     /// last pushed them, the one the (first) node is in checked.
     fn open_list_chooser(&mut self, ws: &WorkspaceDoc, trigger: Trigger, nodes: Vec<NodeId>) {
-        let table: Vec<list_picker::ListChoice> = self
-            .view()
-            .lists
+        let lists = &self.view().lists;
+        let table: Vec<list_picker::ListChoice> = lists
             .listed()
             .iter()
             .map(|(id, name, color)| list_picker::ListChoice {
                 id: *id,
                 name: name.clone(),
                 color: color.clone(),
+                path: lists.path(*id).map(str::to_owned),
+                top_level: lists.is_top_level(*id),
             })
             .collect();
         let current = current_list(ws, nodes.first().copied());
@@ -8556,6 +8598,15 @@ pub trait Editing {
 
     /// Returns true if a redraw is needed.
     fn mouse_down(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_down_inner(ws, x, y, ctrl);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
         // A new press is a new drag, of whichever of the three kinds. Cleared
         // here rather than in each arm, so a press that lands on a row cannot
         // inherit the last field drag.
@@ -9635,6 +9686,15 @@ pub trait Editing {
     }
 
     fn mouse_up(&mut self, ws: &mut WorkspaceDoc) -> bool {
+        let before = ws.version();
+        let handled = self.mouse_up_inner(ws);
+        if ws.version() != before {
+            self.body_mut().settle_local(ws);
+        }
+        handled
+    }
+
+    fn mouse_up_inner(&mut self, ws: &mut WorkspaceDoc) -> bool {
         self.view_mut().dragging = false;
         self.view_mut().drag_scroll_tick = None;
         // Short-click on a body emoji: drop the armed long-press, leave the caret.
@@ -14860,6 +14920,40 @@ mod tests {
         assert_eq!(flash.node, id);
         assert_eq!(flash.range, 0.."Deep target".len());
         assert_eq!(ws.read(id).unwrap().content.as_text(), Some("Deep target"));
+    }
+
+    /// **A picture's result lands on the picture** (OCR Plan 2.5): selected,
+    /// not given a caret, and flashed on the sentence's own deadline — whatever
+    /// words matched, since they were read from its pixels and are not text
+    /// in the row.
+    #[test]
+    fn a_picture_result_selects_the_picture_and_flashes_its_frame() {
+        let (_ws, mut e) = editor_over_image();
+        let picture = e
+            .body
+            .rows
+            .iter()
+            .find(|row| row.image.is_some())
+            .map(|row| row.id)
+            .expect("an image row");
+        e.body.focus = 0;
+        let before = Instant::now();
+
+        assert!(e.reveal_search_match(picture, "pump"));
+
+        assert_eq!(
+            e.body.rows[e.body.focus].id, picture,
+            "the picture is selected"
+        );
+        assert!(e.view.active);
+        let flash = e.view.search_flash.as_ref().expect("the frame flashes");
+        assert_eq!(flash.node, picture);
+        assert_eq!(flash.range, 0..0, "no text range: the frame is the cue");
+        assert!(flash.until >= before + SEARCH_FLASH_DURATION);
+        // It ends on the same single deadline a sentence's flash ends on.
+        let deadline = e.search_flash_deadline().expect("deadline");
+        assert!(e.maintain_search_flash(deadline));
+        assert!(e.view.search_flash.is_none());
     }
 
     fn right(ws: &mut WorkspaceDoc, e: &mut Editor) {

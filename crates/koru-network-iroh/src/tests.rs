@@ -6823,3 +6823,309 @@ fn root_sync_readings_are_installed_whole_and_leave_with_the_peer() {
     set_peer(&status, peer, PeerConnectionState::Disconnected);
     assert!(!status.read().unwrap().root_sync.contains_key(&peer));
 }
+
+// ----- pairing is bounded before its join is verified ----------------------
+
+/// An inviter with an invitation open, and a join for it that nobody sent.
+fn open_invitation() -> (
+    koru_pairing::PairingInvitationV1,
+    koru_pairing::PairingJoinV1,
+    ReplicationEndpointSecret,
+) {
+    let inviter_endpoint = ReplicationEndpointSecret::generate();
+    let joiner_endpoint = ReplicationEndpointSecret::generate();
+    let inviter_key = DeviceSigningKey::generate();
+    let joiner_key = DeviceSigningKey::generate();
+    let invitation = koru_pairing::PairingInvitationV1::new(
+        DeviceDescriptorV1::new(
+            DeviceId::new(),
+            "Windows".into(),
+            &inviter_key,
+            inviter_endpoint.endpoint_id(),
+            1,
+        ),
+        None,
+    );
+    let join = koru_pairing::PairingJoinV1::sign(
+        &invitation,
+        DeviceDescriptorV1::new(
+            DeviceId::new(),
+            "Android".into(),
+            &joiner_key,
+            joiner_endpoint.endpoint_id(),
+            1,
+        ),
+        &joiner_key,
+        42,
+    )
+    .unwrap();
+    (invitation, join, joiner_endpoint)
+}
+
+async fn pairing_client() -> Endpoint {
+    let secret = ReplicationEndpointSecret::generate();
+    Endpoint::builder(presets::Minimal)
+        .secret_key(SecretKey::from_bytes(&secret.secret_bytes()))
+        .bind()
+        .await
+        .unwrap()
+}
+
+/// Why the far side closed `connection`, or a panic if it did not in time.
+async fn closed_because(connection: &iroh::endpoint::Connection) -> Vec<u8> {
+    match tokio::time::timeout(Duration::from_secs(5), connection.closed())
+        .await
+        .expect("the connection was left open")
+    {
+        iroh::endpoint::ConnectionError::ApplicationClosed(close) => close.reason.to_vec(),
+        other => panic!("closed, but not by the pairing server: {other:?}"),
+    }
+}
+
+/// A bare endpoint that serves each pairing connection it accepts against
+/// `hub`, with `join_timeout`.
+async fn pairing_server(hub: Arc<PairingHub>, join_timeout: Duration) -> Endpoint {
+    let secret = ReplicationEndpointSecret::generate();
+    let server = Endpoint::builder(presets::Minimal)
+        .secret_key(SecretKey::from_bytes(&secret.secret_bytes()))
+        .alpns(vec![PAIRING_ALPN_V1.to_vec()])
+        .bind()
+        .await
+        .unwrap();
+    let accepting = server.clone();
+    tokio::spawn(async move {
+        while let Some(incoming) = accepting.accept().await {
+            let hub = Arc::clone(&hub);
+            tokio::spawn(async move {
+                let Ok(accepting) = incoming.accept() else {
+                    return;
+                };
+                let Ok(connection) = accepting.await else {
+                    return;
+                };
+                serve_pairing_connection_with_timeout(connection, hub, join_timeout).await;
+            });
+        }
+    });
+    server
+}
+
+fn hub_with(invitation: Option<koru_pairing::PairingInvitationV1>) -> Arc<PairingHub> {
+    let hub = Arc::new(PairingHub::default());
+    *hub.invitation.write().unwrap() = invitation;
+    hub
+}
+
+fn sessions_held(hub: &PairingHub) -> (usize, usize) {
+    (
+        MAX_CONCURRENT_PAIRING_SESSIONS - hub.sessions.permits.available_permits(),
+        hub.sessions.remotes.lock().unwrap().len(),
+    )
+}
+
+#[test]
+fn an_honest_join_is_far_inside_the_pairing_frame_limit() {
+    let (_, join, _) = open_invitation();
+    let bytes = serde_json::to_vec(&join).unwrap();
+    assert!(
+        bytes.len() * 8 < MAX_PAIRING_JOIN_BYTES,
+        "an honest join is {} bytes",
+        bytes.len()
+    );
+    assert!(MAX_PAIRING_JOIN_BYTES < protocol::MAX_FRAME_BYTES / 64);
+}
+
+#[test]
+fn pairing_sessions_are_counted_in_all_and_per_remote() {
+    let hub = hub_with(None);
+    let held = (0..MAX_CONCURRENT_PAIRING_SESSIONS)
+        .map(|index| hub.admit([index as u8; 32]).expect("room for a session"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sessions_held(&hub),
+        (
+            MAX_CONCURRENT_PAIRING_SESSIONS,
+            MAX_CONCURRENT_PAIRING_SESSIONS
+        )
+    );
+    assert!(hub.admit([200; 32]).is_none(), "one more than the cap");
+    // A refusal leaves nothing behind for the remote that was refused.
+    assert!(!hub.sessions.remotes.lock().unwrap().contains(&[200; 32]));
+    drop(held);
+    assert_eq!(sessions_held(&hub), (0, 0));
+
+    let first = hub.admit([7; 32]).unwrap();
+    assert!(hub.admit([7; 32]).is_none(), "one session per remote");
+    assert!(
+        hub.admit([8; 32]).is_some(),
+        "another remote is not refused"
+    );
+    drop(first);
+    assert!(hub.admit([7; 32]).is_some());
+    assert_eq!(sessions_held(&hub), (0, 0));
+}
+
+#[tokio::test]
+async fn pairing_with_no_invitation_open_is_closed_at_once() {
+    let endpoint = ReplicationEndpointSecret::generate();
+    let server = RuntimeHandle::spawn(IrohNetworkConfig::isolated());
+    server.provision_endpoint(endpoint.secret_bytes());
+    wait_until(|| server.endpoint_addr().is_some()).await;
+
+    let client = pairing_client().await;
+    let connection = client
+        .connect(server.endpoint_addr().unwrap(), PAIRING_ALPN_V1)
+        .await
+        .unwrap();
+    // The client opens no stream and sends nothing: the server did not wait
+    // for either.
+    assert_eq!(closed_because(&connection).await, b"no active invitation");
+    assert_eq!(sessions_held(&server.pairing), (0, 0));
+    client.close().await;
+    server.clear();
+}
+
+#[tokio::test]
+async fn a_silent_pairing_connection_is_closed_at_the_deadline_and_gives_its_session_back() {
+    let (invitation, _, _) = open_invitation();
+    let hub = hub_with(Some(invitation));
+    let server = pairing_server(Arc::clone(&hub), Duration::from_millis(100)).await;
+
+    // Silent from the start: no stream is ever opened.
+    let client = pairing_client().await;
+    let connection = client
+        .connect(server.addr(), PAIRING_ALPN_V1)
+        .await
+        .unwrap();
+    assert_eq!(closed_because(&connection).await, b"pairing join timed out");
+    wait_until(|| sessions_held(&hub) == (0, 0)).await;
+
+    // Silent after a length inside the limit: a stream, four bytes, nothing.
+    let connection = client
+        .connect(server.addr(), PAIRING_ALPN_V1)
+        .await
+        .unwrap();
+    let (mut send, _recv) = connection.open_bi().await.unwrap();
+    send.write_all(&1024u32.to_be_bytes()).await.unwrap();
+    assert_eq!(closed_because(&connection).await, b"pairing join timed out");
+    wait_until(|| sessions_held(&hub) == (0, 0)).await;
+
+    client.close().await;
+    server.close().await;
+}
+
+#[tokio::test]
+async fn a_pairing_join_longer_than_its_limit_is_refused_unread() {
+    let (invitation, _, _) = open_invitation();
+    let hub = hub_with(Some(invitation));
+    // A deadline long enough that only the length can end the session.
+    let server = pairing_server(Arc::clone(&hub), Duration::from_secs(60)).await;
+    let client = pairing_client().await;
+
+    for announced in [
+        MAX_PAIRING_JOIN_BYTES + 1,
+        protocol::MAX_FRAME_BYTES,
+        u32::MAX as usize,
+    ] {
+        let connection = client
+            .connect(server.addr(), PAIRING_ALPN_V1)
+            .await
+            .unwrap();
+        let (mut send, _recv) = connection.open_bi().await.unwrap();
+        send.write_all(&(announced as u32).to_be_bytes())
+            .await
+            .unwrap();
+        // Refused on the four bytes alone: the session ends, and with it the
+        // connection, long before the deadline and with no body sent.
+        tokio::time::timeout(Duration::from_secs(5), connection.closed())
+            .await
+            .unwrap_or_else(|_| panic!("a {announced}-byte join was waited for"));
+        wait_until(|| sessions_held(&hub) == (0, 0)).await;
+    }
+    assert!(hub.events.lock().unwrap().is_empty());
+
+    client.close().await;
+    server.close().await;
+}
+
+#[tokio::test]
+async fn a_second_pairing_connection_from_one_remote_is_refused_while_the_first_is_open() {
+    let (invitation, _, _) = open_invitation();
+    let hub = hub_with(Some(invitation));
+    let server = pairing_server(Arc::clone(&hub), Duration::from_secs(60)).await;
+    let client = pairing_client().await;
+
+    let first = client
+        .connect(server.addr(), PAIRING_ALPN_V1)
+        .await
+        .unwrap();
+    wait_until(|| sessions_held(&hub) == (1, 1)).await;
+    let second = client
+        .connect(server.addr(), PAIRING_ALPN_V1)
+        .await
+        .unwrap();
+    assert_eq!(closed_because(&second).await, b"pairing capacity reached");
+    assert_eq!(sessions_held(&hub), (1, 1));
+
+    // The first one going away is what frees the remote.
+    first.close(0u32.into(), b"done");
+    wait_until(|| sessions_held(&hub) == (0, 0)).await;
+    let third = client
+        .connect(server.addr(), PAIRING_ALPN_V1)
+        .await
+        .unwrap();
+    wait_until(|| sessions_held(&hub) == (1, 1)).await;
+    third.close(0u32.into(), b"done");
+    wait_until(|| sessions_held(&hub) == (0, 0)).await;
+
+    client.close().await;
+    server.close().await;
+}
+
+#[tokio::test]
+async fn pairing_connections_beyond_the_cap_are_refused_and_every_count_returns_to_zero() {
+    let (invitation, _, _) = open_invitation();
+    let hub = hub_with(Some(invitation));
+    let server = pairing_server(Arc::clone(&hub), Duration::from_secs(60)).await;
+
+    // Each from its own endpoint, so only the cap in all can refuse one.
+    let mut clients = Vec::new();
+    let mut held = Vec::new();
+    for _ in 0..MAX_CONCURRENT_PAIRING_SESSIONS {
+        let client = pairing_client().await;
+        held.push(
+            client
+                .connect(server.addr(), PAIRING_ALPN_V1)
+                .await
+                .unwrap(),
+        );
+        clients.push(client);
+    }
+    wait_until(|| sessions_held(&hub).0 == MAX_CONCURRENT_PAIRING_SESSIONS).await;
+    let extra = pairing_client().await;
+    let refused = extra.connect(server.addr(), PAIRING_ALPN_V1).await.unwrap();
+    assert_eq!(closed_because(&refused).await, b"pairing capacity reached");
+
+    // Opened and dropped, over and over: nothing is left counted.
+    drop(held);
+    for client in clients {
+        client.close().await;
+    }
+    wait_until(|| sessions_held(&hub) == (0, 0)).await;
+    for round in 0..3 {
+        let mut clients = Vec::new();
+        for _ in 0..MAX_CONCURRENT_PAIRING_SESSIONS * 2 {
+            let client = pairing_client().await;
+            let _ = client.connect(server.addr(), PAIRING_ALPN_V1).await;
+            clients.push(client);
+        }
+        for client in clients {
+            client.close().await;
+        }
+        wait_until(|| sessions_held(&hub) == (0, 0)).await;
+        assert_eq!(sessions_held(&hub), (0, 0), "round {round}");
+    }
+
+    extra.close().await;
+    server.close().await;
+}

@@ -319,6 +319,8 @@ fn every_message_round_trips() {
                 trashed: true,
                 match_text: Some("a phrase".into()),
                 new_window: false,
+                kind: TargetKind::Document,
+                list: None,
             },
         },
     };
@@ -665,8 +667,75 @@ fn the_two_version_numbers_are_not_the_same_declaration() {
     // `OpenLink` bump that took the protocol to 8 and left the frame alone,
     // and then caught root-catalog Plan 2.2 taking the protocol to 46 for
     // `Push::RootSync` while the frame stayed at 1.
-    assert_eq!(PROTOCOL_VERSION, 49);
+    assert_eq!(PROTOCOL_VERSION, 50);
     assert_eq!(FRAME_VERSION, 1);
+}
+
+fn target_of(kind: TargetKind) -> Target {
+    let (document, node, list) = match kind {
+        TargetKind::Document => (Some("d".into()), Some("n".into()), None),
+        TargetKind::Task => (Some("d".into()), Some("n".into()), None),
+        TargetKind::TaskList => (None, None, Some("l".into())),
+    };
+    Target {
+        profile: "p".into(),
+        workspace: "w".into(),
+        document,
+        node,
+        trashed: false,
+        match_text: Some("a phrase".into()),
+        new_window: true,
+        kind,
+        list,
+    }
+}
+
+#[test]
+fn every_target_kind_round_trips() {
+    for kind in [TargetKind::Document, TargetKind::Task, TargetKind::TaskList] {
+        let target = target_of(kind);
+        let back: Target = serde_json::from_str(&json(&target)).unwrap();
+        assert_eq!(back, target);
+        let open = FromAgent::Push {
+            body: Push::Open {
+                target: target.clone(),
+            },
+        };
+        assert_eq!(
+            serde_json::from_str::<FromAgent>(&json(&open)).unwrap(),
+            open
+        );
+    }
+}
+
+#[test]
+fn the_target_kinds_are_spelled_document_task_and_task_list() {
+    assert_eq!(json(&TargetKind::Document), r#""document""#);
+    assert_eq!(json(&TargetKind::Task), r#""task""#);
+    assert_eq!(json(&TargetKind::TaskList), r#""task_list""#);
+    for kind in [TargetKind::Document, TargetKind::Task, TargetKind::TaskList] {
+        assert_eq!(json(&kind), format!(r#""{}""#, kind.as_str()));
+    }
+    let text = json(&target_of(TargetKind::TaskList));
+    assert!(text.contains(r#""kind":"task_list""#), "{text}");
+    assert!(text.contains(r#""list":"l""#), "{text}");
+}
+
+#[test]
+fn a_target_without_a_kind_reads_as_a_document() {
+    // The seven fields a target had before 50, exactly as they were written.
+    let before = r#"{"profile":"p","workspace":"w","document":"d","node":null,"trashed":false,"match_text":"a phrase","new_window":false}"#;
+    let target: Target = serde_json::from_str(before).unwrap();
+    assert_eq!(target.kind, TargetKind::Document);
+    assert_eq!(target.list, None);
+    assert_eq!(target.document.as_deref(), Some("d"));
+    assert_eq!(target.match_text.as_deref(), Some("a phrase"));
+
+    let workspace = r#"{"profile":"p","workspace":"w","document":null,"node":null,"trashed":false,"match_text":null,"new_window":true}"#;
+    let target: Target = serde_json::from_str(workspace).unwrap();
+    assert_eq!(target.kind, TargetKind::Document);
+    assert_eq!(target.list, None);
+    assert_eq!(target.document, None);
 }
 
 #[test]

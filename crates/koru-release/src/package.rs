@@ -178,6 +178,9 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     // still comes from the shared release/updater inventory rather than a
     // second literal here.
     ("koru-voice-worker", koru_update::VOICE_EXE),
+    // `crates/koru-read` holds the reading contract, so the read worker takes
+    // the same `-worker` suffix for the same reason.
+    ("koru-read-worker", koru_update::READ_EXE),
 ];
 
 #[cfg(windows)]
@@ -187,17 +190,22 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru-com-notification", koru_update::COM_NOTIFICATION_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
     ("koru-voice-worker", koru_update::VOICE_EXE),
+    ("koru-read-worker", koru_update::READ_EXE),
 ];
 
 /// **Linux ships without the voice worker** until Linux rung 3 builds it
 /// (`docs/features/linux/`). A stub binary was rejected: a binary that
 /// pretends. This arm is deleted when voice lands on Linux, together with the
 /// Linux arm of `koru_update::ALL_EXE`.
+///
+/// **It does ship the read worker**, which is pure Rust: text-layer PDFs and
+/// plain-text files are read on Linux, and only recognition is absent there.
 #[cfg(target_os = "linux")]
 pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru", koru_update::APP_EXE),
     ("koru-agent", koru_update::AGENT_EXE),
     ("koru-mcp", koru_update::MCP_EXE),
+    ("koru-read-worker", koru_update::READ_EXE),
 ];
 
 #[cfg(any(target_os = "macos", test))]
@@ -532,6 +540,8 @@ pub fn build(
     // hash still links; an official release links the canonical one or is not
     // packaged.
     crate::native::check_this_build(root, native_rule)?;
+    // The same question for the ONNX Runtime library the read worker linked.
+    crate::read_runtime::check_this_build(root, native_rule)?;
     let channel_binaries = CHANNEL_BINARIES
         .iter()
         .map(|(_, executable)| (*executable, root.join("target/release").join(*executable)))
@@ -886,6 +896,15 @@ fn run_cargo(
         .args(["build", "--release", "--locked"]);
     for package in packages {
         command.args(["-p", package]);
+    }
+    // **The read worker recognizes where its ONNX Runtime is pinned**, linked
+    // from the library fetch-voice-runtime extracted and verified, and checked
+    // again after the build (`read_runtime::check_this_build`).
+    if let Some(features) = crate::read_runtime::features_for_this_build(packages) {
+        command.args(["--features", features]);
+        if let Some(dir) = crate::read_runtime::lib_dir(root) {
+            command.env(koru_read_paddle::artifacts::ORT_LIB_PATH, dir);
+        }
     }
     command
         .env("KORU_VERSION", version)
@@ -2582,6 +2601,11 @@ mod tests {
                 "the voice worker package and its shipped executable must stay paired"
             );
         }
+        // The read worker ships on every platform, Linux included.
+        assert!(
+            CHANNEL_BINARIES.contains(&("koru-read-worker", koru_update::READ_EXE)),
+            "the read worker package and its shipped executable must stay paired"
+        );
         // **Every retired executable, by constant rather than by literal.**
         // Each of these is a name `koru_update::exe` still carries so the
         // updater can stop the process and move the file aside; none of them
@@ -2641,7 +2665,8 @@ mod tests {
     }
 
     /// The Linux arm is the Windows/mac inventory minus the voice worker and
-    /// the Windows-only COM broker — no more, no less.
+    /// the Windows-only COM broker — no more, no less. The read worker is
+    /// pure Rust and ships there.
     #[cfg(target_os = "linux")]
     #[test]
     fn linux_packages_everything_but_the_voice_worker() {
@@ -2651,6 +2676,7 @@ mod tests {
                 ("koru", koru_update::APP_EXE),
                 ("koru-agent", koru_update::AGENT_EXE),
                 ("koru-mcp", koru_update::MCP_EXE),
+                ("koru-read-worker", koru_update::READ_EXE),
             ]
         );
         assert_eq!(crate::host_target(), "linux-x86_64");

@@ -19,7 +19,7 @@
 use std::sync::{Arc, Mutex, Weak};
 
 use koru_projection::Projections;
-use koru_search::TagNames;
+use koru_search::{ListNames, ListRow, TagNames};
 use koru_store_api::state::AppState;
 use koru_store_core::ids::WorkspaceId;
 
@@ -75,6 +75,59 @@ impl TagNames for TagSource {
                 .tag_names()
                 .into_iter()
                 .map(|(id, name)| (id.to_storage(), name))
+                .collect(),
+        )
+    }
+}
+
+/// Where the search index gets a workspace's task lists: the same system
+/// document, through the same door, asked a second question.
+///
+/// **The tree handed over is the repaired one** (`SystemDoc::list_tree`):
+/// each row's parent is the live list it is drawn under, so the index needs
+/// no repair rule of its own and a path in search is the path in the rail —
+/// after a cycle, and after an older build deleted a parent, alike.
+pub fn list_source(
+    derived: &crate::derived::Derived,
+    state: &Arc<AppState>,
+) -> Option<Box<dyn ListNames>> {
+    match derived.projections() {
+        Ok(projections) => Some(Box::new(TagSource {
+            projections: Mutex::new(projections),
+            state: Arc::downgrade(state),
+        })),
+        Err(error) => {
+            tracing::warn!("search will not find task lists by name: {error}");
+            None
+        }
+    }
+}
+
+impl ListNames for TagSource {
+    fn list_names(&self, workspace: WorkspaceId) -> Option<Vec<ListRow>> {
+        let ids = {
+            let projections = self.projections.lock().ok()?;
+            let ids = systemdoc::system_documents(&projections, workspace);
+            // No system document yet is *not now*, as it is for tags: a
+            // workspace that has one later is asked again.
+            if ids.is_empty() {
+                return None;
+            }
+            ids
+        };
+        let system = systemdoc::open_system_document(&self.state.upgrade()?, workspace, &ids)?;
+        Some(
+            system
+                .list_tree()
+                .nodes()
+                .iter()
+                .map(|node| ListRow {
+                    id: node.entry.id.to_storage(),
+                    parent: node.parent.map(|parent| parent.to_storage()),
+                    ordinal: node.ordinal,
+                    name: node.entry.name.clone(),
+                    color: node.entry.color.clone(),
+                })
                 .collect(),
         )
     }

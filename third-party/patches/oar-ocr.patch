@@ -1,0 +1,19 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -170,4 +170,4 @@
+ [dependencies.zip]
+-version = "8.6"
++version = "9.0"
+ features = ["deflate-flate2"]
+ default-features = false
+diff --git a/Cargo.toml.orig b/Cargo.toml.orig
+--- a/Cargo.toml.orig
++++ b/Cargo.toml.orig
+@@ -87,5 +87,5 @@
+ unicode-normalization = "0.1.25"
+ unicode-properties = { version = "0.1.4", default-features = false, features = ["general-category"] }
+-zip = { version = "8.6", default-features = false, features = ["deflate-flate2"] }
++zip = { version = "9.0", default-features = false, features = ["deflate-flate2"] }
+
+ [dev-dependencies]

@@ -38,7 +38,7 @@ impl MainView {
         // to the content in the same breath: a restored width is not a drag,
         // and the first frame should be laid out against it rather than snapping
         // to it a moment later.
-        if let Some(w) = settings.workspace.and_then(|id| settings.sidebar_w_in(id)) {
+        if let Some(w) = settings.sidebar_width_for(settings.workspace) {
             self.sidebar.set_full(w.clamp(SIDEBAR_MIN_W, SIDEBAR_MAX_W));
         }
         self.sidebar.set_immediately(settings.sidebar_open);
@@ -66,6 +66,13 @@ impl MainView {
             .map(|id| settings.collapsed_in(id).to_vec())
             .unwrap_or_default();
         self.explore.set_collapsed(collapsed);
+        // The task lists shut in the rail, the same way and for the same
+        // reason: per workspace, per device, before the first draw.
+        let shut = settings
+            .workspace
+            .map(|id| settings.collapsed_lists_in(id).to_vec())
+            .unwrap_or_default();
+        self.explore.rail_mut().set_collapsed(shut);
 
         // Rebuild the list, dropping anything whose node has gone. Every tab is
         // rebuilt now: there is no permanent one to keep alive across the swap.
@@ -131,7 +138,7 @@ impl MainView {
                     // document read through the gateway; a result tab shows an
                     // artifact version, which is immutable. There is nothing in
                     // `Settings` that is about either.
-                    TabView::Run(_) | TabView::Result(_) => {}
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => {}
                     // The camera will be the surface's (`DocViewPrefs`, P1.5);
                     // the placeholder reads nothing.
                     TabView::Canvas(c) => View::restore(c, workspace, settings),
@@ -169,9 +176,8 @@ impl MainView {
         // `regions.sidebar.w`: `solve` clamps against `CONTENT_MIN_W`, so
         // storing the clamped one would mean opening on a laptop permanently
         // shrank the width chosen on a desktop.
-        if let Some(id) = settings.workspace {
-            settings.set_sidebar_w_in(id, self.sidebar.full());
-        }
+        // One width for every workspace: switching must not resize the pane.
+        settings.sidebar_width = Some(self.sidebar.full());
         // Persist the full split tree. The legacy focused-group fields below
         // are kept so older builds can still restore *something*.
         settings.pane_tree = Some(self.pane_tree_state());
@@ -187,6 +193,7 @@ impl MainView {
         // a tree come back expanded after a switch.
         if let Some(id) = settings.workspace {
             settings.set_collapsed_in(id, self.explore.collapsed());
+            settings.set_collapsed_lists_in(id, self.explore.rail().collapsed());
         }
         // ...and a workspace that no longer exists stops being remembered. The
         // pane knows the list because the shell hands it one; before it has,
@@ -218,7 +225,7 @@ impl MainView {
                     TabView::AiChat(_) | TabView::Bot(_) => {}
                     TabView::Socials(_) => {}
                     TabView::Session(_) => {}
-                    TabView::Run(_) | TabView::Result(_) => {}
+                    TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => {}
                     TabView::Canvas(c) => View::capture(c, settings),
                     TabView::Feedback(f) => View::capture(f, settings),
                     TabView::Diff(_) => {}
@@ -723,7 +730,7 @@ impl MainView {
             // anybody had asked to look at it. The run itself is
             // durable and is reopened from wherever it was reached,
             // and so is a result: it is reopened from its run.
-            TabView::Run(_) | TabView::Result(_) => return None,
+            TabView::Run(_) | TabView::Result(_) | TabView::Ocr(_) => return None,
             // **A canvas persists as a document**, like a page: the
             // settings format does not change, and the kind is read
             // again from the manifest when it comes back.

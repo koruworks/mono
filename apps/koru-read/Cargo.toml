@@ -1,0 +1,87 @@
+# **The package and the binary it ships are both `koru-read-worker`.**
+#
+# The contract crate is already called `koru-read` (`crates/koru-read`), and two
+# packages cannot share a name in one workspace — the split `apps/koru-voice`
+# already makes, for the same reason. `[[bin]]` pins the shipped file name.
+# Keep it synchronized with `koru_update::exe::READ`, `koru-release`'s
+# `CHANNEL_BINARIES` and macOS notices list, the Store's sibling resolution,
+# the launchers and stop scripts, logs and docs. A partial rename makes the
+# worker buildable but neither launchable nor safely replaceable.
+[package]
+rust-version.workspace = true
+name = "koru-read-worker"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The Koru read worker: handed a read-only path to one file, it returns the file's words page by page. Untrusted bytes are parsed here and nowhere else; it holds no Store session and makes no network call."
+
+[[bin]]
+name = "koru-read-worker"
+path = "src/main.rs"
+
+[lib]
+name = "koru_read_worker"
+path = "src/lib.rs"
+
+# **Recognition is a feature, off by default, and the product turns it on.**
+#
+# It turns on `koru-read-paddle`'s `runtime`: `oar-ocr` on `ort`, linked
+# statically against the ONNX Runtime library `ORT_LIB_PATH` names. That
+# library is extracted from voice's pinned sherpa-onnx archive by
+# `scripts/setup/fetch-voice-runtime.*` and nowhere else, so a binary linked
+# with the feature on a machine that never ran that script fails to link — and
+# `cargo test --workspace` on a fresh clone must not. So the feature is off for
+# every ordinary build and test (which compile and test everything around the
+# model with a stand-in reader), and on where a real worker is built:
+# `scripts/dev/run-all.ps1`, `koru-release`'s package build, and by hand with
+# `--features recognition`, each after the launcher has placed the library.
+# `cargo check` with it on needs no library at all: `ort-sys` defers the
+# missing library to the link.
+#
+# On a target with no pinned library (Linux, Windows on ARM) the feature
+# compiles to nothing more than it is off: the worker reads text layers and
+# reports `recognition: false`.
+[features]
+default = []
+recognition = ["koru-read-paddle/runtime"]
+
+[dependencies]
+# The messages, the page caps and the reading tokens. This binary speaks them
+# and redefines none of them.
+koru-read = { path = "../../crates/koru-read" }
+# The reader: the model directory's checks, the measured settings and, with
+# `recognition`, the pipeline. Without the feature it links nothing native.
+koru-read-paddle = { path = "../../crates/koru-read-paddle" }
+# The supervised-child mechanism the Store launches this through: the bounded
+# bootstrap line on stdin, and the pipe behind it as the parent-death signal.
+koru-agent-worker = { path = "../../crates/koru-agent-worker" }
+# The endpoint, the framing and the blocking listener. The whole transport.
+koru-ipc = { path = "../../crates/koru-ipc" }
+# Which channel this build is and where its Store root is — `--root` overrides
+# it, and both reach `Endpoint::for_service_root`.
+koru-channel = { path = "../../crates/koru-channel" }
+# `KORU_READ_IDLE_EXIT` is declared there, or it is invisible to `koru.bat envs`
+# and to reference/ENV.md.
+koru-env = { path = "../../crates/koru-env" }
+# File logging under `<store root>/logs/`, daily rotation, the shared panic hook.
+koru-log = { path = "../../crates/koru-log" }
+# The PDF parser and interpreter. A page's glyphs arrive at `text::Collector`,
+# which this crate writes; there is no "give me the text" call to lean on.
+hayro-interpret = { workspace = true }
+# The renderer, for a page that has to be read from pixels: `hayro-interpret`
+# drawn by `vello_cpu`. Pure Rust, so it builds everywhere; it is only called
+# when recognition is.
+hayro = { workspace = true }
+# Picture files for the reader: the six formats this worker reads, the EXIF
+# orientation a photograph carries, and the scaling down. No AVIF (native
+# dav1d), no format a phone's camera roll would not hold.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+tracing = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The fixtures are PDFs written at test time, in memory (`src/fixtures.rs`),
+# one of them encrypted with the standard security handler, which is MD5 and
+# RC4. Already a workspace dependency (`koru-import-evernote`); nothing new.
+md5 = { workspace = true }

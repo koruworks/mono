@@ -40,6 +40,7 @@ use winit::event::MouseScrollDelta;
 use winit::keyboard::{Key, ModifiersState};
 use winit::window::CursorIcon;
 
+pub(crate) mod reader_link;
 mod reminders;
 #[cfg(test)]
 mod tests;
@@ -97,6 +98,37 @@ pub struct SettingsView {
     /// `spelling::overlay_version` when the dictionary count was last read.
     overlay_version: u64,
     app_menu_read: Option<std::sync::mpsc::Receiver<crate::app_menu::Outcome>>,
+    /// *Text in pictures and PDFs* (OCR Plan 2.5): the thread that asks the
+    /// Store, the state it last answered, and when it was last asked — a
+    /// running download is asked about again on a short deadline, and nothing
+    /// else polls. `None` under test, where no Store may be dialled.
+    reader: Option<reader_link::ReaderLink>,
+    reader_state: Option<koru_store_wire::reader::ReaderState>,
+    reader_scroll_pending: bool,
+    reader_asked_at: Option<std::time::Instant>,
+    /// Commands sent and not yet answered: the page looks for the answer on a
+    /// short wake, as it does for the app-menu read.
+    reader_pending: usize,
+    reader_catalog_polls: u32,
+    /// The last answer listed an item a person asked to have read (OCR Plan
+    /// 3.5): the page asks again, slowly, until none is.
+    reader_requested: bool,
+}
+
+/// How often a running download of the reader is asked about.
+const READER_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+/// How often the lists are asked about while a person's *Read again* or *Read
+/// all pages* is waiting or under way. A page takes about a second to read.
+const READER_REQUEST_POLL: std::time::Duration = std::time::Duration::from_secs(2);
+/// While the Store is still reading the reader's catalog: how often, and how
+/// many times, the card asks again for the size it would offer.
+const READER_CATALOG_POLL: std::time::Duration = std::time::Duration::from_secs(1);
+const READER_CATALOG_POLLS: u32 = 10;
+
+/// Where a *could not be read* item lives, from the token the card handed
+/// back — for `MainView`, which carries out the navigation.
+pub(crate) fn reader_item_target(key: &str) -> Option<koru_workspace_host::NavigationTarget> {
+    reader_link::item_target(key)
 }
 
 impl Default for SettingsView {
@@ -148,11 +180,23 @@ impl SettingsView {
             dictionary_version: 0,
             overlay_version: 0,
             app_menu_read: koru_autostart::app_menu::SUPPORTED.then(crate::app_menu::read),
+            reader: None,
+            reader_state: None,
+            reader_scroll_pending: false,
+            reader_asked_at: None,
+            reader_pending: 0,
+            reader_catalog_polls: 0,
+            reader_requested: false,
         };
         // **The world, asked once.** The kill switch and a walk of the model
         // cache — neither may happen on a frame, and neither may happen under
         // `cargo test`, where the cache it would walk is the developer's own.
         if !cfg!(test) {
+            // The reader's card is read off the event loop, on a thread of
+            // its own; the first answer draws it.
+            view.reader =
+                reader_link::ReaderLink::start(koru_workspace_host::cli::root_from_args());
+            view.ask_reader(reader_link::Command::Refresh);
             view.refresh_voice();
             view.wants_voice_devices = true;
             view.reminders.set_system_week_start(
@@ -170,13 +214,97 @@ impl SettingsView {
     }
 
     /// What only the host can do. Drained by the container.
+    ///
+    /// **The reader's buttons are carried out here**, by this page's own
+    /// thread to the Store, and never reach the container: they touch nothing
+    /// the container owns — *Turn on*, *Stop*, *Turn off*, *Remove*, and *Read
+    /// again* and *Read all pages* on a listed item (OCR Plan 3.5). *Show* on
+    /// an item does reach it, because it navigates.
     pub fn take_requests(&mut self) -> Vec<Request> {
-        self.surface.take_requests()
+        let mut rest = Vec::new();
+        for request in self.surface.take_requests() {
+            let command = match request {
+                Request::TurnOnReader => reader_link::Command::TurnOn,
+                Request::StopReaderInstall => reader_link::Command::Stop,
+                Request::TurnOffReader => reader_link::Command::TurnOff,
+                Request::RemoveReader => reader_link::Command::Remove,
+                Request::ReadReaderItemAgain(key) => match reader_link::item_request(&key) {
+                    Some((workspace, hash)) => reader_link::Command::ReadAgain { workspace, hash },
+                    None => continue,
+                },
+                Request::ReadAllReaderPages(key) => match reader_link::item_request(&key) {
+                    Some((workspace, hash)) => reader_link::Command::ReadAll { workspace, hash },
+                    None => continue,
+                },
+                other => {
+                    rest.push(other);
+                    continue;
+                }
+            };
+            self.ask_reader(command);
+        }
+        rest
+    }
+
+    fn ask_reader(&mut self, command: reader_link::Command) {
+        if self.reader.as_ref().is_some_and(|link| link.send(command)) {
+            self.reader_asked_at = Some(std::time::Instant::now());
+            self.reader_pending += 1;
+        }
+    }
+
+    /// Take the reader's newest answer into the card. `true` when it moved.
+    fn take_reader_answer(&mut self) -> bool {
+        let Some(answer) = self.reader.as_ref().and_then(reader_link::ReaderLink::take) else {
+            return false;
+        };
+        // `take` keeps the newest of what was waiting, which answers every
+        // command sent before it.
+        self.reader_pending = 0;
+        if answer.state.is_none() {
+            // The Store did not answer: the card keeps what it showed.
+            return false;
+        }
+        let row = reader_link::row(&answer);
+        self.reader_requested = reader_link::reading_requested(&answer.items);
+        self.reader_state = answer.state;
+        let changed = self.surface.set_reader(row);
+        if self.reader_scroll_pending {
+            self.reader_scroll_pending = false;
+            return self.surface.scroll_to_reader() || changed;
+        }
+        changed
+    }
+
+    fn reader_deadline(&self) -> Option<std::time::Instant> {
+        if self.reader_pending > 0 {
+            return Some(std::time::Instant::now() + std::time::Duration::from_millis(50));
+        }
+        let at = self.reader_asked_at?;
+        if reader_link::running(self.reader_state.as_ref()) {
+            return Some(at + READER_POLL);
+        }
+        // A person's request on a listed item: how far it got, and the row
+        // going when it finishes (OCR Plan 3.5). Never while none waits.
+        if self.reader_requested {
+            return Some(at + READER_REQUEST_POLL);
+        }
+        // A few more reads while the catalog is fetched, then none: a
+        // settled card is never polled.
+        (reader_link::catalog_pending(self.reader_state.as_ref())
+            && self.reader_catalog_polls < READER_CATALOG_POLLS)
+            .then(|| at + READER_CATALOG_POLL)
     }
 
     /// Opened from the first-minutes guide's mic link.
     pub fn scroll_to_voice(&mut self) -> bool {
         self.surface.scroll_to_voice()
+    }
+
+    pub fn scroll_to_reader(&mut self) -> bool {
+        self.reader_scroll_pending = true;
+        self.ask_reader(reader_link::Command::Refresh);
+        self.surface.scroll_to_reader()
     }
 
     /// The coding agents *Agent providers* lists. Answers whether one moved.
@@ -635,6 +763,7 @@ impl View for SettingsView {
     fn maintenance_deadline(&self) -> Option<std::time::Instant> {
         [
             self.surface.maintenance_deadline(),
+            self.reader_deadline(),
             self.app_menu_read
                 .as_ref()
                 .map(|_| std::time::Instant::now() + std::time::Duration::from_millis(50)),
@@ -666,11 +795,21 @@ impl View for SettingsView {
                 Err(std::sync::mpsc::TryRecvError::Empty) => None,
             });
         let app_menu_changed = app_menu.is_some_and(|added| self.set_app_menu_entry(added));
+        if self
+            .reader_deadline()
+            .is_some_and(|due| due <= std::time::Instant::now())
+        {
+            if !reader_link::running(self.reader_state.as_ref()) {
+                self.reader_catalog_polls += 1;
+            }
+            self.ask_reader(reader_link::Command::Refresh);
+        }
+        let reader_moved = self.take_reader_answer();
         let polled = self.surface.poll();
         // What this page shows is what open terminals should draw — a press
         // here reaches them now, not after the authority's round trip.
         crate::terminal_prefs::adopt(self.surface.terminal());
-        polled || downloaded || app_menu_changed
+        polled || downloaded || app_menu_changed || reader_moved
     }
 
     fn dictation_refused(&mut self, refusal: koru_dictation::Refusal) -> bool {

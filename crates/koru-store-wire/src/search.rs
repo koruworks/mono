@@ -64,6 +64,15 @@ pub mod field {
     pub const LEVEL_NAME: &str = "level-name";
     /// The workspace itself, so its name is matchable.
     pub const WORKSPACE: &str = "workspace";
+    /// Words read out of a picture's or a file's bytes — a PDF's text layer,
+    /// a plain-text file, or the reader. A surface draws the picture mark and
+    /// the *Page N ·* prefix from this token and
+    /// [`SearchHit::page`](super::SearchHit::page), never from a translated
+    /// label.
+    pub const READ: &str = "read";
+    /// A task list's own name. A fragment with no document: its node is the
+    /// list's id. Only a query that asks for lists is answered from these.
+    pub const TASK_LIST: &str = "task-list";
 
     /// `heading-1` … `heading-6`.
     pub fn heading(level: u8) -> String {
@@ -158,6 +167,61 @@ pub struct SearchHit {
     pub observed_modified_at_ms: Option<i64>,
     /// Most recent navigation into this workspace on this machine.
     pub workspace_last_used_at_ms: Option<i64>,
+    /// The page the words were found on, counting from 1, when the hit is a
+    /// [`field::READ`] fragment of a file with more than one page.
+    ///
+    /// **Absent for everything else** — any other field, a picture, a one-page
+    /// PDF, a plain-text file — and absent from an answer written before this
+    /// field existed, which is why it defaults rather than being required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<u32>,
+    /// The name a person gave the picture the words were read from, when the
+    /// hit is a [`field::READ`] fragment of a picture inside a document and
+    /// somebody named it (OCR EXPERIENCE §3: the picture mark, then its name
+    /// only when a person gave it one).
+    ///
+    /// **Absent for a picture nobody named**, for a file, for every other
+    /// field, and from an answer written before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_name: Option<String>,
+    /// **This hit is a task list**, not a document: `kind` is `task_list`,
+    /// `document` is absent and `title` is the list's name. Only in an answer
+    /// to a query that set [`SearchQuery::include_lists`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub list: Option<ListHit>,
+    /// **This hit is a task**: a node carrying `koru.task` or `koru.due`, or
+    /// the title of a page that is itself one. Only in an answer to a query
+    /// that set [`SearchQuery::task_results`]. A surface opens Tasks on
+    /// `task.node`; the hit's own `node` is what it always was (absent for a
+    /// title).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskHit>,
+}
+
+/// What a list result carries beyond its name.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ListHit {
+    /// The list's id, in storage form.
+    pub id: String,
+    /// Its swatch, as an accent token; absent for a list wearing no color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+    /// The names of the lists it is inside, outermost first, as the rail
+    /// draws them. Empty for a top-level list.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
+}
+
+/// What a task result carries: which node is the task, and whether it is done.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct TaskHit {
+    /// The task's node. For a node hit, the hit's own node; for the title of
+    /// a page that is a task, that page's root node.
+    pub node: String,
+    /// The task's lifecycle token as indexed — `open` when none is recorded.
+    /// A hint for drawing; where the task is opened is decided from the task
+    /// as it is at that moment, never from this.
+    pub state: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -292,6 +356,19 @@ pub struct SearchQuery {
     /// the day it exists.
     #[serde(default)]
     pub attributes: Vec<AttrFilter>,
+    /// Answer with task lists too: a list whose name matches is a hit of its
+    /// own, ahead of every other result in every sort. **Off by default**, and
+    /// with it off no list is a candidate and no list's name changes a typo
+    /// correction: the answer is what it was before lists were indexed.
+    #[serde(default)]
+    pub include_lists: bool,
+    /// Answer with tasks as tasks: a hit on a task carries
+    /// [`SearchHit::task`], a task's own text ranks like a title, and text
+    /// read from pictures and files keeps one result per task rather than one
+    /// per document. **Off by default**; with it off hits, scores, order and
+    /// page membership are unchanged.
+    #[serde(default)]
+    pub task_results: bool,
     #[serde(default)]
     pub sort: SearchSort,
     #[serde(default)]
@@ -332,6 +409,8 @@ impl Default for SearchQuery {
             kinds: Vec::new(),
             tags: Vec::new(),
             attributes: Vec::new(),
+            include_lists: false,
+            task_results: false,
             sort: SearchSort::Relevance,
             lifecycle: LifecycleFilter::Live,
             page_size: DEFAULT_PAGE_SIZE,
@@ -354,6 +433,41 @@ pub struct SearchPage {
     /// A corrected spelling inferred from the highest-ranked result. Absent
     /// when the authored query itself supplied the evidence.
     pub corrected_query: Option<String>,
+    /// How far reading the pictures and files **in this query's workspaces**
+    /// has got, and whether to offer the reader.
+    ///
+    /// `None` when the store says nothing about it: a store that predates
+    /// reading, or one that does not count. A surface then shows no line —
+    /// absence is never read as "everything is read".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reading: Option<ReadingCounts>,
+}
+
+/// **How far reading has got, for the workspaces a query is about.**
+///
+/// Scoped to the query's workspaces on purpose: a search in a workspace with
+/// five pictures says five, however many thousands another workspace holds.
+/// Counts only — no name, no hash, no path.
+///
+/// An item is one readable blob referenced by a live entry: a file, or a
+/// picture in a page. `unread` counts those with no finished reading at the
+/// current generation; `needs_reader` and `not_here` say why some of them are
+/// waiting, and are each part of `unread`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ReadingCounts {
+    /// Readable items with no finished reading.
+    pub unread: u64,
+    /// Readable items in scope.
+    pub total: u64,
+    /// Of `unread`, those waiting for the reader to be installed.
+    pub needs_reader: u64,
+    /// Of `unread`, those whose bytes are not on this computer.
+    pub not_here: u64,
+    /// Whether a surface should offer the reader now: something waits for it,
+    /// it is not installed, and the person has not said *Not now* since the
+    /// last import that brought a picture or a scanned PDF. Every surface asks
+    /// this one place.
+    pub offer: bool,
 }
 
 // ------------------------------------------------------------------ the route

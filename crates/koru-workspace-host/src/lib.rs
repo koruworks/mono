@@ -69,6 +69,10 @@ mod profile_lifecycle_decision;
 mod profile_names;
 mod profile_runtime;
 pub mod profile_wait;
+pub mod reader_offer;
+pub mod reading_details;
+pub mod reading_file;
+pub mod reading_requests;
 pub mod reveal;
 /// Who owns the keyboard, factored so the container and the built-in
 /// document cannot drift apart about it. See the module's own note.
@@ -478,6 +482,17 @@ pub trait View {
         _trash_root: Option<NodeId>,
         _match_text: Option<&str>,
     ) -> bool {
+        false
+    }
+
+    /// Open a task list, or the Tasks page a task is on, in a view that can
+    /// host tabs — a list or a task chosen in search. A dedicated search pane
+    /// declines; the container accepts.
+    ///
+    /// For a task the view decides the page **from the task as it is now**,
+    /// and falls back to the task's own document when it cannot. Answering
+    /// `true` means the request was taken, not that the task has landed.
+    fn open_tasks_target(&mut self, _target: TasksTarget, _match_text: Option<&str>) -> bool {
         false
     }
 
@@ -1439,6 +1454,30 @@ pub trait View {
         self.show_notice(message)
     }
 
+    /// **A completed import through an importer**, with what it told the
+    /// reader: how many pictures and scanned PDFs it brought and the reader's
+    /// state as the Store answered (OCR Plan 3.3). A view that can, gives the
+    /// summary its line — *412 pictures and scanned PDFs can be found by the
+    /// words in them…* with **Turn on** and **Not now** — when the state
+    /// says to offer; the answers come back as
+    /// [`PaneRequest::ReaderAnswer`]. The default is the plain summary.
+    fn show_import_notice_reading(
+        &mut self,
+        message: String,
+        target: ImportNoticeTarget,
+        _reading: reader_offer::ImportReading,
+    ) -> bool {
+        self.show_import_notice(message, target)
+    }
+
+    /// **The Store answered something pressed on that line**, or a download
+    /// it started moved on: the reader's state, or `None` when the Store did
+    /// not answer. Every pane hears it; one carrying the line or the download
+    /// it started updates it and says so.
+    fn reader_answered(&mut self, _state: Option<&koru_store_wire::reader::ReaderState>) -> bool {
+        false
+    }
+
     /// **Ask whether voice input may be set up**, naming the download size and
     /// the model's licence.
     ///
@@ -1568,7 +1607,7 @@ pub trait View {
     /// lives in the system document (ADR-176), a view cannot see one, and the
     /// name has already been typed by the time this is asked. The colour is an
     /// `AccentColor` token from the shared swatch set, never an RGB value.
-    fn take_wants_create_list(&mut self) -> Option<(String, Option<String>)> {
+    fn take_wants_create_list(&mut self) -> Option<tasks::ListCreate> {
         None
     }
 
@@ -1733,11 +1772,14 @@ pub trait View {
         false
     }
 
-    /// The workspace list table, pushed whenever it changes — a list made
-    /// here, or a peer's arriving through the system document's room. Answers
-    /// whether anything on screen changed. Default no-op: only a view that
-    /// draws the tasks rail cares.
-    fn set_list_table(&mut self, _lists: &[koru_core::system::ListEntry]) -> bool {
+    /// The workspace's lists **as the repaired tree**
+    /// ([`SystemDoc::list_tree`](koru_core::system::SystemDoc::list_tree)),
+    /// depth first, pushed whenever the table changes — a list made here, or
+    /// a peer's arriving through the system document's room. One tree for
+    /// every surface, so the rail, the picker and the chip cannot place a
+    /// list differently. Answers whether anything on screen changed. Default
+    /// no-op: only a view that draws lists cares.
+    fn set_list_table(&mut self, _lists: &[koru_core::system::ListNode]) -> bool {
         false
     }
 
@@ -1791,6 +1833,66 @@ pub trait View {
     /// bytes and the system clipboard, so it performs the copy.
     fn take_wants_copy_image(&mut self) -> Option<String> {
         None
+    }
+
+    /// Claim a file open for the shared image viewer. Decoding stays on a
+    /// worker; hosts without a viewer keep using the system application.
+    fn begin_file_image_open(&mut self, _file: koru_core::DocumentId) -> bool {
+        false
+    }
+
+    /// Deliver a file's reading to the pane that requested inspection.
+    fn show_file_reading(
+        &mut self,
+        _file: koru_core::DocumentId,
+        _details: Result<reading_details::ReadingDetails, String>,
+    ) -> bool {
+        false
+    }
+
+    /// Deliver a decoded image only to the pane that requested it.
+    fn show_file_image(
+        &mut self,
+        _file: koru_core::DocumentId,
+        _name: String,
+        _image: std::sync::Arc<koru_ui::media_viewer::ViewerImage>,
+    ) -> bool {
+        false
+    }
+
+    /// Blob hash of a picture whose reading the person asked to save — the
+    /// `KORU_READ_DEBUG` entry on a picture ([`reading_file`]). The shell owns
+    /// the fetch, the dialog and the write, as it does an image's *Copy*.
+    fn take_wants_save_reading(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Blob hash of a picture whose right-click menu just opened, for the
+    /// shell to ask the Store what may be asked of it (*Read again*,
+    /// [`reading_requests`]). Fetched on a worker; the answer comes back
+    /// through [`View::set_reading_offers`].
+    fn take_wants_reading_offers(&mut self) -> Option<String> {
+        None
+    }
+
+    /// Blob hash of a picture the person chose *Read again* on
+    /// ([`reading_requests`]). The shell sends the request.
+    fn take_wants_read_again(&mut self) -> Option<String> {
+        None
+    }
+
+    /// **What the Store says may be asked of one item now** — the answer to a
+    /// [`PaneRequest::ReadingOffers`] or a
+    /// [`View::take_wants_reading_offers`]. `None` when nothing has been read
+    /// of it, or the Store could not be asked: nothing is offered. A view keeps
+    /// it for the item's next menu and corrects a menu open on that item.
+    /// Returns whether anything drawn changed.
+    fn set_reading_offers(
+        &mut self,
+        _target: &reading_file::ReadingTarget,
+        _offers: Option<reading_requests::ReadingOffers>,
+    ) -> bool {
+        false
     }
 
     /// Finish an image cut after the shell wrote the bitmap (delete the row).
@@ -2346,6 +2448,37 @@ pub enum NavigationTarget {
         profile: ProfileId,
         workspace: WorkspaceId,
     },
+    /// A task list's page in Tasks. A list is in no document, so the
+    /// workspace is carried rather than located.
+    TaskList {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        list: koru_core::ids::ListId,
+    },
+    /// One of a workspace's standing task queues, opened as its page.
+    TaskQueue {
+        profile: ProfileId,
+        workspace: WorkspaceId,
+        bucket: koru_core::tasks::Bucket,
+    },
+    /// A task, opened in Tasks on the page where it is now. Located through
+    /// its document, as a document is.
+    Task {
+        document: koru_core::DocumentId,
+        node: NodeId,
+    },
+}
+
+/// What a view is asked to open in Tasks ([`View::open_tasks_target`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TasksTarget {
+    List(koru_core::ids::ListId),
+    /// One of the standing queues: Today, Next, Upcoming, Later.
+    Queue(koru_core::tasks::Bucket),
+    Task {
+        document: koru_core::DocumentId,
+        node: NodeId,
+    },
 }
 
 /// What a selection amounts to when it leaves its document.
@@ -2816,6 +2949,11 @@ pub enum PaneRequest {
     },
     /// Add opaque file entries to the workspace's Files projection.
     ImportFiles(ImportSourceSelection),
+    /// Import copied files, then add references to the captured document.
+    ImportFileAttachments {
+        paths: Vec<std::path::PathBuf>,
+        document: koru_core::DocumentId,
+    },
     /// Ask the active content-import worker to stop at its next safe checkpoint.
     CancelImport,
     /// **The voice consent step was answered.** `true` records the agreement
@@ -2824,6 +2962,11 @@ pub enum PaneRequest {
     VoiceConsent(bool),
     /// Ask the running model download to stop at its next chunk boundary.
     CancelVoiceDownload,
+    /// **An answer on the line in an import's summary** — Turn on, Not now,
+    /// or Stop on the download it started (OCR Plan 3.3). The shell carries
+    /// it to the Store off the event loop and hands the reader's state back
+    /// through [`View::reader_answered`].
+    ReaderAnswer(reader_offer::ReaderAnswer),
     /// **Offer a speech model**, opening the consent step and then the
     /// download. What the Settings section's *Install* asks for, and the same
     /// work the tray row already asks the agent to hand a window.
@@ -2850,15 +2993,33 @@ pub enum PaneRequest {
     SaveFile(koru_core::DocumentId),
     /// Save several workspace files into a user-selected folder.
     SaveFiles(Vec<koru_core::DocumentId>),
+    /// Save what was read out of one file or picture to a text file the
+    /// person chooses — the `KORU_READ_DEBUG` entry ([`reading_file`]).
+    SaveReading(reading_file::ReadingTarget),
+    InspectFileReading(koru_core::DocumentId),
+    /// Ask the Store what may be asked of one item's reading now (*Read all
+    /// pages*, *Read again*), for its right-click menu. The answer comes back
+    /// through [`View::set_reading_offers`] (OCR Plan 3.2).
+    ReadingOffers(reading_file::ReadingTarget),
+    /// The person chose *Read all pages* or *Read again* on one item.
+    ReadRequest(
+        reading_file::ReadingTarget,
+        reading_requests::ReadRequestKind,
+    ),
+    /// Re-run reading for eligible live files in this captured workspace.
+    /// Selection and later workspace navigation do not alter the scope.
+    RescanWorkspaceFiles(koru_core::WorkspaceId),
     /// Save a drawn diagram as a PNG or an SVG at a user-selected path. Served
     /// against the window that asked: its device rasterises the PNG.
     SaveDiagram(SaveDiagram),
     /// Put a picture of a drawn diagram on the clipboard. Served against the
     /// window that asked, like a save: its device rasterises the bitmap.
     CopyDiagram(CopyDiagram),
-    /// Materialize one workspace file in Koru's temporary open cache and hand
-    /// it to the operating system's associated application.
+    /// Open a workspace image in Koru's viewer, or another file through its
+    /// operating system association. Hosts without a viewer use the latter.
     OpenFile(koru_core::DocumentId),
+    /// Explicit external opening from the built-in image viewer.
+    OpenFileExternally(koru_core::DocumentId),
     /// Materialize and open every selected workspace file through its OS
     /// association.
     OpenFiles(Vec<koru_core::DocumentId>),
@@ -3024,9 +3185,11 @@ impl PaneRequest {
             Self::SetWorkspaceIcon { .. } => "request.workspace_icon",
             Self::ImportContent { .. } => "request.import_content",
             Self::ImportFiles(..) => "request.import_files",
+            Self::ImportFileAttachments { .. } => "request.import_file_attachments",
             Self::CancelImport => "request.cancel_import",
             Self::VoiceConsent(..) => "request.voice_consent",
             Self::CancelVoiceDownload => "request.cancel_voice_download",
+            Self::ReaderAnswer(..) => "request.reader_answer",
             Self::SetUpVoice => "request.set_up_voice",
             Self::RemoveVoiceModels => "request.remove_voice_models",
             Self::AskVoiceDevices => "request.ask_voice_devices",
@@ -3034,6 +3197,12 @@ impl PaneRequest {
             Self::ReminderSnooze(..) => "request.reminder_snooze",
             Self::SaveFile(..) => "request.save_file",
             Self::SaveFiles(..) => "request.save_files",
+            Self::SaveReading(..) => "request.save_reading",
+            Self::InspectFileReading(..) => "request.inspect_file_reading",
+            Self::ReadingOffers(..) => "request.reading_offers",
+            Self::ReadRequest(..) => "request.read_request",
+            Self::OpenFileExternally(..) => "request.open_file_externally",
+            Self::RescanWorkspaceFiles(..) => "request.rescan_workspace_files",
             Self::SaveDiagram(..) => "request.save_diagram",
             Self::CopyDiagram(..) => "request.copy_diagram",
             Self::OpenFile(..) => "request.open_file",

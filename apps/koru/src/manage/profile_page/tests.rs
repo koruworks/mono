@@ -146,7 +146,7 @@ fn the_status_line_says_which_profile_is_open_and_switch_opens_another() {
         view.laid()
             .header
             .status_text
-            .starts_with("Current profile · ")
+            .starts_with("Current profile")
     );
     assert!(
         !controls(&view).contains(&Control::Switch),
@@ -192,7 +192,10 @@ fn a_local_profile_signs_in_with_google_while_signed_out() {
     let mut view = manage(std::slice::from_ref(&local));
     signed_out(&mut view);
     let row = &view.laid().sign_in.as_ref().unwrap().rows[0];
-    assert_eq!(row.label.as_deref(), Some("On this computer only"));
+    assert_eq!(
+        row.label.as_deref(),
+        Some("Not connected to a Koru account")
+    );
     let session = view.laid().placed(Control::Session).unwrap();
     assert_eq!(session.look, Look::Google);
     assert_eq!(session.label, "Sign in with Google");
@@ -283,28 +286,65 @@ fn a_synced_profile_lists_its_google_accounts_and_the_account_actions() {
 }
 
 #[test]
-fn the_cloud_row_is_the_shared_switch_or_the_way_to_koru_cloud() {
+fn sync_modes_profile_and_workspace_choices_show_saved_state_and_ceiling() {
+    use koru_store_core::TransportMode;
     let synced = profile("Synced", Some(IDENTITY));
     let mut view = manage(std::slice::from_ref(&synced));
     signed_in(&mut view, &synced, vec![identity(1, "one@example.test")]);
     view.c.set_cloud_status(profiles::CloudStatus::Subscribe);
     view.delegate(|_| ());
-    assert!(!controls(&view).contains(&Control::CloudSync));
-    assert!(press(&mut view, Control::GetCloud));
-    assert_eq!(view.page(), Some(Page::Cloud));
-
-    view.show(Page::Profile(synced.id));
+    let workspace = koru_store_core::ids::WorkspaceId::new();
+    view.c
+        .set_sync_settings_for_test(koru_store_wire::ProfileTransportSettings {
+            mode: "p2p".into(),
+            explicit_choice: false,
+            revision: 2,
+            workspaces: vec![koru_store_wire::WorkspaceTransportSettings {
+                id: workspace.to_storage(),
+                name: "Work".into(),
+                mode: "local_only".into(),
+                explicit_choice: true,
+                revision: 3,
+            }],
+        });
+    view.delegate(|_| ());
+    assert!(controls(&view).contains(&Control::SyncMode(None, TransportMode::P2p)));
+    assert!(
+        view.laid()
+            .disabled
+            .contains(&Control::SyncMode(None, TransportMode::Cloud))
+    );
+    assert!(matches!(
+        view.laid()
+            .placed(Control::SyncMode(None, TransportMode::P2p))
+            .unwrap()
+            .look,
+        Look::Action(koru_ui::button::ActionStyle::Primary)
+    ));
+    assert!(
+        view.laid()
+            .disabled
+            .contains(&Control::SyncMode(Some(workspace), TransportMode::Cloud))
+    );
+    assert!(
+        !view
+            .laid()
+            .disabled
+            .contains(&Control::SyncMode(Some(workspace), TransportMode::P2p))
+    );
     view.c.set_cloud_status(profiles::CloudStatus::Manage);
     view.delegate(|_| ());
-    let switch = view.laid().placed(Control::CloudSync).unwrap().clone();
-    let Look::Toggle(toggle) = switch.look else {
-        panic!("the shared switch")
-    };
-    assert_eq!(toggle, Toggle::new(false));
-    // Turning it on is the whole act: nothing is asked (2026-11-11).
-    assert!(press(&mut view, Control::CloudSync));
-    assert!(view.c.prompts().next().is_none());
-    assert_eq!(view.c.cloud_sync_pending_for(synced.id), Some(true));
+    assert!(
+        !view
+            .laid()
+            .disabled
+            .contains(&Control::SyncMode(None, TransportMode::Cloud))
+    );
+    assert!(
+        view.laid()
+            .disabled
+            .contains(&Control::SyncMode(Some(workspace), TransportMode::Cloud))
+    );
 }
 
 #[test]
@@ -327,7 +367,15 @@ fn a_profiles_own_repair_is_an_attention_card_and_another_profiles_is_not() {
 
     let section = view.laid().sign_in.clone().unwrap();
     assert!(section.repair.is_some());
-    assert!(section.rows.is_empty(), "the repair is the section");
+    assert_eq!(
+        section.rows.len(),
+        2,
+        "sync settings remain below account repair"
+    );
+    assert!(controls(&view).contains(&Control::SyncMode(
+        None,
+        koru_store_core::TransportMode::P2p
+    )));
     let cancel = view
         .laid()
         .controls
@@ -455,6 +503,9 @@ fn tab_walks_the_nav_then_the_page_and_enter_presses_what_it_is_on() {
             Control::ImportWorkspaces,
             Control::NewWorkspace,
             Control::Session,
+            Control::SyncMode(None, koru_store_core::TransportMode::LocalOnly),
+            Control::SyncMode(None, koru_store_core::TransportMode::P2p),
+            Control::SyncMode(None, koru_store_core::TransportMode::Cloud),
             Control::Delete,
             Control::RemoveFromDevice,
         ],
@@ -512,6 +563,7 @@ fn the_inspector_names_the_pages_parts() {
     assert_eq!(named(&snapshot, "Manage profile header"), 1);
     assert_eq!(named(&snapshot, "Manage sign-in and sync"), 1);
     assert_eq!(named(&snapshot, "Manage account actions"), 1);
+    assert_eq!(named(&snapshot, "Manage sync choices"), 1);
     assert_eq!(named(&snapshot, "Manage delete profile"), 1);
     assert_eq!(named(&snapshot, "Manage attention"), 0);
     assert!(named(&snapshot, "KoruCardRow") >= 1, "shared rows");
@@ -584,12 +636,14 @@ fn a_screen_reader_hears_the_pages_controls_as_buttons_and_presses_them() {
                 ))
         })
         .expect("the device-local removal");
-    let switch = tree
-        .children
-        .iter()
-        .find(|node| node.role == accesskit::Role::Switch)
-        .expect("Cloud sync is a switch");
-    assert_eq!(switch.label.as_deref(), Some("Cloud sync"));
+    for label in ["Sync off: Synced", "P2P: Synced", "Cloud: Synced"] {
+        let choice = tree
+            .children
+            .iter()
+            .find(|node| node.label.as_deref() == Some(label))
+            .expect("each sync mode names its Profile");
+        assert_eq!(choice.role, accesskit::Role::Button);
+    }
     let unlink = tree
         .children
         .iter()

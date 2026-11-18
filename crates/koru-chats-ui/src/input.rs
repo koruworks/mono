@@ -235,7 +235,11 @@ impl ChatsSurface {
             .focus_row()
             .and_then(|focus| rows.iter().position(|row| *row == focus));
         let last = rows.len() - 1;
+        // Filtered, the answers are a ring: Down from the last is the first.
+        let wraps = self.filter.is_some();
         let next = match press {
+            Press::Down if wraps => at.map_or(0, |at| (at + 1) % rows.len()),
+            Press::Up if wraps => at.map_or(0, |at| (at + rows.len() - 1) % rows.len()),
             Press::Down => at.map_or(0, |at| (at + 1).min(last)),
             Press::Up => at.map_or(0, |at| at.saturating_sub(1)),
             Press::Home => 0,

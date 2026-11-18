@@ -289,7 +289,7 @@ fn documents_actions_menu_opens_and_routes_every_action() {
 }
 
 #[test]
-fn files_has_the_same_import_entry_point_for_multi_file_picker() {
+fn files_heading_opens_the_shell_menu_with_import_and_ocr_actions() {
     let mut v = with_rows(3);
     v.show_files();
     let a = area();
@@ -299,19 +299,15 @@ fn files_has_the_same_import_entry_point_for_multi_file_picker() {
     let (x, y) = button.centre();
     assert!(v.mouse_move(a, VIEW, x, y));
     assert_eq!(v.cursor_icon(), koru_ui::cursor::PRESS);
-    assert_eq!(v.mouse_down(a, VIEW, x, y, false), Outcome::Consumed);
     assert_eq!(
-        v.popover_rows(),
-        vec![PopoverRow::LibraryAction(actions::Action::Import)]
+        v.mouse_down(a, VIEW, x, y, false),
+        Outcome::LibraryMenu {
+            at: (button.x, button.y + button.h),
+        }
     );
     assert!(
-        v.popover_list_band(a, VIEW).is_none(),
-        "the one-command menu has no footer divider"
-    );
-    let import = v.popover_rects(a, VIEW)[0].1.centre();
-    assert_eq!(
-        v.mouse_down(a, VIEW, import.0, import.1, false),
-        Outcome::ImportFiles
+        v.popover.is_none(),
+        "the shell owns the complete Files menu"
     );
 }
 
@@ -3030,7 +3026,7 @@ fn relocate_moves_a_root_before_the_target() {
         carried_order: vec![ids[2]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Before, &carried, Instant::now());
     let order: Vec<NodeId> = v.rows.iter().map(|r| r.node).collect();
@@ -3099,7 +3095,7 @@ fn relocate_nests_and_rebases_depth() {
         carried_order: vec![a_id],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.relocate_carried(target_i, DropZone::Nest, &carried, Instant::now());
     let order: Vec<(NodeId, u16)> = v.rows.iter().map(|r| (r.node, r.depth)).collect();
@@ -3247,6 +3243,30 @@ fn clicking_an_already_selected_row_without_dragging_collapses_to_that_row() {
     v.mouse_down(a, VIEW, on_label(a), row_centre(&v, a, 2), false);
     assert_eq!(v.mouse_up(), Outcome::OpenNode(ids[2]));
     assert_eq!(v.selection, HashSet::from([ids[2]]));
+}
+
+#[test]
+fn files_selection_can_replace_and_clear_a_revealed_row() {
+    let (mut view, ids) = flat_rows(2);
+    view.mode = NavigatorMode::Files;
+    for row in &mut view.rows {
+        row.kind = Kind::File;
+    }
+    // A stale active-file marker must not behave as a second selection.
+    view.set_selected(Some(ids[0]));
+    view.select_only(ids[0]);
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Card);
+    let a = area();
+    view.mouse_down(a, VIEW, on_label(a), row_centre(&view, a, 1), false);
+    assert_eq!(view.mouse_up(), Outcome::Consumed);
+    assert_eq!(view.selection_nodes(), vec![ids[1]]);
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Idle);
+    assert_eq!(view.row_treatment(&view.rows[1], 1), RowTreatment::Card);
+    view.mouse_down(a, VIEW, on_label(a), row_centre(&view, a, 1), true);
+    assert_eq!(view.mouse_up(), Outcome::Consumed);
+    assert!(view.selection_nodes().is_empty());
+    assert_eq!(view.row_treatment(&view.rows[0], 0), RowTreatment::Idle);
+    assert_eq!(view.row_treatment(&view.rows[1], 1), RowTreatment::Idle);
 }
 
 /// The row cache is pre-order, so an inclusive Shift range contains nested
@@ -3413,7 +3433,7 @@ fn drag_auto_scroll_moves_toward_the_edge_the_pointer_is_in() {
             carried_order: vec![ids[0]],
             item_count: 1,
             last: None,
-            spring: None,
+            spring: Default::default(),
         });
         v.drag_tick = None;
     };
@@ -3468,7 +3488,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
         carried_order: vec![ids[1]],
         item_count: 1,
         last: None,
-        spring: None,
+        spring: Default::default(),
     });
     v.update_drop(Instant::now());
     let d = v.drag.as_ref().unwrap();
@@ -3479,7 +3499,7 @@ fn a_collapsed_nest_target_becomes_a_spring_candidate() {
             zone: DropZone::Nest
         })
     );
-    assert_eq!(d.spring.map(|(n, _)| n), Some(ids[0]));
+    assert_eq!(d.spring.pending(), Some(ids[0]));
 }
 
 /// Dropping past the end of the list lands at the top level, however deep the
@@ -3948,6 +3968,28 @@ fn a_press_on_the_dots_does_not_seed_a_drag() {
 /// button. Empty library space offers import, while pinned chrome is swallowed
 /// rather than falling through to the view underneath.
 #[test]
+fn files_ocr_heading_and_background_use_the_same_menu_route() {
+    let mut view = with_rows(2);
+    view.show_files();
+    let a = area();
+    let button = view.actions_button(a);
+    let (x, y) = button.centre();
+    assert_eq!(
+        view.mouse_down(a, VIEW, x, y, false),
+        Outcome::LibraryMenu {
+            at: (button.x, button.y + button.h),
+        }
+    );
+    assert!(view.popover.is_none());
+    // Empty library space ends above the pinned Trash row.
+    let (_, trash) = view.footer_rects(a)[0];
+    assert!(matches!(
+        view.context_menu(a, a.x + a.w * 0.5, trash.y - 2.0),
+        Outcome::LibraryMenu { .. }
+    ));
+}
+
+#[test]
 fn right_clicking_a_row_reports_its_menu_at_the_cursor() {
     let mut v = with_rows(2);
     let a = area();
@@ -4324,13 +4366,8 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
     let mut view = ExploreView::new();
     view.show_tasks();
     let list = koru_core::ids::ListId::new();
-    view.rail_mut().set_lists(vec![rail::RailList {
-        id: list,
-        name: "Bike".to_owned(),
-        color: None,
-        count: 0,
-        overdue: 0,
-    }]);
+    view.rail_mut()
+        .set_lists(vec![rail::RailList::flat(list, "Bike", None, 0, 0)]);
     let a = area();
     let top = view.rail_top(a);
     let alt = PressMods {
@@ -4375,10 +4412,20 @@ fn alt_clicking_a_rail_row_asks_where_its_page_opens() {
         }),
         "Ctrl's press"
     );
-    let (x, y) = at(rail::RailRow::NewList);
+    // The heading's `+` names no page, so Alt on it keeps its meaning.
+    let (_, heading) = rows
+        .iter()
+        .find(|(row, _)| *row == rail::RailRow::ListsHeading)
+        .copied()
+        .expect("the rail has the Lists heading");
+    let (x, y) = view
+        .rail()
+        .row_parts(rail::RailRow::ListsHeading, heading)
+        .trailing
+        .centre();
     assert_eq!(
         view.mouse_down_with(a, (1200.0, 800.0), x, y, alt),
-        Outcome::Tasks(rail::TasksRailRequest::BeginNewList),
+        Outcome::Tasks(rail::TasksRailRequest::BeginNewList { parent: None }),
         "a row that names no page keeps its meaning"
     );
 }
@@ -4405,31 +4452,31 @@ fn drawing_the_rail_leaves_the_scene_balanced() {
         completed: 122,
     });
     v.rail_mut().set_lists(vec![
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Wedding".into(),
-            color: Some("pink".into()),
-            count: 14,
-            overdue: 0,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "Bike Project".into(),
-            color: Some("blue".into()),
-            count: 6,
-            overdue: 1,
-        },
-        rail::RailList {
-            id: koru_core::ids::ListId::new(),
-            name: "A list with no colour at all".into(),
-            color: None,
-            count: 0,
-            overdue: 0,
-        },
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Wedding",
+            Some("pink"),
+            14,
+            0,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "Bike Project",
+            Some("blue"),
+            6,
+            1,
+        ),
+        rail::RailList::flat(
+            koru_core::ids::ListId::new(),
+            "A list with no colour at all",
+            None,
+            0,
+            0,
+        ),
     ]);
     let a = area();
     draw_once(&mut v, a);
-    v.rail_mut().begin_new_list();
+    v.rail_mut().begin_new_list(None);
     draw_once(&mut v, a);
     // A collapsed column draws nothing and must not panic doing it.
     draw_once(&mut v, Rect::new(0.0, theme::CAPTION_H, 0.0, 600.0));
@@ -7229,4 +7276,142 @@ fn the_bots_roster_asks_only_while_its_view_is_showing() {
         actions::available(NavigatorMode::Bots).is_empty(),
         "no heading menu"
     );
+}
+
+// ------------------------------------------------------------ quick filter
+
+fn typed(view: &mut ExploreView, text: &str) -> bool {
+    use winit::keyboard::{Key, ModifiersState};
+    let mut engine = TextEngine::new();
+    text.chars().all(|ch| {
+        let s = ch.to_string();
+        view.quick_filter_key(
+            &mut engine,
+            &Key::Character(s.as_str().into()),
+            Some(&s),
+            ModifiersState::empty(),
+        )
+    })
+}
+
+fn pressed(
+    view: &mut ExploreView,
+    key: winit::keyboard::NamedKey,
+    mods: winit::keyboard::ModifiersState,
+) -> bool {
+    let mut engine = TextEngine::new();
+    view.quick_filter_key(&mut engine, &winit::keyboard::Key::Named(key), None, mods)
+}
+
+/// Typing in the sidebar narrows the tree to the names that hold it, keeps
+/// the rows a match is inside (even shut ones), and clearing shows the tree
+/// as it was.
+#[test]
+fn typing_in_the_sidebar_filters_the_tree_and_escape_restores_it() {
+    use winit::keyboard::{Key, ModifiersState, NamedKey};
+    let rows = entries(&[
+        ("Notes", None),
+        ("Design system", Some(0)),
+        ("Old", Some(1)),
+        ("Roadmap", None),
+        ("Sidebar redesign", None),
+    ]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    // Shut *Notes*: the match inside it must still be found.
+    let notes = view.rows[0].node;
+    view.collapsed.insert(notes);
+    view.rebuild_from_entries(&rows);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+
+    // Not armed: the letters are somebody else's.
+    view.focus = Some(notes);
+    assert!(!typed(&mut view, "d"));
+    assert_eq!(view.quick_filter(), None);
+
+    view.arm_quick_filter(true);
+    assert!(view.quick_filter_armed());
+    assert!(typed(&mut view, "DESIGN"));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(
+        labels(&view),
+        ["Notes", "Design system", "Sidebar redesign"]
+    );
+    assert_eq!(view.quick_match_count(), 2);
+    assert!(
+        view.quick_dim.contains(&notes),
+        "kept for what is inside it"
+    );
+    assert_eq!(
+        view.focus,
+        Some(view.rows[1].node),
+        "the keyboard is on the first match"
+    );
+    // The rows start below the field.
+    assert!(
+        view.rows_top(area()) > {
+            let mut plain = ExploreView::new();
+            plain.rebuild_from_entries(&rows);
+            plain.rows_top(area())
+        }
+    );
+
+    // Nothing matches: no rows, and a count of none.
+    assert!(typed(&mut view, "zz"));
+    assert!(labels(&view).is_empty());
+    assert_eq!(view.quick_match_count(), 0);
+    let none = ModifiersState::empty();
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert!(pressed(&mut view, NamedKey::Backspace, none));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The field edits as any field does: Ctrl+Backspace takes a word.
+    assert!(typed(&mut view, " sys"));
+    assert_eq!(view.quick_filter(), Some("DESIGN sys"));
+    assert!(pressed(
+        &mut view,
+        NamedKey::Backspace,
+        ModifiersState::CONTROL
+    ));
+    assert_eq!(view.quick_filter(), Some("DESIGN"));
+    assert_eq!(labels(&view).len(), 3);
+
+    // The answers are a ring: Down from the last is the first.
+    let last = view.rows.last().unwrap().node;
+    view.focus = Some(last);
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowDown));
+    assert_eq!(view.focus, Some(view.rows[0].node));
+    view.nav_key(area(), &Key::Named(NamedKey::ArrowUp));
+    assert_eq!(view.focus, Some(last));
+
+    // Escape puts it away, and the fold is where it was.
+    assert!(pressed(&mut view, NamedKey::Escape, none));
+    assert_eq!(view.quick_filter(), None);
+    assert_eq!(labels(&view), ["Notes", "Roadmap", "Sidebar redesign"]);
+    assert!(view.collapsed.contains(&notes));
+    // And Escape again is not the filter's.
+    assert!(!pressed(&mut view, NamedKey::Escape, none));
+}
+
+/// A chord is never filter text, and another view starts unfiltered.
+#[test]
+fn a_chord_is_not_filter_text_and_the_filter_is_the_views_own() {
+    use winit::keyboard::{Key, ModifiersState};
+    let rows = entries(&[("Design", None), ("Roadmap", None)]);
+    let mut view = ExploreView::new();
+    view.rebuild_from_entries(&rows);
+    view.focus = Some(view.rows[0].node);
+    view.arm_quick_filter(true);
+    assert!(!view.quick_filter_key(
+        &mut TextEngine::new(),
+        &Key::Character("d".into()),
+        Some("d"),
+        ModifiersState::CONTROL
+    ));
+    assert!(typed(&mut view, "road"));
+    assert_eq!(labels(&view), ["Roadmap"]);
+    view.show_files();
+    assert_eq!(view.quick_filter(), None);
+    view.show_documents();
+    assert_eq!(labels(&view), ["Design", "Roadmap"]);
 }

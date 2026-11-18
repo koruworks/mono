@@ -277,6 +277,7 @@ impl EmbeddedStore for MemoryStore {
                 updating_workspaces: Vec::new(),
                 request_seq: 0,
                 corrected_query: None,
+                reading: None,
             },
             facets: None,
             recent_queries: None,

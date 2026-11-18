@@ -6,7 +6,7 @@
 //! intent. This crate owns network addresses, QUIC connections, and streams.
 //! No iroh type crosses the Agent/Store control contract.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -55,6 +55,18 @@ pub const MAX_ENROLLMENT_FRAME_BYTES: usize = 128 * 1024;
 pub const MAX_ENROLLMENT_FRAMES_PER_DIRECTION: usize = 8;
 const MAX_CONCURRENT_ENROLLMENT_SESSIONS: usize = 4;
 const ENROLLMENT_SESSION_TIMEOUT: Duration = Duration::from_secs(120);
+/// The largest pairing join read from a peer. An honest join is two device
+/// descriptors and three signatures — about two kilobytes — and it is read
+/// from an endpoint nobody has authorized yet, so the bound is its own and
+/// not replication's frame limit.
+const MAX_PAIRING_JOIN_BYTES: usize = 64 * 1024;
+/// Pairing connections served at once. One invitation is claimed by one
+/// joiner; the rest of the room is for a retry and for a join that fails.
+const MAX_CONCURRENT_PAIRING_SESSIONS: usize = 4;
+/// How long a peer has to open its stream and send its whole join. The
+/// person's answer has its own, longer wait; nothing before the join is
+/// verified waits longer than this.
+const PAIRING_JOIN_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Encode one enrollment frame with a ceremony-specific limit. Enrollment
 /// never inherits replication's multi-megabyte content-frame allowance.
@@ -2552,9 +2564,77 @@ struct PairingHub {
         HashMap<PairingAttemptId, oneshot::Sender<Result<koru_pairing::PreparedPairingV1, String>>>,
     >,
     pending_trust: Mutex<HashMap<TrustDeliveryId, oneshot::Sender<bool>>>,
+    sessions: PairingSessions,
+}
+
+/// The incoming pairing connections being served right now.
+///
+/// Pairing is the one protocol an endpoint nobody has authorized may speak,
+/// and an endpoint id is not a secret: it is in every invitation, and every
+/// paired device and the relay know it. So what a stranger can hold open is
+/// counted — a few sessions in all, and one per remote endpoint.
+struct PairingSessions {
+    permits: Arc<Semaphore>,
+    remotes: Mutex<HashSet<[u8; 32]>>,
+}
+
+impl Default for PairingSessions {
+    fn default() -> Self {
+        Self {
+            permits: Arc::new(Semaphore::new(MAX_CONCURRENT_PAIRING_SESSIONS)),
+            remotes: Mutex::new(HashSet::new()),
+        }
+    }
+}
+
+/// One admitted pairing session. Dropping it gives both counts back, on
+/// every way out of the session.
+struct PairingSession {
+    hub: Arc<PairingHub>,
+    remote: [u8; 32],
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+
+impl Drop for PairingSession {
+    fn drop(&mut self) {
+        self.hub
+            .sessions
+            .remotes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.remote);
+    }
 }
 
 impl PairingHub {
+    fn invitation_is_open(&self) -> bool {
+        self.invitation
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .is_some()
+    }
+
+    /// `None` when `remote` already has a session, or every session is taken.
+    fn admit(self: &Arc<Self>, remote: [u8; 32]) -> Option<PairingSession> {
+        let mut remotes = self
+            .sessions
+            .remotes
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if remotes.contains(&remote) {
+            return None;
+        }
+        let permit = Arc::clone(&self.sessions.permits)
+            .try_acquire_owned()
+            .ok()?;
+        remotes.insert(remote);
+        Some(PairingSession {
+            hub: Arc::clone(self),
+            remote,
+            _permit: permit,
+        })
+    }
+
     fn event(&self, event: PairingEvent) {
         self.events
             .lock()
@@ -5307,13 +5387,50 @@ async fn serve_pairing_connection(
     connection: iroh::endpoint::Connection,
     pairing: Arc<PairingHub>,
 ) {
+    serve_pairing_connection_with_timeout(connection, pairing, PAIRING_JOIN_TIMEOUT).await;
+}
+
+/// Serve one incoming pairing connection, from an endpoint nobody has
+/// authorized yet. Everything it may cost before its join is verified is
+/// bounded here: no invitation, no session; a few sessions at once and one
+/// per remote; one deadline over the stream and the join; and a join read
+/// against its own small limit.
+async fn serve_pairing_connection_with_timeout(
+    connection: iroh::endpoint::Connection,
+    pairing: Arc<PairingHub>,
+    join_timeout: Duration,
+) {
     let remote = connection.remote_id();
+    // The usual case: nobody is pairing, so there is nothing to wait for.
+    if !pairing.invitation_is_open() {
+        connection.close(1u32.into(), b"no active invitation");
+        return;
+    }
+    let Some(_session) = pairing.admit(*remote.as_bytes()) else {
+        connection.close(1u32.into(), b"pairing capacity reached");
+        return;
+    };
     let result = async {
-        let (mut send, mut recv) = connection
-            .accept_bi()
-            .await
-            .map_err(|error| FrameError::new("accept", error))?;
-        let join = read_json::<koru_pairing::PairingJoinV1>(&mut recv).await?;
+        let received = tokio::time::timeout(join_timeout, async {
+            let (send, mut recv) = connection
+                .accept_bi()
+                .await
+                .map_err(|error| FrameError::new("accept", error))?;
+            let join =
+                read_json_bounded::<koru_pairing::PairingJoinV1>(&mut recv, MAX_PAIRING_JOIN_BYTES)
+                    .await?;
+            Ok::<_, FrameError>((send, recv, join))
+        })
+        .await;
+        // `_recv` lives as long as the exchange, as it did before the join
+        // was read under a deadline.
+        let (mut send, _recv, join) = match received {
+            Ok(received) => received?,
+            Err(_) => {
+                connection.close(1u32.into(), b"pairing join timed out");
+                return Err(FrameError::message("accept", "pairing join timed out"));
+            }
+        };
         let invitation = pairing
             .invitation
             .read()
@@ -8012,6 +8129,37 @@ async fn read_frame(
     recv: &mut iroh::endpoint::RecvStream,
 ) -> Result<protocol::PeerFrame, FrameError> {
     read_json(recv).await
+}
+
+/// Read one length-prefixed JSON frame of at most `limit` bytes from a peer
+/// that is not trusted with memory: the buffer grows with the bytes that
+/// arrive, never with the length the peer announced.
+async fn read_json_bounded<T: for<'de> Deserialize<'de>>(
+    recv: &mut iroh::endpoint::RecvStream,
+    limit: usize,
+) -> Result<T, FrameError> {
+    let mut length = [0; 4];
+    recv.read_exact(&mut length)
+        .await
+        .map_err(|error| FrameError::new("read_length", error))?;
+    let mut remaining = u32::from_be_bytes(length) as usize;
+    if remaining > limit {
+        return Err(FrameError::message(
+            "read_length",
+            format!("peer announced {remaining} bytes; limit is {limit}"),
+        ));
+    }
+    let mut bytes = Vec::new();
+    let mut chunk = [0; 4096];
+    while remaining > 0 {
+        let wanted = remaining.min(chunk.len());
+        recv.read_exact(&mut chunk[..wanted])
+            .await
+            .map_err(|error| FrameError::new("read_body", error))?;
+        bytes.extend_from_slice(&chunk[..wanted]);
+        remaining -= wanted;
+    }
+    serde_json::from_slice(&bytes).map_err(|error| FrameError::new("decode", error))
 }
 
 async fn read_json<T: for<'de> Deserialize<'de>>(
