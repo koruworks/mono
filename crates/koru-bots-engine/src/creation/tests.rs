@@ -37,6 +37,7 @@ impl Fixture {
             bot,
             begin: Command::Begin {
                 request: id,
+                source_hash: blake3::hash(b"synthetic request").to_hex().to_string(),
                 bot,
                 definition,
                 authored: authored.then(|| AuthoredRole {

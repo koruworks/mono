@@ -210,12 +210,14 @@ pub enum Change {
 pub struct Bot {
     pub id: Uuid,
     pub revision: u64,
+    pub policy_revision: u64,
     pub definition: Definition,
     pub paused: bool,
     pub lifecycle: Lifecycle,
     pub main_thread: Uuid,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub folder_frozen_at_ms: Option<i64>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Thread {
@@ -266,7 +268,9 @@ fn owner(connection: &rusqlite::Connection, who: &Person, bot: Uuid) -> Result<(
         Err(Error::NotAllowed)
     }
 }
-pub(crate) fn handle(
+/// Execute a request already vouched by the gateway/Agent carrier. Embedders
+/// must authenticate before constructing its identity, as the IPC owner does.
+pub fn handle(
     db: &mut Database,
     events: &crate::observations::LiveEvents,
     answers: &mut crate::questions::Transient,

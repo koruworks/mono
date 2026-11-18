@@ -18,9 +18,17 @@ use serde_json::Value;
 use std::sync::Arc;
 
 type Call = Arc<dyn Fn(person::Request) -> Result<person::Reply, Error> + Send + Sync>;
+type CreationCall = Arc<
+    dyn Fn(koru_bots_engine::creation::Request) -> Result<koru_bots_engine::creation::Reply, Error>
+        + Send
+        + Sync,
+>;
+mod creation;
+mod window;
 pub(crate) struct Gateway {
     authority: Arc<dyn BotAuthority>,
     call: Call,
+    creation: CreationCall,
     permits: Arc<tokio::sync::Semaphore>,
     root: std::path::PathBuf,
     folders: Arc<dyn koru_bots_engine::folders::Folders + Send + Sync>,
@@ -34,11 +42,23 @@ impl GatewayState {
         else {
             return false;
         };
+        let creation_engine = engine.clone();
         self.bots_engine
             .set(Arc::new(Gateway {
                 root,
                 folders: Arc::new(koru_bots_engine::folders::Native),
                 authority: Arc::new(authority),
+                creation: Arc::new(move |request| {
+                    match worker::request(
+                        &creation_engine.endpoint,
+                        creation_engine.authority.expose(),
+                        worker::Command::Creation(request),
+                    )? {
+                        worker::Reply::Creation(reply) => Ok(reply),
+                        worker::Reply::Refused(error) => Err(error),
+                        _ => Err(Error::EngineUnavailable),
+                    }
+                }),
                 call: Arc::new(move |request| {
                     match worker::request(
                         &engine.endpoint,
@@ -277,6 +297,45 @@ pub(crate) async fn command(
         Ok(Err(error)) => failed(error),
         Err(_) => failed(Error::EngineUnavailable),
     }
+}
+pub(crate) async fn window_command(
+    state: Arc<GatewayState>,
+    principal: GatewayPrincipal,
+    command: koru_ai_core::bots::BotCommand,
+) -> Response {
+    if !permitted(&principal) {
+        return window_failed(Error::NotAllowed);
+    }
+    let Some(gateway) = state.bots_engine.get().cloned() else {
+        return window_failed(Error::EngineUnavailable);
+    };
+    let Ok(permit) = gateway.permits.clone().try_acquire_owned() else {
+        return window_failed(Error::EngineUnavailable);
+    };
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        gateway.window_command(command)
+    })
+    .await
+    {
+        Ok(Ok(reply)) => Json(reply).into_response(),
+        Ok(Err(error)) => window_failed(error),
+        Err(_) => window_failed(Error::EngineUnavailable),
+    }
+}
+fn window_failed(error: Error) -> Response {
+    let (status, code) = match error {
+        Error::NotAllowed | Error::Unauthenticated => {
+            (StatusCode::FORBIDDEN, BotError::Forbidden.code())
+        }
+        Error::InvalidRequest | Error::InputTooSmall => {
+            (StatusCode::BAD_REQUEST, BotError::Invalid.code())
+        }
+        Error::Conflict => (StatusCode::CONFLICT, BotError::Conflict.code()),
+        Error::StorageUnavailable => (StatusCode::INTERNAL_SERVER_ERROR, BotError::Storage.code()),
+        _ => (StatusCode::SERVICE_UNAVAILABLE, "bot_unavailable"),
+    };
+    crate::failure(status, code, "The Bot request could not be completed.")
 }
 fn failed(error: Error) -> Response {
     let status = match error {

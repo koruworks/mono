@@ -84,6 +84,7 @@ impl Fixture {
         let retained = receipt.clone();
         let scope = authority.owner.user_scope.to_storage();
         let gateway = Gateway {
+            creation: Arc::new(|_| Err(Error::EngineUnavailable)),
             root: std::path::PathBuf::new(),
             folders: Arc::new(koru_bots_engine::folders::Native),
             authority: authority.clone(),
@@ -342,4 +343,21 @@ fn committed_configuration_retry_does_not_reopen_a_removed_folder() {
         true
     );
     assert_eq!(f.changed.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn window_failures_keep_existing_ui_codes_and_retryability() {
+    for (error, code, retryable) in [
+        (Error::Conflict, "request_conflict", false),
+        (Error::NotAllowed, "wrong_owner", false),
+        (Error::EngineUnavailable, "bot_unavailable", true),
+    ] {
+        let response = window_failed(error);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let failure: koru_ai_wire::Failure = serde_json::from_slice(&body).unwrap();
+        assert_eq!(failure.code, code);
+        assert_eq!(failure.retryable, retryable);
+    }
 }

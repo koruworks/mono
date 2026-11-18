@@ -1129,6 +1129,9 @@ async fn bot_command(
         Ok(request) => request,
         Err(response) => return response,
     };
+    if koru_bots_engine::ENABLED {
+        return crate::bots_engine::window_command(state, principal, request).await;
+    }
     let (client, context) = match admitted(&state, principal, AiScope::ManageBots) {
         Ok(values) => values,
         Err(response) => return response,

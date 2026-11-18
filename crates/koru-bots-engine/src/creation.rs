@@ -13,6 +13,8 @@ use uuid::Uuid;
 mod bytes;
 
 pub const MAX_RECORD_BYTES: usize = 1024 * 1024;
+pub const MAX_PENDING_PER_OWNER: usize = 64;
+const MAX_PENDING_TOTAL: usize = 256;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -54,9 +56,26 @@ impl Phase {
 #[serde(rename_all = "snake_case")]
 pub enum Failure {
     FolderUnavailable,
+    FolderOccupied,
+    FolderMismatch,
+    FolderInvalid,
     RoleUnavailable,
     RoleMissing,
+    RoleConflict,
+    StoreRefused,
     AuthorityUnavailable,
+}
+impl Failure {
+    pub fn retryable(self) -> bool {
+        !matches!(
+            self,
+            Self::FolderOccupied
+                | Self::FolderInvalid
+                | Self::RoleMissing
+                | Self::RoleConflict
+                | Self::StoreRefused
+        )
+    }
 }
 
 /// Includes private seed bytes; public projections must omit them. Debug is
@@ -64,6 +83,7 @@ pub enum Failure {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
     pub request: Uuid,
+    pub source_hash: String,
     pub bot: Uuid,
     pub revision: u64,
     pub definition: Definition,
@@ -85,6 +105,10 @@ impl std::fmt::Debug for Record {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Check {
+        request: Uuid,
+        source_hash: String,
+    },
     Read {
         request: Uuid,
     },
@@ -93,6 +117,7 @@ pub enum Command {
     },
     Begin {
         request: Uuid,
+        source_hash: String,
         bot: Uuid,
         definition: Definition,
         authored: Option<AuthoredRole>,
@@ -187,6 +212,19 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
         sender: request.sender,
     };
     match request.command {
+        Command::Check {
+            request,
+            source_hash,
+        } => {
+            let record = read(&db.connection, &who.owner, request)?;
+            if record
+                .as_ref()
+                .is_some_and(|record| record.source_hash != source_hash)
+            {
+                return Err(Error::Conflict);
+            }
+            Ok(Reply::Record(record))
+        }
         Command::Read { request } => Ok(Reply::Record(read(&db.connection, &who.owner, request)?)),
         Command::Pending { after } => {
             let mut statement = db.connection.prepare("SELECT record FROM creations WHERE owner=?1 AND terminal=0 AND request>?2 ORDER BY request LIMIT 32")?;
@@ -216,17 +254,26 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
         }
         Command::Begin {
             request,
+            source_hash,
             bot,
             definition,
             authored,
             seed,
         } => {
-            if request.is_nil() || bot.is_nil() {
+            if request.is_nil()
+                || bot.is_nil()
+                || source_hash.len() != 64
+                || !source_hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+            {
                 return Err(Error::InvalidRequest);
             }
             person::change::validate_definition(&definition)?;
-            let digest =
-                crate::messages::receipts::digest("creation", &(bot, &definition, &authored))?;
+            let digest = crate::messages::receipts::digest(
+                "creation",
+                &(bot, &definition, &authored, &source_hash),
+            )?;
             let tx = db.connection.transaction()?;
             let prior: Option<Vec<u8>> = tx
                 .query_row(
@@ -245,7 +292,7 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
             if exists {
                 return Err(Error::Conflict);
             }
-            let full: bool = tx.query_row("SELECT (SELECT COUNT(*) FROM creations WHERE terminal=0)>=256 OR (SELECT COUNT(*) FROM creations WHERE terminal=0 AND owner=?1)>=64",[&who.owner],|r|r.get(0))?;
+            let full: bool = tx.query_row("SELECT (SELECT COUNT(*) FROM creations WHERE terminal=0)>=?2 OR (SELECT COUNT(*) FROM creations WHERE terminal=0 AND owner=?1)>=?3",params![who.owner, MAX_PENDING_TOTAL, MAX_PENDING_PER_OWNER],|r|r.get(0))?;
             if full {
                 return Err(Error::EngineUnavailable);
             }
@@ -278,6 +325,7 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
             };
             let record = Record {
                 request,
+                source_hash,
                 bot,
                 revision: 1,
                 definition,
@@ -368,7 +416,9 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
                     record.phase = Phase::Completed;
                 }
                 Step::Failed { reason } => record.failure = Some(reason),
-                Step::Retry => record.failure = None,
+                Step::Retry if record.failure.is_some_and(Failure::retryable) => {
+                    record.failure = None
+                }
                 Step::Abandon => {
                     record.abandoned_from = Some(record.phase);
                     record.phase = Phase::Abandoned;

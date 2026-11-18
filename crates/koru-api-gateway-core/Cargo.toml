@@ -21,6 +21,7 @@ futures-util.workspace = true
 koru-ai-api = { path = "../koru-ai-api" }
 koru-ai-client = { path = "../koru-ai-client" }
 koru-ai-core = { path = "../koru-ai-core" }
+koru-ai-provider-agent = { path = "../koru-ai-provider-agent" }
 koru-ai-server = { path = "../../apps/koru-ai-server" }
 koru-ai-wire = { path = "../koru-ai-wire" }
 # The private read (M5): the service the AI worker hosts, the content type it
@@ -28,6 +29,8 @@ koru-ai-wire = { path = "../koru-ai-wire" }
 koru-connections = { path = "../koru-connections" }
 koru-api-wire = { path = "../koru-api-wire" }
 koru-bots-engine = { path = "../koru-bots-engine", features = ["schema"] }
+koru-core = { path = "../koru-core" }
+koru-import-markdown = { path = "../koru-import-markdown" }
 # The Artifact Store's typed port, model and wire. The store itself
 # (`koru-artifact-sqlite`) is opened by the host and handed down, so this
 # crate links the port and not the database — except under test.

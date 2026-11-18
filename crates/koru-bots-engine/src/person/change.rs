@@ -192,12 +192,7 @@ pub(super) fn apply(
             name(label)?;
             configuration.validate()?;
             if current.definition.configuration.working_folder != configuration.working_folder {
-                let frozen: bool = tx.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM obligations WHERE bot=?1)",
-                    [bot.to_string()],
-                    |r| r.get(0),
-                )?;
-                if frozen {
+                if current.folder_frozen_at_ms.is_some() {
                     return Err(Error::NotAllowed);
                 }
             }
@@ -240,7 +235,7 @@ pub(super) fn apply(
                 return Err(Error::NotAllowed);
             }
             tx.execute(
-                "UPDATE bots SET access=?2 WHERE id=?1",
+                "UPDATE bots SET access=?2,policy_revision=policy_revision+1 WHERE id=?1",
                 params![bot.to_string(), encode(access)?],
             )?;
             updated(&tx, *bot, now)?;

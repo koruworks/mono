@@ -67,6 +67,10 @@ impl Database {
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'accepted',?6)",rusqlite::params![answer.message.to_string(),thread.to_string(),answer.sequence,person.sender,encode(&content)?,now])?;
         let obligation = Uuid::new_v4();
         let expired = envelope.deadline_ms.is_some_and(|deadline| now > deadline);
+        tx.execute(
+            "UPDATE bots SET folder_frozen_at_ms=COALESCE(folder_frozen_at_ms,?2) WHERE id=?1",
+            rusqlite::params![envelope.to.to_string(), now],
+        )?;
         tx.execute("INSERT INTO obligations(id,thread,message,bot,state,accepted_at_ms) VALUES (?1,?2,?3,?4,?5,?6)",rusqlite::params![obligation.to_string(),thread.to_string(),answer.message.to_string(),envelope.to.to_string(),if expired{"expired"}else{"owed"},now])?;
         if !expired {
             tx.execute(

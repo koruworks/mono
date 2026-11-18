@@ -326,6 +326,44 @@ fn selected_folder_freezes_on_accepted_input_but_model_and_face_stay_editable() 
 }
 
 #[test]
+fn window_policy_revision_changes_only_with_access_and_freeze_time_is_durable() {
+    let mut f = Fixture::new();
+    let changed = f.change(Change::Configure {
+        bot: f.bot.id,
+        revision: 1,
+        name: "renamed".into(),
+        avatar: Some(5),
+        configuration: f.bot.definition.configuration.clone(),
+    });
+    assert_eq!(changed["revision"], 2);
+    assert_eq!(changed["policy_revision"], 1);
+    let mut access = f.bot.definition.access.clone();
+    access
+        .selected_pages
+        .insert(koru_delegate_core::DocumentId::new());
+    let changed = f.change(Change::Access {
+        bot: f.bot.id,
+        revision: 2,
+        access,
+    });
+    assert_eq!(changed["revision"], 3);
+    assert_eq!(changed["policy_revision"], 2);
+    assert!(
+        read::bot(&f.db.connection, &f.who, f.bot.id)
+            .unwrap()
+            .folder_frozen_at_ms
+            .is_none()
+    );
+    f.send(f.bot.main_thread);
+    assert_eq!(
+        read::bot(&f.db.connection, &f.who, f.bot.id)
+            .unwrap()
+            .folder_frozen_at_ms,
+        Some(3)
+    );
+}
+
+#[test]
 fn list_is_owner_scoped_and_paged_without_dropping_entries() {
     let mut f = Fixture::new();
     for _ in 0..65 {
