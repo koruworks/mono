@@ -51,21 +51,19 @@ impl RestoredContent {
         let (schema, hashes) = match self.proof.unit {
             Unit::WorkspaceDocument { document_id } => {
                 let inspected = inspect_file_references(&self.doc, budget)?;
+                // `meta.id` is not checked against the storing Workspace. It is
+                // the Workspace the document was created in, stamped once and
+                // never moved with the document, so a document moved between
+                // Workspaces keeps its old one; the storage binding of this
+                // unit already proves where it is held. `meta.document` names
+                // the document itself and must still match.
                 let meta = self.doc.get_map("meta");
-                for (key, expected) in [
-                    (
-                        "id",
-                        identity::uuid_text(identity::parts(self.proof.dataset).1),
-                    ),
-                    ("document", identity::uuid_text(document_id)),
-                ] {
-                    if let Some(value) = meta.get(key) {
-                        let Some(LoroValue::String(value)) = value.as_value() else {
-                            return Err(StrictReferenceError::Scope);
-                        };
-                        if value.as_str() != expected {
-                            return Err(StrictReferenceError::Scope);
-                        }
+                if let Some(value) = meta.get("document") {
+                    let Some(LoroValue::String(value)) = value.as_value() else {
+                        return Err(StrictReferenceError::Scope);
+                    };
+                    if value.as_str() != identity::uuid_text(document_id) {
+                        return Err(StrictReferenceError::Scope);
                     }
                 }
                 // Feed the canonical walker only after every raw slot has been

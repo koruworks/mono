@@ -114,6 +114,24 @@ fn malformed_reference_unknown_root_and_unit_identity_fail_closed_without_changi
     );
 }
 
+/// Found in production 2026-11-17: 261 documents moved between Workspaces
+/// kept the Workspace they were created in as `meta.id`, and every one was
+/// refused, so their owner's storage could never be counted.
+#[test]
+fn a_document_moved_from_another_workspace_still_counts_its_files() {
+    let doc = LoroDoc::new();
+    let hash = format!("b3:{}", "ab".repeat(32));
+    node(&doc, TreeParentId::Root, "image", Some(&hash));
+    doc.get_map("meta")
+        .insert("id", uuid::Uuid::new_v4().to_string())
+        .unwrap();
+    let references = restored(&doc).strict_blob_references().unwrap();
+    assert_eq!(
+        references.hashes().iter().collect::<Vec<_>>(),
+        vec![&hash]
+    );
+}
+
 #[test]
 fn structural_units_require_supported_shapes_before_returning_empty() {
     for index in [0, 2, 3, 4] {
