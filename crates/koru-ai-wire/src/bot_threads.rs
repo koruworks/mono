@@ -252,14 +252,14 @@ pub enum Response {
     },
 }
 
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 #[schemars(rename = "BotThreadOperationRef")]
 pub struct OperationRef {
     pub bot: Uuid,
     pub operation: Uuid,
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(rename = "BotThreadOperationAttention")]
 pub struct OperationAttention {
     pub key: OperationRef,

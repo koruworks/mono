@@ -745,7 +745,7 @@ impl ChatSurface {
             self.composer.set_focused(false);
             self.conversation_scroll = card.top.max(0.0);
             self.follow_tail = false;
-        } else {
+        } else if !(forward && self.focus_managed_attention(false)) {
             self.focus = Focus::Composer;
             self.composer.set_focused(true);
         }

@@ -29,6 +29,19 @@ fn read(
         _ => Err(malformed()),
     }
 }
+fn attention(
+    client: &koru_api_client::Client,
+    thread: ChatId,
+    after: Option<koru_ai_wire::bot_threads::OperationRef>,
+) -> Result<crate::managed_attention::Page, koru_ai_wire::Failure> {
+    match client.ai().bot_thread(&C::Attention {
+        thread,
+        after: after.clone(),
+    })? {
+        R::Attention { items, next } => Ok(crate::managed_attention::Page { after, items, next }),
+        _ => Err(malformed()),
+    }
+}
 fn refreshed(
     client: &koru_api_client::Client,
     poll: Poll,
@@ -66,6 +79,7 @@ fn refreshed(
         return Err(malformed());
     };
     Ok(Refreshed {
+        attention: attention(client, poll.thread, poll.attention_after)?,
         snapshot,
         messages,
         after,
@@ -130,6 +144,7 @@ pub(super) fn handle(
                     return Err(malformed());
                 };
                 Ok(Opened {
+                    attention: attention(client, *thread, None)?,
                     snapshot,
                     messages,
                     before,
@@ -165,6 +180,7 @@ pub(super) fn handle(
         }
         Command::EnginePoll(poll) if *backend == Backend::Engine => {
             let poll = Poll {
+                attention_after: poll.attention_after.clone(),
                 thread: poll.thread,
                 after: poll.after,
                 boot: poll.boot,

@@ -139,6 +139,10 @@ impl ChatSurface {
         {
             state.pending_send = old.pending_send;
             state.retry_send = state.pending_send.is_some();
+            if old.attention.pending.is_some() {
+                state.attention = old.attention;
+                state.attention.retry = Some(now);
+            }
         }
         if let Some((command, sent)) = self.managed_outbox.remove(&state.thread()) {
             state.pending_send = Some(command);
@@ -203,6 +207,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn managed_reply(&mut self, thread: ChatId, reply: R) -> bool {
+        self.settle_managed_attention(thread, &reply);
         self.settle_managed_request(thread, &reply);
         let Some(state) = &mut self.managed else {
             return false;
@@ -301,6 +306,9 @@ impl ChatSurface {
         command: C,
         failure: koru_ai_wire::Failure,
     ) -> bool {
+        if self.failed_managed_attention(thread, &command, &failure) {
+            return true;
+        }
         if self.failed_managed_request(thread, &command, &failure) {
             return true;
         }
@@ -343,6 +351,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn maintain_managed(&mut self, now: Instant) -> bool {
+        self.maintain_managed_attention(now);
         self.maintain_managed_requests(now);
         let Some(reader) = &self.reader else {
             return false;

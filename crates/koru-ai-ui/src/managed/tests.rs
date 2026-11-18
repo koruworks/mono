@@ -56,6 +56,7 @@ pub(crate) fn opened() -> Opened {
         after: 0,
         settings: None,
         questions: vec![],
+        attention: Default::default(),
     }
 }
 
@@ -175,6 +176,7 @@ fn publish_replaces_live_identity_and_preserves_real_history_facts() {
         Refreshed {
             snapshot,
             messages: vec![published],
+            attention: Default::default(),
             questions: vec![],
             after: 4,
             feed: Feed {
@@ -209,6 +211,7 @@ fn poll_backpressure_and_old_settings_snapshot_are_safe() {
         Refreshed {
             snapshot,
             messages: vec![],
+            attention: Default::default(),
             questions: vec![],
             after: 0,
             feed: Feed {

@@ -19,6 +19,7 @@ pub(crate) struct Opened {
     pub after: u64,
     pub settings: Option<ProviderSettingsResponse>,
     pub questions: Vec<wire::Question>,
+    pub attention: crate::managed_attention::Page,
 }
 
 #[cfg(test)]
@@ -35,12 +36,14 @@ pub(crate) struct Refreshed {
     pub after: u64,
     pub feed: Feed,
     pub questions: Vec<wire::Question>,
+    pub attention: crate::managed_attention::Page,
 }
 pub(crate) struct Poll {
     pub thread: ChatId,
     pub after: u64,
     pub boot: Option<Uuid>,
     pub cursor: u64,
+    pub attention_after: Option<wire::OperationRef>,
 }
 
 pub(crate) struct Live {
@@ -56,6 +59,7 @@ pub(crate) struct Live {
 
 pub(crate) struct State {
     pub snapshot: wire::Snapshot,
+    pub attention: crate::managed_attention::State,
     pub questions: Vec<wire::Question>,
     pub requests_dirty: bool,
     pub messages: BTreeMap<u64, wire::Message>,
@@ -96,6 +100,7 @@ impl State {
             .collect();
         Self {
             snapshot: opened.snapshot.clone(),
+            attention: crate::managed_attention::State::new(std::mem::take(&mut opened.attention)),
             questions: std::mem::take(&mut opened.questions),
             requests_dirty: true,
             messages: std::mem::take(&mut opened.messages)
@@ -132,6 +137,7 @@ impl State {
             after: self.after,
             boot: self.boot,
             cursor: self.cursor,
+            attention_after: self.attention.next.clone(),
         })
     }
     pub fn settled(&mut self, now: Instant) {
@@ -193,6 +199,7 @@ impl State {
                     || a.details != b.details
             });
         self.snapshot = update.snapshot;
+        changed |= self.attention.ingest(update.attention);
         self.requests_dirty |= self.questions != update.questions;
         changed |= self.questions != update.questions;
         self.questions = update.questions;

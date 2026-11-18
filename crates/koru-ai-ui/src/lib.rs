@@ -124,6 +124,7 @@ mod layout_cache;
 mod link_card;
 mod live_markdown;
 mod managed;
+mod managed_attention;
 mod managed_questions;
 mod managed_surface;
 mod microphone;
@@ -324,6 +325,7 @@ enum Focus {
     /// says which option, box or action.
     Questions(ToolInvocationId),
     ManagedQuestion(uuid::Uuid),
+    ManagedAttention,
     WorkspaceSearch,
     /// *Save chat*'s name field.
     SaveName,
@@ -1365,6 +1367,9 @@ impl ChatSurface {
             self.give_back_sent(None);
         }
         if let Some(state) = &mut self.managed {
+            if state.attention.pending.is_some() {
+                state.attention.retry = Some(Instant::now());
+            }
             state.retry_send = state.pending_send.is_some();
             state.retry_at = Instant::now();
             state.polling = false;
@@ -2094,11 +2099,16 @@ impl ChatSurface {
         {
             return handled;
         }
+        if self.focus == Focus::ManagedAttention
+            && let Some(handled) = self.managed_attention_key(key, text, mods)
+        {
+            return handled;
+        }
         if self.focus == Focus::Composer
             && matches!(key, Key::Named(NamedKey::Tab))
             && mods.shift_key()
             && !koru_keys::is_chord(mods)
-            && self.step_managed_question(None, false)
+            && (self.focus_managed_attention(true) || self.step_managed_question(None, false))
         {
             return true;
         }
@@ -2855,6 +2865,9 @@ impl ChatSurface {
                 self.composer.set_focused(false);
             }
             return self.toggle_work(hit);
+        }
+        if let Some(handled) = self.managed_attention_press(x, y) {
+            return handled;
         }
         if let Some(handled) = self.managed_question_press(x, y) {
             return handled;
@@ -5765,6 +5778,11 @@ impl ChatSurface {
             .iter()
             .filter(|message| message.role == ChatRole::User)
             .flat_map(|message| doc_links::documents(&message.markdown))
+            .chain(
+                self.managed
+                    .iter()
+                    .flat_map(|state| state.attention.documents()),
+            )
             .filter(|document| {
                 !self.document_titles.contains_key(document)
                     && !self.titles_requested.contains(document)
@@ -8301,6 +8319,7 @@ impl ChatSurface {
         }
         self.message_layouts = messages;
         self.rebuild_managed_cards(width);
+        self.rebuild_managed_attention(width);
         self.position_conversation_items();
         if let Some(state) = &mut self.managed
             && !state.history_pending
@@ -8443,7 +8462,8 @@ impl ChatSurface {
                 top += notice.layout.height() + NOTICE_GAP;
             }
         }
-        self.place_managed_cards(None, top)
+        let top = self.place_managed_cards(None, top);
+        self.place_managed_attention(top)
     }
 
     /// A reply's work view, then its cards, from `top`; where they end.
@@ -8500,6 +8520,12 @@ impl ChatSurface {
             .chain(cards)
             .chain(work)
             .chain(notices)
+            .chain(
+                self.managed
+                    .iter()
+                    .filter(|state| state.attention.height > 0.0)
+                    .map(|state| state.attention.top + state.attention.height + CARD_GAP),
+            )
             .chain(
                 self.managed_cards
                     .values()
@@ -8864,6 +8890,7 @@ impl ChatSurface {
             );
         }
         self.draw_managed_cards(canvas, root);
+        self.draw_managed_attention(canvas, root);
         for tool in &self.tool_activity_layouts {
             let row = Rect::new(
                 area.x,
