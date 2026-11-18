@@ -2220,6 +2220,7 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::Delegate,
         MenuAction::Chats,
         MenuAction::Socials,
+        MenuAction::Divider,
         MenuAction::Move,
         MenuAction::Divider,
         MenuAction::ImportAs,

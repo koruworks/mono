@@ -3330,6 +3330,21 @@ fn moving_the_active_tab_to_the_right_splits_the_pane() {
     let _ = workspace;
 }
 
+/// The Move flyout's arms answer the arrow that names them: Right selects the
+/// Right arm, and so on — no need to step the highlight first.
+#[test]
+fn the_move_flyout_selects_its_arm_with_the_matching_arrow() {
+    let (mut v, workspace) = two_document_tabs();
+    assert!(v.open_new_tab_menu());
+    // 'm' is Move's mnemonic: it opens the flyout.
+    assert!(v.menu_key(&ch("m")));
+    assert!(v.submenu.is_some(), "the Move flyout is open");
+    // ArrowRight chooses the Right arm.
+    assert!(v.menu_key(&Key::Named(winit::keyboard::NamedKey::ArrowRight)));
+    assert_eq!(v.panes.iter_groups().count(), 2, "the pane split right");
+    let _ = workspace;
+}
+
 /// Drag a tab to the left edge of the view to create a vertical split with the
 /// dragged tab on the left.
 #[test]

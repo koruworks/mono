@@ -6205,6 +6205,28 @@ impl MainView {
         // move the highlight in a list the pointer is no longer looking at.
         if let Some((at, sub)) = self.submenu.clone() {
             let enabled = self.enabled_items(&sub);
+            // A directional submenu — Move's Top/Right/Bottom/Left — picks its
+            // arm with the matching arrow, so the arrow that names a side
+            // chooses it rather than stepping the highlight.
+            if let Some(side) = match key {
+                Key::Named(NamedKey::ArrowUp) => Some(koru_editor::SplitSide::Up),
+                Key::Named(NamedKey::ArrowRight) => Some(koru_editor::SplitSide::Right),
+                Key::Named(NamedKey::ArrowDown) => Some(koru_editor::SplitSide::Down),
+                Key::Named(NamedKey::ArrowLeft) => Some(koru_editor::SplitSide::Left),
+                _ => None,
+            } && let Some(i) = sub
+                .items()
+                .iter()
+                .position(|a| *a == MenuAction::MoveToSplit(side))
+                .filter(|&i| enabled.get(i) == Some(&true))
+            {
+                let action = sub.items()[i];
+                self.nested = None;
+                self.submenu = None;
+                self.menu = None;
+                self.run_menu_action(sub.subject, action);
+                return true;
+            }
             return match key {
                 // Esc and Left back out one level, leaving the parent standing
                 // with its own row still highlighted — the same "one Esc, one
