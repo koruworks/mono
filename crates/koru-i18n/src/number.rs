@@ -186,6 +186,9 @@ mod tests {
         assert_eq!(storage(Lang::En, 4_200_000), "4.2 MB");
         assert_eq!(storage(Lang::En, 999), "999 B");
         assert_eq!(storage(Lang::De, 4_200_000), "4,2 MB");
-        assert_ne!(storage(Lang::En, 100_000_000_000), bytes(Lang::En, 100_000_000_000));
+        assert_ne!(
+            storage(Lang::En, 100_000_000_000),
+            bytes(Lang::En, 100_000_000_000)
+        );
     }
 }

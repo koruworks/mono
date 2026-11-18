@@ -356,11 +356,10 @@ impl MainView {
         let (documents, nodes) = self.split_documents(nodes);
         if !documents.is_empty() {
             for document in &documents {
-                self.trashed_here.remove(&NodeId::from_uuid(document.as_uuid()));
+                self.trashed_here
+                    .remove(&NodeId::from_uuid(document.as_uuid()));
             }
-            self.ask_pane(koru_workspace_host::PaneRequest::PurgeDocuments(
-                documents,
-            ));
+            self.ask_pane(koru_workspace_host::PaneRequest::PurgeDocuments(documents));
             acted = true;
         }
         for node in nodes {

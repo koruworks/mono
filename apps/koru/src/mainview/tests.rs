@@ -15812,7 +15812,10 @@ fn delete_permanently_on_a_trashed_document_asks_the_shell_to_purge_it() {
 
     v.pending_delete_forever = Some((vec![node], false));
     assert!(v.drain_delete_forever(&mut workspace.ws), "asks first");
-    assert!(View::take_pane_request(&mut v).is_none(), "nothing before the yes");
+    assert!(
+        View::take_pane_request(&mut v).is_none(),
+        "nothing before the yes"
+    );
 
     v.pending_delete_forever = Some((vec![node], true));
     assert!(v.drain_delete_forever(&mut workspace.ws));
