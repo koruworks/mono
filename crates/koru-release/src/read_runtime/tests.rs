@@ -17,8 +17,13 @@ fn the_feature_is_on_for_the_read_worker_on_a_pinned_target() {
     );
     assert_eq!(
         features(&packages, &triples(&["x86_64-unknown-linux-gnu"])),
+        Some("koru-read-worker/recognition"),
+        "Linux x86_64 links the library from its TTS-free archive"
+    );
+    assert_eq!(
+        features(&packages, &triples(&["aarch64-unknown-linux-gnu"])),
         None,
-        "Linux has no archive"
+        "Linux aarch64 has no TTS-free archive"
     );
     assert_eq!(
         features(&packages, &triples(&["aarch64-apple-darwin"])),
@@ -62,4 +67,31 @@ fn a_refusal_says_what_to_run() {
     assert!(other.contains("ORT_LIB_PATH"));
     assert_eq!(require_canonical(library, &Linked::Canonical), Ok(()));
     assert!(notice(library, &Linked::Canonical).is_none());
+}
+
+/// **What a release builds on this host is what the table says**: Windows x64
+/// and Linux x86_64 turn recognition on and point the build at the fetched
+/// library.
+#[test]
+fn this_host_builds_recognition_where_a_library_is_pinned() {
+    let packages = ["koru", "koru-read-worker"];
+    let pinned = cfg!(all(
+        any(target_os = "windows", target_os = "linux"),
+        target_arch = "x86_64"
+    ));
+    assert_eq!(
+        features_for_this_build(&packages).is_some(),
+        pinned,
+        "recognition follows the pin"
+    );
+    if pinned {
+        let library = artifacts::library_for_this_build().unwrap();
+        assert_eq!(library_for_triple(library.target), Some(library));
+        if std::env::var_os(artifacts::ORT_LIB_PATH).is_none() {
+            assert_eq!(
+                lib_dir(Path::new("repo")),
+                Some(library.lib_dir(Path::new("repo")))
+            );
+        }
+    }
 }

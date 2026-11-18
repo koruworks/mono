@@ -198,8 +198,10 @@ pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
 /// pretends. This arm is deleted when voice lands on Linux, together with the
 /// Linux arm of `koru_update::ALL_EXE`.
 ///
-/// **It does ship the read worker**, which is pure Rust: text-layer PDFs and
-/// plain-text files are read on Linux, and only recognition is absent there.
+/// **It does ship the read worker**, with recognition on x86_64: its ONNX
+/// Runtime comes from upstream's TTS-free Linux archive, which the reader pins
+/// on its own (`read_runtime`), so reading pictures and scans needs no voice
+/// worker.
 #[cfg(target_os = "linux")]
 pub(crate) const CHANNEL_BINARIES: &[(&str, &str)] = &[
     ("koru", koru_update::APP_EXE),

@@ -93,6 +93,18 @@ jobs:
       - name: Fetch fonts
         if: steps.fonts.outputs.cache-hit != 'true'
         run: bash scripts/setup/fetch-fonts.sh
+      # **The read worker's recognition links ONNX Runtime** from upstream's
+      # TTS-free Linux sherpa-onnx archive, which the fetch script places and
+      # verifies, extracting the one library `koru-release` points
+      # ORT_LIB_PATH at. Linux builds no voice from it (D4).
+      # actions/cache v6.1.0
+      - id: sherpa
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: third-party/sherpa-onnx/1.13.6
+          key: sherpa-no-tts-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup/fetch-voice-runtime.sh') }}
+      - name: Fetch the reader's ONNX Runtime
+        run: bash scripts/setup/fetch-voice-runtime.sh
       # **No notes, no release**, found before anything is built. A nightly's
       # are the one releases/nightly/*.toml added since the tag's previous
       # position (an all-zero `before` is the tag's first push); a stable
@@ -152,6 +164,25 @@ jobs:
           tar -xzf "${archives[0]}" -C "$smoke"
           timeout 30 "$smoke/koru" --help >/dev/null
           timeout 30 "$smoke/koru-agent" --help >/dev/null
+      # **The glibc floor is 2.35** (Ubuntu 22.04, TECHNICAL.final.md): no
+      # packaged binary may ask for a newer symbol version. Building on
+      # ubuntu-22.04 is what keeps it there; this proves it, including for the
+      # statically linked ONNX Runtime the read worker carries.
+      - name: Check the glibc floor
+        run: |
+          set -euo pipefail
+          smoke="$RUNNER_TEMP/koru-package"
+          status=0
+          while IFS= read -r -d '' binary; do
+            [ "$(head -c 4 "$binary" | tail -c 3)" = ELF ] || continue
+            newest="$(objdump -T "$binary" | grep -oE 'GLIBC_[0-9]+\.[0-9]+(\.[0-9]+)?' | sed 's/^GLIBC_//' | sort -V | tail -n 1 || true)"
+            echo "${binary#"$smoke"/}: GLIBC_${newest:-none}"
+            if [ -n "$newest" ] && [ "$(printf '%s\n2.35\n' "$newest" | sort -V | tail -n 1)" != 2.35 ]; then
+              echo "::error::${binary#"$smoke"/} needs GLIBC_$newest, newer than the 2.35 floor"
+              status=1
+            fi
+          done < <(find "$smoke" -type f -perm -u+x -print0)
+          exit "$status"
       # actions/attest-build-provenance v4.2.2
       - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
         with:

@@ -281,16 +281,16 @@ WORKSPACE_EXCLUDES=()
 builds_voice_worker || WORKSPACE_EXCLUDES=(--exclude koru-voice-worker)
 
 ensure_voice_runtime() {
-  # Status 3 is the script saying this platform has no voice runtime
-  # provisioned (Linux until its voice rung). It has said so in one line;
-  # nothing here will build voice, so the CMake and libclang checks below
-  # would only fail a command that does not need them.
-  local fetched=0
-  bash scripts/setup/fetch-voice-runtime.sh || fetched=$?
-  if [ "$fetched" = 3 ]; then
+  bash scripts/setup/fetch-voice-runtime.sh || return
+  # **Linux places the reader's library, not a voice runtime.** The script
+  # placed upstream's TTS-free Linux archive and extracted the ONNX Runtime
+  # library the read worker's recognition links; nothing here builds voice
+  # (D4a), so the CMake and libclang checks below would only fail a command
+  # that does not need them.
+  if ! builds_voice_worker; then
+    export ORT_LIB_PATH="${ORT_LIB_PATH:-$PWD/third-party/sherpa-onnx/1.13.6/sherpa-onnx-v1.13.6-linux-x64-static-no-tts-lib/lib}"
     return 0
   fi
-  [ "$fetched" = 0 ] || return "$fetched"
   export SHERPA_ONNX_ARCHIVE_DIR="$PWD/third-party/sherpa-onnx/1.13.6"
   if ! command -v cmake >/dev/null 2>&1; then
     echo "[Koru] voice build needs CMake. Install it, then retry." >&2

@@ -24,12 +24,14 @@ description = "Turns PaddleOCR's PP-OCRv6 small models, run by oar-ocr on ONNX R
 # order of recognized lines and the confidence, and the pinned ONNX Runtime
 # library.
 #
-# **Only Windows x64 and macOS can turn it on.** The ONNX Runtime 1.27.1 static
-# library this tree pins comes from the sherpa-onnx archive voice already
-# fetches, which exists for those targets only. The runtime dependencies are
-# declared for those targets alone, so `runtime` on Linux or Windows on ARM
-# compiles to the same nothing as `runtime` off, and the worker there reads
-# text layers without recognition.
+# **Only Windows x64, Linux x86_64 and macOS can turn it on.** The ONNX
+# Runtime 1.27.1 static library this tree pins comes from upstream's TTS-free
+# sherpa-onnx archive for the target (voice's own archive on Windows and
+# macOS; on Linux x86_64 an archive the reader alone takes it from until Linux
+# voice lands, `src/artifacts.rs`), and those archives exist for these targets
+# only. The runtime dependencies are declared for these targets alone, so
+# `runtime` on Windows on ARM or Linux aarch64 compiles to the same nothing as
+# `runtime` off, and the worker there reads text layers without recognition.
 [features]
 default = []
 runtime = ["dep:oar-ocr", "dep:ort", "dep:image", "dep:rayon"]
@@ -50,7 +52,7 @@ koru-read = { path = "../koru-read" }
 # at run time. `rayon` bounds the thread pool `oar-ocr` does its own pre- and
 # post-processing on, which otherwise takes every core. `image` only names the
 # `RgbImage` `oar-ocr` takes.
-[target.'cfg(any(all(target_os = "windows", target_arch = "x86_64"), target_os = "macos"))'.dependencies]
+[target.'cfg(any(all(target_os = "windows", target_arch = "x86_64"), all(target_os = "linux", target_arch = "x86_64"), target_os = "macos"))'.dependencies]
 oar-ocr = { version = "=0.10.2", default-features = false, optional = true }
 ort = { version = "=2.0.0-rc.13", default-features = false, features = ["std", "ndarray", "api-27"], optional = true }
 image = { version = "0.25", default-features = false, optional = true }

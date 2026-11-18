@@ -28,7 +28,8 @@ path = "src/lib.rs"
 #
 # It turns on `koru-read-paddle`'s `runtime`: `oar-ocr` on `ort`, linked
 # statically against the ONNX Runtime library `ORT_LIB_PATH` names. That
-# library is extracted from voice's pinned sherpa-onnx archive by
+# library is extracted from a pinned TTS-free sherpa-onnx archive (voice's own,
+# except on Linux x86_64, where voice links nothing yet) by
 # `scripts/setup/fetch-voice-runtime.*` and nowhere else, so a binary linked
 # with the feature on a machine that never ran that script fails to link — and
 # `cargo test --workspace` on a fresh clone must not. So the feature is off for
@@ -39,8 +40,8 @@ path = "src/lib.rs"
 # `cargo check` with it on needs no library at all: `ort-sys` defers the
 # missing library to the link.
 #
-# On a target with no pinned library (Linux, Windows on ARM) the feature
-# compiles to nothing more than it is off: the worker reads text layers and
+# On a target with no pinned library (Windows on ARM, Linux aarch64) the
+# feature compiles to nothing more than it is off: the worker reads text layers and
 # reports `recognition: false`.
 [features]
 default = []

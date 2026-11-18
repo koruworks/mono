@@ -11,7 +11,7 @@
 # assets\fonts\*.ttf follows through koru.bat fonts.
 #
 #   scripts\setup\fetch-voice-runtime.ps1            this host's target
-#   scripts\setup\fetch-voice-runtime.ps1 -All       all three shipped targets
+#   scripts\setup\fetch-voice-runtime.ps1 -All       every pinned target
 #   scripts\setup\fetch-voice-runtime.ps1 -Verify    check what is already here
 #
 # Then, for a benchmark or a release build:
@@ -40,12 +40,18 @@ $Base = "https://github.com/k2-fsa/sherpa-onnx/releases/download/v$Version"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $Dest = Join-Path $Root "third-party\sherpa-onnx\$Version"
 
-# The same three columns as koru_voice_sherpa::artifacts::NAMES, and a test
-# there fails if the file names drift from what sherpa-onnx-sys looks for.
+# The first three rows are the same three columns as
+# koru_voice_sherpa::artifacts::NAMES, and a test there fails if the file names
+# drift from what sherpa-onnx-sys looks for. The Linux row is the reader's
+# alone until Linux voice lands (docs/features/linux/TECHNICAL.final.md, D4),
+# pinned in koru_read_paddle::artifacts::READER_ARCHIVES, and a test there
+# fails if this copy drifts. It is placed only with -All: this script runs on
+# Windows.
 #
-# All three are upstream's TTS-free ("no-tts") archives: no espeak-ng, ucd or
+# All four are upstream's TTS-free ("no-tts") archives: no espeak-ng, ucd or
 # piper_phonemize, so no GPL-3.0 eSpeak NG in what links them
-# (third-party/patches/sherpa-onnx.md).
+# (third-party/patches/sherpa-onnx.md; the Linux one verified 2026-11-17,
+# licensing/THIRD-PARTY.md).
 $Artifacts = @(
     [pscustomobject]@{
         Name = "sherpa-onnx-v$Version-win-x64-static-MT-Release-no-tts-lib.tar.bz2"
@@ -64,6 +70,12 @@ $Artifacts = @(
         Sha  = 'adcc1de32d99410416a98d4f880ee2e2ef4343fad8b627e58d1cd1a5bd6d16b8'
         Size = 18413779
         Host = 'macos-x86_64'
+    },
+    [pscustomobject]@{
+        Name = "sherpa-onnx-v$Version-linux-x64-static-no-tts-lib.tar.bz2"
+        Sha  = 'b6d61f8836ea247cf529ea411e12c9fc35314f0217278a3d61195672a4778e6a'
+        Size = 21170001
+        Host = 'linux-x86_64'
     }
 )
 
@@ -168,7 +180,7 @@ function Place-Artifact {
 # launchers point ORT_LIB_PATH at its lib\. One ONNX Runtime in the tree, from
 # one pinned archive. The same row as koru_read_paddle::artifacts::ONNXRUNTIME,
 # and a test there fails if they drift. macOS is pinned when a Mac build first
-# links it; Linux and Windows on ARM have no archive.
+# links it; Windows on ARM and Linux aarch64 have no TTS-free archive.
 $OrtLibraries = @(
     [pscustomobject]@{
         Archive = "sherpa-onnx-v$Version-win-x64-static-MT-Release-no-tts-lib"
@@ -176,6 +188,13 @@ $OrtLibraries = @(
         Sha     = 'fc1f5722dd17cbe8c2131cad2b9da6e004392d45bbe71560ff5e54c9dee26f24'
         Size    = 916804662
         Host    = 'windows-x86_64'
+    },
+    [pscustomobject]@{
+        Archive = "sherpa-onnx-v$Version-linux-x64-static-no-tts-lib"
+        File    = 'libonnxruntime.a'
+        Sha     = '9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea'
+        Size    = 109507520
+        Host    = 'linux-x86_64'
     }
 )
 

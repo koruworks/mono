@@ -9,7 +9,7 @@
 //! names. That library is one file inside voice's pinned sherpa-onnx archive,
 //! extracted and verified by `scripts/setup/fetch-voice-runtime.*`
 //! (`koru_read_paddle::artifacts`). So, for a host with a pinned library
-//! (Windows x64 today):
+//! (Windows x64 and Linux x86_64 today):
 //!
 //! - the package build turns the feature on and, unless the environment
 //!   already names one, points `ORT_LIB_PATH` at the fetched library
@@ -20,9 +20,15 @@
 //!   an official release refuses any bytes but the pinned ones, a local one
 //!   says what it linked — the rule `native.rs` applies to sherpa's archive.
 //!
-//! A host with no pinned library (macOS until a Mac build pins it, Linux)
-//! builds the worker without recognition: text layers only, and the Store is
-//! told `recognition: false`.
+//! A host with no pinned library (macOS until a Mac build pins it) builds the
+//! worker without recognition: text layers only, and the Store is told
+//! `recognition: false`.
+//!
+//! **Linux x86_64 recognizes without voice.** Its library comes from the
+//! TTS-free archive the reader pins on its own
+//! (`koru_read_paddle::artifacts::READER_ARCHIVES`), so this check runs there
+//! while `native.rs`, which checks the archive voice linked, has nothing to
+//! check: Linux still ships no voice worker (`package.rs`).
 
 use std::path::{Path, PathBuf};
 

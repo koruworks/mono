@@ -1,7 +1,7 @@
 Component: ONNX Runtime
 Version: 1.27.1 (static build from csukuangfj/onnxruntime-libs)
 Source: https://github.com/microsoft/onnxruntime/tree/v1.27.1
-Files: koru-agent, koru-com-notification, koru-voice-worker (statically linked, through sherpa-onnx 1.13.6); koru-read-worker on Windows x64 (the same static library from the same archive, linked through ort 2.0.0-rc.13 for recognition)
+Files: koru-agent, koru-com-notification, koru-voice-worker (statically linked, through sherpa-onnx 1.13.6); koru-read-worker on Windows x64 and Linux x86_64 (the same static library, linked through ort 2.0.0-rc.13 for recognition: on Windows from the archive voice links, on Linux from upstream's TTS-free sherpa-onnx 1.13.6 linux-x64 archive, which voice does not link yet)
 License: MIT
 Note: ONNX Runtime's own third-party notices follow its license.
 Platforms: windows, macos, linux
@@ -446,6 +446,8 @@ Copyright (c) Facebook, Inc. and Microsoft Corporation. All rights reserved.
 _____
 
 Eigen
+
+Source: https://gitlab.com/libeigen/eigen
 
 MPL v2.0
 Mozilla Public License Version 2.0
