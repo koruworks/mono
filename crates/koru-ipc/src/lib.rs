@@ -166,6 +166,11 @@ pub const DELEGATE: &str = "koru-delegate";
 /// [`STORE`] gives.
 pub const READ: &str = "koru-read";
 
+/// Bots engine authority, registered workers, and its gateway workspace door.
+pub const BOTS: &str = "koru-bots";
+pub const BOT_WORKERS: &str = "koru-bot-workers";
+pub const BOT_WORKSPACE: &str = "koru-bot-ws";
+
 /// Every service token this crate can name, as one table.
 ///
 /// **It exists so the length budget can be tested rather than remembered.** A
@@ -190,4 +195,7 @@ pub const SERVICES: &[&str] = &[
     VOICE,
     DELEGATE,
     READ,
+    BOTS,
+    BOT_WORKERS,
+    BOT_WORKSPACE,
 ];

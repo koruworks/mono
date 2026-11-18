@@ -8,6 +8,7 @@ fn bootstrap(
     koru_network_bridge::LaunchBootstrap {
         device_id: None,
         bot_delegate: None,
+        bots_engine: None,
         launch_id: "launch".into(),
         bridge_version: koru_network_bridge::BRIDGE_VERSION,
         channel: koru_channel::segment().into(),

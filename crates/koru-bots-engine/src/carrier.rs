@@ -5,7 +5,7 @@
 
 use crate::{
     Database, Error,
-    authority::{self, Issued, Mint, Worker},
+    authority::{self, Binding, Descriptor, Issued, Mint, Secret, Worker},
     capacity::{Admission, Reservation},
     messages::{Delivery, Resume, Turn},
 };
@@ -29,6 +29,27 @@ pub enum Command {
         session: Uuid,
         resume: Resume,
         budget: usize,
+    },
+    Catalog {
+        reservation: Reservation,
+        session: Uuid,
+        secret: Secret,
+    },
+    Bind {
+        reservation: Reservation,
+        session: Uuid,
+        secret: Secret,
+        command: Uuid,
+        descriptor: Descriptor,
+    },
+    OwnTool {
+        reservation: Reservation,
+        session: Uuid,
+        secret: Secret,
+        binding: Uuid,
+        door_call: Uuid,
+        tool: String,
+        arguments: Vec<u8>,
     },
     Accepted {
         reservation: Reservation,
@@ -54,6 +75,9 @@ pub enum Reply {
     },
     Issued(Issued),
     Delivery(Option<Delivery>),
+    CatalogGrant(serde_json::Value),
+    Bound(Binding),
+    Tool(serde_json::Value),
     Done,
     Refused(Error),
 }
@@ -93,6 +117,9 @@ fn execute(
         Command::Started { reservation }
         | Command::Mint { reservation, .. }
         | Command::Claim { reservation, .. }
+        | Command::Catalog { reservation, .. }
+        | Command::Bind { reservation, .. }
+        | Command::OwnTool { reservation, .. }
         | Command::Accepted { reservation, .. }
         | Command::Unknown { reservation, .. }
         | Command::Retired { reservation, .. } => *reservation,
@@ -107,6 +134,39 @@ fn execute(
     match command {
         Command::Poll => unreachable!(),
         Command::Started { .. } => admission.started(reservation, who.incarnation)?,
+        Command::Catalog {
+            session, secret, ..
+        } => {
+            check_session(db, admission, who, reservation, session, &secret)?;
+            return db
+                .session_catalog_grant(who, &secret)
+                .map(Reply::CatalogGrant);
+        }
+        Command::Bind {
+            session,
+            secret,
+            command,
+            descriptor,
+            ..
+        } => {
+            check_session(db, admission, who, reservation, session, &secret)?;
+            return db
+                .bind_descriptor(who, &secret, &descriptor, command, now)
+                .map(Reply::Bound);
+        }
+        Command::OwnTool {
+            session,
+            secret,
+            binding,
+            door_call,
+            tool,
+            arguments,
+            ..
+        } => {
+            check_session(db, admission, who, reservation, session, &secret)?;
+            let call = authority::Call::parse(door_call, tool, &arguments)?;
+            return crate::own_tools::execute(db, &secret, binding, &call).map(Reply::Tool);
+        }
         Command::Mint { request, .. } => {
             if request.thread != reservation.key.thread {
                 return Err(Error::NotAllowed);
@@ -178,6 +238,20 @@ fn execute(
         }
     }
     Ok(Reply::Done)
+}
+
+fn check_session(
+    db: &Database,
+    admission: &Admission,
+    who: Worker,
+    reservation: Reservation,
+    session: Uuid,
+    secret: &Secret,
+) -> Result<(), Error> {
+    if admission.provider(reservation, who.incarnation)? != Some(session) {
+        return Err(Error::StaleTurn);
+    }
+    db.check_session(who, reservation.key.thread, session, secret)
 }
 
 fn check_turn(

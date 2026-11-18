@@ -124,6 +124,7 @@ impl Gateway {
         let bootstrap = LaunchBootstrap {
             device_id: None,
             bot_delegate: None,
+            bots_engine: None,
             launch_id: launch_id.clone(),
             bridge_version: BRIDGE_VERSION,
             channel: segment().into(),

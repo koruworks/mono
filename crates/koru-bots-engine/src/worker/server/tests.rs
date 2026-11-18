@@ -10,6 +10,27 @@ fn authority_requires_the_whole_secret() {
 }
 
 #[test]
+fn failed_stop_revocation_does_not_acknowledge_or_dispatch_a_stop() {
+    let mut db = Database::in_memory().unwrap();
+    db.connection
+        .execute_batch("ALTER TABLE credentials RENAME TO temporarily_unavailable;")
+        .unwrap();
+    assert!(matches!(
+        stop_bot(&mut db, Some(Uuid::new_v4()), || panic!(
+            "revocation must commit first"
+        )),
+        Reply::Refused(Error::StorageUnavailable)
+    ));
+    db.connection
+        .execute_batch("ALTER TABLE temporarily_unavailable RENAME TO credentials;")
+        .unwrap();
+    assert!(matches!(
+        stop_bot(&mut db, Some(Uuid::new_v4()), || Ok(())),
+        Reply::Queued
+    ));
+}
+
+#[test]
 fn bootstrap_debug_contains_neither_root_nor_authority() {
     let bootstrap = Bootstrap {
         launch_id: Uuid::new_v4(),

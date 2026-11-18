@@ -6,10 +6,39 @@ pub(crate) mod arguments;
 /// it forwards. Provider JSON never supplies its own argument digest.
 #[derive(Clone)]
 pub struct Call {
+    descriptor: Descriptor,
+    arguments: serde_json::Value,
+}
+
+/// Only the registered door and gateway construct descriptors. They cross the
+/// private authority channel without sending page content to the engine.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Descriptor {
     door_call: Uuid,
     tool: String,
     argument_digest: [u8; 32],
-    arguments: serde_json::Value,
+}
+impl Descriptor {
+    pub fn validate(&self) -> Result<(), Error> {
+        if self.door_call.is_nil()
+            || self.tool.is_empty()
+            || self.tool.len() > 256
+            || self.tool.chars().any(char::is_control)
+        {
+            Err(Error::InvalidRequest)
+        } else {
+            Ok(())
+        }
+    }
+    pub fn tool(&self) -> &str {
+        &self.tool
+    }
+}
+impl std::fmt::Debug for Descriptor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CallDescriptor(<redacted>)")
+    }
 }
 impl Call {
     /// Parse once, rejecting duplicate keys at every nesting level. Forward
@@ -48,23 +77,28 @@ impl Call {
         hash.update((canonical.len() as u32).to_be_bytes());
         hash.update(canonical);
         Ok(Self {
-            door_call,
-            tool,
-            argument_digest: hash.finalize().into(),
+            descriptor: Descriptor {
+                door_call,
+                tool,
+                argument_digest: hash.finalize().into(),
+            },
             arguments,
         })
+    }
+    pub fn descriptor(&self) -> &Descriptor {
+        &self.descriptor
     }
     pub fn arguments(&self) -> &serde_json::Value {
         &self.arguments
     }
     pub fn door_call(&self) -> Uuid {
-        self.door_call
+        self.descriptor.door_call
     }
     pub fn tool(&self) -> &str {
-        &self.tool
+        &self.descriptor.tool
     }
     pub fn argument_digest(&self) -> [u8; 32] {
-        self.argument_digest
+        self.descriptor.argument_digest
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,6 +109,7 @@ pub struct Binding {
 
 /// The boundary evaluates both grants as restrictions. Returning a snapshot
 /// does not authorize a resource without that check. No content in Debug.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Resolution {
     pub scope: String,
     pub bot: Uuid,
@@ -82,6 +117,11 @@ pub struct Resolution {
     pub binding: Binding,
     pub captured_grant: serde_json::Value,
     pub current_grant: serde_json::Value,
+}
+impl std::fmt::Debug for Resolution {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CallResolution(<redacted>)")
+    }
 }
 
 fn open(
@@ -116,7 +156,11 @@ fn open(
     })
 }
 
-fn existing(connection: &Connection, session: Uuid, call: &Call) -> Result<Option<Binding>, Error> {
+fn existing(
+    connection: &Connection,
+    session: Uuid,
+    call: &Descriptor,
+) -> Result<Option<Binding>, Error> {
     let row:Option<(String,String,u64,String,Vec<u8>,Vec<u8>)>=connection.query_row("SELECT binding,turn,generation,tool,argument_digest,details FROM tool_calls WHERE session=?1 AND door_call=?2",params![session.to_string(),call.door_call.to_string()],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?,r.get(5)?))).optional()?;
     row.map(|(binding, turn, generation, tool, digest, details)| {
         if tool != call.tool || digest.as_slice() != call.argument_digest {
@@ -147,6 +191,18 @@ impl Database {
         command: Uuid,
         now: i64,
     ) -> Result<Binding, Error> {
+        self.bind_descriptor(who, secret, call.descriptor(), command, now)
+    }
+
+    pub fn bind_descriptor(
+        &mut self,
+        who: Worker,
+        secret: &Secret,
+        call: &Descriptor,
+        command: Uuid,
+        now: i64,
+    ) -> Result<Binding, Error> {
+        call.validate()?;
         if command.is_nil()
             || call.door_call.is_nil()
             || call.tool.is_empty()
@@ -204,6 +260,16 @@ impl Database {
         binding: Uuid,
         call: &Call,
     ) -> Result<Resolution, Error> {
+        self.resolve_descriptor(secret, binding, call.descriptor())
+    }
+
+    pub fn resolve_descriptor(
+        &mut self,
+        secret: &Secret,
+        binding: Uuid,
+        call: &Descriptor,
+    ) -> Result<Resolution, Error> {
+        call.validate()?;
         let tx = self.connection.transaction()?;
         let identity = identity(&tx, secret)?;
         let prior = existing(&tx, identity.session, call)?

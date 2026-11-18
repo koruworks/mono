@@ -2,6 +2,48 @@
 use super::*;
 use serde_json::json;
 
+#[test]
+fn private_descriptor_contains_no_arguments_and_resolution_checks_its_exact_digest() {
+    let mut f = Fixture::new();
+    let issued = f.mint();
+    f.claim(issued.session);
+    let secret = issued.secret.unwrap();
+    let call = Call::parse(
+        Uuid::new_v4(),
+        "read_document".into(),
+        br#"{"page":"private-marker"}"#,
+    )
+    .unwrap();
+    let bytes = serde_json::to_vec(call.descriptor()).unwrap();
+    assert!(
+        !String::from_utf8(bytes.clone())
+            .unwrap()
+            .contains("private-marker")
+    );
+    let descriptor: Descriptor = serde_json::from_slice(&bytes).unwrap();
+    let binding =
+        f.db.bind_descriptor(f.worker, &secret, &descriptor, Uuid::new_v4(), 4)
+            .unwrap();
+    assert_eq!(
+        f.db.resolve_descriptor(&secret, binding.id, &descriptor)
+            .unwrap()
+            .binding,
+        binding
+    );
+    let changed = Call::parse(
+        call.door_call(),
+        call.tool().into(),
+        br#"{"page":"different"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        f.db.resolve_descriptor(&secret, binding.id, changed.descriptor())
+            .err(),
+        Some(Error::BindingConflict)
+    );
+    assert!(!format!("{descriptor:?}").contains("read_document"));
+}
+
 struct Fixture {
     db: Database,
     worker: Worker,

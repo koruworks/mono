@@ -98,6 +98,10 @@ pub struct LaunchBootstrap {
     pub device_id: Option<String>,
     #[serde(default)]
     pub bot_delegate: Option<BotDelegateAuthority>,
+    /// Separate engine/gateway control capability. Never handed to providers
+    /// or Bot workers, and absent when the engine feature is disabled.
+    #[serde(default)]
+    pub bots_engine: Option<BotEngineAuthority>,
     pub launch_id: String,
     pub bridge_version: u32,
     pub channel: String,
@@ -109,6 +113,22 @@ pub struct LaunchBootstrap {
     /// workspace-lifecycle operation rather than guessing a secret.
     #[serde(default)]
     pub session_lifecycle: Option<SessionLifecycleAuthority>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BotEngineAuthority(String);
+impl BotEngineAuthority {
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+impl fmt::Debug for BotEngineAuthority {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("BotEngineAuthority([REDACTED])")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -230,6 +250,7 @@ mod tests {
         LaunchBootstrap {
             device_id: None,
             bot_delegate: None,
+            bots_engine: None,
             launch_id: uuid::Uuid::new_v4().to_string(),
             bridge_version: BRIDGE_VERSION,
             channel: "internal-debug".into(),
@@ -252,6 +273,18 @@ mod tests {
         let mut current = legacy.clone();
         current.device_id = Some(uuid::Uuid::new_v4().to_string());
         assert_eq!(legacy.identity(), current.identity());
+    }
+
+    #[test]
+    fn engine_control_authority_is_optional_redacted_and_not_bridge_identity() {
+        let mut current = bootstrap();
+        current.bots_engine = Some(BotEngineAuthority::new("private-engine-capability".into()));
+        assert!(!format!("{current:?}").contains("private-engine-capability"));
+        let mut encoded = serde_json::to_value(&current).unwrap();
+        encoded.as_object_mut().unwrap().remove("bots_engine");
+        let old: LaunchBootstrap = serde_json::from_value(encoded).unwrap();
+        assert!(old.bots_engine.is_none());
+        assert_eq!(old.identity(), current.identity());
     }
 
     fn principal() -> NetworkPrincipal {

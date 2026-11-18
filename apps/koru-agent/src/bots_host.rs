@@ -17,6 +17,23 @@ struct Child {
 }
 
 static BOTS: OnceLock<WorkerHandle<Child>> = OnceLock::new();
+static AUTHORITY: OnceLock<String> = OnceLock::new();
+
+/// Per-Agent lifetime, shared privately with its gateway across child restarts.
+/// A provider or Bot-worker bootstrap never receives this capability.
+pub fn authority() -> Option<String> {
+    koru_bots_engine::ENABLED.then(|| {
+        AUTHORITY
+            .get_or_init(|| {
+                format!(
+                    "{}{}",
+                    uuid::Uuid::new_v4().simple(),
+                    uuid::Uuid::new_v4().simple()
+                )
+            })
+            .clone()
+    })
+}
 
 pub fn start(paths: &Paths) -> Result<(), koru_bots_engine::Error> {
     if !koru_bots_engine::ENABLED {
@@ -25,6 +42,7 @@ pub fn start(paths: &Paths) -> Result<(), koru_bots_engine::Error> {
     let root = paths.root().to_path_buf();
     let segment = crate::segment().to_owned();
     let endpoint = worker::endpoint(&root, &segment)?;
+    let authority = authority().ok_or(koru_bots_engine::Error::EngineDisabled)?;
     let mut spec = WorkerSpec::new(
         "bots",
         move |_| {
@@ -32,11 +50,7 @@ pub fn start(paths: &Paths) -> Result<(), koru_bots_engine::Error> {
                 launch_id: uuid::Uuid::new_v4(),
                 segment: segment.clone(),
                 root: root.clone(),
-                authority: format!(
-                    "{}{}",
-                    uuid::Uuid::new_v4().simple(),
-                    uuid::Uuid::new_v4().simple()
-                ),
+                authority: authority.clone(),
             };
             Ok(LaunchPlan {
                 args: vec!["--root".into(), root.clone().into_os_string()],

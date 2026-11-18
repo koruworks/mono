@@ -5810,6 +5810,7 @@ dependencies = [
  "koru-artifact-core",
  "koru-artifact-sqlite",
  "koru-artifact-wire",
+ "koru-bots-engine",
  "koru-channel",
  "koru-connections",
  "koru-delegate-api",
@@ -6007,6 +6008,7 @@ dependencies = [
 name = "koru-bots-engine"
 version = "0.0.3"
 dependencies = [
+ "axum",
  "blake3",
  "koru-agent-worker",
  "koru-bot-client-wire",
@@ -6016,10 +6018,12 @@ dependencies = [
  "koru-session-runtime",
  "koru-settings",
  "koru-sqlite",
+ "rmcp",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tokio",
  "uuid",
  "windows-sys 0.59.0",
 ]

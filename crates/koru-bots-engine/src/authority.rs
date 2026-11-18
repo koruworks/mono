@@ -3,7 +3,7 @@
 //! Engine-owned session credentials and immutable call identity. Only trusted
 //! carrier adapters construct Worker; no provider request chooses that identity.
 pub(crate) mod calls;
-pub use calls::{Binding, Call, Resolution};
+pub use calls::{Binding, Call, Descriptor, Resolution};
 
 use crate::{
     Database, Error,
@@ -141,6 +141,23 @@ fn identity(connection: &Connection, secret: &Secret) -> Result<Identity, Error>
 }
 
 impl Database {
+    pub(crate) fn check_session(
+        &self,
+        who: Worker,
+        thread: Uuid,
+        session: Uuid,
+        secret: &Secret,
+    ) -> Result<(), Error> {
+        let identity = identity(&self.connection, secret)?;
+        if identity.bot != who.bot
+            || identity.worker != who.incarnation
+            || identity.thread != thread
+            || identity.session != session
+        {
+            return Err(Error::Unauthenticated);
+        }
+        Ok(())
+    }
     pub fn session_head(&self, who: Worker, thread: Uuid) -> Result<Option<Uuid>, Error> {
         membership(&self.connection, who, thread)?;
         head(&self.connection, who, thread)

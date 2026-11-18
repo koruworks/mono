@@ -227,6 +227,7 @@ pub struct Gateway {
     state: Arc<GatewayState>,
     listener: tokio::net::TcpListener,
     discovery: tokio::task::JoinHandle<()>,
+    bots_workspace: Option<crate::bots_workspace::Server>,
     bridge_forwarders: Option<(tokio::task::JoinHandle<()>, tokio::task::JoinHandle<()>)>,
     readiness: Readiness,
 }
@@ -290,6 +291,7 @@ impl Gateway {
             state,
             listener,
             discovery,
+            bots_workspace,
             bridge_forwarders,
             readiness: _,
         } = self;
@@ -306,6 +308,9 @@ impl Gateway {
             .await
             .map_err(|error| error.to_string());
         discovery.abort();
+        if let Some(server) = bots_workspace {
+            server.stop().await;
+        }
         if let Some((sessions, connections)) = bridge_forwarders {
             sessions.abort();
             connections.abort();
@@ -392,9 +397,10 @@ pub async fn start(config: GatewayConfig) -> Result<Gateway, String> {
             .await
             .map_err(|error| error.to_string())?;
         let address = listener.local_addr().map_err(|error| error.to_string())?;
-        Ok::<_, String>((listener, address))
+        let bots_workspace = crate::bots_workspace::start(&config, &state)?;
+        Ok::<_, String>((listener, address, bots_workspace))
     };
-    let (listener, address) = match listen.await {
+    let (listener, address, bots_workspace) = match listen.await {
         Ok(listening) => listening,
         Err(error) => {
             state.stop_workers();
@@ -452,6 +458,7 @@ pub async fn start(config: GatewayConfig) -> Result<Gateway, String> {
         state,
         listener,
         discovery,
+        bots_workspace,
         bridge_forwarders,
         readiness,
     })

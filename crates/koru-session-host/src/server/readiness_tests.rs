@@ -4,8 +4,8 @@ use super::*;
 use koru_session_protocol::{CapabilitySet, ExecutableAvailability as A, ProviderKind, capability};
 use koru_session_runtime::providers::{
     AgentCapabilities, CompatibilityProbe, DelegationFacts, ManagedProvider,
-    ManagedProviderFactory, ManagedProviderRequest, ProbeLimits, ProviderDiagnostic,
-    ProviderFailure, ProviderReadinessCache, ProviderStage,
+    ManagedProviderFactory, ManagedProviderRegistry, ManagedProviderRequest, ProbeLimits,
+    ProviderDiagnostic, ProviderFailure, ProviderReadinessCache, ProviderStage,
 };
 
 struct ProbeFactory {

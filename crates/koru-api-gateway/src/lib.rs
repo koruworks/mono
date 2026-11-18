@@ -53,6 +53,7 @@
 //! rendezvous rather than asked of the supervisor.
 
 mod bootstrap;
+mod bots_workspace;
 mod bot_events;
 mod bot_ingress;
 mod composition;

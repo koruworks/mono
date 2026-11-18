@@ -27,6 +27,7 @@ koru-ai-wire = { path = "../koru-ai-wire" }
 # returns and the bound on it. No credential store is named here.
 koru-connections = { path = "../koru-connections" }
 koru-api-wire = { path = "../koru-api-wire" }
+koru-bots-engine = { path = "../koru-bots-engine" }
 # The Artifact Store's typed port, model and wire. The store itself
 # (`koru-artifact-sqlite`) is opened by the host and handed down, so this
 # crate links the port and not the database — except under test.

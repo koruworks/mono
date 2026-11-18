@@ -13,6 +13,12 @@ enum ActorCommand {
     Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
+    ResolveCall(
+        crate::authority::Secret,
+        Uuid,
+        crate::authority::Descriptor,
+        mpsc::SyncSender<Reply>,
+    ),
     WakeBot(uuid::Uuid, mpsc::SyncSender<Reply>),
     StopBot(uuid::Uuid, mpsc::SyncSender<Reply>),
     Stop,
@@ -136,6 +142,13 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::ResolveCall(secret, binding, descriptor, reply) => {
+                let result = database
+                    .resolve_descriptor(&secret, binding, &descriptor)
+                    .map(Reply::Resolved)
+                    .unwrap_or_else(Reply::Refused);
+                let _ = reply.try_send(result);
+            }
             ActorCommand::Hello(reply) => {
                 let _ = reply.try_send(Reply::Hello { launch_id });
             }
@@ -168,12 +181,9 @@ pub(super) fn serve(
                 dispatch = true;
             }
             ActorCommand::StopBot(bot, reply) => {
-                let _ = reply.try_send(
-                    launcher
-                        .stop(bot)
-                        .map(|()| Reply::Queued)
-                        .unwrap_or_else(Reply::Refused),
-                );
+                let _ = reply.try_send(stop_bot(&mut database, launcher.incarnation(bot), || {
+                    launcher.stop(bot)
+                }));
             }
             ActorCommand::Stop => break,
         }
@@ -204,6 +214,25 @@ fn handle(
         Reply::Refused(Error::Unauthenticated)
     } else {
         match request.command {
+            Command::ResolveCall {
+                secret,
+                binding,
+                descriptor,
+            } => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::ResolveCall(
+                        secret, binding, descriptor, reply,
+                    ))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
             Command::Hello | Command::Status | Command::Capacity => {
                 let (reply, answer) = mpsc::sync_channel(1);
                 let command = match request.command {
@@ -256,6 +285,24 @@ fn wake_bot(database: &Database, bot: Uuid, ensure: impl FnOnce() -> Result<(), 
             return Err(Error::InvalidRequest);
         }
         ensure()
+    })();
+    result
+        .map(|()| Reply::Queued)
+        .unwrap_or_else(Reply::Refused)
+}
+
+fn stop_bot(
+    database: &mut Database,
+    incarnation: Option<Uuid>,
+    stop: impl FnOnce() -> Result<(), Error>,
+) -> Reply {
+    // Commit revocation before asking the supervisor to end the process. A
+    // slow shutdown must not leave the old provider able to start new effects.
+    let result = (|| {
+        if let Some(worker) = incarnation {
+            database.interrupt_worker(worker)?;
+        }
+        stop()
     })();
     result
         .map(|()| Reply::Queued)

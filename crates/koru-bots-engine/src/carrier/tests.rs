@@ -11,6 +11,88 @@ struct Fixture {
     who: Worker,
     reservation: Reservation,
 }
+
+#[test]
+fn door_requires_current_assignment_and_bound_history_cannot_choose_another_thread() {
+    let mut f = Fixture::new();
+    let issued = f.mint(None);
+    let secret = issued.secret.unwrap();
+    let session = issued.session;
+    assert!(matches!(
+        f.request(Command::Catalog {
+            reservation: f.reservation,
+            session,
+            secret: secret.clone()
+        }),
+        Reply::CatalogGrant(_)
+    ));
+    let call = authority::Call::parse(
+        Uuid::new_v4(),
+        "read_older_messages".into(),
+        br#"{"after":0}"#,
+    )
+    .unwrap();
+    let bind = |reservation| Command::Bind {
+        reservation,
+        session,
+        secret: secret.clone(),
+        command: Uuid::new_v4(),
+        descriptor: call.descriptor().clone(),
+    };
+    assert!(matches!(
+        f.request(bind(f.reservation)),
+        Reply::Refused(Error::NoTurn)
+    ));
+    let Reply::Delivery(Some(delivery)) = f.request(Command::Claim {
+        reservation: f.reservation,
+        session,
+        resume: Resume::Rebuilt,
+        budget: 65536,
+    }) else {
+        panic!()
+    };
+    let Reply::Bound(binding) = f.request(bind(f.reservation)) else {
+        panic!()
+    };
+    let own = |reservation, arguments: &[u8]| Command::OwnTool {
+        reservation,
+        session,
+        secret: secret.clone(),
+        binding: binding.id,
+        door_call: call.door_call(),
+        tool: call.tool().into(),
+        arguments: arguments.to_vec(),
+    };
+    let mut wrong = f.reservation;
+    wrong.assignment = Uuid::new_v4();
+    assert!(matches!(
+        f.request(own(wrong, br#"{"after":0}"#)),
+        Reply::Refused(Error::StaleTurn)
+    ));
+    assert!(matches!(
+        f.request(own(f.reservation, br#"{"after":1}"#)),
+        Reply::Refused(Error::BindingConflict)
+    ));
+    let Reply::Tool(history) = f.request(own(f.reservation, br#"{"after":0}"#)) else {
+        panic!()
+    };
+    assert_eq!(history["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(history["messages"][0]["content"]["body"], "synthetic");
+    f.db.stop_turn(
+        &Person {
+            owner: "owner".into(),
+            sender: "person".into(),
+        },
+        Uuid::new_v4(),
+        delivery.turn,
+        4,
+    )
+    .unwrap();
+    assert!(matches!(
+        f.request(own(f.reservation, br#"{"after":0}"#)),
+        Reply::Refused(Error::CredentialRevoked)
+    ));
+}
 impl Fixture {
     fn new() -> Self {
         let mut db = Database::in_memory().unwrap();

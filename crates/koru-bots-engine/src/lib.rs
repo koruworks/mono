@@ -13,10 +13,12 @@ pub mod door;
 mod error;
 pub mod launcher;
 pub mod messages;
+pub mod own_tools;
 #[cfg(any(test, feature = "provider-runtime"))]
 pub mod sessions;
 mod ownership;
 pub mod worker;
+pub mod workspace;
 
 pub use database::{DATABASE_NAME, Database, Diagnostic, Status, inspect};
 pub use error::Error;

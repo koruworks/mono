@@ -4,6 +4,7 @@
 
 mod ai;
 mod artifacts;
+pub mod bots_workspace;
 mod decision_bridge;
 #[cfg(feature = "fixtures")]
 #[doc(hidden)]

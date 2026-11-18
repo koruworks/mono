@@ -264,6 +264,7 @@ fn supervised_refusal(directory: &str, mangle: impl FnOnce(&mut LaunchBootstrap)
     let mut bootstrap = LaunchBootstrap {
         device_id: None,
         bot_delegate: None,
+        bots_engine: None,
         launch_id: uuid::Uuid::new_v4().to_string(),
         bridge_version: BRIDGE_VERSION,
         channel: segment().into(),

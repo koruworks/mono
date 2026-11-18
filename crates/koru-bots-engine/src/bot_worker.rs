@@ -42,7 +42,7 @@ pub(crate) enum Reply {
 }
 
 pub fn endpoint(root: &Path, segment: &str) -> Result<koru_ipc::Endpoint, Error> {
-    koru_ipc::Endpoint::for_service_channel_root("koru-bot-workers", segment, root)
+    koru_ipc::Endpoint::for_service_channel_root(koru_ipc::BOT_WORKERS, segment, root)
         .map_err(|_| Error::EngineUnavailable)
 }
 

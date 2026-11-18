@@ -11894,6 +11894,9 @@
               }
             ]
           },
+          "bots_session_capacity": {
+            "$ref": "#/components/schemas/Nullable_uint32"
+          },
           "caret_color": {
             "anyOf": [
               {
@@ -12380,6 +12383,14 @@
           },
           "body_font": {
             "$ref": "#/components/schemas/FontSetting"
+          },
+          "bots_session_capacity": {
+            "default": null,
+            "description": "Live Bot agent sessions on this device; None uses installed RAM / 2 GB.",
+            "format": "uint32",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           },
           "caret_color": {
             "$ref": "#/components/schemas/CaretColorChoice"
@@ -14491,6 +14502,21 @@
         "anyOf": [
           {
             "type": "string"
+          },
+          {
+            "enum": [
+              null
+            ],
+            "nullable": true
+          }
+        ]
+      },
+      "Nullable_uint32": {
+        "anyOf": [
+          {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
           },
           {
             "enum": [

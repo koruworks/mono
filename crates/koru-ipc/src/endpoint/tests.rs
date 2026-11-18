@@ -367,11 +367,14 @@ fn the_service_table_names_every_service_constant() {
         crate::VOICE,
         crate::DELEGATE,
         crate::READ,
+        crate::BOTS,
+        crate::BOT_WORKERS,
+        crate::BOT_WORKSPACE,
     ] {
         assert!(
             crate::SERVICES.contains(&service),
             "{service} is not in SERVICES, so no length budget covers it"
         );
     }
-    assert_eq!(crate::SERVICES.len(), 10);
+    assert_eq!(crate::SERVICES.len(), 13);
 }

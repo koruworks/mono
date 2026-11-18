@@ -12,9 +12,12 @@ default = []
 active = ["provider-runtime"]
 # Only the Bot worker owns provider processes. Legacy consumers need the mode
 # and ownership fence without acquiring the session runtime's composition.
-provider-runtime = ["dep:koru-session-runtime"]
+provider-runtime = ["dep:koru-session-runtime", "dep:axum", "dep:tokio", "dep:rmcp"]
 
 [dependencies]
+axum = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+rmcp = { version = "=3.9.0", default-features = false, features = ["server"], optional = true }
 blake3.workspace = true
 koru-agent-worker = { path = "../koru-agent-worker" }
 koru-bot-client-wire = { path = "../koru-bot-client-wire" }

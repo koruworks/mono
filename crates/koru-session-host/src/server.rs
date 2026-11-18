@@ -12,9 +12,7 @@ use koru_session_profiles::ProfileLabel;
 use koru_session_protocol::{
     AttachmentId, ControllerLeaseToken, ControllerState, ErrorCode, SessionFailure, SessionId,
 };
-use koru_session_runtime::providers::{
-    AcpFactory, AcpRoute, CodexFactory, ManagedProviderRegistry, ProviderCatalogCache,
-};
+use koru_session_runtime::providers::{ProviderCatalogCache, builtin_providers};
 use koru_session_runtime::{
     AgentEventUpdate, AttachmentPathResolver, EnvironmentPolicy, RawOutputUpdate, SessionCreate,
     SessionLaunch, SessionRegistry, SessionResourceLifecycle, SessionRuntimeConfig, SpawnRequest,
@@ -320,38 +318,7 @@ pub async fn serve(
     let lifecycle: Arc<dyn koru_session_runtime::SessionLifecycleSink> = Arc::new(
         LifecycleQueue::start(bootstrap.segment.clone(), bootstrap.root.clone()),
     );
-    let mut managed_providers = ManagedProviderRegistry::default();
-    managed_providers
-        .register(
-            koru_session_profiles::CODEX_REGISTRATION,
-            Arc::new(CodexFactory::new(resources.clone())),
-        )
-        .expect("built-in provider registrations are valid and unique");
-    for (registration, route) in [
-        (
-            koru_session_profiles::CLAUDE_REGISTRATION,
-            AcpRoute::claude_code(),
-        ),
-        (
-            koru_session_profiles::OPENCODE_REGISTRATION,
-            AcpRoute::opencode(),
-        ),
-        (koru_session_profiles::KIMI_REGISTRATION, AcpRoute::kimi()),
-        (koru_session_profiles::GROK_REGISTRATION, AcpRoute::grok()),
-        (
-            koru_session_profiles::ANTIGRAVITY_REGISTRATION,
-            AcpRoute::antigravity(),
-        ),
-        (koru_session_profiles::DEVIN_REGISTRATION, AcpRoute::devin()),
-    ] {
-        managed_providers
-            .register(
-                registration,
-                Arc::new(AcpFactory::new(route, resources.clone())),
-            )
-            .expect("built-in provider registrations are valid and unique");
-    }
-    let managed_providers = Arc::new(managed_providers);
+    let managed_providers = Arc::new(builtin_providers(resources.clone()));
     // The catalog loads its file before the first probe, so a persisted
     // list is there to show while every agent still reads *Checking*.
     let catalog = ProviderCatalogCache::new(

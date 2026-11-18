@@ -32,7 +32,7 @@ impl std::fmt::Debug for Bootstrap {
 }
 
 pub fn endpoint(root: &Path, segment: &str) -> Result<koru_ipc::Endpoint, Error> {
-    koru_ipc::Endpoint::for_service_channel_root("koru-bots", segment, root)
+    koru_ipc::Endpoint::for_service_channel_root(koru_ipc::BOTS, segment, root)
         .map_err(|_| Error::EngineUnavailable)
 }
 
@@ -42,9 +42,18 @@ pub enum Command {
     Hello,
     Status,
     Capacity,
+    ResolveCall {
+        secret: crate::authority::Secret,
+        binding: Uuid,
+        descriptor: crate::authority::Descriptor,
+    },
     Stop,
-    WakeBot { bot: Uuid },
-    StopBot { bot: Uuid },
+    WakeBot {
+        bot: Uuid,
+    },
+    StopBot {
+        bot: Uuid,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -61,6 +70,7 @@ pub enum Reply {
     Stopping,
     Queued,
     Capacity { sessions: u32 },
+    Resolved(crate::authority::Resolution),
     Refused(Error),
 }
 

@@ -860,6 +860,8 @@ fn gateway_spec(
             let bootstrap = koru_network_bridge::LaunchBootstrap {
                 device_id: Some(device.to_storage()),
                 bot_delegate: bot_authority.clone(),
+                bots_engine: crate::bots_host::authority()
+                    .map(koru_network_bridge::BotEngineAuthority::new),
                 launch_id: launch_id.clone(),
                 bridge_version: koru_network_bridge::BRIDGE_VERSION,
                 channel: launch_segment.clone(),

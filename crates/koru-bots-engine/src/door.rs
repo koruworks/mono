@@ -12,6 +12,9 @@ use serde_json::Value;
 use std::{collections::BTreeSet, sync::Arc};
 use uuid::Uuid;
 
+#[cfg(feature = "provider-runtime")]
+pub mod http;
+
 pub trait Port: Send + Sync + 'static {
     /// Authenticate on discovery, including before a turn opens. Definitions
     /// come from the session's captured thread grant and contain no resources.

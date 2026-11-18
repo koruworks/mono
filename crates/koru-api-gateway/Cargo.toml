@@ -43,7 +43,7 @@ koru-bot-client-wire = { path = "../koru-bot-client-wire" }
 koru-network-bridge = { path = "../koru-network-bridge" }
 # `TransportSession`: what the bridge hands over, routed here by its token.
 koru-network-edge = { path = "../koru-network-edge" }
-koru-ipc = { path = "../koru-ipc" }
+koru-ipc = { path = "../koru-ipc", features = ["tokio"] }
 koru-store-server = { path = "../../apps/koru-store-server" }
 # This computer's time zone, for a Bot Routine it owns (P4.3, D5): the same
 # detection the delegate's scheduler runs, read again on every Routine read.
