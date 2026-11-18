@@ -554,6 +554,12 @@ Record that a search led somewhere
 
 Returns: nothing. Machine-local and derived: it feeds recent queries and a workspace's recency, and reaches no document and no shared profile. A query earns a place in the history only by leading somewhere, which is why the text arrives here rather than on the search
 
+## POST `/v1/ai/bots/engine`
+
+Read or change engine-owned Bots and conversations
+
+Returns: An owner-scoped read, revision-checked durable receipt, or explicit live-feed gap. Available only when the supervised Bots engine is composed; no legacy data is read.
+
 ## POST `/v1/ai/bots/list`
 
 Authorized local Bot task operation: list_bots

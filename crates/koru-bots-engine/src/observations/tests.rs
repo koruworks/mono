@@ -28,7 +28,21 @@ fn live_feed_bounds_memory_reports_gaps_and_checks_membership() {
         .read(&db, &person, record.key.thread, Some(events.boot), 1)
         .unwrap();
     assert!(page.gap);
-    assert_eq!(page.cursor, 600);
+    assert_eq!(page.entries.len(), crate::messages::PAGE_LIMIT);
+    assert_eq!(page.cursor, 152);
+    let mut cursor = page.cursor;
+    let mut count = page.entries.len();
+    while cursor < 600 {
+        let next = events
+            .read(&db, &person, record.key.thread, Some(page.boot), cursor)
+            .unwrap();
+        assert!(!next.gap);
+        assert!(next.entries.len() <= crate::messages::PAGE_LIMIT);
+        assert!(next.cursor > cursor);
+        count += next.entries.len();
+        cursor = next.cursor;
+    }
+    assert_eq!(count, 512);
     assert!(
         events
             .read(&db, &person, record.key.thread, Some(events.boot), 600)

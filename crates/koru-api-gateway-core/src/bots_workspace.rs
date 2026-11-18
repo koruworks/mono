@@ -16,6 +16,7 @@ use uuid::Uuid;
 mod recovery;
 mod writes;
 
+#[derive(Clone)]
 pub struct Engine {
     pub endpoint: koru_ipc::Endpoint,
     /// Private Agent bootstrap authority, never included in worker requests.

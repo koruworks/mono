@@ -4,6 +4,7 @@
 
 mod ai;
 mod artifacts;
+mod bots_engine;
 pub mod bots_workspace;
 mod decision_bridge;
 #[cfg(feature = "fixtures")]
@@ -432,6 +433,12 @@ pub const MOBILE_UNAVAILABLE_OPERATIONS: &[MobileUnavailableOperation] = &[
         client: "client.ai().bots",
         http: "POST /v1/ai/bots",
         reason: "Bot configuration and Knowledge Library commands require the vouched desktop owner",
+    },
+    MobileUnavailableOperation {
+        id: "ai.bot_engine_command",
+        client: "client.ai().bot_engine",
+        http: "POST /v1/ai/bots/engine",
+        reason: "Bot engine commands require the vouched desktop owner",
     },
     MobileUnavailableOperation {
         id: "ai.list_bots",
@@ -1083,6 +1090,7 @@ pub struct GatewayState {
     pub sessions: Arc<SessionAuthority>,
     store: WorkerHandle,
     ai: Option<AiDomain>,
+    bots_engine: std::sync::OnceLock<Arc<bots_engine::Gateway>>,
     /// The embedded events worker — the same worker-beside-the-gateway shape
     /// as the Store. `None` only in hosts that did not open one (older tests);
     /// its routes then answer 503 rather than 404, because the API exists.
@@ -1227,6 +1235,7 @@ impl GatewayState {
             sessions: Arc::new(SessionAuthority::default()),
             store,
             ai,
+            bots_engine: std::sync::OnceLock::new(),
             events,
             session_bridge,
             confirmations: workspaces::Ledger::default(),

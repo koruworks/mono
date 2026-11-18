@@ -93,6 +93,9 @@ impl LiveEvents {
                 continue;
             }
             if entry.observation.thread == thread {
+                if entries.len() >= crate::messages::PAGE_LIMIT {
+                    break;
+                }
                 if !entries.is_empty() && bytes + size > koru_bot_client_wire::MAX_FRAME_BYTES / 2 {
                     break;
                 }

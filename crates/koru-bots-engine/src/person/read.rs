@@ -86,6 +86,15 @@ fn page<T: Serialize>(
 pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, Error> {
     let c = &db.connection;
     match query {
+        Query::ChangeReceipt { id, action } => {
+            change::authorize(c, who, &action)?;
+            let digest = messages::receipts::digest("person-change", &action)?;
+            let found = messages::receipts::find::<Value>(c, &who.receipt_subject(), id, &digest)?;
+            value(found.map(|answer| Receipt {
+                answer,
+                replayed: true,
+            }))
+        }
         Query::Bot { bot: key } => value(bot(c, who, key)?),
         Query::Bots {
             workspace,

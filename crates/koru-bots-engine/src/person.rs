@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
+pub const MAX_COMMAND_BYTES: usize = koru_bot_client_wire::MAX_FRAME_BYTES / 2;
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Request {
     pub owner: String,
@@ -35,6 +37,7 @@ impl std::fmt::Debug for Reply {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Command {
     Read {
         query: Query,
@@ -68,7 +71,12 @@ impl Command {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    ChangeReceipt {
+        id: Uuid,
+        action: Change,
+    },
     Bot {
         bot: Uuid,
     },
@@ -97,6 +105,7 @@ pub enum Query {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Lifecycle {
     Active,
     Archived,
@@ -113,6 +122,7 @@ impl Lifecycle {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Definition {
     pub name: String,
     pub configuration: Configuration,
@@ -123,6 +133,7 @@ pub struct Definition {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Change {
     Create {
         bot: Uuid,

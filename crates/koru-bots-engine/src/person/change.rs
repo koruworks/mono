@@ -38,7 +38,7 @@ fn policy(access: &CapturedBotPolicy) -> Result<(), Error> {
         Ok(())
     }
 }
-fn authorize(c: &Connection, who: &Person, action: &Change) -> Result<(), Error> {
+pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result<(), Error> {
     match action {
         Change::Create { bot, .. } => {
             let other: bool = c.query_row(

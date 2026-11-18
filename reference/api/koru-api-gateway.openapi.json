@@ -519,6 +519,10 @@
         ],
         "type": "object"
       },
+      "AgentModeId": {
+        "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
+        "type": "string"
+      },
       "AgentModeView": {
         "description": "One approval mode an agent offers: its own id, and what it says of it.\nA client words the ids it knows and shows these for the rest.",
         "properties": {
@@ -2625,7 +2629,7 @@
         "additionalProperties": false,
         "properties": {
           "access": {
-            "$ref": "#/components/schemas/BotAccess"
+            "$ref": "#/components/schemas/BotAccess2"
           },
           "config": {
             "$ref": "#/components/schemas/BotConfig"
@@ -2772,6 +2776,13 @@
         "type": "object"
       },
       "BotAccess": {
+        "enum": [
+          "default",
+          "workspace"
+        ],
+        "type": "string"
+      },
+      "BotAccess2": {
         "enum": [
           "default",
           "workspace"
@@ -3467,7 +3478,7 @@
             "description": "Replace one paused Routine's own access. Refused while the Routine is\non and while a Run of it has not finished. The access it was set up\nwith stays recorded. Answered `routine_access`; the same request\nreturns its retained answer.",
             "properties": {
               "access": {
-                "$ref": "#/components/schemas/BotAccess"
+                "$ref": "#/components/schemas/BotAccess2"
               },
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -4151,7 +4162,7 @@
             "additionalProperties": false,
             "properties": {
               "access": {
-                "$ref": "#/components/schemas/BotAccess"
+                "$ref": "#/components/schemas/BotAccess2"
               },
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -4264,7 +4275,7 @@
             "additionalProperties": false,
             "properties": {
               "access": {
-                "$ref": "#/components/schemas/BotAccess"
+                "$ref": "#/components/schemas/BotAccess2"
               },
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -4758,7 +4769,7 @@
             "description": "Create a Bot together with its Role page and working folder (P1.8).\nAnswered with the creation's progress; the same request and input\nreturns its current progress or the completed Bot, and changed input\nunder the same request is `request_conflict`.",
             "properties": {
               "access": {
-                "$ref": "#/components/schemas/BotAccess"
+                "$ref": "#/components/schemas/BotAccess2"
               },
               "bot_id": {
                 "$ref": "#/components/schemas/BotId"
@@ -7284,7 +7295,7 @@
         "description": "The Routine's access after an edit. There is no pending state: the edit\nis answered only once its policy barrier is installed.",
         "properties": {
           "access": {
-            "$ref": "#/components/schemas/BotAccess"
+            "$ref": "#/components/schemas/BotAccess2"
           },
           "grant_revision": {
             "format": "uint64",
@@ -7605,7 +7616,7 @@
         "additionalProperties": false,
         "properties": {
           "access": {
-            "$ref": "#/components/schemas/BotAccess"
+            "$ref": "#/components/schemas/BotAccess2"
           },
           "grant_revision": {
             "format": "uint64",
@@ -8480,6 +8491,47 @@
         ],
         "type": "object"
       },
+      "CapturedBotPolicy": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/BotAccess"
+          },
+          "connections": {
+            "description": "Private connection grants (M5). **Omitted from the serialized form\nwhenever it is empty**, so a policy without a grant keeps exactly its\npre-M5 bytes and every digest computed over them (both policy\nbarriers, a Routine grant, a decision binding, a stored submission).\nThis is the only field of this type that may ever be skipped.",
+            "items": {
+              "$ref": "#/components/schemas/ConnectionGrantRef"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "destination": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceId"
+              }
+            ],
+            "description": "Explicit accepted destination, never inferred from the Run's location."
+          },
+          "selected_pages": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentId"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "workspace",
+          "access",
+          "selected_pages",
+          "destination"
+        ],
+        "type": "object"
+      },
       "CaretColorChoice": {
         "description": "`caret_color=`, and the terminal row's `cursor_color=`.",
         "enum": [
@@ -8556,6 +8608,336 @@
           "two"
         ],
         "type": "string"
+      },
+      "Change": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "definition": {
+                "$ref": "#/components/schemas/Definition"
+              },
+              "kind": {
+                "enum": [
+                  "create"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "definition"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "configuration": {
+                "$ref": "#/components/schemas/Configuration"
+              },
+              "kind": {
+                "enum": [
+                  "configure"
+                ],
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "name",
+              "configuration"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "library"
+                ],
+                "type": "string"
+              },
+              "knowledge": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "memory": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "role": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "knowledge"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "access": {
+                "$ref": "#/components/schemas/CapturedBotPolicy"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "access"
+                ],
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "access"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "pause"
+                ],
+                "type": "string"
+              },
+              "paused": {
+                "type": "boolean"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "paused"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "team"
+                ],
+                "type": "string"
+              },
+              "paused": {
+                "type": "boolean"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "revision",
+              "paused"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "bot_lifecycle"
+                ],
+                "type": "string"
+              },
+              "lifecycle": {
+                "$ref": "#/components/schemas/Lifecycle"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "lifecycle"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "conversation"
+                ],
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "title"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "thread_lifecycle"
+                ],
+                "type": "string"
+              },
+              "lifecycle": {
+                "$ref": "#/components/schemas/Lifecycle"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "revision",
+              "lifecycle"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "rename_thread"
+                ],
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "revision",
+              "title"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "retry_setup"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "turn": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "turn"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "Chat": {
         "properties": {
@@ -9174,6 +9556,159 @@
         ],
         "type": "string"
       },
+      "Command": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "read"
+                ],
+                "type": "string"
+              },
+              "query": {
+                "$ref": "#/components/schemas/Query"
+              }
+            },
+            "required": [
+              "kind",
+              "query"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/Change"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "change"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "envelope": {
+                "$ref": "#/components/schemas/Envelope"
+              },
+              "kind": {
+                "enum": [
+                  "send"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "envelope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "stop"
+                ],
+                "type": "string"
+              },
+              "turn": {
+                "$ref": "#/components/schemas/Turn"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "turn"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "continue"
+                ],
+                "type": "string"
+              },
+              "operations": {
+                "items": {
+                  "$ref": "#/components/schemas/Key"
+                },
+                "type": "array"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "operations"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "boot": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "observe"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "after"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "CommandReceipt": {
         "properties": {
           "idempotency_key": {
@@ -9239,6 +9774,26 @@
             "type": "object"
           }
         ]
+      },
+      "Configuration": {
+        "additionalProperties": false,
+        "properties": {
+          "provider": {
+            "$ref": "#/components/schemas/ProviderKind"
+          },
+          "selection": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LaunchSelection"
+              }
+            ],
+            "default": {}
+          }
+        },
+        "required": [
+          "provider"
+        ],
+        "type": "object"
       },
       "ConnectionGrantRef": {
         "additionalProperties": false,
@@ -9808,6 +10363,44 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "Definition": {
+        "additionalProperties": false,
+        "properties": {
+          "access": {
+            "$ref": "#/components/schemas/CapturedBotPolicy"
+          },
+          "configuration": {
+            "$ref": "#/components/schemas/Configuration"
+          },
+          "knowledge": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "memory": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "configuration",
+          "access",
+          "knowledge"
+        ],
         "type": "object"
       },
       "DelegateFailure": {
@@ -13162,6 +13755,33 @@
         ],
         "type": "object"
       },
+      "Key": {
+        "additionalProperties": false,
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "thread": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scope",
+          "bot",
+          "thread",
+          "operation"
+        ],
+        "type": "object"
+      },
       "KeyModifiers": {
         "properties": {
           "alt": {
@@ -13223,10 +13843,85 @@
           }
         ]
       },
+      "LaunchReasoning": {
+        "description": "How hard a model should think, as a closed token a provider adapter maps\nonto its own vocabulary. Not the AI core's reasoning choice: this crate\nis a leaf, and a protocol token must be spelled here.",
+        "oneOf": [
+          {
+            "enum": [
+              "off",
+              "on",
+              "minimal",
+              "low",
+              "medium",
+              "high",
+              "max"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "v18: an older peer cannot read it, so it is sent only to a v18 host.\nSpelled `xhigh`, as the agents and the AI core spell it.",
+            "enum": [
+              "xhigh"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "LaunchSelection": {
+        "description": "An explicit model and effort a creator asks a managed session for.\n\n`None` in any field is \"the provider's own default\", which is never\ngated. A `Some` is acknowledged by the adapter before the first prompt\nor refused visibly; it is never silently replaced by the default.",
+        "properties": {
+          "fast": {
+            "description": "v19 (koru-ai D11): the session starts with the model's Fast mode on\nor off. Ignored by an adapter whose model offers no Fast mode.",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "mode": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentModeId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "description": "v19 (koru-ai D7): the approval mode the session starts in, one of\nthose the agent offers. Sent only to a v19 host."
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelName"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "reasoning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LaunchReasoning"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "type": "object"
+      },
       "Lifecycle": {
-        "description": "Whether a hit's document is in the trash.\n\n**Not a property of a fragment.** Trash is a flag on the manifest entry\n([ADR-95](../../../docs/decisions/ADR-076-100.md#adr-95-trash--a-document-in-the-trash-is-a-flag-on-its-manifest-entry)), so it is a property\nof the *document*, resolved by joining the mirrored listing. Storing it on\nevery fragment is what used to let a hit and its own document title disagree\nabout whether they were binned.",
         "enum": [
-          "live",
+          "active",
+          "archived",
           "trashed"
         ],
         "type": "string"
@@ -16149,6 +16844,198 @@
         ],
         "type": "object"
       },
+      "Query": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/Change"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "change_receipt"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "bot"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "bots"
+                ],
+                "type": "string"
+              },
+              "lifecycle": {
+                "$ref": "#/components/schemas/Lifecycle"
+              },
+              "workspace": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "workspace",
+              "lifecycle"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "threads"
+                ],
+                "type": "string"
+              },
+              "lifecycle": {
+                "$ref": "#/components/schemas/Lifecycle"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "lifecycle"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "thread"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "history"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "after"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "outputs"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "team"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "RateRunRequest": {
         "description": "`POST /v1/runs/{run}/rate`: one gesture on a finished run (D44).\n\nThe note travels here because it lives in the run's own content and\nnowhere else — never an event attribute, never a metric. The event the\nworker publishes carries the rating and whether a note exists, and not\na byte of the note itself.",
         "properties": {
@@ -17429,6 +18316,13 @@
             "type": "object"
           }
         ]
+      },
+      "ReplyTo": {
+        "description": "Rung 1 answers in its thread. Place delivery is added with Routines.",
+        "enum": [
+          "thread"
+        ],
+        "type": "string"
       },
       "ReportedContextUsage": {
         "properties": {
@@ -24347,6 +25241,34 @@
         ],
         "type": "object"
       },
+      "Turn": {
+        "properties": {
+          "generation": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "session": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "worker": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "generation",
+          "worker",
+          "session"
+        ],
+        "type": "object"
+      },
       "TurnOriginator": {
         "description": "Who submitted a turn.",
         "oneOf": [
@@ -26161,6 +27083,90 @@
           }
         ],
         "summary": "Read or configure an engine-owned Bot and its Knowledge Library, create an initially Paused Routine, read/retry its creation, list current Routine observations or read one Routine's timing and local conversations, archive, trash or restore the Bot, list or add conversations, read Bot activity or a task's Run, request admission, or stop an API task"
+      }
+    },
+    "/v1/ai/bots/engine": {
+      "post": {
+        "description": "An owner-scoped read, revision-checked durable receipt, or explicit live-feed gap. Available only when the supervised Bots engine is composed; no legacy data is read.",
+        "operationId": "bots_engine_command",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Command"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": true
+              }
+            },
+            "description": "An owner-scoped read, revision-checked durable receipt, or explicit live-feed gap. Available only when the supervised Bots engine is composed; no legacy data is read."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.manage"
+            ]
+          }
+        ],
+        "summary": "Read or change engine-owned Bots and conversations"
       }
     },
     "/v1/ai/bots/list": {

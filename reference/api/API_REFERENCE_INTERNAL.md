@@ -152,6 +152,7 @@ Generated from the route catalog. Do not edit.
 - PUT `/v1/sessions/{session_id}/size` — Set the process terminal size (sessions.resize)
 - DELETE `/v1/sessions/{session_id}` — Terminate the complete process tree (sessions.terminate)
 - GET `/v1/sessions/{session_id}/subscribe` — Subscribe to ordered output and lifecycle events (sessions.subscribe)
+- POST `/v1/ai/bots/engine` — Read or change engine-owned Bots and conversations (Public)
 - POST `/v1/ai/bots/list` — Authorized local Bot task operation: list_bots (Public)
 - POST `/v1/ai/bots/tasks/start` — Authorized local Bot task operation: start_bot_task (Public)
 - POST `/v1/ai/bots/tasks/read` — Authorized local Bot task operation: read_bot_task (Public)

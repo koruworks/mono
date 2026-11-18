@@ -34,6 +34,7 @@ impl Person {
 
 #[derive(Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Envelope {
     pub id: Uuid,
     pub to: Uuid,
@@ -62,6 +63,7 @@ pub struct Content {
 /// Rung 1 answers in its thread. Place delivery is added with Routines.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum ReplyTo {
     #[default]
     Thread,
@@ -110,6 +112,7 @@ pub struct Message {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Turn {
     pub id: Uuid,
     pub generation: u64,

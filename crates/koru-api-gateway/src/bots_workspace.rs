@@ -44,6 +44,14 @@ pub(crate) fn start(
             .map_err(|e| e.to_string())?,
         authority: Secret::parse(authority.expose().to_owned()).map_err(|e| e.to_string())?,
     };
+    let device = config
+        .bootstrap
+        .as_ref()
+        .and_then(|b| b.device_id.as_deref())
+        .ok_or_else(|| "engine_owner_unavailable".to_owned())?;
+    if !state.set_bots_engine(engine.clone(), device) {
+        return Err("engine_owner_unavailable".into());
+    }
     let boundary = Arc::new(state.bots_workspace(engine));
     let endpoint = workspace::endpoint(&config.channel_root, &config.build.segment)
         .map_err(|e| e.to_string())?;

@@ -81,6 +81,19 @@ const ATTACHMENT_BODY_LIMIT: usize =
 
 pub const ROUTES: &[AiRoute] = &[
     AiRoute {
+        operation_id: "bots_engine_command",
+        method: "POST",
+        path: "/v1/ai/bots/engine",
+        scope: AiScope::ManageBots,
+        summary: "Read or change engine-owned Bots and conversations",
+        returns: "An owner-scoped read, revision-checked durable receipt, or explicit live-feed gap. Available only when the supervised Bots engine is composed; no legacy data is read.",
+        handler: || post(crate::bots_engine::command).layer(DefaultBodyLimit::max(koru_bots_engine::person::MAX_COMMAND_BYTES)),
+        request: AiBody::Json(|g|g.subschema_for::<koru_bots_engine::person::Command>()),
+        response: AiBody::Json(|g|g.subschema_for::<serde_json::Value>()),
+        stream: false,
+        path_parameters: &[],
+    },
+    AiRoute {
         operation_id: "ai_list_bots",
         method: "POST",
         path: "/v1/ai/bots/list",
