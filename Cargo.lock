@@ -6706,6 +6706,7 @@ dependencies = [
  "koru-title",
  "koru-workspace",
  "loro",
+ "postcard",
  "rmcp",
  "schemars 1.2.2",
  "serde",
