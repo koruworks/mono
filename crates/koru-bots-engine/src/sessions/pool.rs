@@ -39,6 +39,10 @@ impl Pool {
     pub fn occupied(&self) -> u32 {
         self.entries.len().min(u32::MAX as usize) as u32
     }
+    #[cfg(feature = "provider-runtime")]
+    pub(crate) fn journal_database(&self) -> Arc<Mutex<BotDatabase>> {
+        Arc::clone(&self.database)
+    }
     pub fn admit(&mut self, start: Start) -> Result<(), Error> {
         if start.thread.is_nil() || start.worker != self.worker {
             return Err(Error::InvalidRequest);

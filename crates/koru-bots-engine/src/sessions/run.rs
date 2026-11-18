@@ -302,7 +302,7 @@ fn observe(
                 if !accepted {
                     start.port.unknown(turn, delivery.id)?;
                 }
-                return Ok(());
+                return Err(Failure::ProviderEnded);
             }
             _ => {}
         }

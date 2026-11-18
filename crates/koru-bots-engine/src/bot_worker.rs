@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use uuid::Uuid;
+#[cfg(feature = "provider-runtime")]
+mod runtime;
 
 pub(crate) const VERSION: u8 = 1;
 pub(crate) const TIMEOUT: Duration = Duration::from_secs(3);
@@ -78,7 +80,7 @@ pub fn run_supervised(bot: Uuid) -> Result<(), Error> {
         &Registration {
             bot,
             incarnation: bootstrap.incarnation,
-            capability: bootstrap.capability,
+            capability: bootstrap.capability.clone(),
         },
     )
     .map_err(|_| Error::EngineUnavailable)?;
@@ -87,23 +89,32 @@ pub fn run_supervised(bot: Uuid) -> Result<(), Error> {
     if version != VERSION || !matches!(reply, Reply::Registered) {
         return Err(Error::Unauthenticated);
     }
-    let _database = BotDatabase::open(&bootstrap.root, bot)?;
-    while parent_alive.load(std::sync::atomic::Ordering::Acquire) {
-        // P1.4 replaces this empty shell with its owned provider-session set.
-        koru_ipc::frame::write_frame(&mut stream, VERSION, &crate::carrier::Command::Poll)
-            .map_err(|_| Error::EngineUnavailable)?;
-        let (version, reply) = koru_ipc::frame::read_frame::<_, Reply>(&mut stream)
-            .map_err(|_| Error::EngineUnavailable)?;
-        if version != VERSION {
-            return Err(Error::InvalidRequest);
-        }
-        match reply {
-            Reply::Control(crate::carrier::Reply::Work { starts, stops })
-                if starts.is_empty() && stops.is_empty() => {}
-            Reply::Stop => return Ok(()),
-            _ => return Err(Error::Unauthenticated),
-        }
-        std::thread::sleep(Duration::from_millis(250));
+    let database = BotDatabase::open(&bootstrap.root, bot)?;
+    #[cfg(feature = "provider-runtime")]
+    {
+        return runtime::run(stream, bootstrap, database, parent_alive);
     }
-    Ok(())
+    #[cfg(not(feature = "provider-runtime"))]
+    {
+        let _database = database;
+        while parent_alive.load(std::sync::atomic::Ordering::Acquire) {
+            // Non-active builds support the existing lifecycle proof only. They
+            // cannot start a provider; production active builds use the pool above.
+            koru_ipc::frame::write_frame(&mut stream, VERSION, &crate::carrier::Command::Poll)
+                .map_err(|_| Error::EngineUnavailable)?;
+            let (version, reply) = koru_ipc::frame::read_frame::<_, Reply>(&mut stream)
+                .map_err(|_| Error::EngineUnavailable)?;
+            if version != VERSION {
+                return Err(Error::InvalidRequest);
+            }
+            match reply {
+                Reply::Control(crate::carrier::Reply::Work { starts, stops })
+                    if starts.is_empty() && stops.is_empty() => {}
+                Reply::Stop => return Ok(()),
+                _ => return Err(Error::Unauthenticated),
+            }
+            std::thread::sleep(Duration::from_millis(250));
+        }
+        Ok(())
+    }
 }

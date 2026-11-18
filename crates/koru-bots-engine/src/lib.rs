@@ -8,12 +8,14 @@ pub mod bot_database;
 pub mod bot_worker;
 pub mod capacity;
 pub mod carrier;
+pub mod configuration;
 mod database;
 pub mod door;
 mod error;
 pub mod launcher;
 pub mod messages;
 pub mod own_tools;
+pub mod observations;
 pub mod operations;
 #[cfg(any(test, feature = "provider-runtime"))]
 pub mod sessions;

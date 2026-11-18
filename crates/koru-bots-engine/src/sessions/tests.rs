@@ -21,6 +21,7 @@ struct Plan {
     fail_retirement: bool,
     no_resume: bool,
     hold: bool,
+    cancelled: bool,
 }
 #[derive(Default)]
 struct Records {
@@ -124,7 +125,12 @@ impl AgentControl for Agent {
         self.events.push_back(AgentEvent::TurnStarted {
             turn_id: input.turn_id,
         });
-        if !self.plan.lost && !self.plan.hold {
+        if self.plan.cancelled {
+            self.events.push_back(AgentEvent::TurnCancelled {
+                turn_id: input.turn_id,
+                reason: koru_session_protocol::CancelReason::Run,
+            });
+        } else if !self.plan.lost && !self.plan.hold {
             self.events.push_back(AgentEvent::MessageDelta {
                 turn_id: input.turn_id,
                 text: "synthetic reply".into(),
@@ -359,6 +365,45 @@ impl Fixture {
     fn input(&self, index: usize) -> serde_json::Value {
         serde_json::from_str(&self.records.lock().unwrap().inputs[index]).unwrap()
     }
+}
+
+#[test]
+fn unexpected_provider_cancellation_preserves_owed_work_and_confirms_shutdown() {
+    let f = Fixture::new();
+    f.plan(Plan {
+        cancelled: true,
+        ..Default::default()
+    });
+    assert!(matches!(f.run(), Err(Failure::ProviderEnded)));
+    assert_eq!(f.records.lock().unwrap().stopped, 1);
+    assert_eq!(
+        f.port
+            .db
+            .lock()
+            .unwrap()
+            .connection
+            .query_row(
+                "SELECT count(*) FROM obligations WHERE state IN ('owed','delivered')",
+                [],
+                |r| r.get::<_, u64>(0)
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        f.port
+            .db
+            .lock()
+            .unwrap()
+            .connection
+            .query_row(
+                "SELECT count(*) FROM messages WHERE sender=?1",
+                [f.port.bot.to_string()],
+                |r| r.get::<_, u64>(0)
+            )
+            .unwrap(),
+        0
+    );
 }
 
 #[test]

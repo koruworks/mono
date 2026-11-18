@@ -20,6 +20,22 @@ pub enum Command {
     Context {
         reservation: Reservation,
     },
+    Configuration {
+        reservation: Reservation,
+    },
+    Publish {
+        reservation: Reservation,
+        request: crate::messages::Publish,
+    },
+    Event {
+        reservation: Reservation,
+        turn: Turn,
+        event: koru_session_protocol::AgentEvent,
+    },
+    SetupFailed {
+        reservation: Reservation,
+        code: crate::configuration::SetupFailure,
+    },
     Head {
         reservation: Reservation,
     },
@@ -86,6 +102,9 @@ pub enum Reply {
     Tool(serde_json::Value),
     LoadContext(crate::workspace::Sources),
     Context(crate::workspace::Context),
+    Configuration(crate::configuration::Configuration),
+    Published(crate::messages::Published),
+    Observed(crate::observations::Observation),
     ContextPending,
     Head(Option<Uuid>),
     Done,
@@ -126,6 +145,10 @@ fn execute(
         Command::Poll => unreachable!(),
         Command::Started { reservation }
         | Command::Context { reservation }
+        | Command::Configuration { reservation }
+        | Command::Publish { reservation, .. }
+        | Command::Event { reservation, .. }
+        | Command::SetupFailed { reservation, .. }
         | Command::Head { reservation }
         | Command::Mint { reservation, .. }
         | Command::Claim { reservation, .. }
@@ -150,6 +173,52 @@ fn execute(
             return db
                 .context_sources(who, reservation.key.thread)
                 .map(Reply::LoadContext);
+        }
+        Command::Configuration { .. } => {
+            return db
+                .configuration(who, reservation.key.thread)
+                .map(Reply::Configuration);
+        }
+        Command::Publish { request, .. } => {
+            check_turn(db, who, reservation, request.turn)?;
+            return db
+                .publish_reply(&request, now)
+                .map(|receipt| Reply::Published(receipt.answer));
+        }
+        Command::Event { turn, event, .. } => {
+            check_turn(db, who, reservation, turn)?;
+            let live: bool = db.connection.query_row(
+                "SELECT state='running' AND stopped=0 FROM turns WHERE id=?1",
+                [turn.id.to_string()],
+                |r| r.get(0),
+            )?;
+            if !live {
+                return Err(Error::StaleTurn);
+            }
+            let value = serde_json::to_value(&event).map_err(|_| Error::InvalidRequest)?;
+            if value
+                .get("turn_id")
+                .is_some_and(|id| id.as_str() != Some(&turn.id.to_string()))
+            {
+                return Err(Error::StaleTurn);
+            }
+            return Ok(Reply::Observed(crate::observations::Observation {
+                thread: reservation.key.thread,
+                bot: who.bot,
+                turn,
+                event,
+            }));
+        }
+        Command::SetupFailed { code, .. } => {
+            let session = admission.provider(reservation, who.incarnation)?;
+            db.setup_failure(
+                who,
+                reservation.assignment,
+                reservation.key.thread,
+                session,
+                code,
+                now,
+            )?;
         }
         Command::Head { .. } => {
             return db

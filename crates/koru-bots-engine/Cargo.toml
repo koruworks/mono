@@ -12,7 +12,7 @@ default = []
 active = ["provider-runtime"]
 # Only the Bot worker owns provider processes. Legacy consumers need the mode
 # and ownership fence without acquiring the session runtime's composition.
-provider-runtime = ["dep:koru-session-runtime", "dep:axum", "dep:tokio", "dep:rmcp"]
+provider-runtime = ["dep:koru-session-runtime", "dep:koru-session-profiles", "dep:axum", "dep:tokio", "dep:rmcp"]
 
 [dependencies]
 axum = { workspace = true, optional = true }
@@ -28,6 +28,7 @@ koru-sqlite = { path = "../koru-sqlite" }
 koru-store-core = { path = "../koru-store-core" }
 koru-settings = { path = "../koru-settings" }
 koru-session-protocol = { path = "../koru-session-protocol" }
+koru-session-profiles = { path = "../koru-session-profiles", optional = true }
 koru-session-runtime = { path = "../koru-session-runtime", optional = true }
 rusqlite.workspace = true
 serde.workspace = true

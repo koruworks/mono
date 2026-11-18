@@ -13,6 +13,136 @@ struct Fixture {
 }
 
 #[test]
+fn failed_configuration_parks_work_once_and_confirmed_retirement_releases_capacity() {
+    let mut f = Fixture::new();
+    for _ in 0..2 {
+        assert!(matches!(
+            f.request(Command::SetupFailed {
+                reservation: f.reservation,
+                code: crate::configuration::SetupFailure::Configuration
+            }),
+            Reply::Done
+        ));
+    }
+    assert_eq!(
+        f.db.connection
+            .query_row(
+                "SELECT count(*) FROM messages WHERE kind='setup_note'",
+                [],
+                |r| r.get::<_, usize>(0)
+            )
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        f.db.connection
+            .query_row("SELECT count(*) FROM inbox", [], |r| r.get::<_, usize>(0))
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        f.db.connection
+            .query_row("SELECT state FROM turns", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        "needs_you"
+    );
+    assert!(matches!(
+        f.request(Command::Retired {
+            reservation: f.reservation,
+            turn: None
+        }),
+        Reply::Done
+    ));
+    assert_eq!(f.admission.occupied(), 0);
+    assert!(f.admission.next(&f.db, 4).unwrap().is_none());
+}
+
+#[test]
+fn configuration_is_current_and_a_registered_worker_cannot_publish_another_assignment() {
+    let mut f = Fixture::new();
+    assert!(matches!(
+        f.request(Command::Configuration {
+            reservation: f.reservation
+        }),
+        Reply::Refused(Error::InvalidRequest)
+    ));
+    let settings =
+        serde_json::to_vec(&serde_json::json!({"provider":"codex","selection":{}})).unwrap();
+    f.db.connection
+        .execute("UPDATE bots SET settings=?1", [settings])
+        .unwrap();
+    assert!(matches!(
+        f.request(Command::Configuration {
+            reservation: f.reservation
+        }),
+        Reply::Configuration(_)
+    ));
+    let issued = f.mint(None);
+    let Reply::Delivery(Some(delivery)) = f.request(Command::Claim {
+        reservation: f.reservation,
+        session: issued.session,
+        resume: Resume::Rebuilt,
+        budget: 65536,
+    }) else {
+        panic!("delivery")
+    };
+    f.db.delivery_accepted(delivery.turn, delivery.id).unwrap();
+    let event = koru_session_protocol::AgentEvent::MessageDelta {
+        turn_id: Uuid::new_v4().to_string().parse().unwrap(),
+        text: "stale".into(),
+    };
+    assert!(matches!(
+        f.request(Command::Event {
+            reservation: f.reservation,
+            turn: delivery.turn,
+            event
+        }),
+        Reply::Refused(Error::StaleTurn)
+    ));
+    let event = koru_session_protocol::AgentEvent::MessageDelta {
+        turn_id: delivery.turn.id.to_string().parse().unwrap(),
+        text: "current".into(),
+    };
+    assert!(matches!(
+        f.request(Command::Event {
+            reservation: f.reservation,
+            turn: delivery.turn,
+            event
+        }),
+        Reply::Observed(_)
+    ));
+    let request = crate::messages::Publish {
+        command: Uuid::new_v4(),
+        turn: delivery.turn,
+        body: "completed".into(),
+        outputs: vec![],
+    };
+    let mut stale = f.reservation;
+    stale.assignment = Uuid::new_v4();
+    assert!(matches!(
+        f.request(Command::Publish {
+            reservation: stale,
+            request: request.clone()
+        }),
+        Reply::Refused(Error::StaleTurn)
+    ));
+    let Reply::Published(first) = f.request(Command::Publish {
+        reservation: f.reservation,
+        request: request.clone(),
+    }) else {
+        panic!("publish")
+    };
+    let Reply::Published(replayed) = f.request(Command::Publish {
+        reservation: f.reservation,
+        request,
+    }) else {
+        panic!("receipt")
+    };
+    assert_eq!(first, replayed);
+    assert_eq!(first.answered, 1);
+}
+
+#[test]
 fn context_and_session_head_require_current_registration_and_assignment() {
     let mut f = Fixture::new();
     let role = Uuid::new_v4();

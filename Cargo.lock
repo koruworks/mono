@@ -6015,6 +6015,7 @@ dependencies = [
  "koru-channel",
  "koru-delegate-core",
  "koru-ipc",
+ "koru-session-profiles",
  "koru-session-protocol",
  "koru-session-runtime",
  "koru-settings",

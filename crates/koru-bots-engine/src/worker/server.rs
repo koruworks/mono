@@ -87,6 +87,7 @@ pub(super) fn serve(
         })
         .map_err(|_| Error::EngineUnavailable)?;
     let mut pending = std::collections::VecDeque::new();
+    let mut observations = crate::observations::LiveEvents::default();
     let mut admission = crate::capacity::Admission::new(launcher.capacity());
     let mut dispatch = true;
     let mut retry_dispatch = None;
@@ -139,10 +140,12 @@ pub(super) fn serve(
                 request.command,
                 crate::carrier::Command::Poll
                     | crate::carrier::Command::Context { .. }
+                    | crate::carrier::Command::Configuration { .. }
                     | crate::carrier::Command::Head { .. }
                     | crate::carrier::Command::Catalog { .. }
                     | crate::carrier::Command::Bind { .. }
                     | crate::carrier::Command::OwnTool { .. }
+                    | crate::carrier::Command::Event { .. }
             );
             let response = crate::carrier::handle(
                 &mut database,
@@ -152,6 +155,10 @@ pub(super) fn serve(
                 now_ms(),
             );
             let response = match response {
+                crate::carrier::Reply::Observed(event) => observations
+                    .push(event)
+                    .map(|()| crate::carrier::Reply::Done)
+                    .unwrap_or_else(crate::carrier::Reply::Refused),
                 crate::carrier::Reply::LoadContext(sources) => contexts.request(
                     who,
                     context_assignment.expect("only Context prepares sources"),

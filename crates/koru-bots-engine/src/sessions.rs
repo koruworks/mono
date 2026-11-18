@@ -91,6 +91,9 @@ struct Control {
 pub enum Failure {
     Engine(Error),
     Provider(ProviderFailure),
+    /// A provider ended unfinished work without an engine Stop. Keep the work
+    /// visible for the person instead of immediately starting another process.
+    ProviderEnded,
     /// Process death was not confirmed; retain the capacity reservation
     /// until the owning Bot worker is confirmed dead.
     RetirementUnconfirmed,
