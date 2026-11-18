@@ -8,6 +8,39 @@ fn staged(f: &mut Fixture, length: usize) -> serde_json::Value {
 }
 
 #[test]
+fn provider_file_limit_splits_work_and_omits_only_old_context() {
+    let mut f = Fixture::new();
+    for _ in 0..2 {
+        let mut envelope = f.envelope("six files");
+        envelope.attachments = (0..6).map(|_| staged(&mut f, 3)).collect();
+        f.db.accept_message(&f.person, &envelope, 1).unwrap();
+    }
+    let first = f.claim(Resume::Rebuilt);
+    assert_eq!(first.work.len(), 1);
+    assert_eq!(first.work[0].content.attachments.len(), 6);
+    f.db.delivery_accepted(first.turn, first.id).unwrap();
+    f.db.publish_reply(&reply(&first), 3).unwrap();
+    let second = f.claim(Resume::Rebuilt);
+    assert_eq!(second.work.len(), 1);
+    assert_eq!(second.work[0].content.attachments.len(), 6);
+    assert!(second.older_history_available);
+    assert!(
+        second
+            .context
+            .iter()
+            .all(|m| m.content.attachments.is_empty())
+    );
+    assert_eq!(
+        f.db.read_messages(&f.person, f.thread, 0)
+            .unwrap()
+            .iter()
+            .map(|m| m.content.attachments.len())
+            .sum::<usize>(),
+        12
+    );
+}
+
+#[test]
 fn a_small_provider_budget_makes_smaller_batches_without_dropping_attachments() {
     let mut f = Fixture::new();
     for _ in 0..32 {

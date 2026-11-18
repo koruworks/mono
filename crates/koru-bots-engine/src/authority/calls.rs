@@ -124,7 +124,7 @@ impl std::fmt::Debug for Resolution {
     }
 }
 
-fn open(
+pub(super) fn open(
     connection: &Connection,
     identity: &Identity,
     turn: Option<Uuid>,

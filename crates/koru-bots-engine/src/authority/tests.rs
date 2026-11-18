@@ -3,6 +3,58 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn input_resolution_is_exactly_delivery_scoped_and_revoked_by_stop() {
+    let mut f = Fixture::new();
+    let file = crate::attachments::tests::record(f.thread, 12);
+    f.db.stage_attachment(&f.person, &file).unwrap();
+    f.db.accept_message(
+        &f.person,
+        &messages::Envelope {
+            id: Uuid::new_v4(),
+            to: f.worker.bot,
+            thread: Some(f.thread),
+            body: "file".into(),
+            in_reply_to: None,
+            attachments: vec![json!(file.attachment.id.as_uuid())],
+            references: vec![],
+            deadline_ms: None,
+            reply_to: messages::ReplyTo::Thread,
+        },
+        1,
+    )
+    .unwrap();
+    let issued = f.mint();
+    let delivery = f.claim(issued.session);
+    let secret = issued.secret.unwrap();
+    let grant =
+        f.db.resolve_input(&secret, delivery.turn, delivery.id)
+            .unwrap();
+    assert!(grant.delivery == delivery);
+    assert_eq!(grant.files.len(), 1);
+    assert_eq!(grant.files[0].attachment.id, file.attachment.id);
+    assert!(grant.files[0].attachment.message_id.is_some());
+    assert_eq!(format!("{grant:?}"), "InputGrant(<redacted>)");
+    assert_eq!(
+        f.db.resolve_input(&secret, delivery.turn, Uuid::new_v4())
+            .unwrap_err(),
+        Error::NotAllowed
+    );
+    let mut stale = delivery.turn;
+    stale.generation += 1;
+    assert_eq!(
+        f.db.resolve_input(&secret, stale, delivery.id).unwrap_err(),
+        Error::StaleTurn
+    );
+    f.db.stop_turn(&f.person, Uuid::new_v4(), delivery.turn, 4)
+        .unwrap();
+    assert_eq!(
+        f.db.resolve_input(&secret, delivery.turn, delivery.id)
+            .unwrap_err(),
+        Error::CredentialRevoked
+    );
+}
+
+#[test]
 fn private_descriptor_contains_no_arguments_and_resolution_checks_its_exact_digest() {
     let mut f = Fixture::new();
     let issued = f.mint();

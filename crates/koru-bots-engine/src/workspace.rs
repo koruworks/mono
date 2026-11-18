@@ -12,6 +12,7 @@ use std::{path::Path, time::Duration};
 use uuid::Uuid;
 
 pub mod context;
+pub mod input;
 pub use context::{Context, Page, Sources};
 
 #[derive(Serialize, Deserialize)]
@@ -19,6 +20,11 @@ pub enum Command {
     Call(Request),
     Catalog {
         secret: Secret,
+    },
+    Input {
+        secret: Secret,
+        turn: crate::messages::Turn,
+        delivery: Uuid,
     },
     Recover {
         authority: Secret,
@@ -66,6 +72,7 @@ impl Request {
 pub enum Reply {
     Result(Value),
     Context(Context),
+    Input(input::Prepared),
     Recovery(RecoveryReply),
     Refused(Error),
 }
@@ -134,6 +141,26 @@ pub fn load_context(
 pub fn catalog(endpoint: &koru_ipc::Endpoint, secret: Secret) -> Result<Vec<Value>, Error> {
     match send(endpoint, &Command::Catalog { secret })? {
         Reply::Result(value) => serde_json::from_value(value).map_err(|_| Error::InvalidRequest),
+        Reply::Refused(error) => Err(error),
+        _ => Err(Error::InvalidRequest),
+    }
+}
+
+pub fn prepare_input(
+    endpoint: &koru_ipc::Endpoint,
+    secret: Secret,
+    turn: crate::messages::Turn,
+    delivery: Uuid,
+) -> Result<input::Prepared, Error> {
+    match send(
+        endpoint,
+        &Command::Input {
+            secret,
+            turn,
+            delivery,
+        },
+    )? {
+        Reply::Input(input) => Ok(input),
         Reply::Refused(error) => Err(error),
         _ => Err(Error::InvalidRequest),
     }

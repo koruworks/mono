@@ -22,6 +22,7 @@ use uuid::Uuid;
 mod tests;
 
 pub(super) struct Port {
+    paths: Arc<super::paths::Paths>,
     pub client: Client,
     pub reservation: Reservation,
     pub selection: LaunchSelection,
@@ -45,8 +46,10 @@ impl Port {
         endpoint: koru_session_protocol::McpEndpoint,
         registry: Arc<door::http::Registry>,
         database: Arc<Mutex<BotDatabase>>,
+        paths: Arc<super::paths::Paths>,
     ) -> Self {
         Self {
+            paths,
             client,
             reservation,
             selection,
@@ -71,6 +74,9 @@ impl Port {
 impl Drop for Port {
     fn drop(&mut self) {
         if let Ok(state) = self.state.get_mut() {
+            if let Some(turn) = state.turn {
+                self.paths.remove(turn.session);
+            }
             if let Some(secret) = &state.secret {
                 self.registry.remove(secret);
             }
@@ -78,6 +84,27 @@ impl Drop for Port {
     }
 }
 impl sessions::Port for Port {
+    fn input(&self, delivery: &Delivery) -> Result<workspace::input::Prepared, Error> {
+        if delivery
+            .context
+            .iter()
+            .chain(&delivery.work)
+            .all(|m| m.content.attachments.is_empty())
+        {
+            return workspace::input::Prepared::empty(delivery);
+        }
+        let secret = {
+            let state = self.state.lock().map_err(|_| Error::StorageUnavailable)?;
+            if state.turn != Some(delivery.turn) {
+                return Err(Error::StaleTurn);
+            }
+            state.secret.clone().ok_or(Error::Unauthenticated)?
+        };
+        let prepared =
+            workspace::prepare_input(&self.workspace, secret, delivery.turn, delivery.id)?;
+        self.paths.install(delivery, &prepared)?;
+        Ok(prepared)
+    }
     fn context(&self, thread: Uuid) -> Result<sessions::Context, Error> {
         self.thread(thread)?;
         let deadline = Instant::now() + Duration::from_secs(30);
@@ -271,6 +298,7 @@ impl sessions::Port for Port {
         Err(Error::EngineUnavailable)
     }
     fn retired(&self, turn: Turn) -> Result<(), Error> {
+        self.paths.remove(turn.session);
         // The worker manager releases the assignment only after Pool::finished
         // confirms this session thread itself has returned. It also handles
         // failed starts and lost Claim replies whose turn was never received.

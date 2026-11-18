@@ -23,6 +23,7 @@ enum Steering {
 
 #[derive(Clone, Default)]
 struct Plan {
+    native_images: bool,
     fail_resume: bool,
     lost: bool,
     fail_retirement: bool,
@@ -34,6 +35,7 @@ struct Plan {
 }
 #[derive(Default)]
 struct Records {
+    attachment_counts: Vec<usize>,
     plans: VecDeque<Plan>,
     inputs: Vec<String>,
     histories: std::collections::BTreeMap<String, Vec<[u8; 32]>>,
@@ -132,7 +134,15 @@ impl AgentControl for Agent {
             .parse()
             .unwrap(),
             protocol_version: "1".parse().unwrap(),
-            capabilities: Default::default(),
+            capabilities: koru_session_protocol::CapabilitySet::new(if self.plan.native_images {
+                vec![
+                    koru_session_protocol::capability::NATIVE_ATTACHMENT_DELIVERY
+                        .parse()
+                        .unwrap(),
+                ]
+            } else {
+                vec![]
+            }),
             delegation: DelegationFacts::undeclared(),
         };
         self.caps = Some(caps.clone());
@@ -144,6 +154,7 @@ impl AgentControl for Agent {
     fn submit(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
         {
             let mut records = self.records.lock().unwrap();
+            records.attachment_counts.push(input.attachments.len());
             records
                 .histories
                 .entry(self.history.clone())
@@ -288,6 +299,39 @@ struct TestPort {
     question_answers: Mutex<crate::questions::Transient>,
 }
 impl Port for TestPort {
+    fn input(&self, delivery: &Delivery) -> Result<crate::workspace::input::Prepared, Error> {
+        use crate::workspace::input::{File, Prepared};
+        let mut files = vec![];
+        for message in delivery.context.iter().chain(&delivery.work) {
+            for value in &message.content.attachments {
+                let a: koru_ai_core::ChatAttachment =
+                    serde_json::from_value(value.clone()).unwrap();
+                let path = a.reference_path.unwrap_or_else(|| {
+                    if cfg!(windows) {
+                        r"C:\fixture\image.png"
+                    } else {
+                        "/fixture/image.png"
+                    }
+                    .into()
+                });
+                files.push(File {
+                    id: a.id.as_uuid(),
+                    kind: a.kind,
+                    image: (a.kind == koru_ai_core::AttachmentKind::Image).then(|| {
+                        crate::workspace::input::Image {
+                            path: path.clone(),
+                            media_type: "image/png".into(),
+                        }
+                    }),
+                    path,
+                });
+            }
+        }
+        Ok(Prepared {
+            delivery_hash: crate::workspace::input::digest(delivery)?,
+            files,
+        })
+    }
     fn context(&self, _: Uuid) -> Result<Context, Error> {
         let text = self
             .context
@@ -525,6 +569,117 @@ impl Fixture {
     fn input(&self, index: usize) -> serde_json::Value {
         serde_json::from_str(&self.records.lock().unwrap().inputs[index]).unwrap()
     }
+}
+
+#[test]
+fn provider_capability_selects_native_image_or_explicit_path_input() {
+    for native_images in [false, true] {
+        let f = Fixture::new();
+        let mut record = crate::attachments::tests::record(f.thread, 5);
+        record.attachment.kind = koru_ai_core::AttachmentKind::Image;
+        record.attachment.source = koru_ai_core::AttachmentSource::Drop;
+        record.attachment.reference_path = None;
+        record.attachment.byte_count = 10;
+        record.attachment.media_type = "image/png".into();
+        let person = Person {
+            owner: "owner".into(),
+            sender: "person".into(),
+        };
+        {
+            let mut db = f.port.db.lock().unwrap();
+            db.stage_attachment(&person, &record).unwrap();
+            db.accept_message(
+                &person,
+                &Envelope {
+                    id: Uuid::new_v4(),
+                    to: f.port.bot,
+                    thread: Some(f.thread),
+                    body: "image".into(),
+                    in_reply_to: None,
+                    attachments: vec![serde_json::json!(record.attachment.id.as_uuid())],
+                    references: vec![],
+                    deadline_ms: None,
+                    reply_to: ReplyTo::Thread,
+                },
+                1,
+            )
+            .unwrap();
+        }
+        f.plan(Plan {
+            native_images,
+            ..Default::default()
+        });
+        f.run().unwrap();
+        assert_eq!(
+            f.records.lock().unwrap().attachment_counts,
+            vec![usize::from(native_images)]
+        );
+        assert_eq!(f.input(0)["native_images"], native_images);
+        assert!(
+            f.input(0)["files"][0]["path"]
+                .as_str()
+                .unwrap()
+                .ends_with("image.png")
+        );
+    }
+}
+
+#[test]
+fn file_paths_are_part_of_the_exact_journaled_input_and_resume_proof() {
+    let f = Fixture::new();
+    let mut record = crate::attachments::tests::record(f.thread, 6);
+    record.attachment.reference_path = Some(
+        if cfg!(windows) {
+            r"C:\fixture\source.txt"
+        } else {
+            "/fixture/source.txt"
+        }
+        .into(),
+    );
+    let person = Person {
+        owner: "owner".into(),
+        sender: "person".into(),
+    };
+    {
+        let mut db = f.port.db.lock().unwrap();
+        db.stage_attachment(&person, &record).unwrap();
+        db.accept_message(
+            &person,
+            &Envelope {
+                id: Uuid::new_v4(),
+                to: f.port.bot,
+                thread: Some(f.thread),
+                body: "read this".into(),
+                in_reply_to: None,
+                attachments: vec![serde_json::json!(record.attachment.id.as_uuid())],
+                references: vec![],
+                deadline_ms: None,
+                reply_to: ReplyTo::Thread,
+            },
+            1,
+        )
+        .unwrap();
+    }
+    f.plan(Plan {
+        lost: true,
+        ..Default::default()
+    });
+    assert!(f.run().is_err());
+    let first = f.input(0);
+    assert_eq!(
+        first["files"][0]["path"],
+        record.attachment.reference_path.unwrap()
+    );
+    assert_eq!(first["native_images"], false);
+    f.run().unwrap();
+    let resumed = f.input(1);
+    assert!(resumed["delivery"]["work"].as_array().unwrap().is_empty());
+    assert!(
+        !resumed["delivery"]["resume_accepted"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
 }
 
 #[test]

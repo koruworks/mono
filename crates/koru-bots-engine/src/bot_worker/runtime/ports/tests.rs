@@ -28,6 +28,7 @@ fn fixture() -> (Port, mpsc::Receiver<Request>, Turn) {
             "http://127.0.0.1:1/mcp".parse().unwrap(),
             Arc::new(door::http::Registry::default()),
             Arc::new(Mutex::new(BotDatabase::in_memory().unwrap())),
+            Arc::new(super::super::paths::Paths::default()),
         ),
         receiver,
         turn,

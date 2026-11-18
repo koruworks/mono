@@ -3,6 +3,7 @@
 //! Engine-owned session credentials and immutable call identity. Only trusted
 //! carrier adapters construct Worker; no provider request chooses that identity.
 pub(crate) mod calls;
+pub mod input;
 pub use calls::{Binding, Call, Descriptor, Resolution};
 
 use crate::{

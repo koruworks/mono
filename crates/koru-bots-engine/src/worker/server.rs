@@ -21,6 +21,12 @@ enum ActorCommand {
     Creation(crate::creation::Request, mpsc::SyncSender<Reply>),
     Operation(crate::operations::control::Command, mpsc::SyncSender<Reply>),
     SessionCatalog(crate::authority::Secret, mpsc::SyncSender<Reply>),
+    ResolveInput(
+        crate::authority::Secret,
+        crate::messages::Turn,
+        Uuid,
+        mpsc::SyncSender<Reply>,
+    ),
     ResolveCall(
         crate::authority::Secret,
         Uuid,
@@ -244,6 +250,13 @@ pub(super) fn serve(
                     .unwrap_or_else(Reply::Refused);
                 let _ = reply.try_send(result);
             }
+            ActorCommand::ResolveInput(secret, turn, delivery, reply) => {
+                let result = database
+                    .resolve_input(&secret, turn, delivery)
+                    .map(Reply::Input)
+                    .unwrap_or_else(Reply::Refused);
+                let _ = reply.try_send(result);
+            }
             ActorCommand::ResolveCall(secret, binding, descriptor, reply) => {
                 let result = database
                     .resolve_descriptor(&secret, binding, &descriptor)
@@ -372,6 +385,23 @@ fn handle(
                 let (reply, answer) = mpsc::sync_channel(1);
                 if actor
                     .try_send(ActorCommand::SessionCatalog(secret, reply))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
+            Command::ResolveInput {
+                secret,
+                turn,
+                delivery,
+            } => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::ResolveInput(secret, turn, delivery, reply))
                     .is_err()
                 {
                     Reply::Refused(Error::EngineUnavailable)

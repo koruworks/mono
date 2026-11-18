@@ -54,6 +54,11 @@ pub trait Port: Send + Sync + 'static {
         budget: usize,
     ) -> Result<Option<Delivery>, Error>;
     fn accepted(&self, turn: Turn, delivery: Uuid) -> Result<(), Error>;
+    /// Resolve only files carried by this exact durable delivery. Legacy and
+    /// probe ports refuse attachments until they supply an authenticated owner.
+    fn input(&self, delivery: &Delivery) -> Result<crate::workspace::input::Prepared, Error> {
+        crate::workspace::input::Prepared::empty(delivery)
+    }
     fn unknown(&self, turn: Turn, delivery: Uuid) -> Result<(), Error>;
     /// Pull one new message for the running turn. Legacy/probe ports that do
     /// not compose steering leave it queued for the next ordinary claim.

@@ -137,7 +137,7 @@ pub fn handle(db: &mut Database, request: Request) -> Result<Reply, Error> {
         }
     }
 }
-fn load(c: &Connection, thread: Uuid, id: Uuid) -> Result<Option<Record>, Error> {
+pub(crate) fn load(c: &Connection, thread: Uuid, id: Uuid) -> Result<Option<Record>, Error> {
     let row: Option<(Vec<u8>,Option<String>,Option<u32>)> = c.query_row(
         "SELECT record,message,ordinal FROM attachments WHERE id=?1 AND thread=?2 AND removed=0",
         params![id.to_string(),thread.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),

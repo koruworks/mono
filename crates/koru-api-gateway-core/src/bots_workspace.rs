@@ -57,6 +57,7 @@ impl Resolver for Engine {
     }
 }
 pub struct Boundary {
+    attachments: Option<std::sync::Arc<crate::bots_engine::Gateway>>,
     engine: Engine,
     store: StoreWorkerClient,
     incarnation: Uuid,
@@ -64,6 +65,7 @@ pub struct Boundary {
 impl GatewayState {
     pub fn bots_workspace(&self, engine: Engine) -> Boundary {
         Boundary {
+            attachments: self.bots_engine.get().cloned(),
             engine,
             store: self.store.client(),
             incarnation: Uuid::new_v4(),
@@ -73,6 +75,14 @@ impl GatewayState {
 impl Boundary {
     pub fn handle(&self, command: workspace::Command) -> workspace::Reply {
         match command {
+            workspace::Command::Input {
+                secret,
+                turn,
+                delivery,
+            } => self
+                .input(secret, turn, delivery)
+                .map(workspace::Reply::Input)
+                .unwrap_or_else(workspace::Reply::Refused),
             workspace::Command::Recover { authority, request } => {
                 if !same_authority(&authority, &self.engine.authority) {
                     return workspace::Reply::Refused(Error::Unauthenticated);
@@ -96,6 +106,32 @@ impl Boundary {
                 }).map(workspace::Reply::Context).unwrap_or_else(workspace::Reply::Refused)
             }
         }
+    }
+    fn input(
+        &self,
+        secret: Secret,
+        turn: koru_bots_engine::messages::Turn,
+        delivery: Uuid,
+    ) -> Result<workspace::input::Prepared, Error> {
+        let grant = match worker::request(
+            &self.engine.endpoint,
+            self.engine.authority.expose(),
+            worker::Command::ResolveInput {
+                secret,
+                turn,
+                delivery,
+            },
+        )? {
+            worker::Reply::Input(grant) => grant,
+            worker::Reply::Refused(error) => return Err(error),
+            _ => return Err(Error::EngineUnavailable),
+        };
+        let identity = read_authority(grant.resolution.clone())?;
+        self.store_authority(identity)?;
+        self.attachments
+            .as_ref()
+            .ok_or(Error::EngineUnavailable)?
+            .input_files(&grant)
     }
     pub fn execute(&self, request: workspace::Request) -> workspace::Reply {
         if matches!(request.tool.as_str(), "create_document" | "edit_document") {

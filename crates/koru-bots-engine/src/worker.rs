@@ -50,6 +50,11 @@ pub enum Command {
     SessionCatalog {
         secret: crate::authority::Secret,
     },
+    ResolveInput {
+        secret: crate::authority::Secret,
+        turn: crate::messages::Turn,
+        delivery: Uuid,
+    },
     ResolveCall {
         secret: crate::authority::Secret,
         binding: Uuid,
@@ -79,6 +84,7 @@ pub enum Reply {
     Queued,
     Capacity { sessions: u32 },
     Resolved(crate::authority::Resolution),
+    Input(crate::authority::input::Grant),
     Catalog(CatalogGrant),
     Person(crate::person::Reply),
     Attachment(crate::attachments::Reply),

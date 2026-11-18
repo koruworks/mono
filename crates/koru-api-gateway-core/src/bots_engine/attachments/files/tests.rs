@@ -179,3 +179,27 @@ fn junctions_in_parents_or_originals_refuse_without_writing_outside_root() {
             .contains_key(&root.join("elsewhere"))
     );
 }
+
+#[test]
+fn provider_paths_require_verified_originals_and_keep_path_references_metadata_only() {
+    let root = root();
+    let fs = Memory::new(&root);
+    let checked = upload();
+    let saved = publish(&fs, &root, &checked, b"hello").unwrap();
+    let input = input_file(&fs, &root, &saved).unwrap();
+    assert!(input.path.ends_with("notes.txt"));
+    assert!(input.image.is_none());
+    let mut reference = saved.clone();
+    reference.attachment.source = AttachmentSource::Path;
+    reference.attachment.kind = koru_ai_core::AttachmentKind::Folder;
+    reference.attachment.reference_path = Some(root.join("not-present").to_str().unwrap().into());
+    assert_eq!(
+        input_file(&fs, &root, &reference).unwrap().path,
+        reference.attachment.reference_path.unwrap()
+    );
+    fs.entries
+        .lock()
+        .unwrap()
+        .remove(&PathBuf::from(input.path));
+    assert!(input_file(&fs, &root, &saved).is_err());
+}

@@ -2,6 +2,7 @@
 //! One registered IPC owner and a provider pool. Blocking discovery, context,
 //! provider and tool calls run on session/door threads, never this pump.
 mod client;
+mod paths;
 mod ports;
 use super::*;
 use crate::{
@@ -145,8 +146,9 @@ pub(super) fn run(
     let registry = Arc::new(door::http::Registry::default());
     let server = door::http::Server::start(Arc::clone(&registry))?;
     let workspace = crate::workspace::endpoint(&bootstrap.root, &bootstrap.segment)?;
+    let paths = Arc::new(paths::Paths::default());
     let factory: Arc<dyn ManagedProviderFactory> = Arc::new(Factory {
-        registry: builtin_providers(Arc::new(koru_session_runtime::NoopAttachmentPathResolver)),
+        registry: builtin_providers(paths.clone()),
         root: bootstrap.root.clone(),
         bot: bootstrap.bot,
     });
@@ -239,6 +241,7 @@ pub(super) fn run(
                         server.endpoint(),
                         Arc::clone(&registry),
                         pool.journal_database(),
+                        paths.clone(),
                     ));
                     let request = ManagedProviderRequest {
                         provider: configuration.provider,

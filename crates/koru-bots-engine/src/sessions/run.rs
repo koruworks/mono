@@ -162,7 +162,24 @@ fn drive(
     }
     let turn = delivery.turn;
     *claimed = Some(turn);
-    let mut text = prefix;
+    let prepared = start.port.input(&delivery)?;
+    prepared.validate(&delivery)?;
+    let native_images = control.capabilities().is_some_and(|caps| {
+        caps.capabilities
+            .supports(koru_session_protocol::capability::NATIVE_ATTACHMENT_DELIVERY)
+    });
+    // Paths live inside the exact text block we journal and later compare with
+    // replay evidence, not additional adapter text that could change its hash.
+    let mut text = if prepared.files.is_empty() {
+        prefix
+    } else {
+        format!(
+            "{{\"version\":1,\"context\":{},\"files\":{},\"native_images\":{},\"delivery\":",
+            serde_json::to_string(&current).map_err(|_| Error::InvalidRequest)?,
+            serde_json::to_string(&prepared.files).map_err(|_| Error::InvalidRequest)?,
+            native_images
+        )
+    };
     text.push_str(&serde_json::to_string(&delivery).map_err(|_| Error::InvalidRequest)?);
     text.push('}');
     let input = AgentInput {
@@ -172,7 +189,27 @@ fn drive(
             .parse()
             .map_err(|_| Error::InvalidRequest)?,
         text,
-        attachments: vec![],
+        attachments: prepared
+            .files
+            .iter()
+            .filter_map(|file| {
+                file.image
+                    .as_ref()
+                    .filter(|_| native_images)
+                    .map(|image| (file, image))
+            })
+            .map(|(file, image)| {
+                Ok(koru_session_runtime::providers::AgentAttachment {
+                    id: file
+                        .id
+                        .to_string()
+                        .parse()
+                        .map_err(|_| Error::InvalidRequest)?,
+                    kind: koru_session_protocol::AttachmentKind::Image,
+                    media_type: image.media_type.clone(),
+                })
+            })
+            .collect::<Result<_, Error>>()?,
         references: vec![],
         mode: None,
         fast: None,

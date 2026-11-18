@@ -112,6 +112,14 @@ pub(super) fn publish(
     }
     let parent = thread_dir(fs, root, record.thread, true)?;
     let target = parent.join(record.attachment.id.to_storage());
+    if !target
+        .join("file")
+        .join(&record.attachment.file_name)
+        .to_str()
+        .is_some_and(koru_bots_engine::workspace::input::valid_path)
+    {
+        return Err(Error::InvalidRequest);
+    }
     let verify = || -> Result<Record, Error> {
         exact(fs, &target)?;
         let bytes = checked_read(fs, &target.join("record.json"), 16 * 1024)?;
@@ -204,6 +212,82 @@ pub(super) fn read(
         return Err(Error::StorageUnavailable);
     }
     Ok(bytes)
+}
+
+pub(super) fn input_file(
+    fs: &dyn Files,
+    root: &Path,
+    record: &Record,
+) -> Result<koru_bots_engine::workspace::input::File, Error> {
+    use koru_bots_engine::workspace::input::{File, Image, valid_path};
+    let a = &record.attachment;
+    if a.source == AttachmentSource::Path {
+        let path = a
+            .reference_path
+            .clone()
+            .filter(|p| valid_path(p))
+            .ok_or(Error::InvalidRequest)?;
+        return Ok(File {
+            id: a.id.as_uuid(),
+            kind: a.kind,
+            path,
+            image: None,
+        });
+    }
+    // Verify the original against engine metadata before exposing any path.
+    read(fs, root, record, false)?;
+    let target = thread_dir(fs, root, record.thread, false)?.join(a.id.to_storage());
+    let original = target.join("file").join(&a.file_name);
+    let path = original
+        .to_str()
+        .filter(|p| valid_path(p))
+        .ok_or(Error::InvalidRequest)?
+        .to_owned();
+    let image = if a.kind == koru_ai_core::AttachmentKind::Image {
+        if record.has_sent_copy {
+            let mut found = None;
+            for (name, media_type) in [("sent.png", "image/png"), ("sent.jpg", "image/jpeg")] {
+                let candidate = target.join(name);
+                match fs.canonical(&candidate) {
+                    Ok(_) => {
+                        if found.is_some() {
+                            return Err(Error::StorageUnavailable);
+                        }
+                        checked_read(
+                            fs,
+                            &candidate,
+                            koru_ai_core::attachments::MAX_SENT_COPY_BYTES as usize,
+                        )?;
+                        let path = candidate
+                            .to_str()
+                            .filter(|p| valid_path(p))
+                            .ok_or(Error::InvalidRequest)?
+                            .to_owned();
+                        found = Some(Image {
+                            path,
+                            media_type: media_type.into(),
+                        });
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => (),
+                    Err(e) => return Err(storage(e)),
+                }
+            }
+            Some(found.ok_or(Error::StorageUnavailable)?)
+        } else {
+            Some(Image {
+                path: path.clone(),
+                media_type: a.media_type.clone(),
+            })
+        }
+    } else {
+        None
+    };
+    Ok(File {
+        id: a.id.as_uuid(),
+        kind: a.kind,
+        path,
+        image,
+    })
 }
 
 #[cfg(test)]

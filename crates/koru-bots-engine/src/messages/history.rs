@@ -69,6 +69,28 @@ pub(super) fn input(message: Message) -> InputMessage {
 /// The budget includes all serialized framing and uncertainty metadata. Work
 /// identities survive truncation; history can be read later with the tool.
 pub(super) fn bound(delivery: &mut Delivery, budget: usize) -> Result<(), Error> {
+    let work_files: usize = delivery
+        .work
+        .iter()
+        .map(|m| m.content.attachments.len())
+        .sum();
+    let maximum = koru_ai_core::attachments::MAX_ATTACHMENTS_PER_MESSAGE;
+    // Mandatory files are never dropped. The caller retries a smaller batch;
+    // context can be read later through the ordinary history tool.
+    if work_files > maximum {
+        return Err(Error::InputTooSmall);
+    }
+    while work_files
+        + delivery
+            .context
+            .iter()
+            .map(|m| m.content.attachments.len())
+            .sum::<usize>()
+        > maximum
+    {
+        delivery.context.remove(0);
+        delivery.older_history_available = true;
+    }
     while delivery.context.len() + delivery.work.len() > HISTORY_LIMIT {
         delivery.context.remove(0);
         delivery.older_history_available = true;
@@ -81,15 +103,18 @@ pub(super) fn bound(delivery: &mut Delivery, budget: usize) -> Result<(), Error>
         message.content.body.clear();
         message.truncated = true;
     }
-    let share = budget.saturating_sub(encode(&metadata)?.len()) / delivery.work.len().max(1);
+    let size = |delivery: &Delivery| -> Result<usize, Error> {
+        Ok(encode(delivery)?.len() + crate::workspace::input::budget(delivery)?)
+    };
+    let share = budget.saturating_sub(size(&metadata)?) / delivery.work.len().max(1);
     for message in &mut delivery.work {
         cut(message, share);
     }
-    while encode(delivery)?.len() > budget && !delivery.context.is_empty() {
+    while size(delivery)? > budget && !delivery.context.is_empty() {
         delivery.context.remove(0);
         delivery.older_history_available = true;
     }
-    while encode(delivery)?.len() > budget {
+    while size(delivery)? > budget {
         let Some(message) = delivery
             .work
             .iter_mut()

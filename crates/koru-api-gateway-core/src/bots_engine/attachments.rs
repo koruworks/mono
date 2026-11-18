@@ -31,6 +31,26 @@ pub(crate) enum Operation {
     Workspace(koru_ai_wire::FromWorkspaceAttachmentRequest),
 }
 impl Gateway {
+    pub(crate) fn input_files(
+        &self,
+        grant: &koru_bots_engine::authority::input::Grant,
+    ) -> Result<koru_bots_engine::workspace::input::Prepared, Error> {
+        let prepared = koru_bots_engine::workspace::input::Prepared {
+            delivery_hash: koru_bots_engine::workspace::input::digest(&grant.delivery)?,
+            files: grant
+                .files
+                .iter()
+                .map(|record| {
+                    if record.thread != grant.resolution.thread {
+                        return Err(Error::NotAllowed);
+                    }
+                    files::input_file(self.files.as_ref(), &self.root, record)
+                })
+                .collect::<Result<_, _>>()?,
+        };
+        prepared.validate(&grant.delivery)?;
+        Ok(prepared)
+    }
     fn attachment_call(&self, owner: &str, command: Control) -> Result<Reply, Error> {
         (self.attachments)(Request {
             owner: owner.to_owned(),
@@ -188,7 +208,9 @@ impl Gateway {
                     match koru_ai_server::check_attachment(chat, id, &name, source, &bytes) {
                         Ok(checked) => checked,
                         Err(error) => {
-                            return Ok(Some((StatusCode::BAD_REQUEST, Json(error)).into_response()));
+                            return Ok(Some(
+                                (StatusCode::BAD_REQUEST, Json(error)).into_response(),
+                            ));
                         }
                     };
                 let record = files::publish(self.files.as_ref(), &self.root, &checked, &bytes)?;
