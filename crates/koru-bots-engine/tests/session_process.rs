@@ -46,18 +46,21 @@ impl Port for Boundary {
             memory: None,
         })
     }
-    fn credential(&self, _: Uuid, _: Uuid) -> Result<DelegationLaunch, Error> {
+    fn credential(&self, _: Uuid, _: Uuid) -> Result<sessions::SessionGrant, Error> {
         let stage = if self.issued.fetch_add(1, Ordering::SeqCst) == 0 {
             "initial"
         } else {
             "replacement"
         };
-        Ok(DelegationLaunch {
-            model: None,
-            mcp_endpoint: self.endpoint.parse().map_err(|_| Error::InvalidRequest)?,
-            credential: Some(format!("synthetic-probe-{stage}").parse().unwrap()),
-            tools: Default::default(),
-            resume: None,
+        Ok(sessions::SessionGrant {
+            session: koru_session_protocol::SessionId::mint(),
+            launch: DelegationLaunch {
+                model: None,
+                mcp_endpoint: self.endpoint.parse().map_err(|_| Error::InvalidRequest)?,
+                credential: Some(format!("synthetic-probe-{stage}").parse().unwrap()),
+                tools: Default::default(),
+                resume: None,
+            },
         })
     }
     fn claim(

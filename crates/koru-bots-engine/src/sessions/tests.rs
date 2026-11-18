@@ -167,6 +167,7 @@ struct TestPort {
     context: Mutex<Option<String>>,
     offers: Mutex<Vec<Delivery>>,
     events: Mutex<Vec<AgentEvent>>,
+    issued: Mutex<std::collections::BTreeMap<Uuid, Uuid>>,
 }
 impl Port for TestPort {
     fn context(&self, _: Uuid) -> Result<Context, Error> {
@@ -182,13 +183,21 @@ impl Port for TestPort {
             memory: None,
         })
     }
-    fn credential(&self, _: Uuid, session: Uuid) -> Result<DelegationLaunch, Error> {
-        Ok(DelegationLaunch {
-            model: None,
-            mcp_endpoint: "http://127.0.0.1:1/mcp".parse().unwrap(),
-            credential: Some(session.to_string().parse().unwrap()),
-            tools: Default::default(),
-            resume: None,
+    fn credential(&self, thread: Uuid, _: Uuid) -> Result<SessionGrant, Error> {
+        let session = SessionId::mint();
+        self.issued
+            .lock()
+            .unwrap()
+            .insert(thread, session.as_uuid());
+        Ok(SessionGrant {
+            session,
+            launch: DelegationLaunch {
+                model: None,
+                mcp_endpoint: "http://127.0.0.1:1/mcp".parse().unwrap(),
+                credential: Some(session.to_string().parse().unwrap()),
+                tools: Default::default(),
+                resume: None,
+            },
         })
     }
     fn claim(
@@ -198,6 +207,11 @@ impl Port for TestPort {
         resume: Resume,
         budget: usize,
     ) -> Result<Option<Delivery>, Error> {
+        assert_eq!(
+            self.issued.lock().unwrap().get(&thread),
+            Some(&session),
+            "claim must use the engine-issued incarnation"
+        );
         let delivery = self.db.lock().unwrap().claim_messages(
             self.bot,
             thread,
@@ -251,6 +265,7 @@ impl Fixture {
                 context: Mutex::new(Some("current role".into())),
                 offers: Mutex::new(vec![]),
                 events: Mutex::new(vec![]),
+                issued: Mutex::new(Default::default()),
             }),
             records: Arc::new(Mutex::new(Records::default())),
             database: Arc::new(Mutex::new(BotDatabase::in_memory().unwrap())),

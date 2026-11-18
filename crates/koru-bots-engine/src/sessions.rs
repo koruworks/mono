@@ -39,15 +39,23 @@ pub struct Page {
     pub text: String,
 }
 
+/// Both the incarnation and its credential come from the engine. A local
+/// provider owner must not choose the authority identity for its claim.
+pub struct SessionGrant {
+    pub session: SessionId,
+    pub launch: DelegationLaunch,
+}
+
 /// Private trusted carrier. Implementations authenticate the worker and
 /// fence every turn. `claim` must finish operation reconciliation first;
 /// it must not return work while a barrier or unresolved write blocks it.
 /// None of these methods is exposed directly to provider JSON.
 pub trait Port: Send + Sync + 'static {
     fn context(&self, thread: Uuid) -> Result<Context, Error>;
-    /// A new command and session for each attempt, including failed-resume
-    /// fallback. Secrets stay in this return value and the provider launch.
-    fn credential(&self, thread: Uuid, session: Uuid) -> Result<DelegationLaunch, Error>;
+    /// A new mint command for each attempt, including failed-resume fallback.
+    /// The engine selects the session incarnation. Secrets stay in this return
+    /// value and the provider launch; the port handles an uncertain mint reply.
+    fn credential(&self, thread: Uuid, command: Uuid) -> Result<SessionGrant, Error>;
     fn claim(
         &self,
         thread: Uuid,

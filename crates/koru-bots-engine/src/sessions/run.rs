@@ -71,9 +71,10 @@ fn launch(
     start: &Start,
     token: Option<koru_session_protocol::ProviderResumeToken>,
 ) -> Result<(ManagedProvider, SessionId), Failure> {
-    let session = SessionId::mint();
     let mut request = start.request.clone();
-    let mut delegation = start.port.credential(start.thread, session.as_uuid())?;
+    let grant = start.port.credential(start.thread, Uuid::new_v4())?;
+    let session = grant.session;
+    let mut delegation = grant.launch;
     if delegation.credential.is_none() {
         return Err(Error::Unauthenticated.into());
     }
