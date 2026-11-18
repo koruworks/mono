@@ -8,11 +8,13 @@ use std::sync::{
 
 use super::*;
 use crate::Database;
+mod context;
 
 enum ActorCommand {
     Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
+    SessionCatalog(crate::authority::Secret, mpsc::SyncSender<Reply>),
     ResolveCall(
         crate::authority::Secret,
         Uuid,
@@ -44,6 +46,10 @@ pub(super) fn serve(
     )?;
     let (sender, receiver) = mpsc::sync_channel(64);
     let launch_id = bootstrap.launch_id;
+    let mut contexts = context::Jobs::new(
+        crate::workspace::endpoint(&bootstrap.root, &bootstrap.segment)?,
+        crate::authority::Secret::parse(bootstrap.authority.clone())?,
+    );
     let parent = sender.clone();
     koru_agent_worker::ParentPipe::new(input)
         .watch("koru-bots parent", move || {
@@ -77,7 +83,9 @@ pub(super) fn serve(
     let mut pending = std::collections::VecDeque::new();
     let mut admission = crate::capacity::Admission::new(launcher.capacity());
     let mut dispatch = true;
+    let mut retry_dispatch = None;
     loop {
+        contexts.poll(&admission);
         pending.extend(launcher.events());
         while let Some(event) = pending.pop_front() {
             let current = match &event {
@@ -116,7 +124,19 @@ pub(super) fn serve(
         }
         for request in worker_commands.try_iter().take(16) {
             let who = request.worker;
-            dispatch |= !matches!(request.command, crate::carrier::Command::Poll);
+            let context_assignment = match &request.command {
+                crate::carrier::Command::Context { reservation } => Some(*reservation),
+                _ => None,
+            };
+            dispatch |= !matches!(
+                request.command,
+                crate::carrier::Command::Poll
+                    | crate::carrier::Command::Context { .. }
+                    | crate::carrier::Command::Head { .. }
+                    | crate::carrier::Command::Catalog { .. }
+                    | crate::carrier::Command::Bind { .. }
+                    | crate::carrier::Command::OwnTool { .. }
+            );
             let response = crate::carrier::handle(
                 &mut database,
                 &mut admission,
@@ -124,6 +144,14 @@ pub(super) fn serve(
                 request.command,
                 now_ms(),
             );
+            let response = match response {
+                crate::carrier::Reply::LoadContext(sources) => contexts.request(
+                    who,
+                    context_assignment.expect("only Context prepares sources"),
+                    sources,
+                ),
+                response => response,
+            };
             launcher.occupied(
                 who.bot,
                 who.incarnation,
@@ -131,9 +159,13 @@ pub(super) fn serve(
             );
             let _ = request.reply.try_send(response);
         }
+        dispatch |= retry_dispatch.is_some_and(|deadline| std::time::Instant::now() >= deadline);
         if dispatch {
             admission.set_capacity(launcher.capacity());
-            let _ = dispatch_work(&database, &mut admission, &launcher, now_ms());
+            retry_dispatch = match dispatch_work(&database, &mut admission, &launcher, now_ms()) {
+                Ok(()) => None,
+                Err(_) => Some(std::time::Instant::now() + std::time::Duration::from_secs(1)),
+            };
             dispatch = false;
         }
         let command = match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
@@ -142,6 +174,13 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::SessionCatalog(secret, reply) => {
+                let result = database
+                    .boundary_catalog_grant(&secret)
+                    .map(|grant| Reply::Catalog(CatalogGrant(grant)))
+                    .unwrap_or_else(Reply::Refused);
+                let _ = reply.try_send(result);
+            }
             ActorCommand::ResolveCall(secret, binding, descriptor, reply) => {
                 let result = database
                     .resolve_descriptor(&secret, binding, &descriptor)
@@ -214,6 +253,19 @@ fn handle(
         Reply::Refused(Error::Unauthenticated)
     } else {
         match request.command {
+            Command::SessionCatalog { secret } => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::SessionCatalog(secret, reply))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
             Command::ResolveCall {
                 secret,
                 binding,

@@ -5,10 +5,29 @@ use std::cell::RefCell;
 
 struct ResolverFixture(RefCell<Result<Resolution, Error>>, RefCell<usize>);
 impl Resolver for ResolverFixture {
+    fn catalog(&self, _: &Secret) -> Result<Value, Error> {
+        self.0
+            .borrow()
+            .clone()
+            .map(|resolved| resolved.captured_grant)
+    }
     fn resolve(&self, _: &Secret, _: Uuid, _: &Call) -> Result<Resolution, Error> {
         *self.1.borrow_mut() += 1;
         self.0.borrow().clone()
     }
+}
+
+#[test]
+fn discovery_uses_captured_grant_and_revocation_is_not_cached() {
+    let (resolver, secret, _, _) = fixture();
+    let tools = catalog(&resolver, &secret).unwrap();
+    assert_eq!(tools.as_array().unwrap().len(), 2);
+    assert_eq!(*resolver.1.borrow(), 0, "discovery has no resource call");
+    *resolver.0.borrow_mut() = Err(Error::CredentialRevoked);
+    assert_eq!(
+        catalog(&resolver, &secret).err(),
+        Some(Error::CredentialRevoked)
+    );
 }
 fn fixture() -> (ResolverFixture, Secret, Uuid, Call) {
     let workspace = WorkspaceId::new();
@@ -109,4 +128,43 @@ fn duplicate_keys_are_refused_before_resolution() {
         Err(Error::InvalidRequest)
     );
     assert_eq!(*resolver.1.borrow(), 0);
+}
+
+#[test]
+fn context_requires_engine_authority_and_reads_only_configured_current_pages() {
+    let (resolver, engine_authority, _, _) = fixture();
+    assert!(same_authority(&engine_authority, &engine_authority));
+    assert!(!same_authority(
+        &Secret::parse("cd".repeat(32)).unwrap(),
+        &engine_authority
+    ));
+    let resolved = resolver.0.borrow().clone().unwrap();
+    let role = Uuid::new_v4();
+    let knowledge = Uuid::new_v4();
+    let memory = Uuid::new_v4();
+    let sources = workspace::Sources {
+        scope: resolved.scope,
+        grant: resolved.current_grant,
+        role: Some(role),
+        knowledge: vec![knowledge],
+        memory: Some(memory),
+    };
+    let mut seen = vec![];
+    let context = load_context(sources.clone(), |_, id| {
+        seen.push(id);
+        Ok(serde_json::json!({"text":"current synthetic page"}))
+    })
+    .unwrap();
+    assert_eq!(seen, vec![role, knowledge, memory]);
+    assert_eq!(context.role.unwrap().id, role);
+    assert_eq!(context.knowledge[0].id, knowledge);
+    assert_eq!(context.memory.unwrap().id, memory);
+    assert_eq!(
+        load_context(sources.clone(), |_, _| Err(Error::NotAllowed)).err(),
+        Some(Error::NotAllowed)
+    );
+    assert_eq!(
+        load_context(sources, |_, _| Ok(Value::String("x".repeat(1024 * 1024)))).err(),
+        Some(Error::InputTooSmall)
+    );
 }

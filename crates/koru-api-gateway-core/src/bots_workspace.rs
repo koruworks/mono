@@ -20,9 +20,23 @@ pub struct Engine {
     pub authority: Secret,
 }
 trait Resolver {
+    fn catalog(&self, secret: &Secret) -> Result<Value, Error>;
     fn resolve(&self, secret: &Secret, binding: Uuid, call: &Call) -> Result<Resolution, Error>;
 }
 impl Resolver for Engine {
+    fn catalog(&self, secret: &Secret) -> Result<Value, Error> {
+        match worker::request(
+            &self.endpoint,
+            self.authority.expose(),
+            worker::Command::SessionCatalog {
+                secret: secret.clone(),
+            },
+        )? {
+            worker::Reply::Catalog(grant) => Ok(grant.0),
+            worker::Reply::Refused(error) => Err(error),
+            _ => Err(Error::EngineUnavailable),
+        }
+    }
     fn resolve(&self, secret: &Secret, binding: Uuid, call: &Call) -> Result<Resolution, Error> {
         match worker::request(
             &self.endpoint,
@@ -52,6 +66,24 @@ impl GatewayState {
     }
 }
 impl Boundary {
+    pub fn handle(&self, command: workspace::Command) -> workspace::Reply {
+        match command {
+            workspace::Command::Call(request) => self.execute(request),
+            workspace::Command::Catalog { secret } => catalog(&self.engine, &secret)
+                .map(workspace::Reply::Result)
+                .unwrap_or_else(workspace::Reply::Refused),
+            workspace::Command::Context { authority, sources } => {
+                if !same_authority(&authority, &self.engine.authority) {
+                    return workspace::Reply::Refused(Error::Unauthenticated);
+                }
+                load_context(sources, |identity, page| {
+                    let arguments = serde_json::json!({"workspace_id":identity.workspace.to_storage(),"document_id":page});
+                    let call = Call::parse(Uuid::new_v4(), "read_document".into(), &serde_json::to_vec(&arguments).map_err(|_| Error::InvalidRequest)?)?;
+                    self.read(identity, &call)
+                }).map(workspace::Reply::Context).unwrap_or_else(workspace::Reply::Refused)
+            }
+        }
+    }
     pub fn execute(&self, request: workspace::Request) -> workspace::Reply {
         execute(&self.engine, request, |identity, call| {
             self.read(identity, call)
@@ -104,9 +136,66 @@ impl Boundary {
             })
     }
 }
+#[derive(Clone, Copy)]
 struct ReadAuthority {
     owner: UserScopeId,
     workspace: WorkspaceId,
+}
+
+fn same_authority(supplied: &Secret, expected: &Secret) -> bool {
+    supplied.expose().len() == expected.expose().len()
+        && supplied
+            .expose()
+            .bytes()
+            .zip(expected.expose().bytes())
+            .fold(0, |diff, (a, b)| diff | (a ^ b))
+            == 0
+}
+
+fn load_context(
+    sources: workspace::Sources,
+    mut read: impl FnMut(ReadAuthority, Uuid) -> Result<Value, Error>,
+) -> Result<workspace::Context, Error> {
+    sources.validate()?;
+    let grant: CapturedBotPolicy =
+        serde_json::from_value(sources.grant).map_err(|_| Error::NotAllowed)?;
+    if !grant.valid() {
+        return Err(Error::NotAllowed);
+    }
+    let owner = Uuid::parse_str(&sources.scope)
+        .ok()
+        .filter(|id| !id.is_nil())
+        .ok_or(Error::NotAllowed)?;
+    let identity = ReadAuthority {
+        owner: UserScopeId::from_uuid(owner),
+        workspace: grant.workspace,
+    };
+    let mut bytes = 0usize;
+    let mut page = |id| {
+        let text = read(identity, id)?.to_string();
+        bytes = bytes.saturating_add(text.len());
+        if bytes > 1024 * 1024 {
+            return Err(Error::InputTooSmall);
+        }
+        Ok(workspace::Page { id, text })
+    };
+    let context = workspace::Context {
+        role: sources.role.map(&mut page).transpose()?,
+        knowledge: sources
+            .knowledge
+            .into_iter()
+            .map(&mut page)
+            .collect::<Result<_, _>>()?,
+        memory: sources.memory.map(page).transpose()?,
+    };
+    if serde_json::to_vec(&context)
+        .map_err(|_| Error::InvalidRequest)?
+        .len()
+        > 1024 * 1024
+    {
+        return Err(Error::InputTooSmall);
+    }
+    Ok(context)
 }
 fn execute(
     resolver: &dyn Resolver,
@@ -143,11 +232,20 @@ fn execute(
 
 /// Discovery has no resource content. The worker filters this static catalog
 /// with its captured grant, and every execution is freshly resolved above.
-pub fn read_catalog() -> Vec<Value> {
+fn read_catalog() -> Vec<Value> {
     koru_mcp_server::native::native_tool_catalog().into_iter()
         .filter(|tool| matches!(tool.name.as_str(), "read_document" | "search_documents"))
         .map(|tool| serde_json::json!({"name":tool.name,"description":tool.description,"inputSchema":tool.input_schema}))
         .collect()
+}
+
+fn catalog(resolver: &dyn Resolver, secret: &Secret) -> Result<Value, Error> {
+    let grant: CapturedBotPolicy =
+        serde_json::from_value(resolver.catalog(secret)?).map_err(|_| Error::NotAllowed)?;
+    if !grant.valid() {
+        return Err(Error::NotAllowed);
+    }
+    Ok(Value::Array(read_catalog()))
 }
 
 #[cfg(test)]

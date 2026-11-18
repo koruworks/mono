@@ -102,7 +102,11 @@ pub(crate) fn worker(connection: &Connection, who: Worker) -> Result<(), Error> 
         Err(Error::WorkerReplaced)
     }
 }
-fn membership(connection: &Connection, who: Worker, thread: Uuid) -> Result<String, Error> {
+pub(crate) fn membership(
+    connection: &Connection,
+    who: Worker,
+    thread: Uuid,
+) -> Result<String, Error> {
     worker(connection, who)?;
     let owner:Option<String>=connection.query_row("SELECT b.owner FROM bots b JOIN participants p ON p.participant=b.id AND p.kind='bot' JOIN threads t ON t.id=p.thread WHERE b.id=?1 AND t.id=?2 AND b.lifecycle='active' AND t.lifecycle='active'",params![who.bot.to_string(),thread.to_string()],|r|r.get(0)).optional()?;
     owner
@@ -179,6 +183,18 @@ impl Database {
             "SELECT grant FROM credentials WHERE session=?1",
             [identity.session.to_string()],
             |r| r.get(0),
+        )?;
+        decode(&grant)
+    }
+
+    /// The Agent-authenticated gateway may discover a session's static grant.
+    /// This is not resource authorization and never resolves a tool call.
+    pub fn boundary_catalog_grant(&self, secret: &Secret) -> Result<serde_json::Value, Error> {
+        let identity = identity(&self.connection, secret)?;
+        let grant: Vec<u8> = self.connection.query_row(
+            "SELECT grant FROM credentials WHERE session=?1",
+            [identity.session.to_string()],
+            |row| row.get(0),
         )?;
         decode(&grant)
     }

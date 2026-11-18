@@ -78,14 +78,14 @@ async fn handle(mut stream: koru_ipc::AsyncStream, boundary: Arc<Boundary>) {
         }
         let mut bytes = vec![0; header.body_len];
         stream.read_exact(&mut bytes).await.ok()?;
-        koru_ipc::frame::decode::<workspace::Request>(&bytes).ok()
+        koru_ipc::frame::decode::<workspace::Command>(&bytes).ok()
     };
     let Ok(Some(request)) = tokio::time::timeout(workspace::TIMEOUT, read).await else {
         return;
     };
     // Do not abandon a dispatched operation on client disconnect or timeout.
     // Its bounded admission slot remains held until the owner finishes.
-    let Ok(reply) = tokio::task::spawn_blocking(move || boundary.execute(request)).await else {
+    let Ok(reply) = tokio::task::spawn_blocking(move || boundary.handle(request)).await else {
         return;
     };
     let Ok(bytes) = koru_ipc::frame::encode(workspace::VERSION, &reply) else {

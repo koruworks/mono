@@ -13,6 +13,52 @@ struct Fixture {
 }
 
 #[test]
+fn context_and_session_head_require_current_registration_and_assignment() {
+    let mut f = Fixture::new();
+    let role = Uuid::new_v4();
+    f.db.connection
+        .execute(
+            "UPDATE bots SET role_page=?1 WHERE id=?2",
+            rusqlite::params![role.to_string(), f.who.bot.to_string()],
+        )
+        .unwrap();
+    let Reply::LoadContext(sources) = f.request(Command::Context {
+        reservation: f.reservation,
+    }) else {
+        panic!()
+    };
+    assert_eq!(sources.role, Some(role));
+    assert!(matches!(
+        f.request(Command::Head {
+            reservation: f.reservation
+        }),
+        Reply::Head(None)
+    ));
+    let issued = f.mint(None);
+    assert!(
+        matches!(f.request(Command::Head { reservation: f.reservation }), Reply::Head(Some(id)) if id == issued.session)
+    );
+    let mut wrong = f.reservation;
+    wrong.assignment = Uuid::new_v4();
+    assert!(matches!(
+        f.request(Command::Context { reservation: wrong }),
+        Reply::Refused(Error::StaleTurn)
+    ));
+    f.db.connection
+        .execute(
+            "UPDATE threads SET kind='routine' WHERE id=?1",
+            [f.reservation.key.thread.to_string()],
+        )
+        .unwrap();
+    assert!(matches!(
+        f.request(Command::Context {
+            reservation: f.reservation
+        }),
+        Reply::Refused(Error::NotAllowed)
+    ));
+}
+
+#[test]
 fn door_requires_current_assignment_and_bound_history_cannot_choose_another_thread() {
     let mut f = Fixture::new();
     let issued = f.mint(None);

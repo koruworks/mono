@@ -27,17 +27,7 @@ const MAX_SAVED_INPUTS: usize = 1024;
 
 /// Current page content, fetched on every fresh or resumed incarnation.
 /// Absence is explicit; an unreadable page is a port error, not an empty page.
-#[derive(Clone, Serialize)]
-pub struct Context {
-    pub role: Option<Page>,
-    pub knowledge: Vec<Page>,
-    pub memory: Option<Page>,
-}
-#[derive(Clone, Serialize)]
-pub struct Page {
-    pub id: Uuid,
-    pub text: String,
-}
+pub use crate::workspace::{Context, Page};
 
 /// Both the incarnation and its credential come from the engine. A local
 /// provider owner must not choose the authority identity for its claim.

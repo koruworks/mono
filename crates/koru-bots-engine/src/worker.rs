@@ -42,6 +42,9 @@ pub enum Command {
     Hello,
     Status,
     Capacity,
+    SessionCatalog {
+        secret: crate::authority::Secret,
+    },
     ResolveCall {
         secret: crate::authority::Secret,
         binding: Uuid,
@@ -71,7 +74,16 @@ pub enum Reply {
     Queued,
     Capacity { sessions: u32 },
     Resolved(crate::authority::Resolution),
+    Catalog(CatalogGrant),
     Refused(Error),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct CatalogGrant(pub serde_json::Value);
+impl std::fmt::Debug for CatalogGrant {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CatalogGrant(<redacted>)")
+    }
 }
 
 pub fn request(

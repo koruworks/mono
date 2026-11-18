@@ -17,6 +17,12 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize)]
 pub enum Command {
     Poll,
+    Context {
+        reservation: Reservation,
+    },
+    Head {
+        reservation: Reservation,
+    },
     Started {
         reservation: Reservation,
     },
@@ -78,6 +84,10 @@ pub enum Reply {
     CatalogGrant(serde_json::Value),
     Bound(Binding),
     Tool(serde_json::Value),
+    LoadContext(crate::workspace::Sources),
+    Context(crate::workspace::Context),
+    ContextPending,
+    Head(Option<Uuid>),
     Done,
     Refused(Error),
 }
@@ -115,6 +125,8 @@ fn execute(
     let reservation = match &command {
         Command::Poll => unreachable!(),
         Command::Started { reservation }
+        | Command::Context { reservation }
+        | Command::Head { reservation }
         | Command::Mint { reservation, .. }
         | Command::Claim { reservation, .. }
         | Command::Catalog { reservation, .. }
@@ -134,6 +146,16 @@ fn execute(
     match command {
         Command::Poll => unreachable!(),
         Command::Started { .. } => admission.started(reservation, who.incarnation)?,
+        Command::Context { .. } => {
+            return db
+                .context_sources(who, reservation.key.thread)
+                .map(Reply::LoadContext);
+        }
+        Command::Head { .. } => {
+            return db
+                .session_head(who, reservation.key.thread)
+                .map(Reply::Head);
+        }
         Command::Catalog {
             session, secret, ..
         } => {

@@ -11,6 +11,22 @@ use serde_json::Value;
 use std::{path::Path, time::Duration};
 use uuid::Uuid;
 
+pub mod context;
+pub use context::{Context, Page, Sources};
+
+#[derive(Serialize, Deserialize)]
+pub enum Command {
+    Call(Request),
+    Catalog {
+        secret: Secret,
+    },
+    /// This is an engine-to-gateway command. A session bearer cannot invoke it.
+    Context {
+        authority: Secret,
+        sources: Sources,
+    },
+}
+
 pub const VERSION: u8 = 1;
 pub const TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -45,6 +61,7 @@ impl Request {
 #[derive(Serialize, Deserialize)]
 pub enum Reply {
     Result(Value),
+    Context(Context),
     Refused(Error),
 }
 
@@ -54,6 +71,42 @@ pub fn endpoint(root: &Path, segment: &str) -> Result<koru_ipc::Endpoint, Error>
 }
 pub fn request(endpoint: &koru_ipc::Endpoint, request: &Request) -> Result<Value, Error> {
     request.call()?;
+    let wire = Command::Call(Request {
+        secret: request.secret.clone(),
+        binding: request.binding,
+        door_call: request.door_call,
+        tool: request.tool.clone(),
+        arguments: request.arguments.clone(),
+    });
+    match send(endpoint, &wire)? {
+        Reply::Result(value) => Ok(value),
+        Reply::Refused(error) => Err(error),
+        _ => Err(Error::InvalidRequest),
+    }
+}
+
+pub fn load_context(
+    endpoint: &koru_ipc::Endpoint,
+    authority: Secret,
+    sources: Sources,
+) -> Result<Context, Error> {
+    sources.validate()?;
+    match send(endpoint, &Command::Context { authority, sources })? {
+        Reply::Context(context) => Ok(context),
+        Reply::Refused(error) => Err(error),
+        _ => Err(Error::InvalidRequest),
+    }
+}
+
+pub fn catalog(endpoint: &koru_ipc::Endpoint, secret: Secret) -> Result<Vec<Value>, Error> {
+    match send(endpoint, &Command::Catalog { secret })? {
+        Reply::Result(value) => serde_json::from_value(value).map_err(|_| Error::InvalidRequest),
+        Reply::Refused(error) => Err(error),
+        _ => Err(Error::InvalidRequest),
+    }
+}
+
+fn send(endpoint: &koru_ipc::Endpoint, request: &Command) -> Result<Reply, Error> {
     let mut stream =
         koru_ipc::connect_timed(endpoint, TIMEOUT).map_err(|_| Error::EngineUnavailable)?;
     koru_ipc::set_timeouts(&stream, Some(TIMEOUT));
@@ -64,8 +117,5 @@ pub fn request(endpoint: &koru_ipc::Endpoint, request: &Request) -> Result<Value
     if version != VERSION {
         return Err(Error::InvalidRequest);
     }
-    match reply {
-        Reply::Result(value) => Ok(value),
-        Reply::Refused(error) => Err(error),
-    }
+    Ok(reply)
 }
