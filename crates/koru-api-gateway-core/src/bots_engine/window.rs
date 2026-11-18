@@ -158,7 +158,7 @@ impl Gateway {
             held_by: bot.held_by.map(Self::holder_view).transpose()?,
             pending_change: None,
             connections: d.access.connections,
-            may_ask: true,
+            may_ask: bot.may_ask,
         })
     }
     fn creation_view(&self, owner: BotOwner, record: Record) -> Result<BotCreation, Error> {

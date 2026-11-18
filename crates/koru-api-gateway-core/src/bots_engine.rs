@@ -259,6 +259,22 @@ impl Gateway {
                     document: *document,
                 }));
             }
+            Command::Change {
+                action:
+                    Change::Permissions {
+                        bot,
+                        selected_pages,
+                        ..
+                    },
+                ..
+            } => {
+                let home = read_bot(*bot)?.definition.access.workspace;
+                workspaces.push(home);
+                pages.extend(selected_pages.iter().map(|id| BotPage {
+                    workspace: home,
+                    document: koru_ai_core::DocumentId::from_uuid(*id),
+                }));
+            }
             Command::Read {
                 query:
                     Query::Bots { workspace, .. }

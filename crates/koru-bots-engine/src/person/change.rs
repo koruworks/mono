@@ -86,6 +86,7 @@ pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result
         | Change::Knowledge { bot, .. }
         | Change::Library { bot, .. }
         | Change::Access { bot, .. }
+        | Change::Permissions { bot, .. }
         | Change::Pause { bot, .. }
         | Change::BotLifecycle { bot, .. }
         | Change::ConversationLifecycle { bot, .. }
@@ -259,6 +260,35 @@ pub(super) fn apply(
             updated(&tx, *bot, now)?;
             value(read::bot(&tx, who, *bot)?)?
         }
+        Change::Permissions {
+            bot,
+            revision: rev,
+            policy_revision,
+            access,
+            selected_pages,
+            connections,
+            may_ask,
+        } => {
+            let current = revision(&tx, who, *bot, *rev, true)?;
+            if current.policy_revision != *policy_revision {
+                return Err(Error::RevisionConflict);
+            }
+            let mut policy_value = current.definition.access;
+            policy_value.access = *access;
+            policy_value.selected_pages = selected_pages
+                .iter()
+                .copied()
+                .map(koru_delegate_core::DocumentId::from_uuid)
+                .collect();
+            if let Some(connections) = connections {
+                policy_value.connections = connections.clone();
+            }
+            policy(&policy_value)?;
+            tx.execute("UPDATE bots SET access=?2,may_ask=?3,policy_revision=policy_revision+1 WHERE id=?1",
+                params![bot.to_string(),encode(&policy_value)?,may_ask.unwrap_or(current.may_ask)])?;
+            updated(&tx, *bot, now)?;
+            value(read::bot(&tx, who, *bot)?)?
+        }
         Change::Pause {
             bot,
             revision: rev,
@@ -398,6 +428,26 @@ pub(super) fn apply(
         }
     };
     messages::receipts::save(&tx, &subject, command, &digest, &answer, now)?;
+    let control = match action {
+        Change::Pause { bot, paused, .. } => Some((
+            *bot,
+            if *paused {
+                ControlKind::Pause
+            } else {
+                ControlKind::Resume
+            },
+        )),
+        Change::Access { bot, .. } | Change::Permissions { bot, .. } => {
+            Some((*bot, ControlKind::Access))
+        }
+        _ => None,
+    };
+    if let Some((bot, kind)) = control {
+        tx.execute(
+            "UPDATE receipts SET control_bot=?3,control_kind=?4 WHERE sender=?1 AND id=?2",
+            params![subject, command.to_string(), bot.to_string(), kind.token()],
+        )?;
+    }
     tx.commit()?;
     Ok(Receipt {
         answer,

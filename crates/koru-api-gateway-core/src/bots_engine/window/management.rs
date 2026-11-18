@@ -4,6 +4,25 @@
 use super::*;
 
 impl Gateway {
+    fn control_response(
+        bot_id: BotId,
+        request_id: BotRequestId,
+        kind: person::ControlKind,
+    ) -> BotResponse {
+        BotResponse::Operation {
+            operation: BotOperation {
+                bot_id,
+                request_id,
+                run_id: None,
+                status: BotOperationStatus::Accepted,
+                kind: match kind {
+                    person::ControlKind::Pause => BotOperationKind::Pause,
+                    person::ControlKind::Resume => BotOperationKind::Resume,
+                    person::ControlKind::Access => BotOperationKind::UpdateAccess,
+                },
+            },
+        }
+    }
     pub(super) fn window_change<T: serde::de::DeserializeOwned>(
         &self,
         owner: BotOwner,
@@ -55,6 +74,61 @@ impl Gateway {
         command: BotCommand,
     ) -> Result<BotResponse, Error> {
         match command {
+            BotCommand::ReadOperation { request_id, bot_id }
+            | BotCommand::ReconcileOperation { request_id, bot_id } => {
+                let receipt: person::ControlReceipt = self.person_read(
+                    owner,
+                    Query::ControlReceipt {
+                        bot: bot_id.as_uuid(),
+                        request: request_id.as_uuid(),
+                    },
+                )?;
+                Ok(Self::control_response(bot_id, request_id, receipt.kind))
+            }
+            BotCommand::UpdateAccess {
+                request_id,
+                bot_id,
+                expected_revision,
+                expected_policy_revision,
+                access,
+                selected_pages,
+                connections,
+                may_ask,
+            } => {
+                let bot: person::Bot = self.person_read(
+                    owner,
+                    Query::Bot {
+                        bot: bot_id.as_uuid(),
+                    },
+                )?;
+                let mut normalized = selected_pages.clone();
+                normalize_pages(&mut normalized, bot.definition.access.workspace)
+                    .map_err(authority_error)?;
+                let _: person::Bot = self.window_change(
+                    owner,
+                    request_id,
+                    Change::Permissions {
+                        bot: bot_id.as_uuid(),
+                        revision: expected_revision,
+                        policy_revision: expected_policy_revision,
+                        access: match access {
+                            BotAccess::Default => koru_delegate_core::BotAccess::Default,
+                            BotAccess::Workspace => koru_delegate_core::BotAccess::Workspace,
+                        },
+                        selected_pages: selected_pages
+                            .into_iter()
+                            .map(|page| page.document.as_uuid())
+                            .collect(),
+                        connections,
+                        may_ask,
+                    },
+                )?;
+                Ok(Self::control_response(
+                    bot_id,
+                    request_id,
+                    person::ControlKind::Access,
+                ))
+            }
             BotCommand::CreateChat { request_id, bot_id } => {
                 let thread: person::Thread = self.window_change(
                     owner,
@@ -170,7 +244,7 @@ impl Gateway {
                 expected_revision,
             } => {
                 let paused = matches!(command, BotCommand::Pause { .. });
-                let bot = self.window_change(
+                let _: person::Bot = self.window_change(
                     owner,
                     request_id,
                     Change::Pause {
@@ -179,9 +253,15 @@ impl Gateway {
                         paused,
                     },
                 )?;
-                Ok(BotResponse::Bot {
-                    bot: self.bot_view(owner, bot)?,
-                })
+                Ok(Self::control_response(
+                    bot_id,
+                    request_id,
+                    if paused {
+                        person::ControlKind::Pause
+                    } else {
+                        person::ControlKind::Resume
+                    },
+                ))
             }
             BotCommand::PauseTeam {
                 request_id,

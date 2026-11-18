@@ -2,6 +2,7 @@
 use super::*;
 mod lifecycle;
 mod lists;
+mod permissions;
 use koru_ai_core::{
     DocumentId, ProfileId, WorkspaceId,
     bots::{BOT_ROLE_SCOPE, BotRoleProof},
@@ -407,11 +408,22 @@ fn settings_save_role_atomically_and_retry_the_original_receipt_after_later_chan
         bot_id: bot.id,
         expected_revision: 2,
     };
-    let BotResponse::Bot { bot: paused } = f.gateway.window_command(pause.clone()).unwrap() else {
+    let BotResponse::Operation { operation: paused } =
+        f.gateway.window_command(pause.clone()).unwrap()
+    else {
         panic!()
     };
-    assert!(paused.paused);
-    assert_eq!(paused.revision, 3);
+    assert_eq!(paused.kind, BotOperationKind::Pause);
+    assert_eq!(paused.status, BotOperationStatus::Accepted);
+    let BotResponse::Bot { bot: current } = f
+        .gateway
+        .window_command(BotCommand::Read { bot_id: bot.id })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(current.paused);
+    assert_eq!(current.revision, 3);
     let BotResponse::Bot { bot: replay } = f.gateway.window_command(update.clone()).unwrap() else {
         panic!()
     };
@@ -434,7 +446,8 @@ fn settings_save_role_atomically_and_retry_the_original_receipt_after_later_chan
         f.gateway.window_command(stale).err(),
         Some(Error::RevisionConflict)
     );
-    let BotResponse::Bot { bot: replay } = f.gateway.window_command(pause).unwrap() else {
+    let BotResponse::Operation { operation: replay } = f.gateway.window_command(pause).unwrap()
+    else {
         panic!()
     };
     assert_eq!(replay, paused);

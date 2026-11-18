@@ -4,7 +4,7 @@ use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) fn bot(c: &Connection, who: &Person, key: Uuid) -> Result<Bot, Error> {
     owner(c, who, key)?;
-    let row=c.query_row("SELECT name,settings,access,role_page,knowledge_pages,memory_page,paused,lifecycle,revision,created_at_ms,updated_at_ms,(SELECT id FROM threads WHERE bot=b.id AND kind='main'),avatar,folder_frozen_at_ms,policy_revision,lifecycle_holder FROM bots b WHERE id=?1",[key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,Option<String>>(5)?,r.get(6)?,r.get::<_,String>(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get::<_,String>(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get::<_,Option<Vec<u8>>>(15)?)))?;
+    let row=c.query_row("SELECT name,settings,access,role_page,knowledge_pages,memory_page,paused,lifecycle,revision,created_at_ms,updated_at_ms,(SELECT id FROM threads WHERE bot=b.id AND kind='main'),avatar,folder_frozen_at_ms,policy_revision,lifecycle_holder,may_ask FROM bots b WHERE id=?1",[key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,Vec<u8>>(2)?,r.get::<_,Option<String>>(3)?,r.get::<_,Vec<u8>>(4)?,r.get::<_,Option<String>>(5)?,r.get(6)?,r.get::<_,String>(7)?,r.get(8)?,r.get(9)?,r.get(10)?,r.get::<_,String>(11)?,r.get(12)?,r.get(13)?,r.get(14)?,r.get::<_,Option<Vec<u8>>>(15)?,r.get(16)?)))?;
     Ok(Bot {
         id: key,
         definition: Definition {
@@ -17,6 +17,7 @@ pub(super) fn bot(c: &Connection, who: &Person, key: Uuid) -> Result<Bot, Error>
             memory: row.5.map(id).transpose()?,
         },
         paused: row.6,
+        may_ask: row.16,
         lifecycle: lifecycle(row.7)?,
         held_by: row.15.as_deref().map(decode).transpose()?,
         revision: row.8,
@@ -93,6 +94,18 @@ fn page<T: Serialize>(
 pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, Error> {
     let c = &db.connection;
     match query {
+        Query::ControlReceipt { bot, request } => {
+            owner(c, who, bot)?;
+            let token: Option<String> = c.query_row("SELECT control_kind FROM receipts WHERE sender=?1 AND id=?2 AND control_bot=?3",
+                params![who.receipt_subject(),request.to_string(),bot.to_string()],|r|r.get(0)).optional()?;
+            let kind = match token.as_deref().ok_or(Error::NotAllowed)? {
+                "pause" => ControlKind::Pause,
+                "resume" => ControlKind::Resume,
+                "access" => ControlKind::Access,
+                _ => return Err(Error::StorageUnavailable),
+            };
+            value(ControlReceipt { request, bot, kind })
+        }
         Query::ChangeReceipt { id, action } => {
             change::authorize(c, who, &action)?;
             let digest = messages::receipts::digest("person-change", &action)?;

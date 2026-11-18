@@ -4,6 +4,7 @@ use crate::capacity::{Admission, Decision};
 use rusqlite::params;
 mod lifecycle;
 mod lists;
+mod permissions;
 
 struct Fixture {
     db: Database,

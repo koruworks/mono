@@ -84,6 +84,10 @@ pub enum Query {
         id: Uuid,
         action: Change,
     },
+    ControlReceipt {
+        bot: Uuid,
+        request: Uuid,
+    },
     Bot {
         bot: Uuid,
     },
@@ -196,6 +200,15 @@ pub enum Change {
         revision: u64,
         access: CapturedBotPolicy,
     },
+    Permissions {
+        bot: Uuid,
+        revision: u64,
+        policy_revision: u64,
+        access: koru_delegate_core::BotAccess,
+        selected_pages: Vec<Uuid>,
+        connections: Option<std::collections::BTreeSet<koru_delegate_core::ConnectionGrantRef>>,
+        may_ask: Option<bool>,
+    },
     Pause {
         bot: Uuid,
         revision: u64,
@@ -252,6 +265,7 @@ pub struct Bot {
     pub policy_revision: u64,
     pub definition: Definition,
     pub paused: bool,
+    pub may_ask: bool,
     pub lifecycle: Lifecycle,
     pub held_by: Option<LifecycleHolder>,
     pub main_thread: Uuid,
@@ -303,6 +317,28 @@ pub struct LifecycleOperation {
 pub struct Team {
     pub paused: bool,
     pub revision: u64,
+}
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlKind {
+    Pause,
+    Resume,
+    Access,
+}
+impl ControlKind {
+    fn token(self) -> &'static str {
+        match self {
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Access => "access",
+        }
+    }
+}
+#[derive(Serialize, Deserialize)]
+pub struct ControlReceipt {
+    pub request: Uuid,
+    pub bot: Uuid,
+    pub kind: ControlKind,
 }
 
 fn encode(value: &impl Serialize) -> Result<Vec<u8>, Error> {

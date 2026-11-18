@@ -28,6 +28,7 @@ CREATE TABLE bots (
     memory_page TEXT,
     visibility TEXT NOT NULL CHECK (visibility IN ('private', 'shared')),
     paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+    may_ask INTEGER NOT NULL DEFAULT 1 CHECK (may_ask IN (0,1)),
     lifecycle_holder BLOB,
     lifecycle TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle IN ('active', 'archived', 'trashed'))
 );
@@ -208,6 +209,9 @@ CREATE TABLE receipts (
     digest BLOB NOT NULL CHECK (length(digest) = 32),
     answer BLOB,
     accepted_at_ms INTEGER NOT NULL,
+    control_bot TEXT,
+    control_kind TEXT CHECK(control_kind IN ('pause','resume','access')),
+    CHECK ((control_bot IS NULL) = (control_kind IS NULL)),
     PRIMARY KEY (sender, id)
 );
 CREATE INDEX receipt_retention ON receipts(accepted_at_ms) WHERE answer IS NOT NULL;

@@ -8865,6 +8865,62 @@
           {
             "additionalProperties": false,
             "properties": {
+              "access": {
+                "$ref": "#/components/schemas/BotAccess"
+              },
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "connections": {
+                "items": {
+                  "$ref": "#/components/schemas/ConnectionGrantRef"
+                },
+                "nullable": true,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "kind": {
+                "enum": [
+                  "permissions"
+                ],
+                "type": "string"
+              },
+              "may_ask": {
+                "nullable": true,
+                "type": "boolean"
+              },
+              "policy_revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "selected_pages": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "policy_revision",
+              "access",
+              "selected_pages"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "bot": {
                 "format": "uuid",
                 "type": "string"
@@ -17129,6 +17185,31 @@
               "kind",
               "id",
               "action"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "control_receipt"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "request"
             ],
             "type": "object"
           },
