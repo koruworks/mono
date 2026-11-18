@@ -8,6 +8,7 @@
 use std::path::PathBuf;
 
 mod attachments;
+pub use attachments::{CheckedAttachment, check_attachment};
 mod bots;
 #[cfg(any(test, feature = "fixtures"))]
 #[doc(hidden)]
@@ -43,10 +44,10 @@ pub use worker::bots::memory::{
 };
 pub use worker::bots::memory::{RunMemoryReadRequest, RunMemoryReadResult};
 pub use worker::bots::policy::{NativePolicyEvidence, NativePolicyRequest};
-pub use worker::bots::validate_agent_model_catalog;
 pub use worker::bots::routine::model::{
     RunBotSubject, RunRoutineCreate, RunRoutineOperation, RunRoutineRequest, RunRoutineResult,
 };
+pub use worker::bots::validate_agent_model_catalog;
 pub use worker::connections::ConnectionsSetup;
 pub use worker::connections::plan::{
     PRIVATE_UNAVAILABLE, PrivateItemName, PrivateReadPlan, PrivateReadPlanRequest,

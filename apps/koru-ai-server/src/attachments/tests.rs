@@ -7,6 +7,63 @@ use image::{ImageBuffer, Rgb, Rgba};
 use super::*;
 
 #[test]
+fn shared_validation_preserves_bytes_identity_and_checks_content_without_disk() {
+    let chat = ChatId::new();
+    let id = ChatAttachmentId::new();
+    let checked = check_attachment(
+        chat,
+        id,
+        "../../note<>.txt",
+        AttachmentSource::Drop,
+        b"hello",
+    )
+    .unwrap();
+    assert_eq!(checked.record.attachment.file_name, "note.txt");
+    assert_eq!(
+        checked.record.content_blake3,
+        blake3::hash(b"hello").to_hex().as_str()
+    );
+    assert_eq!(checked.record.attachment.byte_count, 5);
+    assert!(checked.thumbnail.is_none() && checked.sent_copy.is_none());
+    assert!(check_attachment(chat, id, "note.txt", AttachmentSource::Drop, b"MZ\x90\0").is_err());
+    assert!(check_attachment(chat, id, "note.txt", AttachmentSource::Drop, b"").is_err());
+    assert!(
+        check_attachment(
+            chat,
+            id,
+            "x.docx",
+            AttachmentSource::Drop,
+            &zip_with(&[("word/document.xml", b"<w/>")])
+        )
+        .is_err()
+    );
+    assert_eq!(format!("{checked:?}"), "CheckedAttachment(<redacted>)");
+}
+
+#[test]
+fn shared_validation_returns_bounded_image_derivatives_without_disk() {
+    let bytes = noise_png(4000, 2000);
+    let checked = check_attachment(
+        ChatId::new(),
+        ChatAttachmentId::new(),
+        "picture.png",
+        AttachmentSource::Clipboard,
+        &bytes,
+    )
+    .unwrap();
+    assert_eq!(checked.record.attachment.dimensions, Some((4000, 2000)));
+    assert_eq!(checked.record.attachment.kind, AttachmentKind::Image);
+    assert!(checked.record.has_sent_copy);
+    let (name, sent) = checked.sent_copy.unwrap();
+    assert!(matches!(name, "sent.png" | "sent.jpg"));
+    assert!(sent.len() as u64 <= MAX_SENT_COPY_BYTES);
+    let sent = image::load_from_memory(&sent).unwrap();
+    assert!(sent.width().max(sent.height()) <= SENT_COPY_EDGE);
+    let thumb = image::load_from_memory(&checked.thumbnail.unwrap()).unwrap();
+    assert_eq!(thumb.width().max(thumb.height()), THUMBNAIL_EDGE);
+}
+
+#[test]
 fn a_delete_during_restage_prevents_row_publication() {
     // The cancellation protocol is in memory; the copy itself is exercised
     // by the existing folder-copy tests below.

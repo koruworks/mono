@@ -106,6 +106,109 @@ pub(crate) struct Prepared {
     pub(crate) record: AttachmentRecord,
 }
 
+/// Validated upload and bounded image derivatives, without filesystem effects.
+/// The caller owns publication and must persist the original bytes unchanged.
+pub struct CheckedAttachment {
+    pub record: AttachmentRecord,
+    pub thumbnail: Option<Vec<u8>>,
+    /// Stable leaf name and bytes of the provider's resized image, if needed.
+    pub sent_copy: Option<(&'static str, Vec<u8>)>,
+}
+impl std::fmt::Debug for CheckedAttachment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("CheckedAttachment(<redacted>)")
+    }
+}
+
+/// Apply the same upload policy for ordinary chats and engine conversations.
+/// Decoding is CPU work: callers must run this off their dispatcher/reactor.
+pub fn check_attachment(
+    chat: ChatId,
+    id: ChatAttachmentId,
+    file_name: &str,
+    source: AttachmentSource,
+    bytes: &[u8],
+) -> Result<CheckedAttachment, Failure> {
+    let byte_count = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    if byte_count == 0 {
+        return Err(failure(
+            "invalid_request",
+            "An attachment cannot be empty.",
+            false,
+        ));
+    }
+    if byte_count > MAX_ATTACHMENT_BYTES {
+        return Err(refused(
+            attachment_codes::TOO_LARGE,
+            "The attachment is larger than the limit.",
+            "size",
+        ));
+    }
+    let file_name = sanitize_file_name(file_name);
+    let Some(allowed) = allowed_type(&file_name) else {
+        return Err(type_not_allowed(&file_name, "type"));
+    };
+    let head = &bytes[..bytes.len().min(CONTENT_CHECK_BYTES)];
+    if !content_agrees(allowed.family, head) || !archive_agrees(&file_name, allowed.family, bytes) {
+        return Err(type_not_allowed(&file_name, "content"));
+    }
+    let picture = match allowed.family {
+        AttachmentFamily::Picture => Some(prepare_picture(bytes, &file_name)?),
+        _ => None,
+    };
+    let (kind, media_type, dimensions, thumbnail, sent_copy) = match picture {
+        Some(Picture::Previewed {
+            media_type,
+            width,
+            height,
+            thumbnail,
+            sent,
+        }) => (
+            AttachmentKind::Image,
+            media_type,
+            Some((width, height)),
+            Some(thumbnail),
+            sent.map(|sent| {
+                (
+                    if sent.format == ImageFormat::Png {
+                        SENT_PNG
+                    } else {
+                        SENT_JPEG
+                    },
+                    sent.bytes,
+                )
+            }),
+        ),
+        Some(Picture::TooLargeToPreview { media_type }) => {
+            (AttachmentKind::File, media_type, None, None, None)
+        }
+        None => (AttachmentKind::File, allowed.media_type, None, None, None),
+    };
+    Ok(CheckedAttachment {
+        record: AttachmentRecord {
+            chat_id: chat,
+            attachment: ChatAttachment {
+                id,
+                message_id: None,
+                ordinal: None,
+                kind,
+                source,
+                file_name,
+                media_type: media_type.to_owned(),
+                byte_count,
+                dimensions,
+                origin: None,
+                reference_path: None,
+                created_at: Timestamp::now(),
+            },
+            has_sent_copy: sent_copy.is_some(),
+            content_blake3: blake3::hash(bytes).to_hex().to_string(),
+        },
+        thumbnail,
+        sent_copy,
+    })
+}
+
 /// What the start-up sweep removed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct SweepCounts {
@@ -264,51 +367,8 @@ impl AttachmentStore {
         bytes: &[u8],
     ) -> Result<Prepared, Failure> {
         let started = Instant::now();
-        let byte_count = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
-        if byte_count == 0 {
-            return Err(failure(
-                "invalid_request",
-                "An attachment cannot be empty.",
-                false,
-            ));
-        }
-        if byte_count > MAX_ATTACHMENT_BYTES {
-            return Err(refused(
-                attachment_codes::TOO_LARGE,
-                "The attachment is larger than the limit.",
-                "size",
-            ));
-        }
-        let file_name = sanitize_file_name(file_name);
-        let Some(allowed) = allowed_type(&file_name) else {
-            return Err(type_not_allowed(&file_name, "type"));
-        };
-        let head = &bytes[..bytes.len().min(CONTENT_CHECK_BYTES)];
-        if !content_agrees(allowed.family, head)
-            || !archive_agrees(&file_name, allowed.family, bytes)
-        {
-            return Err(type_not_allowed(&file_name, "content"));
-        }
-        let content_blake3 = blake3::hash(bytes).to_hex().to_string();
-
-        let decode_started = Instant::now();
-        let picture = match allowed.family {
-            AttachmentFamily::Picture => Some(prepare_picture(bytes, &file_name)?),
-            _ => None,
-        };
-        let decode_ms = decode_started.elapsed().as_secs_f64() * 1_000.0;
-        let (kind, media_type, dimensions) = match &picture {
-            Some(Picture::Previewed {
-                media_type,
-                width,
-                height,
-                ..
-            }) => (AttachmentKind::Image, *media_type, Some((*width, *height))),
-            Some(Picture::TooLargeToPreview { media_type }) => {
-                (AttachmentKind::File, *media_type, None)
-            }
-            None => (AttachmentKind::File, allowed.media_type, None),
-        };
+        let checked = check_attachment(chat, id, file_name, source, bytes)?;
+        let check_ms = started.elapsed().as_secs_f64() * 1_000.0;
 
         let write_started = Instant::now();
         let staging = self.root.join(STAGING_DIR).join(format!(
@@ -318,21 +378,19 @@ impl AttachmentStore {
         ));
         let written = (|| -> io::Result<Option<usize>> {
             fs::create_dir_all(staging.join(ORIGINAL_DIR))?;
-            write_synced(&staging.join(ORIGINAL_DIR).join(&file_name), bytes)?;
+            write_synced(
+                &staging
+                    .join(ORIGINAL_DIR)
+                    .join(&checked.record.attachment.file_name),
+                bytes,
+            )?;
             let mut sent_bytes = None;
-            if let Some(Picture::Previewed {
-                thumbnail, sent, ..
-            }) = &picture
-            {
+            if let Some(thumbnail) = &checked.thumbnail {
                 write_synced(&staging.join(THUMBNAIL_FILE), thumbnail)?;
-                if let Some(sent) = sent {
-                    let name = match sent.format {
-                        ImageFormat::Png => SENT_PNG,
-                        _ => SENT_JPEG,
-                    };
-                    write_synced(&staging.join(name), &sent.bytes)?;
-                    sent_bytes = Some(sent.bytes.len());
-                }
+            }
+            if let Some((name, bytes)) = &checked.sent_copy {
+                write_synced(&staging.join(name), bytes)?;
+                sent_bytes = Some(bytes.len());
             }
             Ok(sent_bytes)
         })();
@@ -347,37 +405,19 @@ impl AttachmentStore {
             target: "koru_ai::attachments",
             attachment_id = %id,
             source = source.as_token(),
-            kind = kind.as_token(),
-            byte_count,
-            width = dimensions.map(|(width, _)| width),
-            height = dimensions.map(|(_, height)| height),
+            kind = checked.record.attachment.kind.as_token(),
+            byte_count = checked.record.attachment.byte_count,
+            width = checked.record.attachment.dimensions.map(|(width, _)| width),
+            height = checked.record.attachment.dimensions.map(|(_, height)| height),
             sent_copy_bytes = sent_bytes,
-            decode_ms,
+            check_ms,
             write_ms = write_started.elapsed().as_secs_f64() * 1_000.0,
             total_ms = started.elapsed().as_secs_f64() * 1_000.0,
             "attachment prepared"
         );
         Ok(Prepared {
             staging,
-            record: AttachmentRecord {
-                chat_id: chat,
-                attachment: ChatAttachment {
-                    id,
-                    message_id: None,
-                    ordinal: None,
-                    kind,
-                    source,
-                    file_name,
-                    media_type: media_type.to_owned(),
-                    byte_count,
-                    dimensions,
-                    origin: None,
-                    reference_path: None,
-                    created_at: Timestamp::now(),
-                },
-                has_sent_copy: sent_bytes.is_some(),
-                content_blake3,
-            },
+            record: checked.record,
         })
     }
 

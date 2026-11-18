@@ -1798,10 +1798,25 @@ async fn put_attachment(
         }
         _ => return invalid_request("The upload source is not one a person adds a file by."),
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Upload {
+            id: attachment,
+            name: query.name.clone(),
+            source,
+            bytes: body.clone(),
+        },
+    )
+    .await
+    {
+        return response;
+    }
     let upload = koru_ai_api::AttachmentUpload {
         file_name: query.name,
         source,
@@ -1821,10 +1836,20 @@ async fn remove_attachment(
     let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
         return invalid_identity("attachment");
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Remove(attachment),
+    )
+    .await
+    {
+        return response;
+    }
     answer(call(move || client.remove_attachment(context, chat, attachment)).await)
 }
 
@@ -1837,10 +1862,20 @@ async fn reference_attachment(
     let Some(chat) = ChatId::parse(&chat) else {
         return invalid_identity("chat");
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Reference(request.clone()),
+    )
+    .await
+    {
+        return response;
+    }
     answer(call(move || client.reference_attachment(context, chat, request)).await)
 }
 
@@ -1853,10 +1888,20 @@ async fn from_workspace_attachment(
     let Some(chat) = ChatId::parse(&chat) else {
         return invalid_identity("chat");
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Workspace(request.clone()),
+    )
+    .await
+    {
+        return response;
+    }
     answer(call(move || client.from_workspace_attachment(context, chat, request)).await)
 }
 
@@ -1872,10 +1917,23 @@ async fn restage_attachment(
     let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
         return invalid_identity("attachment");
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Restage {
+            id: attachment,
+            new_id: request.new_id,
+        },
+    )
+    .await
+    {
+        return response;
+    }
     answer(call(move || client.restage_attachment(context, chat, attachment, request)).await)
 }
 
@@ -1890,10 +1948,23 @@ async fn read_attachment(
     let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
         return invalid_identity("attachment");
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Read {
+            id: attachment,
+            thumbnail: false,
+        },
+    )
+    .await
+    {
+        return response;
+    }
     match call(move || client.read_attachment(context, chat, attachment)).await {
         Ok(content) => {
             let disposition = format!(
@@ -1917,17 +1988,34 @@ async fn read_attachment_thumbnail(
     let Some(attachment) = ChatAttachmentId::parse(&attachment) else {
         return invalid_identity("attachment");
     };
-    let (client, context) = match admitted(&state, principal, AiScope::Chat) {
+    let (client, context) = match admitted(&state, principal.clone(), AiScope::Chat) {
         Ok(values) => values,
         Err(response) => return response,
     };
+    if let Some(response) = crate::bots_engine::attachments::route(
+        &state,
+        &principal,
+        chat,
+        crate::bots_engine::attachments::Operation::Read {
+            id: attachment,
+            thumbnail: true,
+        },
+    )
+    .await
+    {
+        return response;
+    }
     match call(move || client.read_attachment_thumbnail(context, chat, attachment)).await {
         Ok(bytes) => bytes_response("image/png", None, bytes),
         Err(failure) => ai_failure(status_for(&failure), failure),
     }
 }
 
-fn bytes_response(media_type: &str, disposition: Option<&str>, bytes: Vec<u8>) -> Response {
+pub(crate) fn bytes_response(
+    media_type: &str,
+    disposition: Option<&str>,
+    bytes: Vec<u8>,
+) -> Response {
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -1946,7 +2034,7 @@ fn bytes_response(media_type: &str, disposition: Option<&str>, bytes: Vec<u8>) -
 }
 
 /// RFC 5987 `attr-char`: everything else in the name is percent-encoded.
-fn percent_encode_name(name: &str) -> String {
+pub(crate) fn percent_encode_name(name: &str) -> String {
     let mut encoded = String::with_capacity(name.len());
     for byte in name.bytes() {
         if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {

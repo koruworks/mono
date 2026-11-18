@@ -23,10 +23,13 @@ type CreationCall = Arc<
         + Send
         + Sync,
 >;
+pub(crate) mod attachments;
 mod capacity;
 mod creation;
 mod window;
 pub(crate) struct Gateway {
+    attachments: attachments::Call,
+    files: Arc<dyn attachments::files::Files>,
     capacity: Arc<capacity::Refresh>,
     authority: Arc<dyn BotAuthority>,
     call: Call,
@@ -45,9 +48,22 @@ impl GatewayState {
             return false;
         };
         let creation_engine = engine.clone();
+        let attachment_engine = engine.clone();
         let capacity_engine = engine.clone();
         self.bots_engine
             .set(Arc::new(Gateway {
+                files: Arc::new(attachments::files::Native),
+                attachments: Arc::new(move |request| {
+                    match worker::request(
+                        &attachment_engine.endpoint,
+                        attachment_engine.authority.expose(),
+                        worker::Command::Attachment(request),
+                    )? {
+                        worker::Reply::Attachment(reply) => Ok(reply),
+                        worker::Reply::Refused(error) => Err(error),
+                        _ => Err(Error::EngineUnavailable),
+                    }
+                }),
                 capacity: capacity::Refresh::new(Arc::new(move || {
                     match worker::request(
                         &capacity_engine.endpoint,

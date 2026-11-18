@@ -81,12 +81,24 @@ impl std::fmt::Debug for Request {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Command {
+    /// Routing distinguishes an absent ordinary chat from an engine thread.
+    /// An existing thread with another owner is refused, never a fallback.
+    Probe {
+        thread: Uuid,
+    },
     Stage(Record),
-    Read { thread: Uuid, id: Uuid },
-    Remove { thread: Uuid, id: Uuid },
+    Read {
+        thread: Uuid,
+        id: Uuid,
+    },
+    Remove {
+        thread: Uuid,
+        id: Uuid,
+    },
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
+    Thread(bool),
     Record(Option<Record>),
     Removed,
 }
@@ -104,6 +116,17 @@ pub fn handle(db: &mut Database, request: Request) -> Result<Reply, Error> {
         sender: request.sender,
     };
     match request.command {
+        Command::Probe { thread } => {
+            let exists: bool = db.connection.query_row(
+                "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1)",
+                [thread.to_string()],
+                |r| r.get(0),
+            )?;
+            if exists {
+                messages::authorize_thread(&db.connection, &who, thread)?;
+            }
+            Ok(Reply::Thread(exists))
+        }
         Command::Stage(record) => db
             .stage_attachment(&who, &record)
             .map(|r| Reply::Record(Some(r))),

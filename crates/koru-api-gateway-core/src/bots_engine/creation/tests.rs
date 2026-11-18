@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod attachments;
 mod lifecycle;
 mod lists;
 mod permissions;
@@ -157,9 +158,19 @@ impl Fixture {
             koru_bots_engine::questions::Transient::default(),
         )));
         let person_database = database.clone();
+        let attachment_database = database.clone();
         let abandon = Arc::new(AtomicBool::new(false));
         let flag = abandon.clone();
         let gateway = Gateway {
+            attachments: Arc::new(move |request| {
+                koru_bots_engine::attachments::handle(
+                    &mut attachment_database.lock().unwrap().0,
+                    request,
+                )
+            }),
+            files: Arc::new(crate::bots_engine::attachments::files::tests::Memory::new(
+                &root,
+            )),
             capacity: super::super::capacity::Refresh::new(Arc::new(|| Ok(()))),
             authority: store.clone(),
             folders: fs.clone(),
