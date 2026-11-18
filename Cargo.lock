@@ -5708,6 +5708,7 @@ name = "koru-ai-wire"
 version = "0.0.3"
 dependencies = [
  "koru-ai-core",
+ "koru-session-protocol",
  "schemars 1.2.2",
  "serde",
  "serde_json",

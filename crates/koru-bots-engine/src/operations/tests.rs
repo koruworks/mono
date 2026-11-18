@@ -20,6 +20,40 @@ struct Fixture {
     prepared: Prepared,
     boundary: Uuid,
 }
+
+#[test]
+fn attention_pages_are_bounded_authorized_and_have_no_execution_payload() {
+    let mut f = Fixture::new();
+    for _ in 0..70 {
+        f.leased();
+    }
+    let first = f.db.operation_attention(&f.person, f.thread, None).unwrap();
+    assert_eq!(first.items.len(), 64);
+    let encoded = serde_json::to_value(&first).unwrap();
+    let item = encoded["items"][0].as_object().unwrap();
+    assert_eq!(item.len(), 6);
+    assert!(!item.contains_key("lease"));
+    assert!(!item.contains_key("prepared"));
+    let second =
+        f.db.operation_attention(&f.person, f.thread, first.next)
+            .unwrap();
+    assert_eq!(second.items.len(), 6);
+    assert!(second.next.is_none());
+    assert!(
+        !first
+            .items
+            .iter()
+            .any(|a| second.items.iter().any(|b| a.key == b.key))
+    );
+    let stranger = messages::Person {
+        owner: "another".into(),
+        sender: f.person.sender.clone(),
+    };
+    assert_eq!(
+        f.db.operation_attention(&stranger, f.thread, None).err(),
+        Some(Error::NotAllowed)
+    );
+}
 pub(crate) fn leased_fixture(count: usize) -> (Database, Vec<Record>) {
     let mut fixture = Fixture::new();
     let records = (0..count).map(|_| fixture.leased()).collect();
@@ -431,6 +465,11 @@ fn execute_not_received_requires_original_command_and_same_boundary_boot() {
 fn reconciliation_requires_exact_drain_and_continue_never_releases_old_key() {
     let mut f = Fixture::new();
     let record = f.leased();
+    let pending = f.db.operation_attention(&f.person, f.thread, None).unwrap();
+    assert_eq!(pending.items.len(), 1);
+    assert!(!pending.items[0].unresolved);
+    assert!(!pending.items[0].drained);
+    assert_eq!(pending.items[0].key.operation, record.key.operation);
     assert_eq!(
         f.db.reconcile_operation(&record.key, None).err(),
         Some(Error::RecoveryPending)
@@ -465,6 +504,10 @@ fn reconciliation_requires_exact_drain_and_continue_never_releases_old_key() {
         f.db.reconcile_operation(&record.key, None).unwrap().state,
         State::Unresolved
     );
+    let uncertain = f.db.operation_attention(&f.person, f.thread, None).unwrap();
+    assert!(uncertain.items[0].unresolved);
+    assert!(uncertain.items[0].drained);
+    assert_eq!(uncertain.items[0].document, record.store.document);
     assert!(
         f.db.claim_messages(
             f.worker.bot,
@@ -496,6 +539,12 @@ fn reconciliation_requires_exact_drain_and_continue_never_releases_old_key() {
         f.db.continue_operations(&f.person, command, f.thread, &[record.key.clone()], 12)
             .unwrap();
     assert!(!continued.replayed);
+    assert!(
+        f.db.operation_attention(&f.person, f.thread, None)
+            .unwrap()
+            .items
+            .is_empty()
+    );
     assert!(
         f.db.continue_operations(&f.person, command, f.thread, &[record.key.clone()], 12)
             .unwrap()

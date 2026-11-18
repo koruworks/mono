@@ -717,6 +717,16 @@ impl AiClient<'_> {
             Some(json_body(request)?),
         )
     }
+    pub fn bot_thread(
+        &self,
+        request: &koru_ai_wire::bot_threads::Command,
+    ) -> AiResult<koru_ai_wire::bot_threads::Response> {
+        self.json(
+            reqwest::Method::POST,
+            "/v1/ai/bots/threads".into(),
+            Some(json_body(request)?),
+        )
+    }
     pub fn available(&self) -> bool {
         self.client.capabilities.iter().any(|value| value == "ai")
     }

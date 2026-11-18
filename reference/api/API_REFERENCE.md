@@ -878,6 +878,12 @@ Read a picture attachment's thumbnail
 
 Returns: A PNG at most 512 pixels on its long edge; attachment_no_preview for anything but a picture.
 
+## POST `/v1/ai/bots/threads`
+
+Read or control an engine-owned Bot conversation
+
+Returns: Typed history, accepted input, live observations and exact durable control receipts. Engine disabled is explicit; unavailable or refused conversations never fall back to legacy data.
+
 ## GET `/v1/artifacts/families`
 
 The artifact families of a workspace

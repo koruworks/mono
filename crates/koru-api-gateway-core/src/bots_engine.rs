@@ -336,6 +336,40 @@ impl Gateway {
         send(command)
     }
 }
+pub(crate) async fn thread_command(
+    State(state): State<Arc<GatewayState>>,
+    Extension(principal): Extension<GatewayPrincipal>,
+    payload: Result<Json<koru_ai_wire::bot_threads::Command>, JsonRejection>,
+) -> Response {
+    if !permitted(&principal) {
+        return failed(Error::NotAllowed);
+    }
+    let Ok(Json(command)) = payload else {
+        return failed(Error::InvalidRequest);
+    };
+    if !koru_bots_engine::ENABLED {
+        return failed(Error::EngineDisabled);
+    }
+    let Some(gateway) = state.bots_engine.get().cloned() else {
+        return failed(Error::EngineUnavailable);
+    };
+    let Ok(permit) = gateway.permits.clone().try_acquire_owned() else {
+        return failed(Error::EngineUnavailable);
+    };
+    let client = state.ai_client();
+    match tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        gateway.thread_command(&principal, command, |configuration| {
+            window::readiness::validate(client.as_ref(), configuration)
+        })
+    })
+    .await
+    {
+        Ok(Ok(value)) => Json(value).into_response(),
+        Ok(Err(error)) => error.response(false),
+        Err(_) => failed(Error::EngineUnavailable),
+    }
+}
 pub(crate) async fn command(
     State(state): State<Arc<GatewayState>>,
     Extension(principal): Extension<GatewayPrincipal>,

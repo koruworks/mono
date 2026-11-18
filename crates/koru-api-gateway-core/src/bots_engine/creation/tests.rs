@@ -6,6 +6,7 @@ mod permissions;
 mod recovery;
 mod readiness;
 mod settings;
+mod threads;
 use koru_ai_core::{
     DocumentId, ProfileId, WorkspaceId,
     bots::{BOT_ROLE_SCOPE, BotRoleProof},

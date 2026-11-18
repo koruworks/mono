@@ -80,6 +80,10 @@ impl Command {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    OperationAttention {
+        thread: Uuid,
+        after: Option<crate::operations::AttentionCursor>,
+    },
     RecentHistory {
         thread: Uuid,
         before: Option<u64>,
@@ -320,6 +324,7 @@ pub struct ThreadView {
     pub thread: Thread,
     pub turns: Vec<ActiveTurn>,
     pub waiting_messages: u64,
+    pub head_sequence: u64,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

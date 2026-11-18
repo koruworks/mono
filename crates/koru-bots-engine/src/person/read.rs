@@ -150,10 +150,16 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
                 [key.to_string()],
                 |r| r.get(0),
             )?;
+            let head_sequence = c.query_row(
+                "SELECT COALESCE(MAX(sequence),0) FROM messages WHERE thread=?1",
+                [key.to_string()],
+                |r| r.get(0),
+            )?;
             value(ThreadView {
                 thread,
                 turns,
                 waiting_messages: waiting,
+                head_sequence,
             })
         }
         Query::History { thread, after } => value(db.read_messages(who, thread, after)?),
@@ -161,6 +167,9 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
             value(db.read_recent_messages(who, thread, before)?)
         }
         Query::Questions { thread } => value(db.read_questions(who, thread)?),
+        Query::OperationAttention { thread, after } => {
+            value(db.operation_attention(who, thread, after)?)
+        }
         Query::Outputs { thread, after } => {
             messages::authorize_thread(c, who, thread)?;
             let keys=c.prepare("SELECT id FROM outputs WHERE thread=?1 AND (?2 IS NULL OR id>?2) ORDER BY id LIMIT 65")?.query_map(params![thread.to_string(),after.map(|x|x.to_string())],|r|r.get(0))?.collect::<Result<Vec<String>,_>>()?;

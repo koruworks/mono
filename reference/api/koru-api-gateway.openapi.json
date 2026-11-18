@@ -519,6 +519,597 @@
         ],
         "type": "object"
       },
+      "AgentEvent": {
+        "description": "Provider-neutral managed-session facts. Provider IDs and native wire values\nnever cross this boundary.",
+        "oneOf": [
+          {
+            "description": "Protocol v23. The provider's live listing, independent of any turn.",
+            "properties": {
+              "commands": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentCommand"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "commands_updated"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "commands"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v24. The provider's latest current context occupancy, not\ncumulative usage across turns. Absent when the provider did not say.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "context_usage"
+                ],
+                "type": "string"
+              },
+              "size": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "used": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "used",
+              "size"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "turn_started"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "message_delta"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "input": {
+                "description": "Protocol v17 (UC17). What the agent asked the tool to do, as the\nadapter read it from the call — a command line, the paths of a\nchange, an MCP tool's arguments — bounded to\n[`TOOL_CONTENT_CHARS`]. `None` when the provider gave none, and\nfrom an older peer.",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "tool_started"
+                ],
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              },
+              "tool_call_id": {
+                "$ref": "#/components/schemas/ToolCallId"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "tool_call_id",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "detail": {
+                "description": "Protocol v17. The tool's own account of why it failed, as the\nprovider reported it, bounded to [`TOOL_DETAIL_CHARS`]\ncharacters — the first thing a person asks of a failed row, and\nthe one piece of provider text that crosses here. `None` when it\nsucceeded, when the provider said nothing readable, and from an\nolder peer. Never the arguments, never the results.",
+                "nullable": true,
+                "type": "string"
+              },
+              "failure": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ToolFailure"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "description": "Protocol v14. Why it did not work, as the adapter classified it\nfrom the structured fields it already reads — never the\nprovider's error text, which does not cross this boundary at\nall. `None` when it succeeded, and `None` from an older peer,\nwhich the run reads as [`ToolFailure::Unclassified`]."
+              },
+              "kind": {
+                "enum": [
+                  "tool_completed"
+                ],
+                "type": "string"
+              },
+              "output": {
+                "description": "Protocol v17 (UC17). What the tool produced, as the adapter read\nit — a command's output, a change's diff, an MCP result — bounded\nto [`TOOL_CONTENT_CHARS`]. `None` when the provider gave none,\nand from an older peer.",
+                "nullable": true,
+                "type": "string"
+              },
+              "succeeded": {
+                "type": "boolean"
+              },
+              "tool": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ToolKind"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ],
+                "description": "Protocol v14. Which tool it was, as the adapter classifies it —\nnever the provider's own name for it. Absent from an older peer,\nwhich reads as `None`: unknown, never guessed."
+              },
+              "tool_call_id": {
+                "$ref": "#/components/schemas/ToolCallId"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "tool_call_id",
+              "succeeded"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "approval_id": {
+                "$ref": "#/components/schemas/ApprovalId"
+              },
+              "choices": {
+                "items": {
+                  "$ref": "#/components/schemas/ApprovalChoice"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "approval_required"
+                ],
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "approval_id",
+              "summary"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "approval_id": {
+                "$ref": "#/components/schemas/ApprovalId"
+              },
+              "choice": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ApprovalChoiceId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "decision": {
+                "$ref": "#/components/schemas/ApprovalDecision"
+              },
+              "kind": {
+                "enum": [
+                  "approval_resolved"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "approval_id",
+              "decision"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "approval_id": {
+                "$ref": "#/components/schemas/ApprovalId"
+              },
+              "kind": {
+                "enum": [
+                  "approval_expired"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "approval_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "waiting_for_input"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/AttachmentId"
+              },
+              "kind": {
+                "enum": [
+                  "attachment_accepted"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "attachment_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "attachment_id": {
+                "$ref": "#/components/schemas/AttachmentId"
+              },
+              "code": {
+                "$ref": "#/components/schemas/ErrorCode"
+              },
+              "kind": {
+                "enum": [
+                  "attachment_rejected"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "attachment_id",
+              "code"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "usage"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              },
+              "usage": {
+                "$ref": "#/components/schemas/AgentUsage"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "usage"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "child_session_id": {
+                "$ref": "#/components/schemas/TerminalSessionId"
+              },
+              "kind": {
+                "enum": [
+                  "child_session_created"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "child_session_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "turn_completed"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "turn_cancelled"
+                ],
+                "type": "string"
+              },
+              "reason": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/CancelReason2"
+                  }
+                ],
+                "default": "run",
+                "description": "Protocol v14. Why the turn was cancelled. A peer that predates the\nfield reads `Run`, which is what every cancellation meant before\na takeover could end a step without ending the job."
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "error": {
+                "$ref": "#/components/schemas/SessionFailure"
+              },
+              "kind": {
+                "enum": [
+                  "turn_failed"
+                ],
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "error"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "provider_state"
+                ],
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/components/schemas/ProviderKind"
+              },
+              "state": {
+                "$ref": "#/components/schemas/ManagedState"
+              }
+            },
+            "required": [
+              "kind",
+              "provider",
+              "state"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v19 (koru-ai D7). The agent moved its approval mode itself\nduring the turn — Claude leaving plan mode once a plan is approved,\nor taking another mode when the one asked for is not offered by its\nmodel. A new tag, so the host sends it only to a v19 peer.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "mode_changed"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "$ref": "#/components/schemas/AgentModeId"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "mode"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v20 (koru-ai D69). A short status line from the agent that\nis not part of its reply — a hook that failed on the person's machine,\na warning about the session — bounded to [`AGENT_NOTICE_CHARS`]\ncharacters. One the agent said before any turn is said with the\nnext. A new tag, so the host sends it only to a v20 peer.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "notice"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21 (koru-ai D108). The agent stopped to ask the person —\nCodex's `request_user_input`, Claude's `AskUserQuestion` — bounded by\n[`crate::bound_questions`]. A set is answered once, through\n`answer_questions`, and closed by [`AgentEvent::QuestionsResolved`].\n`blocking: false` is a set the agent does not wait on: its turn runs\non, and the set may be answered until the agent closes it. A new tag,\nso the host sends it only to a v21 peer; a session created by an\nolder peer is never asked at all (the adapter declines for it).\n\n`delivery: next_message` is a set the agent asked in its reply and\nmoved on from (Codex's `request_user_input_async`): never blocking,\nit outlives its turn, and its answers go as the person's next\nmessage — [`crate::QuestionsReply`] on `send_pending_input`, or\n`answer_questions` while its turn still runs, which steers them in.\nA skip sends the agent nothing; another message passes it over and\nit expires.",
+            "properties": {
+              "blocking": {
+                "default": true,
+                "type": "boolean"
+              },
+              "delivery": {
+                "$ref": "#/components/schemas/QuestionsDelivery"
+              },
+              "kind": {
+                "enum": [
+                  "questions_required"
+                ],
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentQuestion2"
+                },
+                "type": "array"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "Protocol v21. How a set of questions ended: answered — a secret's\nanswer withheld — skipped, or expired with its turn.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "questions_resolved"
+                ],
+                "type": "string"
+              },
+              "outcome": {
+                "$ref": "#/components/schemas/QuestionsOutcome"
+              },
+              "request_id": {
+                "$ref": "#/components/schemas/QuestionRequestId"
+              },
+              "turn_id": {
+                "$ref": "#/components/schemas/AgentTurnId"
+              }
+            },
+            "required": [
+              "kind",
+              "turn_id",
+              "request_id",
+              "outcome"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "AgentModeId": {
         "description": "One agent's own id for one of its modes: printable ASCII with no space,\nat most [`MAX_AGENT_MODE_ID_BYTES`].",
         "type": "string"
@@ -794,6 +1385,42 @@
         ],
         "type": "object"
       },
+      "AgentQuestion2": {
+        "description": "One question. `id` is the agent's own key for it, returned with the\nanswer; `header` is the short label above it, empty when the agent gave\nnone. With no options the question takes text only.",
+        "properties": {
+          "allow_other": {
+            "default": false,
+            "description": "The agent takes an answer of the person's own words beside its\noptions (*Other*).",
+            "type": "boolean"
+          },
+          "header": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "options": {
+            "description": "In the agent's order: the first is the one it recommends.",
+            "items": {
+              "$ref": "#/components/schemas/QuestionOption"
+            },
+            "type": "array"
+          },
+          "question": {
+            "type": "string"
+          },
+          "secret": {
+            "default": false,
+            "description": "The answer is a secret: typed into a masked box and never repeated.",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "question"
+        ],
+        "type": "object"
+      },
       "AgentQuestionOption": {
         "description": "One option a question offers: its label, sent back when chosen, and the\nline under it.",
         "properties": {
@@ -813,6 +1440,54 @@
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
         "type": "string"
+      },
+      "AgentUsage": {
+        "description": "One usage report for one turn.\n\n**The report is the total for `turn_id` so far, and a later report for\nthe same turn replaces the earlier one.** Whether the provider sends\ndeltas, running totals or replacements is the adapter's business to\ndeclare in its compatibility note and normalize here; above this type\nthere is one total per turn. A missing count is `None` — unavailable is\nnever zero.",
+        "properties": {
+          "cached_input": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CachedInputRelationship"
+              }
+            ],
+            "default": "undeclared",
+            "description": "Protocol v14. How `cached_input_tokens` relates to `input_tokens`,\nas the adapter declared it. Absent from an older peer, which reads as\n`Undeclared` — incomplete, never guessed."
+          },
+          "cached_input_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "input_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ModelName"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null,
+            "description": "Protocol v14. The model the provider reported for this turn, or\n`None` when it said nothing. Never a copy of the model that was asked\nfor: that lives on the session summary as `requested`."
+          },
+          "output_tokens": {
+            "format": "uint64",
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
+          }
+        },
+        "type": "object"
       },
       "AiError": {
         "properties": {
@@ -1266,6 +1941,26 @@
         ],
         "type": "object"
       },
+      "ApprovalChoice": {
+        "description": "Label is approval content, drawn but never included in diagnostics.",
+        "properties": {
+          "id": {
+            "$ref": "#/components/schemas/ApprovalChoiceId"
+          },
+          "intent": {
+            "$ref": "#/components/schemas/ApprovalIntent"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "intent",
+          "label"
+        ],
+        "type": "object"
+      },
       "ApprovalChoiceId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -1281,6 +1976,16 @@
       "ApprovalId": {
         "format": "uuid",
         "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "ApprovalIntent": {
+        "description": "Semantic intent; provider option identifiers never cross this boundary.",
+        "enum": [
+          "allow",
+          "allow_remembered",
+          "reject",
+          "reject_remembered"
+        ],
         "type": "string"
       },
       "ApprovalOutcome": {
@@ -1816,6 +2521,25 @@
             "type": "string"
           }
         ]
+      },
+      "AttentionCursor": {
+        "additionalProperties": false,
+        "description": "Stable page cursor and exact identity of an uncertain write. Authority is\nsupplied by the carrier, not read from a public operation reference.",
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot",
+          "operation"
+        ],
+        "type": "object"
       },
       "AttentionReason": {
         "enum": [
@@ -8208,6 +8932,1183 @@
           }
         ]
       },
+      "BotThreadActiveTurn": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "details": {},
+          "generation": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "reply_message": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "session": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "worker": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bot",
+          "state",
+          "generation",
+          "created_at_ms",
+          "details"
+        ],
+        "type": "object"
+      },
+      "BotThreadAnswer": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "choice": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ApprovalChoiceId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "decision": {
+                "$ref": "#/components/schemas/ApprovalDecision"
+              },
+              "kind": {
+                "enum": [
+                  "approval"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "decision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/components/schemas/QuestionAnswer"
+                },
+                "nullable": true,
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "questions"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotThreadCommand": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotThreadOperationRef"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "attention"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "continue"
+                ],
+                "type": "string"
+              },
+              "operations": {
+                "items": {
+                  "$ref": "#/components/schemas/BotThreadOperationRef"
+                },
+                "type": "array"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "operations"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "read"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "before": {
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "history"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "since"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "after"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "attachments": {
+                "items": {},
+                "type": "array"
+              },
+              "body": {
+                "type": "string"
+              },
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "in_reply_to": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "send"
+                ],
+                "type": "string"
+              },
+              "references": {
+                "items": {},
+                "type": "array"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "thread",
+              "body",
+              "attachments",
+              "references"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "stop"
+                ],
+                "type": "string"
+              },
+              "turn": {
+                "$ref": "#/components/schemas/BotThreadTurn"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "turn"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "boot": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "observe"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "after"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "$ref": "#/components/schemas/BotId"
+              },
+              "fast": {
+                "nullable": true,
+                "type": "boolean"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "settings"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "nullable": true,
+                "type": "string"
+              },
+              "model": {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "bot",
+              "thread",
+              "revision",
+              "model"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "questions"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "$ref": "#/components/schemas/BotThreadAnswer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "answer"
+                ],
+                "type": "string"
+              },
+              "question": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "question",
+              "answer"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "reask"
+                ],
+                "type": "string"
+              },
+              "question": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "question"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "retry"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "turn": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "turn"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotThreadContent": {
+        "properties": {
+          "attachments": {
+            "items": {},
+            "type": "array"
+          },
+          "body": {
+            "type": "string"
+          },
+          "deadline_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "in_reply_to": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "references": {
+            "items": {},
+            "type": "array"
+          },
+          "reply_to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "body",
+          "attachments",
+          "references",
+          "reply_to"
+        ],
+        "type": "object"
+      },
+      "BotThreadEvent": {
+        "properties": {
+          "cursor": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "observation": {
+            "$ref": "#/components/schemas/BotThreadObservation"
+          }
+        },
+        "required": [
+          "cursor",
+          "observation"
+        ],
+        "type": "object"
+      },
+      "BotThreadMessage": {
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/BotThreadContent"
+          },
+          "created_at_ms": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "sender": {
+            "type": "string"
+          },
+          "sequence": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "sequence",
+          "sender",
+          "kind",
+          "content",
+          "created_at_ms"
+        ],
+        "type": "object"
+      },
+      "BotThreadObservation": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "event": {
+            "$ref": "#/components/schemas/AgentEvent"
+          },
+          "thread": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "turn": {
+            "$ref": "#/components/schemas/BotThreadTurn"
+          }
+        },
+        "required": [
+          "thread",
+          "bot",
+          "turn",
+          "event"
+        ],
+        "type": "object"
+      },
+      "BotThreadOperationAttention": {
+        "properties": {
+          "document": {
+            "$ref": "#/components/schemas/DocumentId"
+          },
+          "drained": {
+            "type": "boolean"
+          },
+          "key": {
+            "$ref": "#/components/schemas/BotThreadOperationRef"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "unresolved": {
+            "type": "boolean"
+          },
+          "workspace": {
+            "$ref": "#/components/schemas/WorkspaceId"
+          }
+        },
+        "required": [
+          "key",
+          "workspace",
+          "document",
+          "kind",
+          "unresolved",
+          "drained"
+        ],
+        "type": "object"
+      },
+      "BotThreadOperationRef": {
+        "additionalProperties": false,
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operation": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot",
+          "operation"
+        ],
+        "type": "object"
+      },
+      "BotThreadPrompt": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "choices": {
+                "items": {
+                  "$ref": "#/components/schemas/ApprovalChoice"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "approval"
+                ],
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "summary",
+              "choices"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "blocking": {
+                "type": "boolean"
+              },
+              "delivery": {
+                "$ref": "#/components/schemas/QuestionsDelivery"
+              },
+              "kind": {
+                "enum": [
+                  "questions"
+                ],
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/components/schemas/AgentQuestion2"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "questions",
+              "blocking",
+              "delivery"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotThreadQuestion": {
+        "properties": {
+          "answer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotThreadAnswer"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "delivery_state": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "prompt": {
+            "$ref": "#/components/schemas/BotThreadPrompt"
+          },
+          "provider_available": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string"
+          },
+          "turn": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "turn",
+          "prompt",
+          "state",
+          "delivery_state",
+          "provider_available"
+        ],
+        "type": "object"
+      },
+      "BotThreadResponse": {
+        "oneOf": [
+          {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/BotThreadOperationAttention"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "attention"
+                ],
+                "type": "string"
+              },
+              "next": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/BotThreadOperationRef"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "items"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "continued"
+                ],
+                "type": "string"
+              },
+              "messages": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "messages",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "read"
+                ],
+                "type": "string"
+              },
+              "snapshot": {
+                "$ref": "#/components/schemas/BotThreadSnapshot"
+              }
+            },
+            "required": [
+              "kind",
+              "snapshot"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "after": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "before": {
+                "format": "uint64",
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "history"
+                ],
+                "type": "string"
+              },
+              "messages": {
+                "items": {
+                  "$ref": "#/components/schemas/BotThreadMessage"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "messages",
+              "after"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "accepted"
+                ],
+                "type": "string"
+              },
+              "message": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "sequence": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "message",
+              "thread",
+              "sequence",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "cancelled": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "kind": {
+                "enum": [
+                  "stopped"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "cancelled",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "boot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "cursor": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "entries": {
+                "items": {
+                  "$ref": "#/components/schemas/BotThreadEvent"
+                },
+                "type": "array"
+              },
+              "gap": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "observed"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "boot",
+              "cursor",
+              "gap",
+              "entries"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "fast": {
+                "nullable": true,
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "settings"
+                ],
+                "type": "string"
+              },
+              "mode": {
+                "nullable": true,
+                "type": "string"
+              },
+              "model": {
+                "$ref": "#/components/schemas/ModelSelection"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "revision",
+              "model",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "questions"
+                ],
+                "type": "string"
+              },
+              "questions": {
+                "items": {
+                  "$ref": "#/components/schemas/BotThreadQuestion"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "kind",
+              "questions"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "continued": {
+                "type": "boolean"
+              },
+              "kind": {
+                "enum": [
+                  "answered"
+                ],
+                "type": "string"
+              },
+              "question": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "question",
+              "continued",
+              "replayed"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "changed"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "replayed"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "BotThreadSnapshot": {
+        "properties": {
+          "conversation": {
+            "$ref": "#/components/schemas/BotConversation"
+          },
+          "head_sequence": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "paused": {
+            "type": "boolean"
+          },
+          "settings_revision": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "team_paused": {
+            "type": "boolean"
+          },
+          "turns": {
+            "items": {
+              "$ref": "#/components/schemas/BotThreadActiveTurn"
+            },
+            "type": "array"
+          },
+          "waiting_messages": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "conversation",
+          "settings_revision",
+          "paused",
+          "team_paused",
+          "waiting_messages",
+          "head_sequence",
+          "turns"
+        ],
+        "type": "object"
+      },
+      "BotThreadTurn": {
+        "additionalProperties": false,
+        "properties": {
+          "generation": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "session": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "worker": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "generation",
+          "worker",
+          "session"
+        ],
+        "type": "object"
+      },
       "BotTrashedBy": {
         "description": "The lifecycle operation that put a conversation into Trash.",
         "properties": {
@@ -8415,6 +10316,32 @@
         "description": "Stable built-in launch-profile key (`powershell`).",
         "type": "string"
       },
+      "CachedInputRelationship": {
+        "description": "Whether a provider's `input_tokens` already counts its cached input.\n\nDeclared by the adapter, never assumed: a wrong guess here misprices\nevery run silently. `Undeclared` is recorded as incomplete downstream,\nwhich is the honest answer when the provider's note has not said.",
+        "oneOf": [
+          {
+            "description": "`cached_input_tokens` is a subset of `input_tokens`.",
+            "enum": [
+              "included"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "`cached_input_tokens` is counted beside `input_tokens`, not inside it.",
+            "enum": [
+              "separate"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The adapter has not said. Recorded incomplete, never guessed.",
+            "enum": [
+              "undeclared"
+            ],
+            "type": "string"
+          }
+        ]
+      },
       "CalendarDate": {
         "type": "string"
       },
@@ -8456,6 +10383,25 @@
           },
           {
             "description": "The person ended the *step* to take control immediately (§7.4). The\nrun stays `Running`; the handover proceeds.",
+            "enum": [
+              "takeover_boundary"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "CancelReason2": {
+        "description": "Why a managed turn is being cancelled.\n\nA takeover cancellation ends the step, not the job (D36). The reason\ntravels with the cancellation so the resulting `TurnCancelled` can say\nwhich one it was, and a consumer that reads only the event still knows\nwhether the run ended.",
+        "oneOf": [
+          {
+            "description": "The run itself is being cancelled: terminal for the run.",
+            "enum": [
+              "run"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "The turn ends so control can be handed over: never terminal.",
             "enum": [
               "takeover_boundary"
             ],
@@ -17206,6 +19152,39 @@
           {
             "additionalProperties": false,
             "properties": {
+              "after": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/AttentionCursor"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "kind": {
+                "enum": [
+                  "operation_attention"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "before": {
                 "format": "uint64",
                 "minimum": 0,
@@ -17669,6 +19648,102 @@
               "kind": {
                 "enum": [
                   "withheld"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionOption": {
+        "description": "One option a question offers. `label` is what is sent back when it is\nchosen; `description` is the line under it, empty when the agent gave\nnone.",
+        "properties": {
+          "description": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "type": "object"
+      },
+      "QuestionRequestId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "QuestionsDelivery": {
+        "description": "**How a set's answers reach the agent** (koru-ai D108).\n\nMost agents ask and wait: the answer goes back on the request that\nasked, through `answer_questions`, while the asking turn is open. Some\nask in their reply and move on — Codex's `request_user_input_async` —\nand take the answers as the person's next message: the set outlives its\nturn, an answer goes as input (`send_pending_input` with\n[`QuestionsReply`], or into the turn still running through\n`answer_questions`), and a skip sends the agent nothing.",
+        "oneOf": [
+          {
+            "description": "Answered on the request that asked, within its turn.",
+            "enum": [
+              "in_turn"
+            ],
+            "type": "string"
+          },
+          {
+            "description": "Answered by the person's next message; the set stays answerable\nafter its turn ends, until it is answered, skipped, or passed over\nby another message.",
+            "enum": [
+              "next_message"
+            ],
+            "type": "string"
+          }
+        ]
+      },
+      "QuestionsOutcome": {
+        "description": "How a set of questions ended.",
+        "oneOf": [
+          {
+            "description": "The person answered; a secret answer is [`QuestionAnswerValue::Withheld`].",
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/components/schemas/QuestionAnswer"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "answered"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "answers"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person skipped the set; the agent was told so.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "skipped"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "It closed unanswered: the turn ended or was stopped, the agent took\nit back, or the session went away.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "expired"
                 ],
                 "type": "string"
               }
@@ -25607,6 +27682,11 @@
         ],
         "type": "string"
       },
+      "ToolCallId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
       "ToolDecisionRequest": {
         "additionalProperties": false,
         "description": "The optional body of an approve or deny. A local agent offers its own\nchoices for a permission request; the chosen one's id comes back here.\nA workspace tool offers none and takes no body. An agent's row with no\nchoice is refused, so two same-intent choices can never collapse.\n\n**An agent's questions are answered by approving their row with\n`answers`** (koru-ai D108), one per question by its id: an offered\noption by label, or the person's own words where the question takes\nthem. Denying the row skips the set. A question row approved without\nanswers is refused.",
@@ -28155,6 +30235,92 @@
           }
         ],
         "summary": "Authorized local Bot task operation: stop_bot_task"
+      }
+    },
+    "/v1/ai/bots/threads": {
+      "post": {
+        "description": "Typed history, accepted input, live observations and exact durable control receipts. Engine disabled is explicit; unavailable or refused conversations never fall back to legacy data.",
+        "operationId": "bots_thread_command",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BotThreadCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BotThreadResponse"
+                }
+              }
+            },
+            "description": "Typed history, accepted input, live observations and exact durable control receipts. Engine disabled is explicit; unavailable or refused conversations never fall back to legacy data."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The request body or path identity is invalid"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The gateway bearer is absent or invalid"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The bearer lacks the operation's declared AI scope"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The operation conflicts with durable chat state"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AiFailure"
+                }
+              }
+            },
+            "description": "The AI worker is unavailable or saturated"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": [
+              "bots.manage"
+            ]
+          }
+        ],
+        "summary": "Read or control an engine-owned Bot conversation"
       }
     },
     "/v1/ai/chats": {

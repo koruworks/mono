@@ -11,6 +11,7 @@ use uuid::Uuid;
 mod lifecycle;
 mod lists;
 mod management;
+mod threads;
 pub(super) mod readiness;
 
 fn model_view(configuration: &Configuration) -> Result<ModelSelection, Error> {

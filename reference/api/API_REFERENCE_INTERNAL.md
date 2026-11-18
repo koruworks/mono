@@ -206,6 +206,7 @@ Generated from the route catalog. Do not edit.
 - DELETE `/v1/ai/chats/{chat}/attachments/{attachment}` — Remove a staged attachment (Public)
 - GET `/v1/ai/chats/{chat}/attachments/{attachment}` — Read an attachment's stored original (Public)
 - GET `/v1/ai/chats/{chat}/attachments/{attachment}/thumbnail` — Read a picture attachment's thumbnail (Public)
+- POST `/v1/ai/bots/threads` — Read or control an engine-owned Bot conversation (Public)
 - GET `/v1/artifacts/families` — The artifact families of a workspace (artifacts.read)
 - POST `/v1/artifacts/families` — Create an artifact family (artifacts.write)
 - GET `/v1/artifacts/families/{family}` — A family with its versions (artifacts.read)

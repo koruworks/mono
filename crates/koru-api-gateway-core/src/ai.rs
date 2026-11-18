@@ -87,9 +87,13 @@ pub const ROUTES: &[AiRoute] = &[
         scope: AiScope::ManageBots,
         summary: "Read or change engine-owned Bots and conversations",
         returns: "An owner-scoped read, revision-checked durable receipt, or explicit live-feed gap. Available only when the supervised Bots engine is composed; no legacy data is read.",
-        handler: || post(crate::bots_engine::command).layer(DefaultBodyLimit::max(koru_bots_engine::person::MAX_COMMAND_BYTES)),
-        request: AiBody::Json(|g|g.subschema_for::<koru_bots_engine::person::Command>()),
-        response: AiBody::Json(|g|g.subschema_for::<serde_json::Value>()),
+        handler: || {
+            post(crate::bots_engine::command).layer(DefaultBodyLimit::max(
+                koru_bots_engine::person::MAX_COMMAND_BYTES,
+            ))
+        },
+        request: AiBody::Json(|g| g.subschema_for::<koru_bots_engine::person::Command>()),
+        response: AiBody::Json(|g| g.subschema_for::<serde_json::Value>()),
         stream: false,
         path_parameters: &[],
     },
@@ -811,6 +815,23 @@ pub const ROUTES: &[AiRoute] = &[
         response: AiBody::Bytes("image/png"),
         stream: false,
         path_parameters: &["chat", "attachment"],
+    },
+    AiRoute {
+        operation_id: "bots_thread_command",
+        method: "POST",
+        path: "/v1/ai/bots/threads",
+        scope: AiScope::ManageBots,
+        summary: "Read or control an engine-owned Bot conversation",
+        returns: "Typed history, accepted input, live observations and exact durable control receipts. Engine disabled is explicit; unavailable or refused conversations never fall back to legacy data.",
+        handler: || {
+            post(crate::bots_engine::thread_command).layer(DefaultBodyLimit::max(
+                koru_bots_engine::person::MAX_COMMAND_BYTES,
+            ))
+        },
+        request: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::bot_threads::Command>()),
+        response: AiBody::Json(|g| g.subschema_for::<koru_ai_wire::bot_threads::Response>()),
+        stream: false,
+        path_parameters: &[],
     },
 ];
 

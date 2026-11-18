@@ -154,6 +154,30 @@ pub struct Continued {
     pub messages: Vec<Uuid>,
 }
 
+/// Stable page cursor and exact identity of an uncertain write. Authority is
+/// supplied by the carrier, not read from a public operation reference.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct AttentionCursor {
+    pub bot: Uuid,
+    pub operation: Uuid,
+}
+#[derive(Serialize, Deserialize)]
+pub struct Attention {
+    pub key: AttentionCursor,
+    pub workspace: WorkspaceId,
+    pub document: DocumentId,
+    pub kind: NativeEffectKind,
+    pub unresolved: bool,
+    pub drained: bool,
+}
+#[derive(Serialize, Deserialize)]
+pub struct AttentionPage {
+    pub items: Vec<Attention>,
+    pub next: Option<AttentionCursor>,
+}
+
 #[derive(Serialize, Deserialize)]
 struct Immutable {
     prepared: Prepared,

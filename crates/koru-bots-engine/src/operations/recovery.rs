@@ -14,6 +14,46 @@ fn keys(connection: &Connection, thread: Uuid) -> Result<Vec<Key>, Error> {
 }
 
 impl Database {
+    /// A bounded read for the person's uncertain-write controls. Native
+    /// arguments, credentials and execution capabilities never leave here.
+    pub fn operation_attention(
+        &self,
+        person: &messages::Person,
+        thread: Uuid,
+        after: Option<AttentionCursor>,
+    ) -> Result<AttentionPage, Error> {
+        messages::authorize_thread(&self.connection, person, thread)?;
+        let rows = self.connection.prepare("SELECT bot,id FROM operations WHERE scope=?1 AND thread=?2 AND (state='leased' OR (state='unresolved' AND json_extract(CAST(recovery AS TEXT),'$.continued_by') IS NULL)) AND (?3 IS NULL OR (bot,id)>(?3,?4)) ORDER BY bot,id LIMIT 65")?
+            .query_map(params![person.owner,thread.to_string(),after.as_ref().map(|a|a.bot.to_string()),after.as_ref().map(|a|a.operation.to_string())],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?
+            .collect::<Result<Vec<_>,_>>()?;
+        let more = rows.len() > messages::PAGE_LIMIT;
+        let mut items = Vec::new();
+        for (bot, operation) in rows.into_iter().take(messages::PAGE_LIMIT) {
+            let id = |s: &str| Uuid::parse_str(s).map_err(|_| Error::StorageUnavailable);
+            let key = Key {
+                scope: person.owner.clone(),
+                thread,
+                bot: id(&bot)?,
+                operation: id(&operation)?,
+            };
+            let record = ledger::load(&self.connection, &key)?.ok_or(Error::StorageUnavailable)?;
+            items.push(Attention {
+                key: AttentionCursor {
+                    bot: key.bot,
+                    operation: key.operation,
+                },
+                workspace: record.store.workspace,
+                document: record.store.document,
+                kind: record.store.kind,
+                unresolved: record.state == State::Unresolved,
+                drained: record.recovery.drain.is_some(),
+            });
+        }
+        let next = more
+            .then(|| items.last().map(|item| item.key.clone()))
+            .flatten();
+        Ok(AttentionPage { items, next })
+    }
     pub(crate) fn recovery_candidates(
         &self,
         after: i64,
