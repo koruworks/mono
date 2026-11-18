@@ -25,7 +25,8 @@ pub(super) fn serve(
     let listener = koru_ipc::Listener::bind(endpoint(&bootstrap.root, &bootstrap.segment)?)
         .map_err(|_| Error::EngineUnavailable)?;
     crate::claim_root(&bootstrap.root)?;
-    let database = Database::open(&bootstrap.root)?;
+    let mut database = Database::open(&bootstrap.root)?;
+    database.recover_interrupted_turns()?;
     database.connection.execute("DELETE FROM workers", [])?;
     let launcher = crate::launcher::Launcher::start(
         bootstrap.root.clone(),
@@ -74,6 +75,7 @@ pub(super) fn serve(
                     database.connection.execute("INSERT INTO workers(bot,incarnation,started_at_ms,last_heard_at_ms) VALUES (?1,?2,?3,?3) ON CONFLICT(bot) DO UPDATE SET incarnation=excluded.incarnation,started_at_ms=excluded.started_at_ms,last_heard_at_ms=excluded.last_heard_at_ms",rusqlite::params![bot.to_string(),incarnation.to_string(),at_ms])?;
                 }
                 crate::launcher::Event::Ended { bot, incarnation } => {
+                    database.interrupt_worker(incarnation)?;
                     database.connection.execute(
                         "DELETE FROM workers WHERE bot=?1 AND incarnation=?2",
                         rusqlite::params![bot.to_string(), incarnation.to_string()],

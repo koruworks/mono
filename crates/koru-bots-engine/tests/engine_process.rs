@@ -31,7 +31,10 @@ fn main() {
         }],
     );
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.is_empty() {
+    if args
+        .first()
+        .is_none_or(|arg| !matches!(arg.as_str(), "--run" | "--check-retired-root"))
+    {
         println!("SKIP engine process proof: requires --run --root and feature active");
         return;
     }
@@ -74,6 +77,8 @@ fn main() {
     assert_eq!(koru_bots_engine::inspect(&root).unwrap().schema_version, 1);
     println!("PASS engine starts, authenticates control, answers status and marks root");
 
+    prove_interrupted_recovery(&root);
+
     let connection = rusqlite::Connection::open(root.join("bots/engine.db")).unwrap();
     connection.execute_batch("PRAGMA user_version=2;").unwrap();
     drop(connection);
@@ -88,6 +93,77 @@ fn main() {
         Some(koru_bots_engine::Error::SchemaTooNew)
     );
     println!("PASS newer schema refuses startup; read-only diagnostic still answers");
+}
+
+fn prove_interrupted_recovery(root: &Path) {
+    use koru_bots_engine::{
+        Database,
+        messages::{Envelope, Person, Resume},
+    };
+    use uuid::Uuid;
+    let bot = Uuid::new_v4();
+    let thread = Uuid::new_v4();
+    let seed = rusqlite::Connection::open(root.join("bots/engine.db")).unwrap();
+    seed.execute("INSERT INTO bots(id,owner,name,settings,access,knowledge_pages,visibility) VALUES (?1,'fixture','fixture',x'7b7d',x'7b7d',x'5b5d','private')",[bot.to_string()]).unwrap();
+    seed.execute(
+        "INSERT INTO threads(id,bot,kind,title,lifecycle) VALUES (?1,?2,'main','','active')",
+        rusqlite::params![thread.to_string(), bot.to_string()],
+    )
+    .unwrap();
+    seed.execute("INSERT INTO participants(thread,participant,kind) VALUES (?1,'fixture','person'),(?1,?2,'bot')",rusqlite::params![thread.to_string(),bot.to_string()]).unwrap();
+    drop(seed);
+    let mut db = Database::open(root).unwrap();
+    let person = Person {
+        sender: "fixture".into(),
+        owner: "fixture".into(),
+    };
+    let envelope = Envelope {
+        id: Uuid::new_v4(),
+        to: bot,
+        thread: Some(thread),
+        in_reply_to: None,
+        body: "synthetic unfinished work".into(),
+        attachments: vec![],
+        references: vec![],
+        deadline_ms: None,
+        reply_to: koru_bots_engine::messages::ReplyTo::Thread,
+    };
+    let accepted = db.accept_message(&person, &envelope, 1).unwrap().answer;
+    db.claim_messages(
+        bot,
+        thread,
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        Resume::Rebuilt,
+        8192,
+        2,
+    )
+    .unwrap()
+    .unwrap();
+    drop(db);
+    let (handle, bootstrap) = launch(root);
+    wait(&handle, State::Ready);
+    let endpoint = worker::endpoint(root, koru_channel::segment()).unwrap();
+    assert!(
+        matches!(worker::request(&endpoint,&bootstrap.authority,Command::Status),Ok(Reply::Status(s)) if s.running_turns==0&&s.inbox_depth==1)
+    );
+    handle.stop();
+    let mut db = Database::open(root).unwrap();
+    let continued = db
+        .claim_messages(
+            bot,
+            thread,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Resume::Rebuilt,
+            8192,
+            3,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(continued.continuation && continued.uncertain);
+    assert_eq!(continued.work[0].id, accepted.message);
+    println!("PASS engine startup interrupts durable running work and retains it for continuation");
 }
 
 fn launch(root: &Path) -> (WorkerHandle<Bootstrap>, Bootstrap) {

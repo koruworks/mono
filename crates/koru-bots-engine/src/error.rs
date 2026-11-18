@@ -12,6 +12,11 @@ pub enum Error {
     EngineUnavailable,
     RootEngineOwned,
     EngineDisabled,
+    Conflict,
+    Expired,
+    StaleTurn,
+    NotAllowed,
+    InputTooSmall,
 }
 
 impl std::fmt::Display for Error {
@@ -24,6 +29,11 @@ impl std::fmt::Display for Error {
             Self::EngineUnavailable => "engine_unavailable",
             Self::RootEngineOwned => "root_engine_owned",
             Self::EngineDisabled => "engine_disabled",
+            Self::Conflict => "conflict",
+            Self::Expired => "expired",
+            Self::StaleTurn => "stale_turn",
+            Self::NotAllowed => "not_allowed",
+            Self::InputTooSmall => "input_too_small",
         })
     }
 }

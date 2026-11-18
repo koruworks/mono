@@ -53,7 +53,7 @@ pub fn run() {
         ],
     );
     let args: Vec<_> = std::env::args().skip(1).collect();
-    if args.is_empty() {
+    if args.first().map(String::as_str) != Some("--run") {
         println!("SKIP Bot process proof: requires --run --root");
         return;
     }

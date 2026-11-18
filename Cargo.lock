@@ -6007,6 +6007,7 @@ name = "koru-bots-engine"
 version = "0.0.3"
 dependencies = [
  "koru-agent-worker",
+ "koru-bot-client-wire",
  "koru-channel",
  "koru-ipc",
  "koru-session-runtime",
@@ -6015,6 +6016,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "uuid",
  "windows-sys 0.59.0",
 ]

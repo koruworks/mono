@@ -9,6 +9,7 @@ pub mod capacity;
 mod database;
 mod error;
 pub mod launcher;
+pub mod messages;
 mod ownership;
 pub mod worker;
 
