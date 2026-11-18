@@ -19,7 +19,9 @@ pub struct Admission {
 mod tests;
 
 struct Slot {
+    /// Capacity identity survives a failed-start credential replacement.
     session: Uuid,
+    provider: Option<Uuid>,
     assignment: Uuid,
     worker: Option<Uuid>,
     phase: Phase,
@@ -67,6 +69,53 @@ impl Admission {
 
     pub fn occupied(&self) -> usize {
         self.sessions.len()
+    }
+
+    pub fn provider(&self, reservation: Reservation, worker: Uuid) -> Result<Option<Uuid>, Error> {
+        self.sessions
+            .get(&reservation.key)
+            .filter(|slot| {
+                slot.session == reservation.session
+                    && slot.assignment == reservation.assignment
+                    && slot.worker == Some(worker)
+            })
+            .map(|slot| slot.provider)
+            .ok_or(Error::StaleTurn)
+    }
+
+    /// Minting is serialized by the engine. A failed native start may replace
+    /// its credential while retaining the same already-counted capacity slot.
+    pub fn bind_provider(
+        &mut self,
+        reservation: Reservation,
+        worker: Uuid,
+        provider: Uuid,
+    ) -> Result<(), Error> {
+        if provider.is_nil() {
+            return Err(Error::InvalidRequest);
+        }
+        let slot = self.matching(reservation, worker)?;
+        if !matches!(slot.phase, Phase::Starting | Phase::Running) {
+            return Err(Error::StaleTurn);
+        }
+        slot.provider = Some(provider);
+        Ok(())
+    }
+
+    pub fn retiring(&self, bot: Uuid, worker: Uuid) -> Vec<Reservation> {
+        self.sessions
+            .iter()
+            .filter_map(|(key, slot)| {
+                (key.bot == bot
+                    && slot.worker == Some(worker)
+                    && matches!(slot.phase, Phase::Stopping))
+                .then_some(Reservation {
+                    key: *key,
+                    session: slot.session,
+                    assignment: slot.assignment,
+                })
+            })
+            .collect()
     }
 
     pub fn occupied_by(&self, bot: Uuid, worker: Uuid) -> u32 {
@@ -160,6 +209,23 @@ impl Admission {
         self.sessions.retain(|_, slot| slot.worker != Some(worker));
     }
 
+    /// Launcher command was not enqueued; no worker ever owned this slot.
+    pub(crate) fn withdraw(&mut self, reservation: Reservation) -> Result<(), Error> {
+        let slot = self
+            .sessions
+            .get(&reservation.key)
+            .ok_or(Error::StaleTurn)?;
+        if slot.session != reservation.session
+            || slot.assignment != reservation.assignment
+            || slot.worker.is_some()
+            || !matches!(slot.phase, Phase::Starting)
+        {
+            return Err(Error::StaleTurn);
+        }
+        self.sessions.remove(&reservation.key);
+        Ok(())
+    }
+
     fn matching(&mut self, reservation: Reservation, worker: Uuid) -> Result<&mut Slot, Error> {
         self.sessions
             .get_mut(&reservation.key)
@@ -185,6 +251,7 @@ impl Admission {
             let reuse = self.sessions.contains_key(&key);
             let slot = self.sessions.entry(key).or_insert(Slot {
                 session: Uuid::new_v4(),
+                provider: None,
                 assignment: Uuid::new_v4(),
                 worker: None,
                 phase: Phase::Starting,
@@ -213,7 +280,7 @@ impl Admission {
         struct Live {
             bot: Uuid,
             thread: Uuid,
-            session: Uuid,
+            session: Option<Uuid>,
             idle: bool,
             active: bool,
         }
@@ -223,7 +290,7 @@ impl Admission {
             .map(|(key, slot)| Live {
                 bot: key.bot,
                 thread: key.thread,
-                session: slot.session,
+                session: slot.provider,
                 idle: matches!(slot.phase, Phase::Idle { .. }),
                 active: matches!(slot.phase, Phase::Starting | Phase::Running),
             })
@@ -238,7 +305,7 @@ impl Admission {
              WHERE o.state IN ('owed','delivered') AND b.paused=0 AND b.lifecycle='active' AND t.lifecycle='active' AND COALESCE(tm.paused,0)=0
                AND EXISTS(SELECT 1 FROM participants p WHERE p.thread=i.thread AND p.participant=i.bot AND p.kind='bot')
                AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?2)
-               AND (l.session IS NULL OR l.idle=1) AND (?3=0 OR l.idle=1)
+               AND (l.bot IS NULL OR l.idle=1) AND (?3=0 OR l.idle=1)
                AND NOT EXISTS(SELECT 1 FROM turns r WHERE r.bot=i.bot AND r.thread=i.thread AND r.state IN ('running','needs_you','parked'))
                AND NOT EXISTS(SELECT 1 FROM operations w WHERE w.bot=i.bot AND w.thread=i.thread AND w.state IN ('leased','unresolved'))
                AND NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.session=l.session AND d.state IN ('offered','unknown'))
@@ -271,19 +338,19 @@ impl Admission {
                     saved,
                 } = slot.phase
                 {
-                    Some((*key, slot.session, since, resumable, saved))
+                    Some((*key, slot.provider, since, resumable, saved))
                 } else {
                     None
                 }
             })
             .collect();
         candidates.sort_by_key(|(key, _, since, _, _)| (*since, *key));
-        for (key, session, since, resumable, saved) in candidates {
+        for (key, provider, since, resumable, saved) in candidates {
             let (blocked, side): (bool, bool) = db.connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM deliveries WHERE session=?1 AND state IN ('offered','unknown'))
                    OR EXISTS(SELECT 1 FROM operations WHERE bot=?2 AND thread=?3 AND state IN ('leased','unresolved')),
                    EXISTS(SELECT 1 FROM threads WHERE id=?3 AND kind IN ('routine','between_bots'))",
-                params![session.to_string(),key.bot.to_string(),key.thread.to_string()], |r| Ok((r.get(0)?,r.get(1)?)),
+                params![provider.map(|id| id.to_string()),key.bot.to_string(),key.thread.to_string()], |r| Ok((r.get(0)?,r.get(1)?)),
             )?;
             if !blocked
                 && ((resumable && saved && (pressured || side))
@@ -293,7 +360,7 @@ impl Admission {
                 slot.phase = Phase::Stopping;
                 return Ok(Some(Decision::End(Reservation {
                     key,
-                    session,
+                    session: slot.session,
                     assignment: slot.assignment,
                 })));
             }

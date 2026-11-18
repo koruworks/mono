@@ -29,10 +29,12 @@ pub(super) fn serve(
     let mut database = Database::open(&bootstrap.root)?;
     database.recover_interrupted_turns()?;
     database.connection.execute("DELETE FROM workers", [])?;
+    let (worker_requests, worker_commands) = mpsc::sync_channel::<crate::carrier::Request>(64);
     let launcher = crate::launcher::Launcher::start(
         bootstrap.root.clone(),
         bootstrap.segment.clone(),
         policy,
+        worker_requests,
     )?;
     let (sender, receiver) = mpsc::sync_channel(64);
     let launch_id = bootstrap.launch_id;
@@ -67,6 +69,8 @@ pub(super) fn serve(
         })
         .map_err(|_| Error::EngineUnavailable)?;
     let mut pending = std::collections::VecDeque::new();
+    let mut admission = crate::capacity::Admission::new(launcher.capacity());
+    let mut dispatch = true;
     loop {
         pending.extend(launcher.events());
         while let Some(event) = pending.pop_front() {
@@ -76,6 +80,9 @@ pub(super) fn serve(
                 } => launcher.last_heard(*bot, *incarnation).is_some(),
                 _ => true,
             };
+            if !current {
+                continue;
+            }
             if current && record_worker_event(&mut database, &event).is_err() {
                 // Do not discard a death report or take down unrelated workers.
                 // Keep it pending; commands continue to receive stable errors
@@ -87,6 +94,41 @@ pub(super) fn serve(
                 pending.push_front(event);
                 break;
             }
+            match event {
+                crate::launcher::Event::Allocated { bot, incarnation }
+                | crate::launcher::Event::Registered {
+                    bot, incarnation, ..
+                } => {
+                    admission.bind_worker(bot, incarnation);
+                    launcher.occupied(bot, incarnation, admission.occupied_by(bot, incarnation));
+                }
+                crate::launcher::Event::Ended { incarnation, .. } => {
+                    admission.worker_ended(incarnation)
+                }
+            }
+            dispatch = true;
+        }
+        for request in worker_commands.try_iter().take(16) {
+            let who = request.worker;
+            dispatch |= !matches!(request.command, crate::carrier::Command::Poll);
+            let response = crate::carrier::handle(
+                &mut database,
+                &mut admission,
+                who,
+                request.command,
+                now_ms(),
+            );
+            launcher.occupied(
+                who.bot,
+                who.incarnation,
+                admission.occupied_by(who.bot, who.incarnation),
+            );
+            let _ = request.reply.try_send(response);
+        }
+        if dispatch {
+            admission.set_capacity(launcher.capacity());
+            let _ = dispatch_work(&database, &mut admission, &launcher, now_ms());
+            dispatch = false;
         }
         let command = match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
             Ok(command) => command,
@@ -123,6 +165,7 @@ pub(super) fn serve(
             }
             ActorCommand::WakeBot(bot, reply) => {
                 let _ = reply.try_send(wake_bot(&database, bot, || launcher.ensure(bot)));
+                dispatch = true;
             }
             ActorCommand::StopBot(bot, reply) => {
                 let _ = reply.try_send(
@@ -224,6 +267,7 @@ fn record_worker_event(
     event: &crate::launcher::Event,
 ) -> Result<(), Error> {
     match event {
+        crate::launcher::Event::Allocated { .. } => {}
         crate::launcher::Event::Registered {
             bot,
             incarnation,
@@ -237,6 +281,40 @@ fn record_worker_event(
                 "DELETE FROM workers WHERE bot=?1 AND incarnation=?2",
                 rusqlite::params![bot.to_string(), incarnation.to_string()],
             )?;
+        }
+    }
+    Ok(())
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64
+}
+
+fn dispatch_work(
+    database: &Database,
+    admission: &mut crate::capacity::Admission,
+    launcher: &crate::launcher::Launcher,
+    now: i64,
+) -> Result<(), Error> {
+    while let Some(decision) = admission.next(database, now.max(0) as u64)? {
+        match decision {
+            crate::capacity::Decision::Start { reservation, .. } => {
+                let bot = reservation.key.bot;
+                if let Some(worker) = launcher.incarnation(bot) {
+                    admission.bind_worker(bot, worker);
+                    launcher.occupied(bot, worker, admission.occupied_by(bot, worker));
+                } else if let Err(error) = launcher.ensure(bot) {
+                    admission.withdraw(reservation)?;
+                    return Err(error);
+                }
+            }
+            // The next worker Poll observes the fenced stop assignment. The
+            // slot remains occupied until its provider retirement is confirmed.
+            crate::capacity::Decision::End(_) => {}
         }
     }
     Ok(())

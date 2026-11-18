@@ -142,6 +142,10 @@ impl Database {
             [turn.id.to_string()],
         )?;
         let answer = Stopped { cancelled };
+        tx.execute(
+            "UPDATE credentials SET revoked=1 WHERE session=?1",
+            [turn.session.to_string()],
+        )?;
         receipts::save(&tx, &subject, command, &digest, &answer, now)?;
         tx.commit()?;
         Ok(Receipt {

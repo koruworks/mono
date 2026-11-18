@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
-use crate::bot_worker::{Heartbeat, Registration, Reply, TIMEOUT, VERSION};
+use crate::bot_worker::{Registration, Reply, TIMEOUT, VERSION};
 
 pub(super) fn serve(
     listener: koru_ipc::Listener,
     registry: Registry,
     events: mpsc::Sender<Event>,
+    requests: mpsc::SyncSender<crate::carrier::Request>,
 ) -> Result<(), Error> {
     let pending = Arc::new(AtomicU32::new(0));
     std::thread::Builder::new()
@@ -22,9 +23,10 @@ pub(super) fn serve(
                 let permit = Permit(pending.clone());
                 let registry = registry.clone();
                 let events = events.clone();
+                let requests = requests.clone();
                 let _ = std::thread::Builder::new()
                     .name("koru-bot connection".into())
-                    .spawn(move || connection(stream, registry, events, permit));
+                    .spawn(move || connection(stream, registry, events, requests, permit));
             }
         })
         .map(|_| ())
@@ -47,6 +49,7 @@ fn connection(
     mut stream: koru_ipc::Stream,
     registry: Registry,
     events: mpsc::Sender<Event>,
+    requests: mpsc::SyncSender<crate::carrier::Request>,
     permit: Permit,
 ) {
     koru_ipc::set_timeouts(&stream, Some(TIMEOUT));
@@ -74,23 +77,33 @@ fn connection(
         incarnation: request.incarnation,
         at_ms,
     });
-    while let Ok((VERSION, heartbeat)) = koru_ipc::frame::read_frame::<_, Heartbeat>(&mut stream) {
-        gate.sessions
-            .store(heartbeat.live_sessions, Ordering::Release);
+    while let Ok((VERSION, command)) =
+        koru_ipc::frame::read_frame::<_, crate::carrier::Command>(&mut stream)
+    {
         gate.last_heard.store(now_ms() as u64, Ordering::Release);
         let stopping = gate.stopping.load(Ordering::Acquire);
-        if koru_ipc::frame::write_frame(
-            &mut stream,
-            VERSION,
-            &if stopping {
-                Reply::Stop
+        let response = if stopping {
+            Reply::Stop
+        } else {
+            let (reply, answer) = mpsc::sync_channel(1);
+            let request = crate::carrier::Request {
+                worker: crate::authority::Worker {
+                    bot: request.bot,
+                    incarnation: request.incarnation,
+                },
+                command,
+                reply,
+            };
+            let response = if requests.try_send(request).is_err() {
+                crate::carrier::Reply::Refused(Error::EngineUnavailable)
             } else {
-                Reply::Continue
-            },
-        )
-        .is_err()
-            || stopping
-        {
+                answer
+                    .recv_timeout(TIMEOUT)
+                    .unwrap_or(crate::carrier::Reply::Refused(Error::EngineUnavailable))
+            };
+            Reply::Control(response)
+        };
+        if koru_ipc::frame::write_frame(&mut stream, VERSION, &response).is_err() || stopping {
             break;
         }
     }

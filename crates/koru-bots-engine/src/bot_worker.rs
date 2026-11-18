@@ -36,13 +36,9 @@ pub(crate) struct Registration {
 #[derive(Serialize, Deserialize)]
 pub(crate) enum Reply {
     Registered,
-    Continue,
+    Control(crate::carrier::Reply),
     Stop,
     Refused,
-}
-#[derive(Serialize, Deserialize)]
-pub(crate) struct Heartbeat {
-    pub live_sessions: u32,
 }
 
 pub fn endpoint(root: &Path, segment: &str) -> Result<koru_ipc::Endpoint, Error> {
@@ -94,7 +90,7 @@ pub fn run_supervised(bot: Uuid) -> Result<(), Error> {
     let _database = BotDatabase::open(&bootstrap.root, bot)?;
     while parent_alive.load(std::sync::atomic::Ordering::Acquire) {
         // P1.4 replaces this empty shell with its owned provider-session set.
-        koru_ipc::frame::write_frame(&mut stream, VERSION, &Heartbeat { live_sessions: 0 })
+        koru_ipc::frame::write_frame(&mut stream, VERSION, &crate::carrier::Command::Poll)
             .map_err(|_| Error::EngineUnavailable)?;
         let (version, reply) = koru_ipc::frame::read_frame::<_, Reply>(&mut stream)
             .map_err(|_| Error::EngineUnavailable)?;
@@ -102,7 +98,8 @@ pub fn run_supervised(bot: Uuid) -> Result<(), Error> {
             return Err(Error::InvalidRequest);
         }
         match reply {
-            Reply::Continue => {}
+            Reply::Control(crate::carrier::Reply::Work { starts, stops })
+                if starts.is_empty() && stops.is_empty() => {}
             Reply::Stop => return Ok(()),
             _ => return Err(Error::Unauthenticated),
         }

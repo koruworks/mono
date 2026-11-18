@@ -3,10 +3,13 @@
 //! The Bots engine's device-local authority. Workers reach it over IPC;
 //! this crate never opens a Store or starts a coding agent on a request thread.
 
+pub mod authority;
 pub mod bot_database;
 pub mod bot_worker;
 pub mod capacity;
+pub mod carrier;
 mod database;
+pub mod door;
 mod error;
 pub mod launcher;
 pub mod messages;

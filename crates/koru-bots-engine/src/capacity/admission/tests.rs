@@ -64,6 +64,9 @@ impl Fixture {
         reservation
     }
     fn finish(&mut self, reservation: Reservation, at: i64) -> Delivery {
+        self.admission
+            .bind_provider(reservation, self.worker, reservation.session)
+            .unwrap();
         let key = reservation.key;
         // The publication path requires the Bot's main conversation for cards.
         self.db

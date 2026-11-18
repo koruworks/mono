@@ -7,7 +7,7 @@
 mod accept;
 mod history;
 mod publish;
-mod receipts;
+pub(crate) mod receipts;
 mod refusal;
 mod turns;
 
@@ -143,6 +143,7 @@ pub struct Delivery {
     pub resume_accepted: Vec<Uuid>,
 }
 
+#[derive(Serialize, Deserialize)]
 pub enum Resume {
     Rebuilt,
     /// This is supplied only by an adapter qualified to read exact delivery ids.

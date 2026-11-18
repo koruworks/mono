@@ -4,7 +4,7 @@ use rusqlite::OptionalExtension;
 use sha2::{Digest, Sha256};
 
 /// Sorting is independent of serde_json's workspace-unified map-order feature.
-pub(super) fn digest(kind: &str, value: &impl Serialize) -> Result<[u8; 32], Error> {
+pub(crate) fn canonical_json(value: &serde_json::Value) -> Result<Vec<u8>, Error> {
     fn canonical(value: &serde_json::Value, out: &mut Vec<u8>) -> Result<(), Error> {
         match value {
             serde_json::Value::Object(object) => {
@@ -35,15 +35,21 @@ pub(super) fn digest(kind: &str, value: &impl Serialize) -> Result<[u8; 32], Err
         }
         Ok(())
     }
+    let mut bytes = Vec::new();
+    canonical(value, &mut bytes)?;
+    Ok(bytes)
+}
+
+pub(crate) fn digest(kind: &str, value: &impl Serialize) -> Result<[u8; 32], Error> {
     let value = serde_json::to_value(value).map_err(|_| Error::InvalidRequest)?;
     let mut bytes = b"koru-bots-command-v1\0".to_vec();
     bytes.extend(kind.as_bytes());
     bytes.push(0);
-    canonical(&value, &mut bytes)?;
+    bytes.extend(canonical_json(&value)?);
     Ok(Sha256::digest(&bytes).into())
 }
 
-pub(super) fn find<T: serde::de::DeserializeOwned>(
+pub(crate) fn find<T: serde::de::DeserializeOwned>(
     connection: &rusqlite::Connection,
     sender: &str,
     command: Uuid,
@@ -63,7 +69,7 @@ pub(super) fn find<T: serde::de::DeserializeOwned>(
         Some((_, Some(answer))) => decode(&answer).map(Some),
     }
 }
-pub(super) fn save(
+pub(crate) fn save(
     connection: &rusqlite::Connection,
     sender: &str,
     command: Uuid,

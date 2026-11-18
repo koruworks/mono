@@ -17,6 +17,12 @@ pub enum Error {
     StaleTurn,
     NotAllowed,
     InputTooSmall,
+    WorkerReplaced,
+    CredentialRevoked,
+    SessionConflict,
+    TurnRunning,
+    NoTurn,
+    BindingConflict,
 }
 
 impl std::fmt::Display for Error {
@@ -34,6 +40,12 @@ impl std::fmt::Display for Error {
             Self::StaleTurn => "stale_turn",
             Self::NotAllowed => "not_allowed",
             Self::InputTooSmall => "input_too_small",
+            Self::WorkerReplaced => "worker_replaced",
+            Self::CredentialRevoked => "credential_revoked",
+            Self::SessionConflict => "session_conflict",
+            Self::TurnRunning => "turn_running",
+            Self::NoTurn => "no_turn",
+            Self::BindingConflict => "binding_conflict",
         })
     }
 }

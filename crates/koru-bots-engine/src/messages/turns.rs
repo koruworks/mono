@@ -269,6 +269,10 @@ impl Database {
     /// Operations are intentionally untouched; P1.6 owns their settlement.
     pub fn interrupt_worker(&mut self, worker: Uuid) -> Result<usize, Error> {
         let tx = self.connection.transaction()?;
+        tx.execute(
+            "UPDATE credentials SET revoked=1 WHERE worker_incarnation=?1",
+            [worker.to_string()],
+        )?;
         tx.execute("UPDATE deliveries SET state='unknown' WHERE state='offered' AND turn IN (SELECT id FROM turns WHERE worker_incarnation=?1 AND state='running')",[worker.to_string()])?;
         let count = tx.execute(
             "UPDATE turns SET state='interrupted' WHERE worker_incarnation=?1 AND state='running'",
@@ -282,6 +286,10 @@ impl Database {
     pub fn interrupt_turn(&mut self, turn: Turn) -> Result<(), Error> {
         let tx = self.connection.transaction()?;
         let row = turn_row(&tx, turn)?;
+        tx.execute(
+            "UPDATE credentials SET revoked=1 WHERE session=?1 AND worker_incarnation=?2",
+            params![turn.session.to_string(), turn.worker.to_string()],
+        )?;
         if row.2 == "running" {
             tx.execute(
                 "UPDATE deliveries SET state='unknown' WHERE turn=?1 AND state='offered'",
@@ -299,6 +307,7 @@ impl Database {
     /// have established that every previous worker incarnation is gone.
     pub fn recover_interrupted_turns(&mut self) -> Result<usize, Error> {
         let tx = self.connection.transaction()?;
+        tx.execute("UPDATE credentials SET revoked=1 WHERE revoked=0", [])?;
         tx.execute("UPDATE deliveries SET state='unknown' WHERE state='offered' AND turn IN (SELECT id FROM turns WHERE state='running')",[])?;
         let count = tx.execute(
             "UPDATE turns SET state='interrupted' WHERE state='running'",

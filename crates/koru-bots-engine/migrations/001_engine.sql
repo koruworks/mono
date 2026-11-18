@@ -106,6 +106,7 @@ CREATE TABLE credentials (
     thread TEXT NOT NULL REFERENCES threads(id),
     session TEXT NOT NULL UNIQUE,
     worker_incarnation TEXT NOT NULL,
+    grant BLOB NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0 CHECK (revoked IN (0, 1))
 );
 CREATE TABLE tool_calls (

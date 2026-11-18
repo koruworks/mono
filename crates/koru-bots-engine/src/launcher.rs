@@ -33,6 +33,10 @@ impl Default for Policy {
 }
 
 pub enum Event {
+    Allocated {
+        bot: Uuid,
+        incarnation: Uuid,
+    },
     Registered {
         bot: Uuid,
         incarnation: Uuid,
@@ -76,7 +80,12 @@ pub struct Launcher {
     thread: Option<std::thread::JoinHandle<()>>,
 }
 impl Launcher {
-    pub fn start(root: PathBuf, segment: String, policy: Policy) -> Result<Self, Error> {
+    pub fn start(
+        root: PathBuf,
+        segment: String,
+        policy: Policy,
+        requests: mpsc::SyncSender<crate::carrier::Request>,
+    ) -> Result<Self, Error> {
         // Unix containment has not been qualified; never silently claim it.
         if !cfg!(windows) {
             return Err(Error::EngineUnavailable);
@@ -88,7 +97,7 @@ impl Launcher {
         let capacity_view = capacity.clone();
         let (sender, receiver) = mpsc::sync_channel(64);
         let (event_tx, events) = mpsc::channel();
-        registration::serve(listener, registry.clone(), event_tx.clone())?;
+        registration::serve(listener, registry.clone(), event_tx.clone(), requests)?;
         let entries = registry.clone();
         let thread = std::thread::Builder::new()
             .name("koru-bots launcher".into())
@@ -122,6 +131,25 @@ impl Launcher {
     }
     pub fn capacity(&self) -> u32 {
         self.capacity.load(Ordering::Acquire)
+    }
+    pub fn incarnation(&self, bot: Uuid) -> Option<Uuid> {
+        self.registry
+            .lock()
+            .ok()?
+            .get(&bot)
+            .map(|gate| gate.bootstrap.incarnation)
+    }
+    /// A cache for launcher idle exit, written only from the engine's one
+    /// authoritative admission record. Worker heartbeats do not supply it.
+    pub fn occupied(&self, bot: Uuid, worker: Uuid, count: u32) {
+        if let Ok(registry) = self.registry.lock() {
+            if let Some(gate) = registry
+                .get(&bot)
+                .filter(|gate| gate.bootstrap.incarnation == worker)
+            {
+                gate.sessions.store(count, Ordering::Release);
+            }
+        }
     }
     pub fn stop(&self, bot: Uuid) -> Result<(), Error> {
         self.sender
@@ -192,6 +220,10 @@ fn run(
                     .lock()
                     .expect("worker registry")
                     .insert(bot, gate.clone());
+                let _ = events.send(Event::Allocated {
+                    bot,
+                    incarnation: gate.bootstrap.incarnation,
+                });
                 let handle = launch(gate.clone(), policy);
                 entries.insert(
                     bot,
