@@ -66,10 +66,12 @@ pub use capabilities::{HostCapabilities, RUNG1_READ_TOOLS, RUNG1_TOOLS};
 pub use chat_tools::CHAT_TOOL_NAMES;
 use chat_tools::{ListChatsToolRequest, ReadChatToolRequest, SearchChatsToolRequest};
 use effects::{EffectKind, Ledger, Recovery};
+use revision::{revision, validate_base};
 
 mod image_upload;
 mod local_ids;
 mod published_schema;
+mod revision;
 mod shared_surface;
 pub use shared_surface::{
     documentation_resource_templates, documentation_resources, read_documentation_resource,
@@ -6654,37 +6656,6 @@ fn run_json(run: &koru_core::TextRun) -> Value {
         "highlight":run.style.highlight,
         "pill_attribute_id":run.pill.map(|value| value.to_storage()),
     })
-}
-fn revision(doc: &WorkspaceDoc) -> String {
-    hex(&doc.version().encode())
-}
-fn validate_base(doc: &WorkspaceDoc, encoded: &str) -> Result<(), ToolError> {
-    let bytes = unhex(encoded)?;
-    let base = loro::VersionVector::decode(&bytes)
-        .map_err(|e| ToolError::invalid(format!("invalid base_revision: {e}")))?;
-    if !doc.version().includes_vv(&base) {
-        return Err(ToolError {
-            code: "revision_conflict".into(),
-            message: "base_revision is not in this document's history".into(),
-            details: None,
-        });
-    }
-    Ok(())
-}
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-fn unhex(s: &str) -> Result<Vec<u8>, ToolError> {
-    if !s.len().is_multiple_of(2) {
-        return Err(ToolError::invalid("revision is not hexadecimal"));
-    }
-    (0..s.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&s[i..i + 2], 16)
-                .map_err(|_| ToolError::invalid("revision is not hexadecimal"))
-        })
-        .collect()
 }
 fn workspace(s: &str) -> Result<StoreWorkspaceId, ToolError> {
     StoreWorkspaceId::parse(s).ok_or_else(|| ToolError::invalid("workspace_id is not a UUID"))

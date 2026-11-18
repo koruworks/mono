@@ -973,9 +973,14 @@ jobs:
   ios:
     name: build (ios)
     if: inputs.platform == 'ios'
-    # Xcode 26.5 is the project's floor (apps/ios/README.md), and the macOS 26
-    # image is the one that carries it.
-    runs-on: macos-26
+    # **Built with Xcode 27.2, the iOS 27.2 SDK.** App Store Connect warns on
+    # an iOS 26 SDK build (ITMS-90725) and refuses one from April 2027. The
+    # macOS 26 image stops at Xcode 26.6, which still carries the iOS 26.5
+    # SDK; Xcode 27 is on GitHub's `xcode-27` image (macOS 27), a preview
+    # since 2026-07-16 (actions/runner-images#14404). A preview can queue or
+    # break, and an iOS failure holds back no other platform. Developing on
+    # Xcode 26.5 still works (apps/ios/README.md); only the upload needs 27.
+    runs-on: xcode-27
     timeout-minutes: 120
     environment: ${{ inputs.channel }}
     permissions:
@@ -985,7 +990,7 @@ jobs:
     env:
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: sccache
-      XCODE_APP: /Applications/Xcode_26.5.app
+      XCODE_APP: /Applications/Xcode_27.2.app
     steps:
       # actions/checkout v6.1.0
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
