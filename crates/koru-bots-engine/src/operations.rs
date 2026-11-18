@@ -2,6 +2,7 @@
 
 //! Engine-owned native intent and one execution lease. Document semantics and
 //! permanent fences remain with the existing native MCP and Store owners.
+pub mod control;
 mod ledger;
 mod outcomes;
 pub(crate) mod outputs;
@@ -61,7 +62,9 @@ impl Prepared {
             _ => Err(Error::InvalidRequest),
         }
     }
-    fn same(&self, other: &Self) -> bool {
+    /// Compare semantic intent, decoding revision vectors rather than their
+    /// incidental serialized map ordering.
+    pub fn same(&self, other: &Self) -> bool {
         let mut normalized = other.clone();
         normalized.expected_revision = self.expected_revision.clone();
         self == &normalized
@@ -120,6 +123,8 @@ pub struct Recovery {
     pub continued_by: Option<Uuid>,
     #[serde(default)]
     pub observations: Vec<Outcome>,
+    #[serde(default)]
+    pub requested: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Record {
@@ -136,7 +141,7 @@ pub struct Record {
 
 /// Execute is returned only on the transaction that consumes the sole lease.
 /// Receipts retain consumption; no retry replays this capability.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum Admission {
     Execute(Record),
     Pending(Record),
@@ -167,4 +172,4 @@ fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, Error> {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

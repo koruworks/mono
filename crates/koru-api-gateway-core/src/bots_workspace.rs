@@ -13,6 +13,8 @@ use koru_store_core::{UserScopeId, WorkspaceId, model::Scope};
 use koru_store_server::StoreWorkerClient;
 use serde_json::Value;
 use uuid::Uuid;
+mod recovery;
+mod writes;
 
 pub struct Engine {
     pub endpoint: koru_ipc::Endpoint,
@@ -56,18 +58,28 @@ impl Resolver for Engine {
 pub struct Boundary {
     engine: Engine,
     store: StoreWorkerClient,
+    incarnation: Uuid,
 }
 impl GatewayState {
     pub fn bots_workspace(&self, engine: Engine) -> Boundary {
         Boundary {
             engine,
             store: self.store.client(),
+            incarnation: Uuid::new_v4(),
         }
     }
 }
 impl Boundary {
     pub fn handle(&self, command: workspace::Command) -> workspace::Reply {
         match command {
+            workspace::Command::Recover { authority, request } => {
+                if !same_authority(&authority, &self.engine.authority) {
+                    return workspace::Reply::Refused(Error::Unauthenticated);
+                }
+                self.recover(request)
+                    .map(workspace::Reply::Recovery)
+                    .unwrap_or_else(workspace::Reply::Refused)
+            }
             workspace::Command::Call(request) => self.execute(request),
             workspace::Command::Catalog { secret } => catalog(&self.engine, &secret)
                 .map(workspace::Reply::Result)
@@ -85,6 +97,12 @@ impl Boundary {
         }
     }
     pub fn execute(&self, request: workspace::Request) -> workspace::Reply {
+        if matches!(request.tool.as_str(), "create_document" | "edit_document") {
+            return self
+                .write(request)
+                .map(workspace::Reply::Result)
+                .unwrap_or_else(workspace::Reply::Refused);
+        }
         execute(&self.engine, request, |identity, call| {
             self.read(identity, call)
         })
@@ -92,6 +110,22 @@ impl Boundary {
         .unwrap_or_else(workspace::Reply::Refused)
     }
     fn read(&self, identity: ReadAuthority, call: &Call) -> Result<Value, Error> {
+        let workspace = identity.workspace;
+        let backend = self.backend(identity)?;
+        let context = koru_mcp_server::RequestContext::selected(
+            "local",
+            "koru-bots-engine",
+            [Scope::ReadDocuments],
+            [workspace],
+        );
+        koru_mcp_server::WorkspaceToolExecutor::new(backend)
+            .invoke(&context, call.tool(), call.arguments().clone())
+            .map_err(native_error)
+    }
+    fn store_authority(
+        &self,
+        identity: ReadAuthority,
+    ) -> Result<koru_ai_server::NativeStoreAuthority, Error> {
         let owner = identity.owner;
         let workspace = identity.workspace;
         // Pin the current placement, then the native adapter checks it again
@@ -113,27 +147,27 @@ impl Boundary {
                     .ok_or(Error::NotAllowed)
             })
             .map_err(|_| Error::StorageUnavailable)??;
-        let backend = koru_ai_server::native_store_backend(
+        Ok(koru_ai_server::NativeStoreAuthority {
+            owner_scope: owner,
+            expected_profile: profile,
+            workspace,
+        })
+    }
+    fn backend(
+        &self,
+        identity: ReadAuthority,
+    ) -> Result<std::sync::Arc<koru_mcp_server::LocalBackend>, Error> {
+        Ok(koru_ai_server::native_store_backend(
             self.store.clone(),
-            koru_ai_server::NativeStoreAuthority {
-                owner_scope: owner,
-                expected_profile: profile,
-                workspace,
-            },
-        );
-        let context = koru_mcp_server::RequestContext::selected(
-            "local",
-            "koru-bots-engine",
-            [Scope::ReadDocuments],
-            [workspace],
-        );
-        koru_mcp_server::WorkspaceToolExecutor::new(backend)
-            .invoke(&context, call.tool(), call.arguments().clone())
-            .map_err(|error| match error.code.as_str() {
-                "permission_denied" => Error::NotAllowed,
-                "invalid_request" => Error::InvalidRequest,
-                _ => Error::StorageUnavailable,
-            })
+            self.store_authority(identity)?,
+        ))
+    }
+}
+fn native_error(error: koru_mcp_server::ToolError) -> Error {
+    match error.code.as_str() {
+        "permission_denied" => Error::NotAllowed,
+        "invalid_request" => Error::InvalidRequest,
+        _ => Error::StorageUnavailable,
     }
 }
 #[derive(Clone, Copy)]
@@ -208,6 +242,10 @@ fn execute(
         // Native mutations are installed with the lease/fence composition.
         return Err(Error::NotAllowed);
     }
+    let identity = read_authority(resolved)?;
+    read(identity, &call)
+}
+fn read_authority(resolved: Resolution) -> Result<ReadAuthority, Error> {
     let captured: CapturedBotPolicy =
         serde_json::from_value(resolved.captured_grant).map_err(|_| Error::NotAllowed)?;
     let current: CapturedBotPolicy =
@@ -221,21 +259,23 @@ fn execute(
         .ok_or(Error::NotAllowed)?;
     // Default access limits edits. Reads/search use the home workspace, whose
     // scope the shared executor intersects with the requested resource.
-    read(
-        ReadAuthority {
-            owner: UserScopeId::from_uuid(owner),
-            workspace: current.workspace,
-        },
-        &call,
-    )
+    Ok(ReadAuthority {
+        owner: UserScopeId::from_uuid(owner),
+        workspace: current.workspace,
+    })
 }
 
 /// Discovery has no resource content. The worker filters this static catalog
 /// with its captured grant, and every execution is freshly resolved above.
 fn read_catalog() -> Vec<Value> {
     koru_mcp_server::native::native_tool_catalog().into_iter()
-        .filter(|tool| matches!(tool.name.as_str(), "read_document" | "search_documents"))
-        .map(|tool| serde_json::json!({"name":tool.name,"description":tool.description,"inputSchema":tool.input_schema}))
+        .map(|mut tool| {
+            if matches!(tool.name.as_str(),"create_document"|"edit_document") {
+                tool.input_schema["properties"]["operation_id"]=serde_json::json!({"type":"string","format":"uuid","description":"New UUID v4 for a new logical write. Reuse this exact ID only to query or retry the same intent; never change its arguments."});
+                tool.input_schema["required"].as_array_mut().expect("native tool required fields").push(Value::String("operation_id".into()));
+            }
+            serde_json::json!({"name":tool.name,"description":tool.description,"inputSchema":tool.input_schema})
+        })
         .collect()
 }
 

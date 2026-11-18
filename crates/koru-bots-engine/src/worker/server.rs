@@ -9,11 +9,13 @@ use std::sync::{
 use super::*;
 use crate::Database;
 mod context;
+mod recovery;
 
 enum ActorCommand {
     Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
+    Operation(crate::operations::control::Command, mpsc::SyncSender<Reply>),
     SessionCatalog(crate::authority::Secret, mpsc::SyncSender<Reply>),
     ResolveCall(
         crate::authority::Secret,
@@ -47,6 +49,10 @@ pub(super) fn serve(
     let (sender, receiver) = mpsc::sync_channel(64);
     let launch_id = bootstrap.launch_id;
     let mut contexts = context::Jobs::new(
+        crate::workspace::endpoint(&bootstrap.root, &bootstrap.segment)?,
+        crate::authority::Secret::parse(bootstrap.authority.clone())?,
+    );
+    let mut recovery = recovery::Jobs::new(
         crate::workspace::endpoint(&bootstrap.root, &bootstrap.segment)?,
         crate::authority::Secret::parse(bootstrap.authority.clone())?,
     );
@@ -85,6 +91,7 @@ pub(super) fn serve(
     let mut dispatch = true;
     let mut retry_dispatch = None;
     loop {
+        dispatch |= recovery.poll(&mut database, std::time::Instant::now());
         contexts.poll(&admission);
         pending.extend(launcher.events());
         while let Some(event) = pending.pop_front() {
@@ -174,6 +181,12 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::Operation(command, reply) => {
+                let result = crate::operations::control::handle(&mut database, command, now_ms());
+                let _ = reply.try_send(Reply::Operation(result));
+                dispatch = true;
+                recovery.changed();
+            }
             ActorCommand::SessionCatalog(secret, reply) => {
                 let result = database
                     .boundary_catalog_grant(&secret)
@@ -253,6 +266,19 @@ fn handle(
         Reply::Refused(Error::Unauthenticated)
     } else {
         match request.command {
+            Command::Operation(command) => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::Operation(command, reply))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
             Command::SessionCatalog { secret } => {
                 let (reply, answer) = mpsc::sync_channel(1);
                 if actor

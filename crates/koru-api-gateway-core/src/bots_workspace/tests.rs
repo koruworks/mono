@@ -21,7 +21,28 @@ impl Resolver for ResolverFixture {
 fn discovery_uses_captured_grant_and_revocation_is_not_cached() {
     let (resolver, secret, _, _) = fixture();
     let tools = catalog(&resolver, &secret).unwrap();
-    assert_eq!(tools.as_array().unwrap().len(), 2);
+    assert_eq!(tools.as_array().unwrap().len(), 4);
+    for tool in tools.as_array().unwrap() {
+        let write = matches!(
+            tool["name"].as_str(),
+            Some("create_document" | "edit_document")
+        );
+        assert_eq!(
+            tool["inputSchema"]["properties"]
+                .get("operation_id")
+                .is_some(),
+            write
+        );
+        if write {
+            assert!(
+                tool["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|v| v == "operation_id")
+            );
+        }
+    }
     assert_eq!(*resolver.1.borrow(), 0, "discovery has no resource call");
     *resolver.0.borrow_mut() = Err(Error::CredentialRevoked);
     assert_eq!(

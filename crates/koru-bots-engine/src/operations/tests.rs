@@ -20,6 +20,11 @@ struct Fixture {
     prepared: Prepared,
     boundary: Uuid,
 }
+pub(crate) fn leased_fixture(count: usize) -> (Database, Vec<Record>) {
+    let mut fixture = Fixture::new();
+    let records = (0..count).map(|_| fixture.leased()).collect();
+    (fixture.db, records)
+}
 impl Fixture {
     fn new() -> Self {
         let mut db = Database::in_memory().unwrap();

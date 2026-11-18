@@ -351,7 +351,7 @@ fn uncertain_seed_and_history_recover_without_resubmitting_or_duplicate_markers(
             panic!("must recover exact proof")
         };
         let NativeReconciliation::Verified(retry) = backend
-            .reconcile_native_write(&prepared, key.clone())
+            .reconcile_native_description(prepared.description(), key.clone())
             .unwrap()
         else {
             panic!("must replay")

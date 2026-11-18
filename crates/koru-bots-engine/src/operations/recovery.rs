@@ -14,6 +14,52 @@ fn keys(connection: &Connection, thread: Uuid) -> Result<Vec<Key>, Error> {
 }
 
 impl Database {
+    pub(crate) fn recovery_candidates(
+        &self,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, Record, bool)>, Error> {
+        let rows:Vec<(i64,Key)>=self.connection.prepare("SELECT rowid,scope,bot,thread,id FROM operations WHERE state='leased' AND rowid>?1 ORDER BY rowid LIMIT ?2")?
+            .query_map(params![after,limit.min(8)],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?,r.get::<_,String>(3)?,r.get::<_,String>(4)?)))?
+            .map(|row|{let(rowid,scope,bot,thread,operation)=row?;let id=|s:&str|Uuid::parse_str(s).map_err(|_|Error::StorageUnavailable);Ok((rowid,Key{scope,bot:id(&bot)?,thread:id(&thread)?,operation:id(&operation)?}))}).collect::<Result<_,Error>>()?;
+        rows.into_iter()
+            .map(|(rowid, key)| {
+                let record =
+                    ledger::load(&self.connection, &key)?.ok_or(Error::StorageUnavailable)?;
+                let turn = record
+                    .lease
+                    .as_ref()
+                    .ok_or(Error::StorageUnavailable)?
+                    .binding
+                    .turn;
+                let running: bool = self.connection.query_row(
+                    "SELECT state='running' AND stopped=0 FROM turns WHERE id=?1",
+                    [turn.id.to_string()],
+                    |r| r.get(0),
+                )?;
+                let force = record.recovery.requested || !running;
+                Ok((rowid, record, force))
+            })
+            .collect()
+    }
+    pub fn request_operation_recovery(
+        &mut self,
+        boundary: Uuid,
+        key: &Key,
+        lease: &Lease,
+    ) -> Result<Record, Error> {
+        let tx = self.connection.transaction()?;
+        let mut record = ledger::load(&tx, key)?.ok_or(Error::InvalidRequest)?;
+        if record.lease.as_ref() != Some(lease) || lease.boundary != boundary {
+            return Err(Error::LeaseMismatch);
+        }
+        if !record.recovery.requested {
+            record.recovery.requested = true;
+            outcomes::save(&tx, &record)?;
+        }
+        tx.commit()?;
+        Ok(record)
+    }
     /// Called only with a receipt from Store's exact permanent deny-and-drain.
     /// Persisting this barrier precedes evidence lookup; restart can resume it.
     pub fn record_operation_drain(

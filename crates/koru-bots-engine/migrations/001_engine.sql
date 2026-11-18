@@ -151,6 +151,7 @@ CREATE TABLE outputs (
 );
 CREATE INDEX native_outputs_for_turn ON operations(json_extract(CAST(lease AS TEXT), '$.binding.turn.id')) WHERE state = 'applied';
 CREATE INDEX operations_for_thread ON operations(thread, state);
+CREATE INDEX operations_for_recovery ON operations(state);
 CREATE TABLE receipts (
     sender TEXT NOT NULL,
     id TEXT NOT NULL,

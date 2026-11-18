@@ -420,7 +420,7 @@ impl LocalBackend {
                     )
                     .map_err(NativeWriteError::Unconfirmed)?;
                 evidence(
-                    prepared,
+                    &prepared.description,
                     identity.candidate,
                     retained,
                     &result.origin.initial_update,
@@ -503,17 +503,28 @@ impl LocalBackend {
         prepared: &PreparedNativeWrite,
         identity: NativeStoreIdentity,
     ) -> Result<NativeReconciliation, ToolError> {
+        self.reconcile_native_description(prepared.description(), identity)
+    }
+
+    /// Recover from the trusted owner's retained semantic description. No
+    /// original page bytes or executable request are required for proof lookup.
+    /// This cannot dispatch: edits without retained confirmation stay unknown.
+    pub fn reconcile_native_description(
+        &self,
+        description: &NativeWriteDescription,
+        identity: NativeStoreIdentity,
+    ) -> Result<NativeReconciliation, ToolError> {
         validate_identity(&identity)?;
-        if prepared.description.kind == NativeWriteKind::Edited {
+        if description.kind == NativeWriteKind::Edited {
             return Ok(NativeReconciliation::Unconfirmed);
         }
-        let ws = prepared.description.workspace;
+        let ws = description.workspace;
         let store = self.native_store()?;
         let CreationOriginLookup::Known(origin) = store.creation_origin(ws, identity.candidate)?
         else {
             return Ok(NativeReconciliation::Unconfirmed);
         };
-        if !origin_matches(&origin, &identity, &prepared.description.fingerprint) {
+        if !origin_matches(&origin, &identity, &description.fingerprint) {
             return Err(conflict());
         }
         if !store
@@ -522,13 +533,10 @@ impl LocalBackend {
         {
             return Ok(NativeReconciliation::Unconfirmed);
         }
-        let retained = store.retain_creation_version(
-            ws,
-            identity.clone(),
-            prepared.description.fingerprint.clone(),
-        )?;
+        let retained =
+            store.retain_creation_version(ws, identity.clone(), description.fingerprint.clone())?;
         Ok(NativeReconciliation::Verified(evidence(
-            prepared,
+            description,
             identity.candidate,
             retained,
             &origin.initial_update,
@@ -536,7 +544,7 @@ impl LocalBackend {
     }
 }
 fn evidence(
-    prepared: &PreparedNativeWrite,
+    description: &NativeWriteDescription,
     id: StoreDocumentId,
     version: koru_store_core::ports::DocumentVersion,
     original: &[u8],
@@ -547,10 +555,10 @@ fn evidence(
     }
     Ok(NativeWriteEvidence {
         kind: NativeWriteKind::Created,
-        workspace: prepared.description.workspace,
+        workspace: description.workspace,
         document: id,
         version: version.version_vector,
-        title: prepared.description.title.clone(),
+        title: description.title.clone(),
         confirmed_at_ms: version.captured_at.millis(),
         version_id: Some(version.id),
     })

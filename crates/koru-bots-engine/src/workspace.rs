@@ -20,6 +20,10 @@ pub enum Command {
     Catalog {
         secret: Secret,
     },
+    Recover {
+        authority: Secret,
+        request: RecoveryRequest,
+    },
     /// This is an engine-to-gateway command. A session bearer cannot invoke it.
     Context {
         authority: Secret,
@@ -62,7 +66,36 @@ impl Request {
 pub enum Reply {
     Result(Value),
     Context(Context),
+    Recovery(RecoveryReply),
     Refused(Error),
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum RecoveryRequest {
+    Fence {
+        record: crate::operations::Record,
+        force: bool,
+    },
+    Lookup {
+        record: crate::operations::Record,
+    },
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub enum RecoveryReply {
+    Pending,
+    Drained(koru_store_core::NativeEffectDrainReceipt),
+    Evidence(Option<crate::operations::Outcome>),
+}
+pub fn recover(
+    endpoint: &koru_ipc::Endpoint,
+    authority: Secret,
+    request: RecoveryRequest,
+) -> Result<RecoveryReply, Error> {
+    match send(endpoint, &Command::Recover { authority, request })? {
+        Reply::Recovery(reply) => Ok(reply),
+        Reply::Refused(error) => Err(error),
+        _ => Err(Error::InvalidRequest),
+    }
 }
 
 pub fn endpoint(root: &Path, segment: &str) -> Result<koru_ipc::Endpoint, Error> {
