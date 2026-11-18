@@ -51,6 +51,11 @@ pub trait MenuItem {
     fn swatch(&self) -> Option<Option<&str>> {
         None
     }
+    /// Levels a nested row is indented, so a list's tree shape reads in the
+    /// flat rows of a menu. `0` for a top-level row.
+    fn indent(&self) -> usize {
+        0
+    }
     /// A product's mark drawn as vector path data — for a row naming a
     /// third-party product whose logo the icon font cannot carry (a launch
     /// profile's row). When set it takes the leading slot and
@@ -203,6 +208,8 @@ pub const ROW_PAD_X: f32 = 10.0;
 const SHORTCUT_GAP: f32 = 28.0;
 /// The colour square a row may lead with — the rail's, at a row's scale.
 const SWATCH: f32 = 12.0;
+/// How far each nesting level indents a row's leading slot and label.
+const INDENT: f32 = 16.0;
 /// A stepper button's square. Wider than the glyph inside it on purpose: this
 /// is a target pressed repeatedly, so it is sized for the finger rather than
 /// for the mark.
@@ -1150,8 +1157,9 @@ impl<T: MenuItem> Menu<T> {
                 (true, false) => pal.text,
             };
             // A row with a leading slot — its own icon — draws it first, then
-            // the label indented past it.
-            let mut text_x = p.x + ROW_PAD_X;
+            // the label indented past it. A nested row indents its whole
+            // leading edge one [`INDENT`] per level.
+            let mut text_x = p.x + ROW_PAD_X + item.indent() as f32 * INDENT;
             if leading(item).is_none()
                 && let Some(token) = item.swatch()
             {

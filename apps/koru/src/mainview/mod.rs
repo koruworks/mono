@@ -4475,6 +4475,7 @@ impl MainView {
                 // fixed before the answer landed falls back to.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::NewTaskIn(_) => true,
+                MenuAction::TaskListRow(..) => true,
                 // Dimmed, with its reason beside it, when this build carries
                 // no configuration for the importer (C6) — never hidden.
                 MenuAction::ImportFormat(id) => {
@@ -4503,6 +4504,8 @@ impl MainView {
                         | MenuAction::OpenRunningSession(_)
                         | MenuAction::Chats
                         | MenuAction::NewAiChat
+                        | MenuAction::Tasks
+                        | MenuAction::NewList
                         | MenuAction::OpenRecentChat(_)
                         | MenuAction::ClearRecents
                         | MenuAction::ImportAs
@@ -4911,7 +4914,8 @@ impl MainView {
                 | MenuAction::NewAgent
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
-                | MenuAction::Chats => false,
+                | MenuAction::Chats
+                | MenuAction::Tasks => false,
                 MenuAction::OpenRunningSession(session) => {
                     self.open_session_tab_for_existing(session)
                 }
@@ -4924,6 +4928,12 @@ impl MainView {
                 }
                 // The launcher's Shift+T: that page, caret in Add a task.
                 MenuAction::NewTaskIn(target) => self.new_task_in(target, None),
+                // The `+` menu's Tasks flyout: a list row adds a task to it.
+                MenuAction::TaskListRow(id, ..) => {
+                    self.new_task_in(crate::panes::explore::rail::RailTarget::List(id), None)
+                }
+                // *New list*: make one where it lives — the rail's field.
+                MenuAction::NewList => self.begin_new_list_from_plus(),
                 MenuAction::NewAiChat => self.open_ai_chat_tab(),
                 MenuAction::ManageAgents => {
                     self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
@@ -7904,6 +7914,19 @@ impl MainView {
         let chats = self.plus_recent_chats();
         context_menu::set_plus_snapshots(recents, shells, agents, chats);
         context_menu::set_plus_canvases(canvases);
+        context_menu::set_task_lists(
+            self.list_table
+                .iter()
+                .map(|node| {
+                    (
+                        node.entry.id,
+                        node.entry.name.clone(),
+                        context_menu::static_accent_token(node.entry.color.as_deref()),
+                        node.depth,
+                    )
+                })
+                .collect(),
+        );
         context_menu::set_profile_presence(self.profile_probe.snapshot());
     }
 
@@ -9295,18 +9318,7 @@ impl MainView {
             // into view. It used to hang off a row at the foot of the section,
             // which a long rail scrolls out of sight: the field held the
             // keyboard and drew nothing, and the `+` looked dead.
-            Request::BeginNewList { parent } => {
-                let color = self.explore.rail().suggested_color().to_owned();
-                let origin = self.explore.rail().focus();
-                self.close_list_field();
-                self.list_field_origin = origin;
-                self.explore.rail_mut().begin_new_list(parent);
-                self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
-                let area = self.explore_area();
-                let top = self.explore.rail_top(area);
-                self.explore.rail_mut().reveal_new_list(area, top);
-                true
-            }
+            Request::BeginNewList { parent } => self.begin_new_list(parent),
             Request::NewList {
                 parent,
                 name,
@@ -9552,6 +9564,32 @@ impl MainView {
             self.explore.rail_mut().set_focus(area, top, origin);
         }
         had
+    }
+
+    /// Open the inline field over the rail's *+ New list* row, for `parent`
+    /// (`None` is the top level). The rail's own request and the `+` menu's
+    /// *New list* both reach here.
+    fn begin_new_list(&mut self, parent: Option<koru_core::ids::ListId>) -> bool {
+        let color = self.explore.rail().suggested_color().to_owned();
+        let origin = self.explore.rail().focus();
+        self.close_list_field();
+        self.list_field_origin = origin;
+        self.explore.rail_mut().begin_new_list(parent);
+        self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
+        let area = self.explore_area();
+        let top = self.explore.rail_top(area);
+        self.explore.rail_mut().reveal_new_list(area, top);
+        true
+    }
+
+    /// The `+` menu's *New list*: the field lives in the rail, so show the
+    /// Tasks navigator first, then open the field.
+    fn begin_new_list_from_plus(&mut self) -> bool {
+        if !self.sidebar.is_open() {
+            self.toggle_sidebar();
+        }
+        self.explore.show_tasks();
+        self.begin_new_list(None)
     }
 
     /// The names the open field may not take, so it can refuse a duplicate

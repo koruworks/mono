@@ -486,6 +486,44 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
     assert_eq!(shell_plus_items(), shell_profile_items());
 }
 
+/// The Tasks flyout: *New list* first, then a rule and each list, nested and
+/// wearing its colour. With no lists it is just *New list*.
+#[test]
+fn the_tasks_flyout_lists_nested_coloured_lists_under_new_list() {
+    use koru_core::ids::ListId;
+    let top = ListId::new();
+    let child = ListId::new();
+    set_task_lists(vec![
+        (top, "Top".into(), Some("red"), 0),
+        (child, "Child".into(), None, 1),
+    ]);
+    assert_eq!(
+        task_plus_items(),
+        vec![
+            MenuAction::NewList,
+            MenuAction::Divider,
+            MenuAction::TaskListRow(top, Some("red"), 0),
+            MenuAction::TaskListRow(child, None, 1),
+        ]
+    );
+
+    // A row reads its name, colour and depth.
+    let child = MenuAction::TaskListRow(child, None, 1);
+    assert_eq!(child.label(), "Child");
+    assert_eq!(koru_ui::MenuItem::indent(&child), 1);
+    let top = MenuAction::TaskListRow(top, Some("red"), 0);
+    assert_eq!(koru_ui::MenuItem::swatch(&top), Some(Some("red")));
+    assert_eq!(koru_ui::MenuItem::indent(&top), 0);
+
+    // The `+` menu carries the flyout.
+    assert!(new_tab_items().contains(&MenuAction::Tasks));
+    assert_eq!(submenu(MenuAction::Tasks), Some(task_plus_items()));
+
+    // Nothing to list: only *New list*.
+    set_task_lists(vec![]);
+    assert_eq!(task_plus_items(), vec![MenuAction::NewList]);
+}
+
 // ------------------------------------------------ the + menu's profile rows
 
 /// **The reconciled display names** (W4.4a). Koru Terminal rendered the
