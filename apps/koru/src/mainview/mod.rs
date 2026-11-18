@@ -3131,14 +3131,26 @@ impl MainView {
         }
     }
 
-    /// A sidebar row's `+` (the review's note): the document's name, then the
-    /// shell makes it as the row's last child and opens it.
+    /// A sidebar row's `+`: make a draft that becomes the row's last child on
+    /// promote, exactly as Ctrl+T makes a plain draft. No name prompt — the
+    /// name is typed in the draft's own title, and Escape cancels the whole
+    /// thing.
     fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
         self.menu = None;
-        if self.new_document.is_none() {
-            self.new_workspace_owner = None;
-            self.new_document = Some(NewDocument::child(&mut self.engine, parent));
-        }
+        // The `+` was pressed in the sidebar, which took the keyboard for the
+        // tree (or the quick filter). The new draft is what you want to type
+        // into, so give the keyboard to it.
+        self.explore.clear_focus();
+        // Unfold the row first, so the child shows where it lands.
+        self.explore.expand(parent);
+        let parent_id = koru_core::DocumentId::from_uuid(parent.as_uuid());
+        self.record_jump();
+        self.tabs_mut()
+            .push(Tab::child_draft(Some(parent), parent_id).unwrap_or_else(Tab::welcome));
+        self.slides_mut().clear();
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
         true
     }
 
@@ -3746,21 +3758,6 @@ impl MainView {
                 }
                 true
             }
-            // A row's `+`: inside that row, as its last child. The row is
-            // unfolded first so the child shows where it lands.
-            NewDocumentAction::CreateDocument(title)
-                if matches!(purpose, PromptPurpose::ChildDocument(_)) =>
-            {
-                self.new_document = None;
-                if let PromptPurpose::ChildDocument(parent) = purpose {
-                    self.explore.expand(parent);
-                    self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
-                        parent: koru_core::DocumentId::from_uuid(parent.as_uuid()),
-                        title,
-                    });
-                }
-                return true;
-            }
             NewDocumentAction::CreateDocument(title) => {
                 // **A document belongs to the workspace, not to the document in
                 // hand.** `create_document_after` inserts a node into the
@@ -3891,14 +3888,21 @@ impl MainView {
     /// unconditional `return` for a while; it is deleted rather than kept,
     /// because dead code that still compiles is the kind that gets revived.
     fn promote_draft(&mut self) -> bool {
-        if self.tabs().active_tab().draft.is_none() {
+        let Some(child_of) = self.tabs().active_tab().draft.as_ref().map(|d| d.child_of) else {
             return false;
-        }
+        };
         if !self.promoting {
             self.promoting = true;
-            self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
-                String::new(),
-            ));
+            match child_of {
+                // A row's `+` draft: placed as that row's last child.
+                Some(parent) => self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
+                    parent,
+                    title: String::new(),
+                }),
+                None => self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
+                    String::new(),
+                )),
+            };
         }
         false
     }

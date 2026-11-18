@@ -1479,31 +1479,76 @@ fn a_leading_title_emoji_becomes_the_tab_icon() {
     assert_eq!(tab.label, "Craft.do Pricing");
 }
 
-/// **A row's `+` makes a document inside the row** (the review's note): the
-/// same name prompt, and the shell is asked to place the document as the
-/// row's last child, the row unfolded so it shows where it lands.
+/// **A row's `+` makes a child draft** (the review's note), no name prompt:
+/// like Ctrl+T's draft, but the shell is asked to place it as the row's last
+/// child. The name is typed into the draft's own title, and Escape cancels it
+/// outright as it cancels any draft.
 #[test]
-fn a_rows_plus_prompts_for_a_document_inside_the_row() {
+fn a_rows_plus_makes_a_child_draft() {
     let (mut v, mut workspace) = container();
     let parent = NodeId::new();
+    let parent_id = koru_core::DocumentId::from_uuid(parent.as_uuid());
+    let tabs = v.tabs().len();
     assert!(v.apply(
         &mut workspace.ws,
         crate::panes::Outcome::NewChildDocument(parent)
     ));
-    assert!(v.new_document.is_some(), "the name prompt is open");
-    assert!(v.key(&mut workspace.ws, &ch("Inside"), Some("Inside"), NONE,));
+    assert!(v.new_document.is_none(), "no name prompt");
+    assert_eq!(v.tabs().len(), tabs + 1, "a draft tab opened");
+    assert!(
+        v.tabs()
+            .active_tab()
+            .draft
+            .as_ref()
+            .is_some_and(|d| d.child_of == Some(parent_id)),
+        "it is a child draft"
+    );
+
+    // The first character promotes it, placed under the parent with no title
+    // yet — the name is what the person typed into the draft.
+    assert!(v.key(&mut workspace.ws, &ch("H"), Some("H"), NONE));
+    assert!(matches!(
+        koru_workspace_host::View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::CreateDocumentIn { parent, title })
+            if parent == parent_id && title.is_empty()
+    ));
+}
+
+/// Escape on a fresh child draft cancels it, exactly as it cancels Ctrl+T's.
+#[test]
+fn escape_cancels_a_child_draft() {
+    let (mut v, mut workspace) = container();
+    let tabs = v.tabs().len();
+    assert!(v.apply(
+        &mut workspace.ws,
+        crate::panes::Outcome::NewChildDocument(NodeId::new())
+    ));
+    assert_eq!(v.tabs().len(), tabs + 1);
     assert!(v.key(
         &mut workspace.ws,
-        &Key::Named(winit::keyboard::NamedKey::Enter),
+        &Key::Named(winit::keyboard::NamedKey::Escape),
         None,
         NONE,
     ));
-    assert!(v.new_document.is_none(), "commit closes the modal");
-    assert!(matches!(
-        koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::CreateDocumentIn { parent: p, title })
-            if title == "Inside" && p == koru_core::DocumentId::from_uuid(parent.as_uuid())
+    assert_eq!(v.tabs().len(), tabs, "Escape closes the draft");
+}
+
+/// Pressing `+` was a sidebar press, which took the keyboard; the new draft is
+/// what you want to type into, so the keyboard moves to the document.
+#[test]
+fn a_rows_plus_moves_the_keyboard_to_the_document() {
+    let (mut v, mut workspace) = on_document();
+    // Give the sidebar its rows and the keyboard, as a press on a row would.
+    View::adopt(&mut v, &workspace.ws);
+    v.refresh_explore(&workspace.ws, true);
+    assert!(v.explore.focus_tree(v.regions.sidebar));
+    assert!(v.explore.has_focus(), "the sidebar holds the keyboard");
+
+    assert!(v.apply(
+        &mut workspace.ws,
+        crate::panes::Outcome::NewChildDocument(NodeId::new())
     ));
+    assert!(!v.explore.has_focus(), "the keyboard moved to the document");
 }
 
 #[test]
