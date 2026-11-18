@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::time::{Duration, Instant};
+mod managed;
 
 use koru_ai_core::{
     AiProviderId, AttemptStatus, ChatId, InferenceAttemptId, ProfileId, ToolActivity,
@@ -78,6 +79,11 @@ impl Scopes {
 }
 
 pub(crate) enum Command {
+    Engine {
+        thread: ChatId,
+        command: koru_ai_wire::bot_threads::Command,
+    },
+    EnginePoll(crate::managed::Poll),
     /// The settings, the window's profile's chats and the chat asked for
     /// (AI schema 13: the list is one profile's).
     Boot(Option<ChatId>, Option<ProfileId>),
@@ -153,6 +159,8 @@ pub(crate) enum Command {
 impl Command {
     pub(crate) fn name(&self) -> &'static str {
         match self {
+            Self::Engine { .. } => "engine_command",
+            Self::EnginePoll(_) => "engine_observe",
             Self::Boot(..) => "boot",
             Self::ListChats(_) => "list_chats",
             Self::Create(_) => "create",
@@ -208,6 +216,21 @@ pub(crate) struct DestinationOption {
 
 #[derive(Debug)]
 pub(crate) enum Update {
+    EngineOpened(Box<crate::managed::Opened>),
+    EngineRefreshed(Box<crate::managed::Refreshed>),
+    EngineReply {
+        thread: ChatId,
+        reply: koru_ai_wire::bot_threads::Response,
+    },
+    EngineFailed {
+        thread: ChatId,
+        command: koru_ai_wire::bot_threads::Command,
+        failure: koru_ai_wire::Failure,
+    },
+    EnginePollFailed {
+        thread: ChatId,
+        failure: koru_ai_wire::Failure,
+    },
     Boot {
         settings: ProviderSettingsResponse,
         chats: Vec<koru_ai_core::Chat>,
@@ -427,6 +450,7 @@ fn run(
 ) {
     tracing::info!(target: "koru_ai::ui", "AI UI client thread started");
     let owned = scopes == Scopes::Owned;
+    let mut backend = managed::Backend::default();
     let mut client = scopes.connect(root.as_deref());
     if let Err(ref message) = client {
         tracing::warn!(
@@ -468,6 +492,15 @@ fn run(
                     Err(message) => {
                         let failure = unreachable_failure(message.clone());
                         let update = match &command {
+                            Command::Engine { thread, command } => Update::EngineFailed {
+                                thread: *thread,
+                                command: command.clone(),
+                                failure,
+                            },
+                            Command::EnginePoll(poll) => Update::EnginePollFailed {
+                                thread: poll.thread,
+                                failure,
+                            },
                             // An owned surface's conversation: unreachable,
                             // which it shows as such — never a new chat.
                             Command::Boot(chat, _) if owned => Update::Unavailable {
@@ -493,7 +526,23 @@ fn run(
             }
         };
 
+        if owned && managed::handle(client, &updates, &alive, &mut backend, &command) {
+            continue;
+        }
         match command {
+            Command::Engine { thread, command } => {
+                let _ = updates.send(Update::EngineFailed {
+                    thread,
+                    command,
+                    failure: unreachable_failure("The conversation owner is unavailable.".into()),
+                });
+            }
+            Command::EnginePoll(poll) => {
+                let _ = updates.send(Update::EnginePollFailed {
+                    thread: poll.thread,
+                    failure: unreachable_failure("The conversation owner is unavailable.".into()),
+                });
+            }
             Command::Boot(requested_chat, profile) => {
                 let result = (|| {
                     let settings = client.ai().provider_settings()?;

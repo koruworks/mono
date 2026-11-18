@@ -1819,6 +1819,11 @@ pub enum Key {
     BotsArchived,
     /// A Bot's conversation that cannot be shown — gone, or the service is not answering. Said in its place; it never becomes a new chat (Bots P1.8 S3).
     BotsConversationUnavailable,
+    /// Engine chat states. Non-English translations are machine-written,
+    /// awaiting native review.
+    BotsEngineWaiting,
+    BotsEngineLiveGap,
+    BotsEngineSendUncertain,
     // A Bot's tab (Bots P1.8 S4): its header over its conversation.
     /// A Bot tab's name before the Bot service has said the Bot's: a restored tab, for a moment.
     BotsTabUnnamed,
@@ -4562,7 +4567,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3022] = [
+    pub const ALL: [Key; 3025] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5856,6 +5861,9 @@ impl Key {
         Key::BotsRowPaused,
         Key::BotsArchived,
         Key::BotsConversationUnavailable,
+        Key::BotsEngineWaiting,
+        Key::BotsEngineLiveGap,
+        Key::BotsEngineSendUncertain,
         Key::BotsTabUnnamed,
         Key::BotsBotLoading,
         Key::BotsBotUnavailable,
@@ -16973,6 +16981,39 @@ pub const ROWS: &[Row] = &[
         ar: "لا يمكن فتح هذه المحادثة الآن.",
         zh_hans: "目前无法打开此对话。",
         ja: "この会話は今は開けません。",
+    },
+    Row {
+        key: Key::BotsEngineWaiting,
+        en: "Waiting to start…",
+        es: "Esperando para empezar…",
+        pt_br: "Aguardando para começar…",
+        de: "Wartet auf den Start…",
+        fr: "En attente de démarrage…",
+        ar: "في انتظار البدء…",
+        zh_hans: "等待开始…",
+        ja: "開始を待っています…",
+    },
+    Row {
+        key: Key::BotsEngineLiveGap,
+        en: "Part of the live reply is unavailable. The saved reply will appear when it finishes.",
+        es: "Parte de la respuesta en curso no está disponible. La respuesta guardada aparecerá cuando termine.",
+        pt_br: "Parte da resposta em andamento está indisponível. A resposta salva aparecerá quando terminar.",
+        de: "Ein Teil der laufenden Antwort ist nicht verfügbar. Die gespeicherte Antwort erscheint nach Abschluss.",
+        fr: "Une partie de la réponse en cours est indisponible. La réponse enregistrée apparaîtra une fois terminée.",
+        ar: "جزء من الرد الجاري غير متاح. سيظهر الرد المحفوظ عند اكتماله.",
+        zh_hans: "部分实时回复暂不可用。完成后将显示保存的回复。",
+        ja: "実行中の返信の一部を表示できません。完了すると保存された返信が表示されます。",
+    },
+    Row {
+        key: Key::BotsEngineSendUncertain,
+        en: "Checking whether your message was received…",
+        es: "Comprobando si se recibió tu mensaje…",
+        pt_br: "Verificando se sua mensagem foi recebida…",
+        de: "Prüft, ob deine Nachricht empfangen wurde…",
+        fr: "Vérification de la réception de votre message…",
+        ar: "جارٍ التحقق من استلام رسالتك…",
+        zh_hans: "正在确认消息是否已收到…",
+        ja: "メッセージが受信されたか確認しています…",
     },
     Row {
         key: Key::BotsTabUnnamed,

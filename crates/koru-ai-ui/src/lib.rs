@@ -123,6 +123,8 @@ mod file_citations;
 mod layout_cache;
 mod link_card;
 mod live_markdown;
+mod managed;
+mod managed_surface;
 mod microphone;
 mod model_picker;
 mod new_divider;
@@ -519,6 +521,10 @@ pub struct ChatSurface {
     /// `attempt` until the transcript read that follows replaces it.
     ended_attempt: Option<InferenceAttemptId>,
     pending_assistant_message_id: Option<MessageId>,
+    managed: Option<managed::State>,
+    /// Uncertain submissions stay with their conversation when this surface
+    /// is rebound. Reopening reconciles the same receipt, never a new send.
+    managed_outbox: HashMap<ChatId, (koru_ai_wire::bot_threads::Command, Option<SentMessage>)>,
     /// **Replies the agent failed because it refused their pictures**
     /// (Bots P1.8, QUESTIONS O36): the live `failed` event's engine stop
     /// code said so, and the reply says it in words of its own instead of
@@ -1064,6 +1070,8 @@ impl ChatSurface {
             attempt: None,
             ended_attempt: None,
             pending_assistant_message_id: None,
+            managed: None,
+            managed_outbox: HashMap::new(),
             refused_pictures: HashSet::new(),
             pending_user: None,
             answering: false,
@@ -1343,8 +1351,18 @@ impl ChatSurface {
         // client: it is given back with the message, never sent later.
         self.staged_embedded_send = None;
         self.durable_observations = 0;
-        if self.sent_message.is_some() {
+        if self.sent_message.is_some()
+            && self
+                .managed
+                .as_ref()
+                .is_none_or(|state| state.pending_send.is_none())
+        {
             self.give_back_sent(None);
+        }
+        if let Some(state) = &mut self.managed {
+            state.retry_send = state.pending_send.is_some();
+            state.retry_at = Instant::now();
+            state.polling = false;
         }
         if let Some((chat, item)) = self.steering.take() {
             self.queues.push_front(chat, item);
@@ -1680,6 +1698,16 @@ impl ChatSurface {
             .and_then(|at| at.checked_add(STOP_ESCAPE_WINDOW));
         [
             poll,
+            self.managed
+                .as_ref()
+                .filter(|_| self.reader.is_some())
+                .map(|state| {
+                    if state.polling {
+                        Instant::now() + POLL_INTERVAL
+                    } else {
+                        state.poll_at
+                    }
+                }),
             highlight,
             image,
             stop_hint,
@@ -1708,6 +1736,7 @@ impl ChatSurface {
         // opportunity to publish and acknowledge the edit that preceded it.
         let mut changed = self.staged_embedded_send.is_some();
         changed |= self.drain_updates();
+        self.maintain_managed(_now);
         self.follow_agent_checks(_now);
         self.follow_agent_modes(_now);
         if self
@@ -2155,6 +2184,29 @@ impl ChatSurface {
             return self.leave_input_walk();
         }
         if matches!(key, Key::Named(NamedKey::Escape))
+            && self
+                .managed
+                .as_ref()
+                .is_some_and(|s| s.primary_turn().is_some())
+        {
+            if self.tool_mode_open
+                || self.tool_access_open
+                || self.approval_mode_open
+                || self.destination_open.is_some()
+            {
+                self.tool_mode_open = false;
+                self.tool_access_open = false;
+                self.approval_mode_open = false;
+                self.destination_open = None;
+            } else if self.stop_armed(Instant::now()) {
+                self.stop_armed_at = None;
+                return self.stop_managed();
+            } else {
+                self.stop_armed_at = Some(Instant::now());
+            }
+            return true;
+        }
+        if matches!(key, Key::Named(NamedKey::Escape))
             && let Some(attempt) = self.attempt
         {
             return self.escape_during_turn(attempt, Instant::now());
@@ -2254,7 +2306,11 @@ impl ChatSurface {
 
     /// Whether a first Escape is still waiting for its second at `now`.
     fn stop_armed(&self, now: Instant) -> bool {
-        self.attempt.is_some()
+        (self.attempt.is_some()
+            || self
+                .managed
+                .as_ref()
+                .is_some_and(|s| s.primary_turn().is_some()))
             && self
                 .stop_armed_at
                 .is_some_and(|at| now.saturating_duration_since(at) < STOP_ESCAPE_WINDOW)
@@ -2273,6 +2329,7 @@ impl ChatSurface {
             .and_then(|chat| self.queues.pause_reason(chat))
             // A message on its way to the computer a saved copy came from.
             .or(self.copy_line())
+            .or(self.managed_line())
             .or(self.status.as_deref())
     }
 
@@ -3505,12 +3562,28 @@ impl ChatSurface {
         let Some(command) = self.apply_to_unmade_chat(command) else {
             return true;
         };
+        let Some(command) = self.managed_command(command) else {
+            return false;
+        };
+        let pending = match &command {
+            Command::Engine {
+                command: command @ koru_ai_wire::bot_threads::Command::Send { .. },
+                ..
+            } => Some(command.clone()),
+            _ => None,
+        };
         let Some(reader) = &self.reader else {
             self.status = Some("Koru AI service is not connected.".into());
             return false;
         };
         match reader.send(command) {
             Ok(()) => {
+                if let Some(command) = pending
+                    && let Some(state) = &mut self.managed
+                {
+                    state.pending_send = Some(command);
+                    state.retry_send = false;
+                }
                 self.waiting = true;
                 self.status = None;
                 return true;
@@ -3614,6 +3687,23 @@ impl ChatSurface {
             self.chat_list_changed = true;
         }
         match update {
+            Update::EngineOpened(opened) => return self.managed_opened(*opened),
+            Update::EngineRefreshed(update) => return self.managed_refreshed(*update),
+            Update::EngineReply { thread, reply } => return self.managed_reply(thread, reply),
+            Update::EngineFailed {
+                thread,
+                command,
+                failure,
+            } => return self.managed_failed(thread, command, failure),
+            Update::EnginePollFailed { thread, failure } => {
+                if let Some(state) = &mut self.managed
+                    && state.thread() == thread
+                {
+                    state.settled(Instant::now());
+                    self.status = Some(self.failure_words(&failure));
+                }
+                return true;
+            }
             Update::Boot {
                 settings,
                 chats,
@@ -7165,6 +7255,9 @@ impl ChatSurface {
     }
 
     fn activate_send_button(&mut self) -> bool {
+        if self.managed.is_some() && self.send_mode() == queue::SendMode::Stop {
+            return self.stop_managed();
+        }
         if self.reply_busy() {
             // Queue while the composer holds something, Stop while it is
             // empty. Pointer and keyboard use this same route.
@@ -8047,6 +8140,20 @@ impl ChatSurface {
             }
         }
         let mut old = std::mem::take(&mut self.message_layouts);
+        let mut old_managed = Vec::new();
+        if let Some(state) = &self.managed {
+            let mut index = 0;
+            while index < old.len() {
+                if old[index].id.is_some_and(|id| {
+                    state.live.values().any(|live| live.reply == id)
+                        && !inputs.iter().any(|input| input.id == id)
+                }) {
+                    old_managed.push(old.swap_remove(index));
+                } else {
+                    index += 1;
+                }
+            }
+        }
         // The running reply's last layout, whose closed blocks it keeps.
         let old_live = running
             .filter(|id| !inputs.iter().any(|input| input.id == *id))
@@ -8078,7 +8185,7 @@ impl ChatSurface {
                 attachments: Vec::new(),
             });
         }
-        if self.reply_pending() {
+        if self.managed.is_none() && self.reply_pending() {
             // Answers sent as the next message have no card of the
             // person's: they are read on the set's card (D108).
             if let Some(markdown) = self.pending_user.clone() {
@@ -8164,6 +8271,7 @@ impl ChatSurface {
                 attachments: Vec::new(),
             }));
         }
+        self.append_managed_live(&mut messages, old_managed, width);
         for message in &mut messages {
             for tile in &mut message.attachments {
                 tile.measure_chip(&mut self.engine, message.wrap_width);
@@ -8171,6 +8279,16 @@ impl ChatSurface {
         }
         self.message_layouts = messages;
         self.position_conversation_items();
+        if let Some(state) = &mut self.managed
+            && !state.history_pending
+            && let Some((id, offset)) = state.history_anchor.take()
+            && let Some(message) = self
+                .message_layouts
+                .iter()
+                .find(|message| message.id == Some(id))
+        {
+            self.conversation_scroll = (message.top - offset).max(0.0);
+        }
         self.message_width = width;
         self.messages_dirty = false;
         self.response_selection = None;
@@ -8639,7 +8757,7 @@ impl ChatSurface {
                     && self.response_message_hover == Some(message_index)
                 {
                     if message.state == MessageState::Complete {
-                        for index in 0..RESPONSE_ACTIONS {
+                        for index in 0..self.response_action_count() {
                             let rect = action_rect(card, index);
                             IconButton::new(response_action_glyph(index), rect)
                                 .with_state(IconButtonState {
@@ -8845,7 +8963,7 @@ impl ChatSurface {
                 && self.response_message_hover == Some(message_index)
             {
                 if message.state == MessageState::Complete {
-                    for index in 0..RESPONSE_ACTIONS {
+                    for index in 0..self.response_action_count() {
                         if action_rect(card, index).contains(x, y) {
                             return match index {
                                 0 => Some(ResponseAction::Copy(message.markdown.clone())),
@@ -9054,7 +9172,7 @@ impl ChatSurface {
                 && self.response_message_hover == Some(message_index)
             {
                 let action_count = if message.state == MessageState::Complete {
-                    RESPONSE_ACTIONS
+                    self.response_action_count()
                 } else if matches!(
                     message.state,
                     MessageState::Failed | MessageState::Interrupted

@@ -210,6 +210,7 @@ impl ChatSurface {
         let reread = self.unavailable.is_some() || previous != Some(conversation.chat);
         let chat = conversation.chat;
         if previous.is_some() && previous != Some(chat) {
+            self.leave_managed();
             self.move_composer(previous, chat);
         }
         self.context_workspace = Some(conversation.destination);
@@ -486,6 +487,13 @@ impl ChatSurface {
     /// not copy, so that Retry could only answer not-found (O34). The person
     /// sends the request again instead.
     pub(crate) fn offers_retry(&self, message: koru_ai_core::MessageId) -> bool {
+        if let Some(state) = &self.managed {
+            return state.snapshot.turns.iter().any(|turn| {
+                turn.reply_message == Some(message.as_uuid())
+                    && turn.state == "needs_you"
+                    && turn.details.get("setup_failure").is_some()
+            });
+        }
         self.owned.is_none() || !self.copied_from_elsewhere(message)
     }
 

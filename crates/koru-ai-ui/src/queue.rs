@@ -232,6 +232,14 @@ impl ChatSurface {
     }
 
     pub(crate) fn send_mode(&self) -> SendMode {
+        if !self.composer_has_content()
+            && self
+                .managed
+                .as_ref()
+                .is_some_and(|s| s.primary_turn().is_some())
+        {
+            return SendMode::Stop;
+        }
         if !self.reply_busy() {
             SendMode::Send
         } else if self.composer_has_content() || self.attempt.is_none() {
