@@ -75,7 +75,7 @@ pub(super) fn observe(
         record.outcome = Some(outcome);
         save(connection, record)?;
         if record.state == State::Applied {
-            outputs::attach_if_published(connection, record)?;
+            outputs::record_output(connection, record)?;
         }
         return Ok(true);
     }

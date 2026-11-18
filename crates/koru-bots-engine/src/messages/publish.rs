@@ -51,7 +51,7 @@ impl Database {
         };
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'published',?6)",params![message.to_string(),thread,next_sequence(&tx,thread_id)?,bot,encode(&content)?,now])?;
         for output in &outputs {
-            crate::operations::outputs::insert(&tx, message, output)?;
+            crate::operations::outputs::attach(&tx, message, output)?;
         }
         let answered=tx.execute("UPDATE obligations SET state='answered',answered_by=?1 WHERE state='delivered' AND id IN (SELECT x.obligation FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery WHERE d.turn=?2 AND d.state='accepted')",params![message.to_string(),request.turn.id.to_string()])? as u64;
         tx.execute("DELETE FROM inbox WHERE id IN (SELECT x.obligation FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery JOIN obligations o ON o.id=x.obligation WHERE d.turn=?1 AND o.state IN ('answered','expired'))",[request.turn.id.to_string()])?;

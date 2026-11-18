@@ -851,3 +851,101 @@ fn outputs_have_a_composite_operation_foreign_key() {
             .is_err()
     );
 }
+
+#[test]
+fn interrupted_applied_effect_is_history_and_an_output_before_any_reply() {
+    let mut f = Fixture::new();
+    let record = f.leased();
+    f.db.interrupt_turn(f.binding.turn).unwrap();
+    f.db.report_operation(
+        f.boundary,
+        Uuid::new_v4(),
+        &record.key,
+        record.lease.as_ref().unwrap(),
+        Fixture::applied(&record),
+        8,
+    )
+    .unwrap();
+    let messages = f.db.read_messages(&f.person, f.thread, 0).unwrap();
+    let notice = messages.iter().find(|m| m.kind == "setup_note").unwrap();
+    assert!(notice.content.body.is_empty());
+    assert_eq!(notice.content.references[0]["notice"], "operation_applied");
+    assert_eq!(
+        notice.content.references[0]["operation"],
+        record.key.operation.to_string()
+    );
+    assert_eq!(
+        f.db.connection
+            .query_row("SELECT message FROM outputs", [], |r| r.get::<_, String>(0))
+            .unwrap(),
+        notice.id.to_string()
+    );
+    let delivery =
+        f.db.claim_messages(
+            f.worker.bot,
+            f.thread,
+            f.worker.incarnation,
+            Uuid::new_v4(),
+            messages::Resume::Rebuilt,
+            65536,
+            9,
+        )
+        .unwrap()
+        .unwrap();
+    assert!(delivery.context.iter().any(|m| m.id == notice.id));
+    assert_eq!(delivery.work.len(), 1, "the result did not create new work");
+    assert!(delivery.continuation);
+}
+
+#[test]
+fn applied_notice_and_output_failure_roll_back_the_outcome_and_receipt() {
+    let mut f = Fixture::new();
+    let record = f.leased();
+    let command = Uuid::new_v4();
+    f.db.connection.execute_batch("CREATE TEMP TRIGGER reject_output BEFORE INSERT ON outputs BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert_eq!(
+        f.db.report_operation(
+            f.boundary,
+            command,
+            &record.key,
+            record.lease.as_ref().unwrap(),
+            Fixture::applied(&record),
+            8
+        )
+        .err(),
+        Some(Error::StorageUnavailable)
+    );
+    assert_eq!(
+        ledger::load(&f.db.connection, &record.key)
+            .unwrap()
+            .unwrap()
+            .state,
+        State::Leased
+    );
+    assert_eq!(
+        f.db.connection
+            .query_row(
+                "SELECT count(*) FROM messages WHERE kind='setup_note'",
+                [],
+                |r| r.get::<_, usize>(0)
+            )
+            .unwrap(),
+        0
+    );
+    f.db.connection
+        .execute_batch("DROP TRIGGER reject_output;")
+        .unwrap();
+    assert_eq!(
+        f.db.report_operation(
+            f.boundary,
+            command,
+            &record.key,
+            record.lease.as_ref().unwrap(),
+            Fixture::applied(&record),
+            8
+        )
+        .unwrap()
+        .state,
+        State::Applied
+    );
+}

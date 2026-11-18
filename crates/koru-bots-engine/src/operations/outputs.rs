@@ -34,9 +34,9 @@ pub(crate) fn collect(connection: &Connection, turn: Turn) -> Result<Vec<Output>
         .collect()
 }
 
-pub(crate) fn insert(connection: &Connection, message: Uuid, output: &Output) -> Result<(), Error> {
+pub(crate) fn attach(connection: &Connection, message: Uuid, output: &Output) -> Result<(), Error> {
     let changed = connection.execute(
-        "INSERT INTO outputs(id,message,operation,scope,bot,thread,kind,reference) SELECT ?1,m.id,?3,b.owner,b.id,m.thread,'page',?4 FROM messages m JOIN bots b ON b.id=m.sender WHERE m.id=?2",
+        "UPDATE outputs SET message=?2 WHERE id=?1 AND operation=?3 AND reference=?4 AND EXISTS(SELECT 1 FROM messages m JOIN bots b ON b.id=m.sender WHERE m.id=?2 AND b.owner=outputs.scope AND b.id=outputs.bot AND m.thread=outputs.thread)",
         params![
             output.id.to_string(),
             message.to_string(),
@@ -50,10 +50,11 @@ pub(crate) fn insert(connection: &Connection, message: Uuid, output: &Output) ->
     Ok(())
 }
 
-/// Publish and the first Applied observation serialize in the same database.
-/// If Publish won, attach the stable output to that exact reply now; never to
-/// the newest reply in the thread. Stopped turns have no published reply.
-pub(super) fn attach_if_published(connection: &Connection, record: &Record) -> Result<(), Error> {
+/// Record the applied fact as a typed history entry, even if the provider never
+/// publishes. A replacement session can read it with the ordinary history
+/// budget/cursor. It is evidence, not new work or a fabricated assistant reply.
+/// Publish subsequently attaches the stable output to its exact reply.
+pub(super) fn record_output(connection: &Connection, record: &Record) -> Result<(), Error> {
     let turn = record
         .lease
         .as_ref()
@@ -62,12 +63,27 @@ pub(super) fn attach_if_published(connection: &Connection, record: &Record) -> R
         .turn;
     let message:Option<String>=connection.query_row("SELECT json_extract(CAST(details AS TEXT),'$.published_message') FROM turns WHERE id=?1 AND generation=?2 AND worker_incarnation=?3 AND session=?4",
         params![turn.id.to_string(),turn.generation,turn.worker.to_string(),turn.session.to_string()],|r|r.get(0))?;
-    if let Some(message) = message {
-        insert(
-            connection,
-            Uuid::parse_str(&message).map_err(|_| Error::StorageUnavailable)?,
-            &output(record)?,
-        )?;
-    }
+    let published = message
+        .map(|id| Uuid::parse_str(&id).map_err(|_| Error::StorageUnavailable))
+        .transpose()?;
+    let output = output(record)?;
+    let notice = Uuid::new_v4();
+    let Some(Outcome::Applied { evidence, .. }) = &record.outcome else {
+        return Err(Error::StorageUnavailable);
+    };
+    let content = crate::messages::Content {
+        body: String::new(),
+        attachments: vec![],
+        references: vec![
+            serde_json::json!({"notice":"operation_applied","turn":turn.id,"output":output.id,"operation":output.operation,"reference":output.reference}),
+        ],
+        in_reply_to: None,
+        deadline_ms: None,
+        reply_to: crate::messages::ReplyTo::Thread,
+    };
+    connection.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'setup_note',?5,'published',?6)",
+        params![notice.to_string(),record.key.thread.to_string(),crate::messages::next_sequence(connection,record.key.thread)?,record.key.bot.to_string(),encode(&content)?,evidence.confirmed_at_ms])?;
+    connection.execute("INSERT INTO outputs(id,message,operation,scope,bot,thread,kind,reference) VALUES (?1,?2,?3,?4,?5,?6,'page',?7)",
+        params![output.id.to_string(),published.unwrap_or(notice).to_string(),record.key.operation.to_string(),record.key.scope,record.key.bot.to_string(),record.key.thread.to_string(),encode(&output.reference)?])?;
     Ok(())
 }
