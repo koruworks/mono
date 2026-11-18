@@ -1806,6 +1806,22 @@ impl MainView {
         self.panes.group_mut(source)?.take_tab(index)
     }
 
+    /// The `+` menu's *Move*: lift the active tab out of its group and split
+    /// the focused pane on `side`, landing the tab in the new pane — the same
+    /// path a cross-pane drag to an edge takes.
+    fn move_active_to_split(&mut self, side: koru_editor::SplitSide) -> bool {
+        let source = self.panes.focused_path().clone();
+        let tab_id = self.tabs().active_tab().id;
+        let Some(tab) = self.take_tab_from_group(&source, tab_id) else {
+            return false;
+        };
+        let doc = tab.document;
+        self.panes
+            .split(&source, place_chooser::split_dir(side), tab);
+        self.settle_pane_drop(doc);
+        true
+    }
+
     /// The one tail every drop path runs, **after** the tab has landed:
     /// emptied groups collapse (only now is it safe — the landing's paths were
     /// computed against the pre-collapse tree), and a document no longer shown
@@ -4506,6 +4522,8 @@ impl MainView {
                         | MenuAction::NewAiChat
                         | MenuAction::Tasks
                         | MenuAction::NewList
+                        | MenuAction::Move
+                        | MenuAction::MoveToSplit(_)
                         | MenuAction::OpenRecentChat(_)
                         | MenuAction::ClearRecents
                         | MenuAction::ImportAs
@@ -4915,7 +4933,9 @@ impl MainView {
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
                 | MenuAction::Chats
-                | MenuAction::Tasks => false,
+                | MenuAction::Tasks
+                | MenuAction::Move => false,
+                MenuAction::MoveToSplit(side) => self.move_active_to_split(side),
                 MenuAction::OpenRunningSession(session) => {
                     self.open_session_tab_for_existing(session)
                 }

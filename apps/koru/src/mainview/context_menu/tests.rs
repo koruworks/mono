@@ -398,7 +398,8 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     );
     assert_eq!(
         MenuAction::NewDocument.shortcut(),
-        Some(koru_keys::label_of(koru_keys::ShortcutId::NewTab))
+        None,
+        "Ctrl+T now opens the New menu, so it is not New document's chord"
     );
     // Ctrl+I is Italic; New chat has no chord of its own.
     assert_eq!(MenuAction::NewAiChat.shortcut(), None);
@@ -536,6 +537,36 @@ fn the_plus_menu_flyouts_carry_mnemonic_letters() {
     assert_eq!(MenuAction::Chats.mnemonic(), Some('c'));
     assert_eq!(MenuAction::ImportAs.mnemonic(), Some('i'));
     assert_eq!(MenuAction::OpenWelcome.mnemonic(), None, "no letter");
+}
+
+/// The Move flyout offers the four edges, and the `+` menu carries it between
+/// Socials and Import.
+#[test]
+fn the_move_flyout_offers_the_four_edges() {
+    use koru_editor::SplitSide;
+    assert_eq!(
+        submenu(MenuAction::Move),
+        Some(vec![
+            MenuAction::MoveToSplit(SplitSide::Up),
+            MenuAction::MoveToSplit(SplitSide::Right),
+            MenuAction::MoveToSplit(SplitSide::Down),
+            MenuAction::MoveToSplit(SplitSide::Left),
+        ])
+    );
+    assert_eq!(MenuAction::Move.mnemonic(), Some('m'));
+    let items = new_tab_items();
+    let socials = items
+        .iter()
+        .position(|a| *a == MenuAction::Socials)
+        .unwrap();
+    let import = items
+        .iter()
+        .position(|a| *a == MenuAction::ImportAs)
+        .unwrap();
+    assert!(
+        items[socials + 1..import].contains(&MenuAction::Move),
+        "Move sits below Socials and above Import"
+    );
 }
 
 // ------------------------------------------------ the + menu's profile rows

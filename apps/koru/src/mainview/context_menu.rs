@@ -306,6 +306,12 @@ pub enum MenuAction {
     OpenInChat,
     NewSocialPost,
     Socials,
+    /// Parent of the Move flyout on the `+` menu: the current document moves
+    /// into a new pane split off on the chosen side.
+    Move,
+    /// One arm of *Move*: split the focused pane and put the current document
+    /// on that side.
+    MoveToSplit(koru_editor::SplitSide),
     /// Start a delegation without a document or task as its context.
     Delegate,
     /// *Delegate…* on a task (ROADMAP D7): its title becomes the objective's
@@ -1198,6 +1204,13 @@ impl MenuAction {
             MenuAction::Documents => "Documents",
             MenuAction::OpenWelcome => "Welcome",
             MenuAction::ViewOpenTabs => "View open tabs",
+            MenuAction::Move => "Move",
+            MenuAction::MoveToSplit(side) => match side {
+                koru_editor::SplitSide::Up => "Top",
+                koru_editor::SplitSide::Right => "Right",
+                koru_editor::SplitSide::Down => "Bottom",
+                koru_editor::SplitSide::Left => "Left",
+            },
             MenuAction::Socials => {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
@@ -1543,6 +1556,7 @@ impl MenuAction {
             MenuAction::Delegate => Some('g'),
             MenuAction::Chats => Some('c'),
             MenuAction::Socials => Some('o'),
+            MenuAction::Move => Some('m'),
             MenuAction::ImportAs => Some('i'),
             MenuAction::ViewOpenTabs => Some('w'),
             _ => None,
@@ -1614,7 +1628,6 @@ impl MenuAction {
         use koru_keys::ShortcutId;
         Some(match self {
             MenuAction::RailView { slot, .. } => return koru_keys::rail_slot(slot),
-            MenuAction::NewDocument => ShortcutId::NewTab,
             MenuAction::Close => ShortcutId::CloseTab,
             MenuAction::Rename | MenuAction::ScheduleRename => ShortcutId::RenameDocument,
             MenuAction::RevealInExplore => ShortcutId::ToggleExplore,
@@ -1663,6 +1676,13 @@ impl MenuAction {
             MenuAction::Socials | MenuAction::NewSocialPost => Some(koru_draw::icons::MEGAPHONE),
             MenuAction::OpenWelcome => Some(koru_draw::icons::HOUSE),
             MenuAction::ViewOpenTabs => Some(koru_draw::icons::TABS),
+            MenuAction::Move => Some(koru_draw::icons::ARROWS_IN_SIMPLE),
+            MenuAction::MoveToSplit(side) => Some(match side {
+                koru_editor::SplitSide::Up => koru_draw::icons::CARET_UP,
+                koru_editor::SplitSide::Right => koru_draw::icons::CARET_RIGHT,
+                koru_editor::SplitSide::Down => koru_draw::icons::CARET_DOWN,
+                koru_editor::SplitSide::Left => koru_draw::icons::CARET_LEFT,
+            }),
             MenuAction::NewTaskIn(crate::panes::explore::rail::RailTarget::Bucket(bucket)) => {
                 Some(crate::panes::explore::rail::bucket_glyph(bucket))
             }
@@ -2200,6 +2220,7 @@ pub fn new_tab_items() -> Vec<MenuAction> {
         MenuAction::Delegate,
         MenuAction::Chats,
         MenuAction::Socials,
+        MenuAction::Move,
         MenuAction::Divider,
         MenuAction::ImportAs,
         MenuAction::ViewOpenTabs,
@@ -2945,6 +2966,15 @@ pub fn submenu(self_: MenuAction) -> Option<Vec<MenuAction>> {
     }
     if self_ == MenuAction::Tasks {
         return Some(task_plus_items());
+    }
+    if self_ == MenuAction::Move {
+        use koru_editor::SplitSide;
+        return Some(vec![
+            MenuAction::MoveToSplit(SplitSide::Up),
+            MenuAction::MoveToSplit(SplitSide::Right),
+            MenuAction::MoveToSplit(SplitSide::Down),
+            MenuAction::MoveToSplit(SplitSide::Left),
+        ]);
     }
     if self_ == MenuAction::SessionMoveToProject {
         return Some(session_project_items());

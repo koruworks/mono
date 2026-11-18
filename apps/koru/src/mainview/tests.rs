@@ -3309,6 +3309,27 @@ fn dragging_a_tab_to_the_right_edge_splits_the_pane() {
     assert!(all_labels.contains(&"Notes".to_string()));
 }
 
+/// The `+` menu's *Move*: the active document moves into a new pane split off
+/// on the chosen side, leaving the rest of its group behind.
+#[test]
+fn moving_the_active_tab_to_the_right_splits_the_pane() {
+    let (mut v, workspace) = two_document_tabs();
+    let active = v.tabs().active_tab().label.clone();
+    assert!(v.move_active_to_split(koru_editor::SplitSide::Right));
+    assert_eq!(v.panes.iter_groups().count(), 2, "the pane split");
+    let labels: Vec<String> = v
+        .panes
+        .iter_groups()
+        .flat_map(|(_, g)| g.iter_tabs().map(|t| t.label.clone()))
+        .collect();
+    assert!(labels.contains(&active), "the moved tab is still open");
+    assert!(
+        labels.contains(&"Notes".to_string()),
+        "the other tab stayed"
+    );
+    let _ = workspace;
+}
+
 /// Drag a tab to the left edge of the view to create a vertical split with the
 /// dragged tab on the left.
 #[test]
