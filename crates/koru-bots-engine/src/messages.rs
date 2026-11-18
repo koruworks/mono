@@ -250,4 +250,4 @@ pub(crate) fn next_sequence(connection: &rusqlite::Connection, thread: Uuid) -> 
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

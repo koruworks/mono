@@ -6015,6 +6015,7 @@ dependencies = [
  "axum",
  "blake3",
  "koru-agent-worker",
+ "koru-ai-core",
  "koru-bot-client-wire",
  "koru-channel",
  "koru-delegate-core",

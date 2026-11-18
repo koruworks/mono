@@ -52,20 +52,32 @@ impl Database {
                 return Err(Error::InvalidRequest);
             }
         }
-        let content = Content {
-            body: envelope.body.clone(),
-            attachments: envelope.attachments.clone(),
-            references: envelope.references.clone(),
-            in_reply_to: envelope.in_reply_to,
-            deadline_ms: envelope.deadline_ms,
-            reply_to: envelope.reply_to,
-        };
         let answer = Accepted {
             message: Uuid::new_v4(),
             thread,
             sequence: next_sequence(&tx, thread)?,
         };
-        tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'accepted',?6)",rusqlite::params![answer.message.to_string(),thread.to_string(),answer.sequence,person.sender,encode(&content)?,now])?;
+        let content = Content {
+            body: envelope.body.clone(),
+            attachments: crate::attachments::prepare(
+                &tx,
+                thread,
+                answer.message,
+                &envelope.attachments,
+            )?,
+            references: envelope.references.clone(),
+            in_reply_to: envelope.in_reply_to,
+            deadline_ms: envelope.deadline_ms,
+            reply_to: envelope.reply_to,
+        };
+        let payload = encode(&content)?;
+        // Replacing short attachment ids with durable metadata must not make
+        // an acknowledged message impossible to read through the carrier.
+        if payload.len() > crate::person::MAX_COMMAND_BYTES {
+            return Err(Error::InvalidRequest);
+        }
+        tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'accepted',?6)",rusqlite::params![answer.message.to_string(),thread.to_string(),answer.sequence,person.sender,payload,now])?;
+        crate::attachments::bind(&tx, thread, answer.message, &envelope.attachments)?;
         let obligation = Uuid::new_v4();
         let expired = envelope.deadline_ms.is_some_and(|deadline| now > deadline);
         tx.execute(

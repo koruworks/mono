@@ -4,6 +4,7 @@
 //! this crate never opens a Store or starts a coding agent on a request thread.
 
 pub mod authority;
+pub mod attachments;
 pub mod bot_database;
 pub mod bot_worker;
 pub mod capacity;

@@ -99,6 +99,20 @@ CREATE TABLE messages (
 CREATE TRIGGER message_thread_recency AFTER INSERT ON messages BEGIN
     UPDATE threads SET updated_at_ms=MAX(updated_at_ms,NEW.accepted_at_ms) WHERE id=NEW.thread;
 END;
+-- Bytes are atomically published by the gateway before metadata is staged.
+-- Message ownership is committed with Accept, never with a provider session.
+CREATE TABLE attachments (
+    id TEXT PRIMARY KEY,
+    thread TEXT NOT NULL REFERENCES threads(id),
+    record BLOB NOT NULL,
+    message TEXT REFERENCES messages(id),
+    ordinal INTEGER CHECK (ordinal >= 0),
+    removed INTEGER NOT NULL DEFAULT 0 CHECK (removed IN (0, 1)),
+    CHECK ((message IS NULL) = (ordinal IS NULL)),
+    CHECK (removed=0 OR message IS NULL)
+);
+CREATE INDEX attachments_thread ON attachments(thread, id);
+CREATE INDEX attachments_message ON attachments(message, ordinal);
 CREATE TABLE inbox (
     id TEXT PRIMARY KEY,
     thread TEXT NOT NULL REFERENCES threads(id),

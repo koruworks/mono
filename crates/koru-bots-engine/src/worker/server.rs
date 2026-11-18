@@ -17,6 +17,7 @@ enum ActorCommand {
     Capacity(mpsc::SyncSender<Reply>),
     RefreshCapacity(mpsc::SyncSender<Reply>),
     Person(crate::person::Request, mpsc::SyncSender<Reply>),
+    Attachment(crate::attachments::Request, mpsc::SyncSender<Reply>),
     Creation(crate::creation::Request, mpsc::SyncSender<Reply>),
     Operation(crate::operations::control::Command, mpsc::SyncSender<Reply>),
     SessionCatalog(crate::authority::Secret, mpsc::SyncSender<Reply>),
@@ -225,6 +226,11 @@ pub(super) fn serve(
                     let _ = database.prune_receipt_answers(now_ms());
                 }
             }
+            ActorCommand::Attachment(request, reply) => {
+                let result = crate::attachments::handle(&mut database, request);
+                let _ =
+                    reply.try_send(result.map(Reply::Attachment).unwrap_or_else(Reply::Refused));
+            }
             ActorCommand::Operation(command, reply) => {
                 let result = crate::operations::control::handle(&mut database, command, now_ms());
                 let _ = reply.try_send(Reply::Operation(result));
@@ -327,6 +333,19 @@ fn handle(
                 let (reply, answer) = mpsc::sync_channel(1);
                 if actor
                     .try_send(ActorCommand::Person(request, reply))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
+            Command::Attachment(request) => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::Attachment(request, reply))
                     .is_err()
                 {
                     Reply::Refused(Error::EngineUnavailable)

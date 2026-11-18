@@ -80,7 +80,9 @@ fn accepted_steer_and_initial_input_publish_together() {
 fn rejected_steer_stays_owed_and_is_not_reoffered_to_the_same_turn() {
     let (mut f, first) = running();
     let mut envelope = f.envelope("attachment waits");
-    envelope.attachments = vec![serde_json::json!({"attachment":"fixture"})];
+    let file = crate::attachments::tests::record(f.thread, 5);
+    f.db.stage_attachment(&f.person, &file).unwrap();
+    envelope.attachments = vec![serde_json::json!(file.attachment.id.as_uuid())];
     let message = f.db.accept_message(&f.person, &envelope, 3).unwrap().answer;
     let steer = f.db.offer_steer(first.turn, 64 * 1024, 3).unwrap().unwrap();
     f.db.reject_steer(first.turn, steer.id).unwrap();
@@ -103,7 +105,14 @@ fn rejected_steer_stays_owed_and_is_not_reoffered_to_the_same_turn() {
         1
     );
     let next = f.claim(Resume::Rebuilt);
-    assert_eq!(next.work[0].content.attachments, envelope.attachments);
+    let saved =
+        f.db.read_attachment(&f.person, f.thread, file.attachment.id.as_uuid())
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        next.work[0].content.attachments,
+        vec![serde_json::to_value(saved.attachment).unwrap()]
+    );
 }
 #[test]
 fn stop_and_replacement_fence_steering_and_offer_rolls_back_as_one_unit() {

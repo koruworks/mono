@@ -6,14 +6,14 @@ mod scripted;
 mod steering;
 mod presentation;
 
-struct Fixture {
-    db: Database,
-    person: Person,
+pub(crate) struct Fixture {
+    pub(crate) db: Database,
+    pub(crate) person: Person,
     bot: Uuid,
-    thread: Uuid,
+    pub(crate) thread: Uuid,
 }
 impl Fixture {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let db = Database::in_memory().unwrap();
         let bot = Uuid::new_v4();
         let thread = Uuid::new_v4();
@@ -30,7 +30,7 @@ impl Fixture {
             thread,
         }
     }
-    fn envelope(&self, body: &str) -> Envelope {
+    pub(crate) fn envelope(&self, body: &str) -> Envelope {
         Envelope {
             id: Uuid::new_v4(),
             to: self.bot,
@@ -63,7 +63,7 @@ impl Fixture {
             .unwrap()
             .unwrap()
     }
-    fn count(&self, table: &str) -> u64 {
+    pub(crate) fn count(&self, table: &str) -> u64 {
         self.db
             .connection
             .query_row(&format!("SELECT count(*) FROM {table}"), [], |r| r.get(0))

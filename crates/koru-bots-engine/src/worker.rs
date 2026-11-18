@@ -44,6 +44,7 @@ pub enum Command {
     Capacity,
     RefreshCapacity,
     Person(crate::person::Request),
+    Attachment(crate::attachments::Request),
     Creation(crate::creation::Request),
     Operation(crate::operations::control::Command),
     SessionCatalog {
@@ -80,6 +81,7 @@ pub enum Reply {
     Resolved(crate::authority::Resolution),
     Catalog(CatalogGrant),
     Person(crate::person::Reply),
+    Attachment(crate::attachments::Reply),
     Creation(crate::creation::Reply),
     Operation(crate::operations::control::Reply),
     Refused(Error),

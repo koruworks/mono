@@ -10,7 +10,7 @@ description = "The Bots engine worker, its durable ledger and local control inte
 [features]
 default = []
 active = ["provider-runtime"]
-schema = ["dep:schemars", "koru-delegate-core/schema"]
+schema = ["dep:schemars", "koru-delegate-core/schema", "koru-ai-core/schema"]
 # Only the Bot worker owns provider processes. Legacy consumers need the mode
 # and ownership fence without acquiring the session runtime's composition.
 provider-runtime = ["dep:koru-session-runtime", "dep:koru-session-profiles", "dep:axum", "dep:tokio", "dep:rmcp"]
@@ -21,6 +21,8 @@ tokio = { workspace = true, optional = true }
 rmcp = { version = "=3.9.0", default-features = false, features = ["server"], optional = true }
 blake3.workspace = true
 koru-agent-worker = { path = "../koru-agent-worker" }
+# Shared composer metadata and validation, never the legacy AI repository.
+koru-ai-core = { path = "../koru-ai-core" }
 koru-bot-client-wire = { path = "../koru-bot-client-wire" }
 koru-channel = { path = "../koru-channel" }
 koru-delegate-core = { path = "../koru-delegate-core" }
