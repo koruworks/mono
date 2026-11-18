@@ -349,6 +349,9 @@ fn committed_configuration_retry_does_not_reopen_a_removed_folder() {
 async fn window_failures_keep_existing_ui_codes_and_retryability() {
     for (error, code, retryable) in [
         (Error::Conflict, "request_conflict", false),
+        (Error::RevisionConflict, "revision_conflict", false),
+        (Error::TeamRevisionConflict, "team_revision_conflict", false),
+        (Error::FolderFrozen, "folder_locked", false),
         (Error::NotAllowed, "wrong_owner", false),
         (Error::EngineUnavailable, "bot_unavailable", true),
     ] {

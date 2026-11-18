@@ -361,6 +361,213 @@ fn creation(reply: koru_ai_core::bots::BotResponse) -> koru_ai_core::bots::BotCr
 }
 
 #[test]
+fn settings_save_role_atomically_and_retry_the_original_receipt_after_later_changes() {
+    use koru_ai_core::bots::*;
+    let f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let mut config = bot.config.clone();
+    config.name = "Revised".into();
+    config.avatar = Some(9);
+    config.role.document = DocumentId::new();
+    let update = BotCommand::Update {
+        request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+        bot_id: bot.id,
+        expected_revision: 1,
+        config: config.clone(),
+    };
+    let BotResponse::Bot { bot: saved } = f.gateway.window_command(update.clone()).unwrap() else {
+        panic!()
+    };
+    assert_eq!(saved.config, config);
+    assert_eq!(saved.revision, 2);
+    assert_eq!(saved.policy_revision, 1);
+    // A missing replacement Role refuses the whole form, including its name.
+    f.store.deleted.store(true, Ordering::Relaxed);
+    let mut rejected = config.clone();
+    rejected.name = "Must not land".into();
+    rejected.role = bot.config.role.clone();
+    assert_eq!(
+        f.gateway
+            .window_command(BotCommand::Update {
+                request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+                bot_id: bot.id,
+                expected_revision: 2,
+                config: rejected,
+            })
+            .err(),
+        Some(Error::NotAllowed)
+    );
+    f.store.deleted.store(false, Ordering::Relaxed);
+    let pause = BotCommand::Pause {
+        request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+        bot_id: bot.id,
+        expected_revision: 2,
+    };
+    let BotResponse::Bot { bot: paused } = f.gateway.window_command(pause.clone()).unwrap() else {
+        panic!()
+    };
+    assert!(paused.paused);
+    assert_eq!(paused.revision, 3);
+    let BotResponse::Bot { bot: replay } = f.gateway.window_command(update.clone()).unwrap() else {
+        panic!()
+    };
+    assert_eq!(replay, saved);
+    let mut changed = update.clone();
+    if let BotCommand::Update { config, .. } = &mut changed {
+        config.name.push('!');
+    }
+    assert_eq!(
+        f.gateway.window_command(changed).err(),
+        Some(Error::Conflict)
+    );
+    let stale = BotCommand::Update {
+        request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+        bot_id: bot.id,
+        expected_revision: 1,
+        config,
+    };
+    assert_eq!(
+        f.gateway.window_command(stale).err(),
+        Some(Error::RevisionConflict)
+    );
+    let BotResponse::Bot { bot: replay } = f.gateway.window_command(pause).unwrap() else {
+        panic!()
+    };
+    assert_eq!(replay, paused);
+}
+
+#[test]
+fn selected_folder_disappearance_does_not_block_other_settings_and_knowledge_is_independent() {
+    use koru_ai_core::bots::*;
+    let f = Fixture::new();
+    let path = if cfg!(windows) {
+        PathBuf::from(r"C:\project")
+    } else {
+        PathBuf::from("/project")
+    };
+    f.fs.entries.lock().unwrap().insert(path.clone(), true);
+    let mut request = form(&f);
+    if let BotCommand::CreateBotWithRole { folder, .. } = &mut request {
+        *folder = BotFolderChoice::Selected {
+            path: path.to_str().unwrap().into(),
+        };
+    }
+    let bot = creation(f.gateway.window_command(request).unwrap())
+        .bot
+        .unwrap();
+    f.fs.entries.lock().unwrap().remove(&path);
+    let mut config = bot.config.clone();
+    config.name = "Still editable".into();
+    let BotResponse::Bot { bot: saved } = f
+        .gateway
+        .window_command(BotCommand::Update {
+            request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+            bot_id: bot.id,
+            expected_revision: 1,
+            config: config.clone(),
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(saved.config, config);
+    let pages = vec![BotPage {
+        workspace: f.store.home,
+        document: bot.config.role.document,
+    }];
+    let knowledge = BotCommand::SetKnowledge {
+        request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+        bot_id: bot.id,
+        expected_revision: 2,
+        pages: pages.clone(),
+    };
+    let BotResponse::KnowledgeSaved { receipt } =
+        f.gateway.window_command(knowledge.clone()).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(receipt.pages, pages);
+    assert_eq!(receipt.revision, 3);
+    f.store.deleted.store(true, Ordering::Relaxed);
+    let BotResponse::KnowledgeSaved { receipt: again } =
+        f.gateway.window_command(knowledge).unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(again, receipt);
+    let BotResponse::Library { library } = f
+        .gateway
+        .window_command(BotCommand::ReadLibrary { bot_id: bot.id })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(library.role, bot.config.role);
+    assert_eq!(library.knowledge, pages);
+}
+
+#[test]
+fn team_pause_uses_engine_revision_and_preserves_individual_pause() {
+    use koru_ai_core::bots::*;
+    let f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    f.gateway
+        .window_command(BotCommand::Pause {
+            request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+            bot_id: bot.id,
+            expected_revision: 1,
+        })
+        .unwrap();
+    let pause = BotCommand::PauseTeam {
+        request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+        expected_team_revision: 0,
+    };
+    let BotResponse::TeamPause { team } = f.gateway.window_command(pause.clone()).unwrap() else {
+        panic!()
+    };
+    assert!(team.paused);
+    assert_eq!(team.stage, TeamPauseStage::Acknowledged);
+    let BotResponse::TeamPause { team: resumed } = f
+        .gateway
+        .window_command(BotCommand::ResumeTeam {
+            request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+            expected_team_revision: 1,
+        })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(!resumed.paused);
+    assert_eq!(resumed.revision, 2);
+    let BotResponse::TeamPause { team: replay } = f.gateway.window_command(pause).unwrap() else {
+        panic!()
+    };
+    assert_eq!(replay, team);
+    assert_eq!(
+        f.gateway
+            .window_command(BotCommand::PauseTeam {
+                request_id: BotRequestId::from_uuid(Uuid::new_v4()),
+                expected_team_revision: 0,
+            })
+            .err(),
+        Some(Error::TeamRevisionConflict)
+    );
+    let BotResponse::Bot { bot } = f
+        .gateway
+        .window_command(BotCommand::Read { bot_id: bot.id })
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(bot.paused);
+    assert_eq!(bot.revision, 2);
+}
+
+#[test]
 fn existing_form_creates_role_and_bot_without_legacy_database_and_retry_survives_removal() {
     use koru_ai_core::bots::*;
     let f = Fixture::new();

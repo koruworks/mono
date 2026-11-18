@@ -8,6 +8,7 @@ use koru_bots_engine::{
     creation::{self as c, Phase, Record, Step},
 };
 use uuid::Uuid;
+mod management;
 
 fn configured(config: &BotCreationConfig, folder: Option<String>) -> Result<Configuration, Error> {
     config.validate().map_err(authority_error)?;
@@ -572,9 +573,7 @@ impl Gateway {
                     },
                 })
             }
-            // Other window controls are added in the next P1.7 composition
-            // increment; an engine-owned root must never fall back to ai.db.
-            _ => Err(Error::EngineUnavailable),
+            command => self.window_management(owner, command),
         }
     }
 }

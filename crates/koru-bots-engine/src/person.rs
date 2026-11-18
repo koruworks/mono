@@ -156,6 +156,14 @@ pub enum Change {
         #[serde(default)]
         avatar: Option<u8>,
         configuration: Configuration,
+        /// When present, save the Role with the other settings atomically.
+        #[serde(default)]
+        role: Option<Uuid>,
+    },
+    Knowledge {
+        bot: Uuid,
+        revision: u64,
+        knowledge: Vec<Uuid>,
     },
     Library {
         bot: Uuid,

@@ -83,6 +83,7 @@ pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result
             }
         }
         Change::Configure { bot, .. }
+        | Change::Knowledge { bot, .. }
         | Change::Library { bot, .. }
         | Change::Access { bot, .. }
         | Change::Pause { bot, .. }
@@ -104,7 +105,7 @@ fn revision(
 ) -> Result<Bot, Error> {
     let bot = read::bot(c, who, key)?;
     if bot.revision != expected {
-        return Err(Error::Conflict);
+        return Err(Error::RevisionConflict);
     }
     if active && bot.lifecycle != Lifecycle::Active {
         return Err(Error::NotAllowed);
@@ -187,18 +188,34 @@ pub(super) fn apply(
             name: label,
             avatar,
             configuration,
+            role,
         } => {
             let current = revision(&tx, who, *bot, *rev, true)?;
             name(label)?;
             configuration.validate()?;
+            pages(*role, &[], None)?;
             if current.definition.configuration.working_folder != configuration.working_folder {
                 if current.folder_frozen_at_ms.is_some() {
-                    return Err(Error::NotAllowed);
+                    return Err(Error::FolderFrozen);
                 }
             }
             tx.execute(
-                "UPDATE bots SET name=?2,settings=?3,avatar=?4 WHERE id=?1",
-                params![bot.to_string(), label, encode(configuration)?, avatar],
+                "UPDATE bots SET name=?2,settings=?3,avatar=?4,role_page=COALESCE(?5,role_page) WHERE id=?1",
+                params![bot.to_string(), label, encode(configuration)?, avatar, role.map(|id| id.to_string())],
+            )?;
+            updated(&tx, *bot, now)?;
+            value(read::bot(&tx, who, *bot)?)?
+        }
+        Change::Knowledge {
+            bot,
+            revision: rev,
+            knowledge,
+        } => {
+            revision(&tx, who, *bot, *rev, true)?;
+            pages(None, knowledge, None)?;
+            tx.execute(
+                "UPDATE bots SET knowledge_pages=?2 WHERE id=?1",
+                params![bot.to_string(), encode(knowledge)?],
             )?;
             updated(&tx, *bot, now)?;
             value(read::bot(&tx, who, *bot)?)?
@@ -259,7 +276,7 @@ pub(super) fn apply(
         Change::Team { revision, paused } => {
             let prior = read::team(&tx, who)?;
             if prior.revision != *revision {
-                return Err(Error::Conflict);
+                return Err(Error::TeamRevisionConflict);
             }
             if prior.paused != *paused {
                 tx.execute("INSERT INTO team(owner,paused,revision) VALUES (?1,?2,?3) ON CONFLICT(owner) DO UPDATE SET paused=excluded.paused,revision=excluded.revision",params![who.owner,paused,revision+1])?;
@@ -309,7 +326,7 @@ pub(super) fn apply(
         } => {
             let prior = read::thread(&tx, who, *thread)?;
             if prior.revision != *revision {
-                return Err(Error::Conflict);
+                return Err(Error::RevisionConflict);
             }
             if prior.kind == "main" {
                 return Err(Error::NotAllowed);
@@ -333,7 +350,7 @@ pub(super) fn apply(
             name(title)?;
             let prior = read::thread(&tx, who, *thread)?;
             if prior.revision != *revision {
-                return Err(Error::Conflict);
+                return Err(Error::RevisionConflict);
             }
             tx.execute(
                 "UPDATE threads SET title=?2,revision=revision+1 WHERE id=?1",

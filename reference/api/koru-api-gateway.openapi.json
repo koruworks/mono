@@ -8736,6 +8736,13 @@
                 "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "role": {
+                "default": null,
+                "description": "When present, save the Role with the other settings atomically.",
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
               }
             },
             "required": [
@@ -8744,6 +8751,40 @@
               "revision",
               "name",
               "configuration"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "knowledge"
+                ],
+                "type": "string"
+              },
+              "knowledge": {
+                "items": {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "knowledge"
             ],
             "type": "object"
           },

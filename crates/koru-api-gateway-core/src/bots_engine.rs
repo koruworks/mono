@@ -122,6 +122,14 @@ impl Gateway {
             return Err(Error::NotAllowed);
         }
         let owner = self.authority.owner().map_err(authority_error)?;
+        self.execute_owner(owner, command)
+    }
+    /// Only called after first-party authentication and current owner lookup.
+    fn execute_owner(
+        &self,
+        owner: koru_ai_core::bots::BotOwner,
+        command: Command,
+    ) -> Result<Value, Error> {
         let scope = owner.user_scope.to_storage();
         let send = |command| {
             (self.call)(person::Request {
@@ -182,13 +190,38 @@ impl Gateway {
             Command::Change {
                 action:
                     Change::Configure {
+                        bot,
                         configuration,
                         avatar,
+                        role,
                         ..
                     },
                 ..
             } => {
-                self.configuration(configuration, *avatar)?;
+                let current = read_bot(*bot)?;
+                koru_ai_core::bots::validate_avatar(*avatar).map_err(authority_error)?;
+                // A missing existing folder must not prevent fixing a name or
+                // model. Launch revalidates the binding before native work.
+                if current.definition.configuration.working_folder != configuration.working_folder {
+                    self.configuration(configuration, *avatar)?;
+                }
+                let home = current.definition.access.workspace;
+                workspaces.push(home);
+                pages.extend(role.iter().map(|id| BotPage {
+                    workspace: home,
+                    document: koru_ai_core::DocumentId::from_uuid(*id),
+                }));
+            }
+            Command::Change {
+                action: Change::Knowledge { bot, knowledge, .. },
+                ..
+            } => {
+                let home = read_bot(*bot)?.definition.access.workspace;
+                workspaces.push(home);
+                pages.extend(knowledge.iter().map(|id| BotPage {
+                    workspace: home,
+                    document: koru_ai_core::DocumentId::from_uuid(*id),
+                }));
             }
             Command::Change {
                 action:
@@ -332,6 +365,11 @@ fn window_failed(error: Error) -> Response {
             (StatusCode::BAD_REQUEST, BotError::Invalid.code())
         }
         Error::Conflict => (StatusCode::CONFLICT, BotError::Conflict.code()),
+        Error::RevisionConflict => (StatusCode::CONFLICT, BotError::RevisionConflict.code()),
+        Error::TeamRevisionConflict => {
+            (StatusCode::CONFLICT, BotError::TeamRevisionConflict.code())
+        }
+        Error::FolderFrozen => (StatusCode::CONFLICT, BotError::FolderLocked.code()),
         Error::StorageUnavailable => (StatusCode::INTERNAL_SERVER_ERROR, BotError::Storage.code()),
         _ => (StatusCode::SERVICE_UNAVAILABLE, "bot_unavailable"),
     };

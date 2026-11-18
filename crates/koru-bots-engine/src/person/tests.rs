@@ -90,7 +90,7 @@ fn create_and_change_retries_are_immutable_and_cross_owner_requests_fail() {
     assert_eq!(first.answer["revision"], 2);
     assert_eq!(
         change::apply(&mut f.db, &f.who, Uuid::new_v4(), &action, 3).err(),
-        Some(Error::Conflict)
+        Some(Error::RevisionConflict)
     );
     let other = Person {
         owner: "another-owner".into(),
@@ -250,6 +250,7 @@ fn failed_configuration_transaction_rolls_back_and_setup_retry_is_exact() {
         revision: 1,
         name: "new".into(),
         avatar: None,
+        role: Some(Uuid::new_v4()),
         configuration: f.bot.definition.configuration.clone(),
     };
     assert_eq!(
@@ -258,6 +259,7 @@ fn failed_configuration_transaction_rolls_back_and_setup_retry_is_exact() {
     );
     let current = read::bot(&f.db.connection, &f.who, f.bot.id).unwrap();
     assert_eq!(current.definition.name, "Scout");
+    assert_eq!(current.definition.role, f.bot.definition.role);
     assert_eq!(current.revision, 1);
     let turn = Uuid::new_v4();
     f.db.connection.execute("INSERT INTO turns(id,thread,bot,grant,state,generation,details,created_at_ms) VALUES (?1,?2,?3,x'7b7d','needs_you',1,?4,1)",params![turn.to_string(),f.bot.main_thread.to_string(),f.bot.id.to_string(),br#"{"setup_failure":"configuration"}"#.as_slice()]).unwrap();
@@ -296,6 +298,7 @@ fn selected_folder_freezes_on_accepted_input_but_model_and_face_stay_editable() 
         revision: 1,
         name: "Scout".into(),
         avatar: Some(7),
+        role: None,
         configuration: config.clone(),
     };
     let value = f.change(action);
@@ -308,11 +311,12 @@ fn selected_folder_freezes_on_accepted_input_but_model_and_face_stay_editable() 
         revision: 2,
         name: "Scout".into(),
         avatar: Some(8),
+        role: None,
         configuration: config.clone(),
     };
     assert_eq!(
         change::apply(&mut f.db, &f.who, Uuid::new_v4(), &action, 8).err(),
-        Some(Error::NotAllowed)
+        Some(Error::FolderFrozen)
     );
     config.working_folder = Some(path.into());
     let action = Change::Configure {
@@ -320,6 +324,7 @@ fn selected_folder_freezes_on_accepted_input_but_model_and_face_stay_editable() 
         revision: 2,
         name: "Scout".into(),
         avatar: Some(8),
+        role: None,
         configuration: config,
     };
     assert_eq!(f.change(action)["definition"]["avatar"], 8);
@@ -333,6 +338,7 @@ fn window_policy_revision_changes_only_with_access_and_freeze_time_is_durable() 
         revision: 1,
         name: "renamed".into(),
         avatar: Some(5),
+        role: None,
         configuration: f.bot.definition.configuration.clone(),
     });
     assert_eq!(changed["revision"], 2);
