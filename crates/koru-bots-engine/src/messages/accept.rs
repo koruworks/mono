@@ -2,6 +2,29 @@
 use super::*;
 
 impl Database {
+    /// Read the exact receipt before gateway revalidation of new-send effects.
+    /// Current message authority still applies; changed/expired ids refuse.
+    pub fn message_receipt(
+        &self,
+        person: &Person,
+        envelope: &Envelope,
+    ) -> Result<Option<Receipt<Accepted>>, Error> {
+        authorize_bot(&self.connection, person, envelope.to)?;
+        if let Some(thread) = envelope.thread {
+            authorize_thread(&self.connection, person, thread)?;
+        }
+        let digest = receipts::digest("accept", envelope)?;
+        Ok(receipts::find(
+            &self.connection,
+            &person.receipt_subject(),
+            envelope.id,
+            &digest,
+        )?
+        .map(|answer| Receipt {
+            answer,
+            replayed: true,
+        }))
+    }
     /// Acceptance is one transaction. The caller has a durable receipt only
     /// after its message, inbox row and obligation have all committed.
     pub fn accept_message(

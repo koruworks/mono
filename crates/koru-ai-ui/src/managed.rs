@@ -371,7 +371,19 @@ impl State {
             sources: vec![],
             reasoning_control: None,
             agent_commands: None,
-            attachments: vec![],
+            attachments: self
+                .messages
+                .values()
+                .flat_map(|message| {
+                    message.content.attachments.iter().filter_map(move |value| {
+                        serde_json::from_value::<koru_ai_core::ChatAttachment>(value.clone())
+                            .ok()
+                            .filter(|attachment| {
+                                attachment.message_id.map(|id| id.as_uuid()) == Some(message.id)
+                            })
+                    })
+                })
+                .collect(),
         }
     }
 

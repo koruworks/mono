@@ -2,6 +2,7 @@
 use super::*;
 use crate::bots_engine::attachments::Operation;
 use koru_ai_core::{AttachmentSource, ChatAttachmentId, ChatId, StoreContextPort};
+use koru_ai_wire::bot_threads::{Command as C, Response as R};
 struct Context;
 impl StoreContextPort for Context {
     fn resolve_document(
@@ -179,4 +180,138 @@ fn workspace_copy_rechecks_scope_before_reading_bytes() {
         run(&f, bot.main_chat, Operation::Workspace(forbidden)).unwrap_err(),
         Error::NotAllowed
     );
+}
+
+#[test]
+fn uploaded_files_bind_to_real_messages_replay_and_recall_without_legacy_state() {
+    let f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let id = ChatAttachmentId::new();
+    run(&f, bot.main_chat, upload(id)).unwrap();
+    let command = C::Send {
+        id: Uuid::new_v4(),
+        bot: bot.id,
+        thread: bot.main_chat,
+        body: "file".into(),
+        in_reply_to: None,
+        attachments: vec![serde_json::json!(id.as_uuid())],
+        references: vec![],
+    };
+    let R::Accepted {
+        message, replayed, ..
+    } = f
+        .gateway
+        .thread_command(&principal(), command.clone(), |_| Ok(()))
+        .ok()
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert!(!replayed);
+    let R::Accepted {
+        message: again,
+        replayed,
+        ..
+    } = f
+        .gateway
+        .thread_command(&principal(), command, |_| Ok(()))
+        .ok()
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(message, again);
+    assert!(replayed);
+    assert_eq!(
+        run(&f, bot.main_chat, Operation::Remove(id)).unwrap_err(),
+        Error::NotAllowed
+    );
+    assert!(
+        run(
+            &f,
+            bot.main_chat,
+            Operation::Restage {
+                id,
+                new_id: ChatAttachmentId::new()
+            }
+        )
+        .unwrap()
+        .is_some()
+    );
+    let R::History { messages, .. } = f
+        .gateway
+        .thread_command(
+            &principal(),
+            C::History {
+                thread: bot.main_chat,
+                before: None,
+            },
+            |_| Ok(()),
+        )
+        .ok()
+        .unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(messages.len(), 1);
+    let attachment: koru_ai_core::ChatAttachment =
+        serde_json::from_value(messages[0].content.attachments[0].clone()).unwrap();
+    assert_eq!(attachment.id, id);
+    assert_eq!(attachment.message_id.unwrap().as_uuid(), message);
+    assert_eq!(attachment.ordinal, Some(0));
+}
+
+#[test]
+fn workspace_source_is_fresh_for_new_sends_but_cannot_revoke_a_retained_receipt() {
+    let mut f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let source = *f.store.origins.lock().unwrap().keys().next().unwrap();
+    let first = ChatAttachmentId::new();
+    let second = ChatAttachmentId::new();
+    for id in [first, second] {
+        run(
+            &f,
+            bot.main_chat,
+            Operation::Workspace(koru_ai_wire::FromWorkspaceAttachmentRequest {
+                id,
+                workspace: f.store.home,
+                document: source,
+            }),
+        )
+        .unwrap();
+    }
+    let command = |id| C::Send {
+        id: Uuid::new_v4(),
+        bot: bot.id,
+        thread: bot.main_chat,
+        body: "workspace file".into(),
+        in_reply_to: None,
+        attachments: vec![serde_json::json!(id)],
+        references: vec![],
+    };
+    let sent = command(first.as_uuid());
+    assert!(
+        f.gateway
+            .thread_command(&principal(), sent.clone(), |_| Ok(()))
+            .is_ok()
+    );
+    f.store.deleted.store(true, Ordering::Relaxed);
+    assert!(matches!(
+        f.gateway
+            .thread_command(&principal(), command(second.as_uuid()), |_| Ok(())),
+        Err(crate::bots_engine::window::readiness::Refusal::Engine(
+            Error::NotAllowed
+        ))
+    ));
+    f.gateway.files = Arc::new(crate::bots_engine::attachments::files::tests::Memory::new(
+        &f.gateway.root,
+    ));
+    assert!(matches!(
+        f.gateway.thread_command(&principal(), sent, |_| Ok(())),
+        Ok(R::Accepted { replayed: true, .. })
+    ));
 }

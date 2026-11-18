@@ -81,6 +81,9 @@ impl std::fmt::Debug for Request {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Command {
+    SendReceipt {
+        envelope: crate::messages::Envelope,
+    },
     /// Routing distinguishes an absent ordinary chat from an engine thread.
     /// An existing thread with another owner is refused, never a fallback.
     Probe {
@@ -98,6 +101,7 @@ pub enum Command {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
+    Receipt(Option<crate::messages::Receipt<crate::messages::Accepted>>),
     Thread(bool),
     Record(Option<Record>),
     Removed,
@@ -116,6 +120,9 @@ pub fn handle(db: &mut Database, request: Request) -> Result<Reply, Error> {
         sender: request.sender,
     };
     match request.command {
+        Command::SendReceipt { envelope } => {
+            db.message_receipt(&who, &envelope).map(Reply::Receipt)
+        }
         Command::Probe { thread } => {
             let exists: bool = db.connection.query_row(
                 "SELECT EXISTS(SELECT 1 FROM threads WHERE id=?1)",

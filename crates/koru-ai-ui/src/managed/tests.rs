@@ -3,6 +3,36 @@ use super::*;
 use koru_ai_core::bots::{BotChatLabel, BotChatPurpose, BotConversation, BotId};
 use koru_ai_core::{AiProviderId, Chat, ModelSelection, ReasoningChoice};
 
+#[test]
+fn saved_attachment_tiles_keep_the_accepted_message_and_order_on_refresh() {
+    let mut state = State::new(&mut opened(), Instant::now());
+    let mut saved = message(1, Uuid::new_v4());
+    saved.sender = "person:synthetic".into();
+    let attachment = koru_ai_core::ChatAttachment {
+        id: koru_ai_core::ChatAttachmentId::new(),
+        message_id: Some(MessageId::from_uuid(saved.id)),
+        ordinal: Some(0),
+        kind: koru_ai_core::AttachmentKind::File,
+        source: koru_ai_core::AttachmentSource::Drop,
+        file_name: "fixture.txt".into(),
+        media_type: "text/plain".into(),
+        byte_count: 5,
+        dimensions: None,
+        origin: None,
+        reference_path: None,
+        created_at: Timestamp::from_millis(7),
+    };
+    saved
+        .content
+        .attachments
+        .push(serde_json::to_value(&attachment).unwrap());
+    assert!(state.ingest(saved.clone()));
+    assert_eq!(state.transcript().attachments, vec![attachment.clone()]);
+    assert!(!state.ingest(saved));
+    state.ingest(message(2, Uuid::new_v4()));
+    assert_eq!(state.transcript().attachments, vec![attachment]);
+}
+
 pub(crate) fn opened() -> Opened {
     let bot = BotId::from_uuid(Uuid::new_v4());
     let now = Timestamp::from_millis(7);

@@ -61,7 +61,6 @@ impl ChatSurface {
                 // These inputs need their engine carrier before they can be
                 // admitted. Never silently discard part of a person's send.
                 if request.chat_id != thread
-                    || !request.attachment_ids.is_empty()
                     || request.answers.is_some()
                     || !request.skills.is_empty()
                     || request.system_prompt_override.is_some()
@@ -83,7 +82,11 @@ impl ChatSurface {
                     thread,
                     body: request.markdown,
                     in_reply_to: None,
-                    attachments: vec![],
+                    attachments: request
+                        .attachment_ids
+                        .into_iter()
+                        .map(|id| serde_json::json!(id.as_uuid()))
+                        .collect(),
                     references,
                 }
             }

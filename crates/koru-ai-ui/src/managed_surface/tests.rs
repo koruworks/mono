@@ -4,6 +4,45 @@ use crate::managed::tests::opened;
 use crate::reader::Reader;
 use std::sync::mpsc::{Receiver, SyncSender};
 
+#[test]
+fn attachment_send_keeps_ids_and_receipt_identity_on_the_engine_carrier() {
+    let (mut surface, _, _) = surface();
+    let thread = surface.managed.as_ref().unwrap().thread();
+    let operation_id = uuid::Uuid::new_v4();
+    let attachment = koru_ai_core::ChatAttachmentId::new();
+    let request = koru_ai_wire::SendTurnRequest {
+        destination_workspace: None,
+        operation_id,
+        chat_id: thread,
+        surface: SURFACE,
+        markdown: "with a file".into(),
+        explicit_refs: vec![],
+        reasoning_override: None,
+        web_search: false,
+        system_prompt_override: None,
+        replace_pinned_documents: true,
+        attachment_ids: vec![attachment],
+        answers: None,
+        skills: vec![],
+    };
+    let Some(Command::Engine {
+        command:
+            C::Send {
+                id,
+                attachments,
+                thread: sent_thread,
+                ..
+            },
+        ..
+    }) = surface.managed_command(Command::Send(request))
+    else {
+        panic!("engine send expected")
+    };
+    assert_eq!(id, operation_id);
+    assert_eq!(sent_thread, thread);
+    assert_eq!(attachments, vec![serde_json::json!(attachment.as_uuid())]);
+}
+
 fn surface() -> (ChatSurface, Receiver<Command>, SyncSender<Update>) {
     let opened = opened();
     let mut surface = ChatSurface::new_owned_at(None);

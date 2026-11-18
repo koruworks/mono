@@ -188,6 +188,7 @@ impl Gateway {
         };
         let mut workspaces = vec![];
         let mut pages = vec![];
+        let mut accepted_send = None;
         match &command {
             Command::Change {
                 action: Change::ConversationSettings { bot, .. },
@@ -326,12 +327,11 @@ impl Gateway {
                 workspaces.push(read_bot(*bot)?.definition.access.workspace);
             }
             Command::Send { envelope } => {
-                // The attachment owner is composed with the shared composer in
-                // P1.7. Until then reject, never accept files that cannot travel.
+                let home = read_bot(envelope.to)?.definition.access.workspace;
                 if !envelope.attachments.is_empty() {
-                    return Err(Error::NotAllowed);
+                    accepted_send = self.send_attachments(&scope, envelope, home, &mut pages)?;
                 }
-                workspaces.push(read_bot(envelope.to)?.definition.access.workspace);
+                workspaces.push(home);
             }
             _ => {}
         }
@@ -362,6 +362,9 @@ impl Gateway {
                     .as_ref()
                     .map_err(|error| authority_error(*error))?;
             }
+        }
+        if let Some(receipt) = accepted_send {
+            return Ok(receipt);
         }
         send(command)
     }

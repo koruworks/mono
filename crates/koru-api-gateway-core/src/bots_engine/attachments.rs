@@ -31,6 +31,51 @@ pub(crate) enum Operation {
     Workspace(koru_ai_wire::FromWorkspaceAttachmentRequest),
 }
 impl Gateway {
+    pub(super) fn send_attachments(
+        &self,
+        scope: &str,
+        envelope: &koru_bots_engine::messages::Envelope,
+        home: koru_ai_core::WorkspaceId,
+        pages: &mut Vec<BotPage>,
+    ) -> Result<Option<Value>, Error> {
+        match self.attachment_call(
+            scope,
+            Control::SendReceipt {
+                envelope: envelope.clone(),
+            },
+        )? {
+            Reply::Receipt(Some(receipt)) => {
+                return serde_json::to_value(receipt)
+                    .map(Some)
+                    .map_err(|_| Error::EngineUnavailable);
+            }
+            Reply::Receipt(None) => (),
+            _ => return Err(Error::EngineUnavailable),
+        }
+        let thread = envelope.thread.ok_or(Error::InvalidRequest)?;
+        if envelope.attachments.len() > koru_ai_core::attachments::MAX_ATTACHMENTS_PER_MESSAGE {
+            return Err(Error::InvalidRequest);
+        }
+        for value in &envelope.attachments {
+            let id: Uuid =
+                serde_json::from_value(value.clone()).map_err(|_| Error::InvalidRequest)?;
+            let record = self.attachment_record(scope, thread, ChatAttachmentId::from_uuid(id))?;
+            if record.attachment.message_id.is_some() {
+                return Err(Error::NotAllowed);
+            }
+            if let Some(origin) = &record.attachment.origin {
+                if origin.workspace_id != home {
+                    return Err(Error::NotAllowed);
+                }
+                pages.push(BotPage {
+                    workspace: home,
+                    document: origin.document_id,
+                });
+            }
+            files::input_file(self.files.as_ref(), &self.root, &record)?;
+        }
+        Ok(None)
+    }
     pub(crate) fn input_files(
         &self,
         grant: &koru_bots_engine::authority::input::Grant,
@@ -288,6 +333,7 @@ impl Gateway {
 fn reference(chat: ChatId, request: ReferenceAttachmentRequest) -> Result<Record, Error> {
     let ReferenceAttachmentRequest { id, kind, path } = request;
     if !matches!(kind, AttachmentKind::File | AttachmentKind::Folder)
+        || !koru_bots_engine::workspace::input::valid_path(&path)
         || path.len() > 4096
         || path.chars().any(|c| matches!(c, '\0' | '\r' | '\n'))
         || !std::path::Path::new(&path).is_absolute()
