@@ -33,6 +33,7 @@ struct Boundary {
     issued: AtomicUsize,
     offers: Mutex<Vec<Delivery>>,
     replies: AtomicUsize,
+    publish_attempts: AtomicUsize,
 }
 impl Port for Boundary {
     fn context(&self, _: Uuid) -> Result<sessions::Context, Error> {
@@ -111,6 +112,23 @@ impl Port for Boundary {
     fn retired(&self, turn: Turn) -> Result<(), Error> {
         self.engine.lock().unwrap().interrupt_turn(turn)
     }
+    fn publish(&self, turn: Turn, command: Uuid, body: String) -> Result<(), Error> {
+        // Deliberately lose the first publication before it reaches the engine.
+        // Native resume must recover that unfinished work without resending it.
+        if self.publish_attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+            return Err(Error::StorageUnavailable);
+        }
+        self.engine.lock().unwrap().publish_reply(
+            &messages::Publish {
+                turn,
+                command,
+                body,
+                outputs: vec![],
+            },
+            3,
+        )?;
+        Ok(())
+    }
 }
 
 fn main() {
@@ -167,6 +185,7 @@ fn main() {
         issued: AtomicUsize::new(0),
         offers: Mutex::new(vec![]),
         replies: AtomicUsize::new(0),
+        publish_attempts: AtomicUsize::new(0),
     });
     let mut route = AcpRoute::claude_code();
     route.session_new_meta = Some(serde_json::json!({"claudeCode":{"options":{
@@ -205,7 +224,14 @@ fn main() {
         };
         assert!(done.retired, "provider retirement was not confirmed");
         assert!(
-            done.result.is_ok(),
+            if pass == 0 {
+                matches!(
+                    done.result,
+                    Err(sessions::Failure::Engine(Error::StorageUnavailable))
+                )
+            } else {
+                done.result.is_ok()
+            },
             "session failed with a content-free code: {:?}",
             done.result
         );
@@ -227,6 +253,23 @@ fn main() {
         );
     }
     assert_eq!(boundary.issued.load(Ordering::SeqCst), 2);
+    assert!(
+        boundary
+            .engine
+            .lock()
+            .unwrap()
+            .claim_messages(
+                bot,
+                thread,
+                worker,
+                Uuid::new_v4(),
+                Resume::Rebuilt,
+                sessions::MAX_INPUT_BYTES,
+                4
+            )
+            .unwrap()
+            .is_none()
+    );
     println!(
         "PASS persisted native resume and exact input proof through the worker session driver"
     );

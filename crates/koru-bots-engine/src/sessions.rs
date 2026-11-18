@@ -65,9 +65,13 @@ pub trait Port: Send + Sync + 'static {
     ) -> Result<Option<Delivery>, Error>;
     fn accepted(&self, turn: Turn, delivery: Uuid) -> Result<(), Error>;
     fn unknown(&self, turn: Turn, delivery: Uuid) -> Result<(), Error>;
-    /// Observations, not Publish. A provider's final text cannot complete an
-    /// obligation: the tool boundary's explicit Publish transaction does that.
+    /// Observations only. Completion separately invokes the Publish transaction.
     fn event(&self, turn: Turn, event: &AgentEvent) -> Result<(), Error>;
+    /// Publish the completed reply together with this turn's recorded outputs.
+    /// Implementations obtain outputs from bound operations, never provider
+    /// prose, and retain this command and payload across uncertain retries.
+    /// Success means the engine's atomic Publish transaction acknowledged it.
+    fn publish(&self, turn: Turn, command: Uuid, body: String) -> Result<(), Error>;
     /// Called only after confirmed provider shutdown. Preserve an already
     /// published answer; an unfinished turn remains recoverable.
     fn retired(&self, turn: Turn) -> Result<(), Error>;

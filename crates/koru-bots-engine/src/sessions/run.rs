@@ -20,18 +20,12 @@ pub(super) fn run(
         .lock()
         .map_err(|_| Error::StorageUnavailable)?
         .latest(start.thread, start.request.provider.as_str())?;
+    // Saved provider state is an optional optimization. Invalid or obsolete
+    // state rebuilds from engine history; database/context read failures above
+    // still fail closed rather than pretending that current content is empty.
     let previous = previous
-        .map(|row| {
-            serde_json::from_slice::<Saved>(&row.resume_state)
-                .map_err(|_| Error::StorageUnavailable)
-        })
-        .transpose()?;
-    if previous
-        .as_ref()
-        .is_some_and(|saved| saved.version != 1 || saved.inputs.len() > MAX_SAVED_INPUTS)
-    {
-        return Err(Error::StorageUnavailable.into());
-    }
+        .and_then(|row| serde_json::from_slice::<Saved>(&row.resume_state).ok())
+        .filter(|saved| saved.version == 1 && saved.inputs.len() <= MAX_SAVED_INPUTS);
     let token = previous.as_ref().and_then(|saved| saved.token.clone());
     let (mut provider, session, resumed) = match launch(&start, token.clone()) {
         Ok((provider, session)) => (provider, session, token.is_some()),
@@ -235,6 +229,7 @@ fn observe(
         .parse()
         .map_err(|_| Error::InvalidRequest)?;
     let mut accepted = false;
+    let mut reply = String::new();
     loop {
         if stop.load(Ordering::Acquire) {
             control.cancel(id)?;
@@ -293,7 +288,16 @@ fn observe(
         start.port.event(turn, &event)?;
         journal(database, turn.id, JournalEntry::EngineDelivery(&bytes))?;
         match event {
-            AgentEvent::TurnCompleted { .. } => return Ok(()),
+            AgentEvent::MessageDelta { text, .. } => {
+                if reply.len().saturating_add(text.len()) > koru_bot_client_wire::MAX_FRAME_BYTES {
+                    return Err(Error::InvalidRequest.into());
+                }
+                reply.push_str(&text);
+            }
+            AgentEvent::TurnCompleted { .. } => {
+                start.port.publish(turn, Uuid::new_v4(), reply)?;
+                return Ok(());
+            }
             AgentEvent::TurnCancelled { .. } | AgentEvent::TurnFailed { .. } => {
                 if !accepted {
                     start.port.unknown(turn, delivery.id)?;

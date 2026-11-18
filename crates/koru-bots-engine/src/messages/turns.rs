@@ -80,7 +80,7 @@ impl Database {
             return Ok(None);
         }
         expire(&tx, now)?;
-        let owed:Vec<(String,String)>=tx.prepare("SELECT o.id,o.message FROM obligations o JOIN inbox i ON i.id=o.id JOIN messages m ON m.id=o.message WHERE o.bot=?1 AND o.thread=?2 AND o.state IN ('owed','delivered') AND (json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?3) ORDER BY m.sequence,o.id LIMIT ?4")?.query_map(params![bot.to_string(),thread.to_string(),now,limit as u64],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
+        let owed:Vec<(String,String)>=tx.prepare("SELECT o.id,o.message FROM obligations o JOIN inbox i ON i.id=o.id JOIN messages m ON m.id=o.message WHERE o.bot=?1 AND o.thread=?2 AND o.state IN ('owed','delivered') AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?3) ORDER BY m.sequence,o.id LIMIT ?4")?.query_map(params![bot.to_string(),thread.to_string(),now,limit as u64],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
         if owed.is_empty() {
             tx.commit()?;
             return Ok(None);
@@ -120,22 +120,23 @@ impl Database {
         let mut carried = vec![];
         let mut fresh = vec![];
         for (obligation, message) in &owed {
-            let previous:Option<(String,String,Vec<u8>)>=tx.query_row("SELECT d.id,d.state,d.payload FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery JOIN turns t ON t.id=d.turn WHERE x.obligation=?1 ORDER BY t.generation DESC LIMIT 1",[obligation],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?;
-            let proven = if let Some((prior, state, payload)) = previous {
-                delivery.continuation = true;
-                let prior = id(prior)?;
-                if found.contains(&prior) {
-                    delivery.resume_accepted.push(prior);
-                    true
-                } else {
-                    delivery.uncertain |= matches!(resume, Resume::Resumed { .. })
-                        || matches!(state.as_str(), "offered" | "unknown")
-                        || decode::<Delivery>(&payload)?.uncertain;
-                    false
-                }
-            } else {
-                false
-            };
+            // A carried delivery is an engine record, not another provider
+            // input. Any original input retained by this session can prove the
+            // obligation, even after several interrupted resumes.
+            let previous:Option<(String,Vec<u8>)>=tx.query_row("SELECT d.state,d.payload FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery JOIN turns t ON t.id=d.turn WHERE x.obligation=?1 ORDER BY t.generation DESC,d.id LIMIT 1",[obligation],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+            delivery.continuation |= previous.is_some();
+            // Join the small proof set rather than loading every historical
+            // delivery payload again on each resume.
+            let proven_ids:Vec<String>=tx.prepare("SELECT x.delivery FROM delivery_obligations x JOIN json_each(CAST(?2 AS TEXT)) f ON f.value=x.delivery WHERE x.obligation=?1")?.query_map(params![obligation,encode(&found)?],|r|r.get(0))?.collect::<Result<_,_>>()?;
+            let proven = !proven_ids.is_empty();
+            for prior in proven_ids {
+                delivery.resume_accepted.push(id(prior)?);
+            }
+            if !proven && let Some((state, payload)) = &previous {
+                delivery.uncertain |= matches!(resume, Resume::Resumed { .. })
+                    || matches!(state.as_str(), "offered" | "unknown")
+                    || decode::<Delivery>(payload)?.uncertain;
+            }
             if proven {
                 carried.push(obligation.clone());
             } else {
@@ -168,6 +169,9 @@ impl Database {
         }
         delivery.resume_accepted.sort();
         delivery.resume_accepted.dedup();
+        if matches!(resume, Resume::Resumed { .. }) {
+            reconcile_deliveries(&tx, bot, thread, &found)?;
+        }
         let read_point: u64 = if matches!(resume, Resume::Rebuilt) {
             0
         } else {
@@ -299,10 +303,34 @@ impl Database {
 fn expire(connection: &rusqlite::Connection, now: i64) -> Result<usize, Error> {
     // A bounded batch; claim independently excludes expired work even if an
     // older backlog still awaits this maintenance pass.
-    let ids:Vec<String>=connection.prepare("SELECT o.id FROM obligations o JOIN messages m ON m.id=o.message WHERE o.state IN ('owed','delivered') AND json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')<?1 ORDER BY o.accepted_at_ms,o.id LIMIT 64")?.query_map([now],|r|r.get(0))?.collect::<Result<_,_>>()?;
+    let ids:Vec<String>=connection.prepare("SELECT o.id FROM obligations o JOIN messages m ON m.id=o.message WHERE o.state='owed' AND json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')<?1 ORDER BY o.accepted_at_ms,o.id LIMIT 64")?.query_map([now],|r|r.get(0))?.collect::<Result<_,_>>()?;
     for id in &ids {
         connection.execute("UPDATE obligations SET state='expired' WHERE id=?1", [id])?;
         connection.execute("DELETE FROM inbox WHERE id=?1", [id])?;
     }
     Ok(ids.len())
+}
+
+fn reconcile_deliveries(
+    connection: &rusqlite::Connection,
+    bot: Uuid,
+    thread: Uuid,
+    found: &BTreeSet<Uuid>,
+) -> Result<(), Error> {
+    let proof = encode(found)?;
+    connection.execute(
+        "UPDATE deliveries SET state=CASE WHEN id IN (SELECT value FROM json_each(CAST(?3 AS TEXT))) THEN 'accepted' ELSE 'unknown' END
+         WHERE turn IN (SELECT id FROM turns WHERE bot=?1 AND thread=?2) AND EXISTS(
+           SELECT 1 FROM delivery_obligations x JOIN obligations o ON o.id=x.obligation
+           WHERE x.delivery=deliveries.id AND o.state IN ('owed','delivered'))",
+        params![bot.to_string(),thread.to_string(),proof],
+    )?;
+    connection.execute(
+        "UPDATE participants SET read_sequence=MAX(read_sequence,COALESCE((
+           SELECT MAX(d.history_boundary) FROM deliveries d JOIN turns t ON t.id=d.turn
+           WHERE t.bot=?1 AND t.thread=?2 AND d.id IN (SELECT value FROM json_each(CAST(?3 AS TEXT)))
+         ),0)) WHERE thread=?2 AND participant=?1 AND kind='bot'",
+        params![bot.to_string(),thread.to_string(),proof],
+    )?;
+    Ok(())
 }

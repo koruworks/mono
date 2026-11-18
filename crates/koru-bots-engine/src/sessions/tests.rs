@@ -26,6 +26,7 @@ struct Plan {
 struct Records {
     plans: VecDeque<Plan>,
     inputs: Vec<String>,
+    histories: std::collections::BTreeMap<String, Vec<[u8; 32]>>,
     credentials: Vec<String>,
     starts: Vec<bool>,
     stopped: usize,
@@ -48,16 +49,12 @@ impl ManagedProviderFactory for Factory {
                 .into(),
         );
         let plan = records.plans.pop_front().unwrap_or_default();
-        let hashes = records
-            .inputs
-            .iter()
-            .map(|input| *blake3::hash(input.as_bytes()).as_bytes())
-            .collect();
         Ok(ManagedProvider {
             control: Box::new(Agent {
                 records: self.0.clone(),
                 plan,
-                hashes,
+                hashes: vec![],
+                history: Uuid::new_v4().to_string(),
                 events: VecDeque::new(),
                 caps: None,
             }),
@@ -69,6 +66,7 @@ struct Agent {
     records: Arc<Mutex<Records>>,
     plan: Plan,
     hashes: Vec<[u8; 32]>,
+    history: String,
     events: VecDeque<AgentEvent>,
     caps: Option<AgentCapabilities>,
 }
@@ -89,8 +87,16 @@ impl AgentControl for Agent {
         if start.resume.is_some() && self.plan.fail_resume {
             return Err(failure());
         }
-        if start.resume.is_none() {
-            self.hashes.clear();
+        if let Some(token) = &start.resume {
+            self.history = token.as_str().into();
+            self.hashes = self
+                .records
+                .lock()
+                .unwrap()
+                .histories
+                .get(&self.history)
+                .cloned()
+                .unwrap_or_default();
         }
         let caps = AgentCapabilities {
             provider: "scripted".parse().unwrap(),
@@ -106,7 +112,15 @@ impl AgentControl for Agent {
         self.caps.as_ref()
     }
     fn submit(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
-        self.records.lock().unwrap().inputs.push(input.text);
+        {
+            let mut records = self.records.lock().unwrap();
+            records
+                .histories
+                .entry(self.history.clone())
+                .or_default()
+                .push(*blake3::hash(input.text.as_bytes()).as_bytes());
+            records.inputs.push(input.text);
+        }
         self.events.push_back(AgentEvent::TurnStarted {
             turn_id: input.turn_id,
         });
@@ -145,7 +159,7 @@ impl AgentControl for Agent {
         Default::default()
     }
     fn resume_token(&self) -> Option<ProviderResumeToken> {
-        (!self.plan.no_resume).then(|| "scripted-state".parse().unwrap())
+        (!self.plan.no_resume).then(|| self.history.parse().unwrap())
     }
     fn replayed_input_hashes(&self) -> &[[u8; 32]] {
         &self.hashes
@@ -168,6 +182,7 @@ struct TestPort {
     offers: Mutex<Vec<Delivery>>,
     events: Mutex<Vec<AgentEvent>>,
     issued: Mutex<std::collections::BTreeMap<Uuid, Uuid>>,
+    fail_publish: AtomicBool,
 }
 impl Port for TestPort {
     fn context(&self, _: Uuid) -> Result<Context, Error> {
@@ -239,6 +254,21 @@ impl Port for TestPort {
         self.events.lock().unwrap().push(event.clone());
         Ok(())
     }
+    fn publish(&self, turn: Turn, command: Uuid, body: String) -> Result<(), Error> {
+        if self.fail_publish.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(Error::StorageUnavailable);
+        }
+        self.db.lock().unwrap().publish_reply(
+            &crate::messages::Publish {
+                command,
+                turn,
+                body,
+                outputs: vec![],
+            },
+            11,
+        )?;
+        Ok(())
+    }
     fn retired(&self, turn: Turn) -> Result<(), Error> {
         self.db.lock().unwrap().interrupt_turn(turn)
     }
@@ -266,6 +296,7 @@ impl Fixture {
                 offers: Mutex::new(vec![]),
                 events: Mutex::new(vec![]),
                 issued: Mutex::new(Default::default()),
+                fail_publish: AtomicBool::new(false),
             }),
             records: Arc::new(Mutex::new(Records::default())),
             database: Arc::new(Mutex::new(BotDatabase::in_memory().unwrap())),
@@ -345,7 +376,7 @@ fn lost_acceptance_is_reconciled_from_exact_replay_without_resending_work() {
     assert_eq!(input["delivery"]["resume_accepted"][0], first.to_string());
     assert_eq!(input["context"], serde_json::Value::Null);
     assert_eq!(f.records.lock().unwrap().starts, vec![false, true]);
-    // Provider output is activity, never Publish. The obligation is still owed.
+    // Completion publishes before retirement; the obligation is answered.
     assert_eq!(
         f.port
             .db
@@ -358,7 +389,7 @@ fn lost_acceptance_is_reconciled_from_exact_replay_without_resending_work() {
                 |r| r.get::<_, u64>(0)
             )
             .unwrap(),
-        0
+        1
     );
     assert_eq!(
         f.port
@@ -369,6 +400,12 @@ fn lost_acceptance_is_reconciled_from_exact_replay_without_resending_work() {
             .filter(|e| matches!(e, AgentEvent::MessageDelta { .. }))
             .count(),
         1
+    );
+    f.run().unwrap();
+    assert_eq!(
+        f.records.lock().unwrap().inputs.len(),
+        2,
+        "answered work must not be claimed again"
     );
 }
 
@@ -382,6 +419,7 @@ fn missing_input_replay_resends_current_context_as_well_as_owed_work() {
     assert!(f.run().is_err());
     // The journal was saved, but the provider never retained this input.
     f.records.lock().unwrap().inputs.clear();
+    f.records.lock().unwrap().histories.clear();
     f.run().unwrap();
     assert_eq!(f.input(0)["context"]["role"]["text"], "current role");
     assert_eq!(f.input(0)["delivery"]["work"].as_array().unwrap().len(), 1);
@@ -454,7 +492,11 @@ fn two_conversations_have_independent_sessions_and_retirement() {
 #[test]
 fn failed_resume_retires_first_and_rebuilds_with_new_credentials_and_current_pages() {
     let f = Fixture::new();
-    f.run().unwrap();
+    f.plan(Plan {
+        lost: true,
+        ..Default::default()
+    });
+    assert!(f.run().is_err());
     *f.port.context.lock().unwrap() = Some("changed role".into());
     f.plan(Plan {
         fail_resume: true,
@@ -484,9 +526,10 @@ fn unqualified_provider_rebuilds_and_unreadable_context_never_launches() {
     let f = Fixture::new();
     f.plan(Plan {
         no_resume: true,
+        lost: true,
         ..Default::default()
     });
-    f.run().unwrap();
+    assert!(f.run().is_err());
     f.run().unwrap();
     assert_eq!(f.records.lock().unwrap().starts, vec![false, false]);
     assert_eq!(f.input(1)["delivery"]["work"].as_array().unwrap().len(), 1);
@@ -559,4 +602,84 @@ fn unconfirmed_shutdown_keeps_slot_fenced_and_never_launches_rebuild() {
     assert_eq!(pool.occupied(), 1);
     assert!(pool.finished().is_empty());
     assert_eq!(pool.admit(f.start()), Err(Error::Conflict));
+}
+
+#[test]
+fn failed_publish_retires_without_answering_then_two_resumes_do_not_resend_work() {
+    let f = Fixture::new();
+    f.port
+        .fail_publish
+        .store(true, std::sync::atomic::Ordering::Release);
+    assert!(matches!(
+        f.run(),
+        Err(Failure::Engine(Error::StorageUnavailable))
+    ));
+    let original = f.port.offers.lock().unwrap()[0].id;
+    assert!(f.run().is_err());
+    f.port
+        .fail_publish
+        .store(false, std::sync::atomic::Ordering::Release);
+    f.run().unwrap();
+    for i in [1, 2] {
+        let input = f.input(i);
+        assert!(input["delivery"]["work"].as_array().unwrap().is_empty());
+        assert_eq!(
+            input["delivery"]["resume_accepted"][0],
+            original.to_string()
+        );
+    }
+    let mut db = f.port.db.lock().unwrap();
+    let replies = db.read_messages_for_bot(f.port.bot, f.thread, 0).unwrap();
+    assert_eq!(
+        replies
+            .iter()
+            .filter(|message| message.content.body == "synthetic reply")
+            .count(),
+        1
+    );
+    assert!(
+        db.claim_messages(
+            f.port.bot,
+            f.thread,
+            f.port.worker,
+            Uuid::new_v4(),
+            Resume::Rebuilt,
+            MAX_INPUT_BYTES,
+            12
+        )
+        .unwrap()
+        .is_none()
+    );
+}
+
+#[test]
+fn unreadable_or_obsolete_saved_state_rebuilds_from_owed_work() {
+    for state in [
+        b"invalid".to_vec(),
+        encode(&Saved {
+            version: 2,
+            token: Some("obsolete".parse().unwrap()),
+            context_hash: [0; 32],
+            context_delivery: None,
+            inputs: vec![],
+        })
+        .unwrap(),
+    ] {
+        let f = Fixture::new();
+        f.database
+            .lock()
+            .unwrap()
+            .save(&AgentState {
+                thread: f.thread,
+                session: Uuid::new_v4(),
+                provider: "scripted".into(),
+                resume_state: state,
+                last_delivery: None,
+                saved_at_ms: 1,
+            })
+            .unwrap();
+        f.run().unwrap();
+        assert_eq!(f.records.lock().unwrap().starts, vec![false]);
+        assert_eq!(f.input(0)["delivery"]["work"].as_array().unwrap().len(), 1);
+    }
 }

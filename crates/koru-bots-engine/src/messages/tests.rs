@@ -253,23 +253,125 @@ fn publication_does_not_answer_unknown_delivery_even_after_late_confirmation() {
 }
 
 #[test]
-fn expiry_keeps_late_answer_but_never_completes_expired_obligation() {
+fn expiry_only_removes_owed_work_and_preserves_accepted_running_work() {
     let mut f = Fixture::new();
     let mut envelope = f.envelope("work");
     envelope.deadline_ms = Some(5);
     let message = f.db.accept_message(&f.person, &envelope, 1).unwrap().answer;
     let delivery = f.claim(Resume::Rebuilt);
     f.db.delivery_accepted(delivery.turn, delivery.id).unwrap();
+    let mut waiting = f.envelope("still waiting");
+    waiting.deadline_ms = Some(5);
+    let waiting = f.db.accept_message(&f.person, &waiting, 1).unwrap().answer;
+    assert_eq!(f.db.expire_messages(6).unwrap(), 1);
+    assert_eq!(f.state(waiting.message), "expired");
     assert_eq!(
         f.db.publish_reply(&reply(&delivery), 6)
             .unwrap()
             .answer
             .answered,
-        0
+        1
     );
-    assert_eq!(f.state(message.message), "expired");
-    assert_eq!(f.count("messages"), 2);
+    assert_eq!(f.state(message.message), "answered");
+    assert_eq!(f.count("messages"), 3);
     assert_eq!(f.count("inbox"), 0);
+}
+
+#[test]
+fn consecutive_resume_proves_original_delivery_and_reconciles_missing_history() {
+    let mut f = Fixture::new();
+    f.send("original work");
+    let old = f.claim(Resume::Rebuilt);
+    f.db.interrupt_worker(old.turn.worker).unwrap();
+    let resumed = f.claim(Resume::Resumed {
+        found_deliveries: vec![old.id],
+    });
+    assert!(resumed.work.is_empty());
+    let read: u64 =
+        f.db.connection
+            .query_row(
+                "SELECT read_sequence FROM participants WHERE participant=?1",
+                [f.bot.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert_eq!(
+        read, old.history_boundary,
+        "replay proves the old read point before new input is accepted"
+    );
+    f.db.interrupt_worker(resumed.turn.worker).unwrap();
+    // Only the original input reached the provider; the carried record's id
+    // is engine-local and cannot be present in provider replay.
+    let twice = f.claim(Resume::Resumed {
+        found_deliveries: vec![old.id],
+    });
+    assert!(twice.work.is_empty());
+    assert_eq!(twice.resume_accepted, vec![old.id]);
+    f.db.interrupt_worker(twice.turn.worker).unwrap();
+    let missing = f.claim(Resume::Resumed {
+        found_deliveries: vec![],
+    });
+    assert_eq!(missing.work.len(), 1);
+    let state: String =
+        f.db.connection
+            .query_row(
+                "SELECT state FROM deliveries WHERE id=?1",
+                [old.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert_eq!(state, "unknown");
+    let read: u64 =
+        f.db.connection
+            .query_row(
+                "SELECT read_sequence FROM participants WHERE participant=?1",
+                [f.bot.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert_eq!(
+        read, old.history_boundary,
+        "absence never advances the read point"
+    );
+}
+
+#[test]
+fn output_must_belong_to_an_applied_call_of_this_turn() {
+    let mut f = Fixture::new();
+    f.send("first work");
+    let first = f.claim(Resume::Rebuilt);
+    f.db.delivery_accepted(first.turn, first.id).unwrap();
+    let operation = Uuid::new_v4();
+    let binding = Uuid::new_v4();
+    f.db.connection.execute("INSERT INTO tool_calls(binding,door_call,session,turn,generation,tool,argument_digest,details) VALUES (?1,?1,?2,?3,?4,'page',zeroblob(32),x'7b7d')",params![binding.to_string(),first.turn.session.to_string(),first.turn.id.to_string(),first.turn.generation]).unwrap();
+    f.db.connection.execute("INSERT INTO operations(scope,bot,thread,id,argument_digest,recorded_call,intent,state) VALUES ('owner',?1,?2,?3,zeroblob(32),?4,x'7b7d','applied')",params![f.bot.to_string(),f.thread.to_string(),operation.to_string(),binding.to_string()]).unwrap();
+    let output = Output {
+        id: Uuid::new_v4(),
+        operation,
+        kind: OutputKind::Page,
+        reference: serde_json::json!({"page":"fixture"}),
+    };
+    let mut publication = reply(&first);
+    publication.outputs.push(output.clone());
+    assert_eq!(
+        f.db.publish_reply(&publication, 3).unwrap().answer.answered,
+        1
+    );
+    f.send("second work");
+    let second = f.claim(Resume::Rebuilt);
+    f.db.delivery_accepted(second.turn, second.id).unwrap();
+    let mut publication = reply(&second);
+    publication.outputs.push(Output {
+        id: Uuid::new_v4(),
+        ..output
+    });
+    let before = f.count("messages");
+    assert_eq!(
+        f.db.publish_reply(&publication, 4).err(),
+        Some(Error::InvalidRequest)
+    );
+    assert_eq!(f.count("messages"), before);
+    assert_eq!(f.db.status().unwrap().running_turns, 1);
 }
 
 #[test]

@@ -29,7 +29,6 @@ impl Database {
         if state != "running" {
             return Err(Error::StaleTurn);
         }
-        expire_before_publish(&tx, request.turn.id, now)?;
         let message = Uuid::new_v4();
         let thread_id = id(thread.clone())?;
         let content = Content {
@@ -42,7 +41,7 @@ impl Database {
         };
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'published',?6)",params![message.to_string(),thread,next_sequence(&tx,thread_id)?,bot,encode(&content)?,now])?;
         for output in &request.outputs {
-            let applied:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE id=?1 AND bot=?2 AND thread=?3 AND state='applied')",params![output.operation.to_string(),bot,thread],|r|r.get(0))?;
+            let applied:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM operations o JOIN tool_calls c ON c.binding=o.recorded_call WHERE o.id=?1 AND o.bot=?2 AND o.thread=?3 AND o.state='applied' AND c.turn=?4)",params![output.operation.to_string(),bot,thread,request.turn.id.to_string()],|r|r.get(0))?;
             if !applied {
                 return Err(Error::InvalidRequest);
             }
@@ -153,14 +152,3 @@ impl Database {
 }
 
 use rusqlite::OptionalExtension;
-fn expire_before_publish(
-    connection: &rusqlite::Connection,
-    turn: Uuid,
-    now: i64,
-) -> Result<(), Error> {
-    // Publication must honor every deadline belonging to this answer, even if
-    // an opportunistic maintenance pass has not reached that obligation yet.
-    connection.execute("UPDATE obligations SET state='expired' WHERE state IN ('owed','delivered') AND id IN (SELECT x.obligation FROM delivery_obligations x JOIN deliveries d ON d.id=x.delivery JOIN obligations o ON o.id=x.obligation JOIN messages m ON m.id=o.message WHERE d.turn=?1 AND json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')<?2)",params![turn.to_string(),now])?;
-    connection.execute("DELETE FROM inbox WHERE id IN (SELECT o.id FROM obligations o JOIN delivery_obligations x ON x.obligation=o.id JOIN deliveries d ON d.id=x.delivery WHERE d.turn=?1 AND o.state='expired')",[turn.to_string()])?;
-    Ok(())
-}
