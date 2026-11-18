@@ -326,10 +326,12 @@ impl State {
                 m.kind == "words"
                     && m.sender != "engine"
                     && !(m.content.body.is_empty()
-                        && m.content
-                            .references
-                            .iter()
-                            .any(|r| r.get("answer").is_some()))
+                        && m.content.references.iter().any(|r| {
+                            r.get("answer").is_some()
+                                || (!m.sender.starts_with("person:")
+                                    && r.get("notice").and_then(|v| v.as_str())
+                                        == Some("turn_stopped"))
+                        }))
             })
             .enumerate()
             .map(|(index, m)| Message {

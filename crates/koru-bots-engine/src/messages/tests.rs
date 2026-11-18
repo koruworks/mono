@@ -447,9 +447,10 @@ fn two_threads_run_independently_and_reference_is_committed_with_reply() {
         .unwrap();
     f.db.delivery_accepted(delivery.turn, delivery.id).unwrap();
     let publish = reply(&delivery);
+    let before = f.count("messages"); // Two inputs and the stopped main reply.
     f.db.connection.execute_batch("CREATE TEMP TRIGGER reject_card BEFORE INSERT ON messages WHEN NEW.kind='thread_reference' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
     assert!(f.db.publish_reply(&publish, 4).is_err());
-    assert_eq!(f.count("messages"), 2);
+    assert_eq!(f.count("messages"), before);
     assert_eq!(f.db.status().unwrap().running_turns, 1);
     f.db.connection
         .execute_batch("DROP TRIGGER reject_card;")

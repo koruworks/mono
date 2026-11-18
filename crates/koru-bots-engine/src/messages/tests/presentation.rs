@@ -2,6 +2,53 @@
 use super::*;
 
 #[test]
+fn stop_keeps_the_reserved_reply_and_replays_without_duplicate_history() {
+    let mut f = Fixture::new();
+    let work = f.send("work");
+    let delivery = f.claim(Resume::Rebuilt);
+    let reserved: String =
+        f.db.connection
+            .query_row(
+                "SELECT reply_message FROM turns WHERE id=?1",
+                [delivery.turn.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    let command = Uuid::new_v4();
+    f.db.connection.execute_batch("CREATE TEMP TRIGGER reject_stop BEFORE INSERT ON messages WHEN NEW.state='stopped' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(
+        f.db.stop_turn(&f.person, command, delivery.turn, 3)
+            .is_err()
+    );
+    assert_eq!(f.state(work.message), "delivered");
+    assert_eq!(f.db.status().unwrap().running_turns, 1);
+    f.db.connection
+        .execute_batch("DROP TRIGGER reject_stop;")
+        .unwrap();
+    let first =
+        f.db.stop_turn(&f.person, command, delivery.turn, 4)
+            .unwrap();
+    assert_eq!(first.answer.cancelled, 1);
+    assert!(
+        f.db.stop_turn(&f.person, command, delivery.turn, 5)
+            .unwrap()
+            .replayed
+    );
+    f.db.stop_turn(&f.person, Uuid::new_v4(), delivery.turn, 6)
+        .unwrap();
+    let history = f.db.read_messages(&f.person, f.thread, 0).unwrap();
+    assert_eq!(history.len(), 2);
+    assert_eq!(history[1].id.to_string(), reserved);
+    assert_eq!(history[1].content.references[0]["notice"], "turn_stopped");
+    assert_eq!(history[1].created_at_ms, 4);
+    assert_eq!(f.state(work.message), "cancelled");
+    assert_eq!(
+        f.db.publish_reply(&reply(&delivery), 7).err(),
+        Some(Error::StaleTurn)
+    );
+}
+
+#[test]
 fn an_accepted_input_is_not_a_running_reply_and_publish_uses_the_reserved_identity() {
     let mut f = Fixture::new();
     let accepted = f.send("queued");

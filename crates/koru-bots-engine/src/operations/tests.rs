@@ -947,6 +947,44 @@ fn interrupted_applied_effect_is_history_and_an_output_before_any_reply() {
 }
 
 #[test]
+fn saved_outputs_before_and_after_stop_attach_to_the_same_reserved_reply() {
+    for report_before_stop in [false, true] {
+        let mut f = Fixture::new();
+        let record = f.leased();
+        let report = |f: &mut Fixture| {
+            f.db.report_operation(
+                f.boundary,
+                Uuid::new_v4(),
+                &record.key,
+                record.lease.as_ref().unwrap(),
+                Fixture::applied(&record),
+                8,
+            )
+            .unwrap();
+        };
+        if report_before_stop {
+            report(&mut f);
+        }
+        f.db.stop_turn(&f.person, Uuid::new_v4(), f.binding.turn, 9)
+            .unwrap();
+        if !report_before_stop {
+            report(&mut f);
+        }
+        let linked: bool = f.db.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM outputs o JOIN messages m ON m.id=o.message JOIN turns t ON t.reply_message=m.id WHERE t.id=?1 AND m.state='stopped')",
+            [f.binding.turn.id.to_string()], |r| r.get(0),
+        ).unwrap();
+        assert!(linked);
+        assert_eq!(
+            f.db.connection
+                .query_row("SELECT count(*) FROM inbox", [], |r| r.get::<_, u64>(0))
+                .unwrap(),
+            0
+        );
+    }
+}
+
+#[test]
 fn applied_notice_and_output_failure_roll_back_the_outcome_and_receipt() {
     let mut f = Fixture::new();
     let record = f.leased();

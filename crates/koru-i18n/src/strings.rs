@@ -1839,6 +1839,8 @@ pub enum Key {
     BotsEngineCapacityAutomatic,
     BotsEngineCapacityDefault,
     BotsEngineCapacityHint,
+    BotsEngineStopped,
+    BotsEngineInputTooLarge,
     // A Bot's tab (Bots P1.8 S4): its header over its conversation.
     /// A Bot tab's name before the Bot service has said the Bot's: a restored tab, for a moment.
     BotsTabUnnamed,
@@ -4582,7 +4584,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3040] = [
+    pub const ALL: [Key; 3042] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5894,6 +5896,8 @@ impl Key {
         Key::BotsEngineCapacityAutomatic,
         Key::BotsEngineCapacityDefault,
         Key::BotsEngineCapacityHint,
+        Key::BotsEngineStopped,
+        Key::BotsEngineInputTooLarge,
         Key::BotsTabUnnamed,
         Key::BotsBotLoading,
         Key::BotsBotUnavailable,
@@ -17209,6 +17213,28 @@ pub const ROWS: &[Row] = &[
         ar: "يمكن للبوت استخدام أكثر من مكان لمحادثات منفصلة. خفض هذا الحد لا يوقف العمل الجاري.",
         zh_hans: "一个 Bot 可为不同对话占用多个名额。降低上限不会停止已在运行的工作。",
         ja: "1 つの Bot が別々の会話で複数の枠を使うことがあります。上限を下げても、実行中の作業は停止しません。",
+    },
+    Row {
+        key: Key::BotsEngineStopped,
+        en: "Reply stopped. Saved work is kept.",
+        es: "Respuesta detenida. El trabajo guardado se conserva.",
+        pt_br: "Resposta interrompida. O trabalho salvo é mantido.",
+        de: "Antwort gestoppt. Gespeicherte Arbeit bleibt erhalten.",
+        fr: "Réponse arrêtée. Le travail enregistré est conservé.",
+        ar: "تم إيقاف الرد. يبقى العمل المحفوظ محفوظًا.",
+        zh_hans: "回复已停止。已保存的工作会保留。",
+        ja: "返信を停止しました。保存済みの作業は保持されます。",
+    },
+    Row {
+        key: Key::BotsEngineInputTooLarge,
+        en: "This message could not fit the Bot's input limit. Your message is saved. Try sending fewer files or references.",
+        es: "Este mensaje supera el límite de entrada del Bot. Tu mensaje está guardado. Prueba a enviar menos archivos o referencias.",
+        pt_br: "Esta mensagem excede o limite de entrada do Bot. Sua mensagem está salva. Tente enviar menos arquivos ou referências.",
+        de: "Diese Nachricht überschreitet das Eingabelimit des Bots. Deine Nachricht ist gespeichert. Versuche, weniger Dateien oder Verweise zu senden.",
+        fr: "Ce message dépasse la limite d’entrée du Bot. Votre message est enregistré. Essayez d’envoyer moins de fichiers ou de références.",
+        ar: "تتجاوز هذه الرسالة حد إدخال البوت. تم حفظ رسالتك. جرّب إرسال ملفات أو مراجع أقل.",
+        zh_hans: "这条消息超过了 Bot 的输入上限。你的消息已保存。请尝试减少文件或引用的数量。",
+        ja: "このメッセージは Bot の入力上限を超えています。メッセージは保存されています。ファイルや参照の数を減らしてみてください。",
     },
     Row {
         key: Key::BotsTabUnnamed,

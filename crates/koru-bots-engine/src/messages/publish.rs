@@ -119,7 +119,7 @@ impl Database {
         let subject = person.receipt_subject();
         let tx = self.connection.transaction()?;
         let row = turns::turn_row(&tx, turn)?;
-        authorize_thread(&tx, person, id(row.0)?)?;
+        authorize_thread(&tx, person, id(row.0.clone())?)?;
         if let Some(answer) = receipts::find(&tx, &subject, command, &digest)? {
             return Ok(Receipt {
                 answer,
@@ -142,6 +142,9 @@ impl Database {
             "UPDATE turns SET state='stopped',stopped=1 WHERE id=?1",
             [turn.id.to_string()],
         )?;
+        if row.2 != "stopped" {
+            record_stopped_reply(&tx, turn, &row.0, &row.1, now)?;
+        }
         let answer = Stopped { cancelled };
         tx.execute(
             "UPDATE credentials SET revoked=1 WHERE session=?1",
@@ -155,6 +158,39 @@ impl Database {
             replayed: false,
         })
     }
+}
+
+/// The reserved reply survives Stop as history, even when no final prose was
+/// published. It is not an answer to the cancelled obligations. Output facts
+/// stay attached, including facts reconciled after the provider has ended.
+fn record_stopped_reply(
+    tx: &rusqlite::Connection,
+    turn: Turn,
+    thread: &str,
+    bot: &str,
+    now: i64,
+) -> Result<(), Error> {
+    let message = id(tx.query_row(
+        "SELECT reply_message FROM turns WHERE id=?1",
+        [turn.id.to_string()],
+        |r| r.get::<_, String>(0),
+    )?)?;
+    let content = Content {
+        body: String::new(),
+        attachments: vec![],
+        references: vec![serde_json::json!({"notice":"turn_stopped","turn":turn.id})],
+        in_reply_to: None,
+        deadline_ms: None,
+        reply_to: ReplyTo::Thread,
+    };
+    tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'stopped',?6)",
+        params![message.to_string(),thread,next_sequence(tx,id(thread.to_owned())?)?,bot,encode(&content)?,now])?;
+    tx.execute("UPDATE turns SET details=CAST(json_set(CAST(details AS TEXT),'$.stopped_message',?2) AS BLOB) WHERE id=?1",
+        params![turn.id.to_string(),message.to_string()])?;
+    for output in crate::operations::outputs::collect(tx, turn)? {
+        crate::operations::outputs::attach(tx, message, &output)?;
+    }
+    Ok(())
 }
 
 use rusqlite::OptionalExtension;

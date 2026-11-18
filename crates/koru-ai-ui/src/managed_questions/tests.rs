@@ -2,6 +2,43 @@
 use super::*;
 
 #[test]
+fn stop_and_input_refusal_remain_visible_without_inventing_answers() {
+    let mut opened = crate::managed::tests::opened();
+    for (sequence, kind, notice) in [
+        (1, "words", "turn_stopped"),
+        (2, "setup_note", "input_too_large"),
+    ] {
+        let mut message = crate::managed::tests::message(sequence, Uuid::new_v4());
+        message.kind = kind.into();
+        message.content.body.clear();
+        message.content.references = vec![serde_json::json!({"notice":notice})];
+        opened.messages.push(message);
+    }
+    let mut surface = ChatSurface::new_owned_at(None);
+    surface.managed_opened(opened);
+    surface.rebuild_managed_notices(400.0);
+    assert_eq!(surface.notice_layouts.len(), 2);
+    assert!(surface.transcript.as_ref().unwrap().messages.is_empty());
+    assert!(surface.attempt.is_none());
+    assert!(
+        notice_words(
+            koru_i18n::Lang::En,
+            &serde_json::json!({"notice":"turn_stopped"})
+        )
+        .unwrap()
+        .contains("stopped")
+    );
+    assert!(
+        notice_words(
+            koru_i18n::Lang::En,
+            &serde_json::json!({"notice":"input_too_large"})
+        )
+        .unwrap()
+        .contains("saved")
+    );
+}
+
+#[test]
 fn waiting_notice_names_the_occupants_and_the_global_setting_without_an_attempt() {
     let mut opened = crate::managed::tests::opened();
     let mut notice = crate::managed::tests::message(1, Uuid::new_v4());

@@ -129,11 +129,10 @@ impl ChatSurface {
         let Some(state) = &self.managed else {
             return;
         };
-        for message in state
-            .messages
-            .values()
-            .filter(|message| message.kind == "setup_note")
-        {
+        for message in state.messages.values().filter(|message| {
+            message.kind == "setup_note"
+                || (message.kind == "words" && !message.sender.starts_with("person:"))
+        }) {
             let Some(words) = message
                 .content
                 .references
@@ -763,6 +762,8 @@ fn request_id(command: &wire::Command) -> Option<Uuid> {
 fn notice_words(lang: koru_i18n::Lang, reference: &serde_json::Value) -> Option<String> {
     match reference.get("notice").and_then(|value| value.as_str())? {
         "secret_answer_not_delivered" => Some(t(lang, Words::BotsEngineSecretLost).to_owned()),
+        "turn_stopped" => Some(t(lang, Words::BotsEngineStopped).to_owned()),
+        "input_too_large" => Some(t(lang, Words::BotsEngineInputTooLarge).to_owned()),
         "waiting_for_capacity" => {
             let names = reference
                 .get("running_bots")

@@ -61,7 +61,7 @@ pub(super) fn record_output(connection: &Connection, record: &Record) -> Result<
         .ok_or(Error::StorageUnavailable)?
         .binding
         .turn;
-    let message:Option<String>=connection.query_row("SELECT json_extract(CAST(details AS TEXT),'$.published_message') FROM turns WHERE id=?1 AND generation=?2 AND worker_incarnation=?3 AND session=?4",
+    let message:Option<String>=connection.query_row("SELECT COALESCE(json_extract(CAST(details AS TEXT),'$.published_message'),json_extract(CAST(details AS TEXT),'$.stopped_message')) FROM turns WHERE id=?1 AND generation=?2 AND worker_incarnation=?3 AND session=?4",
         params![turn.id.to_string(),turn.generation,turn.worker.to_string(),turn.session.to_string()],|r|r.get(0))?;
     let published = message
         .map(|id| Uuid::parse_str(&id).map_err(|_| Error::StorageUnavailable))
