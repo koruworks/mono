@@ -211,6 +211,27 @@ fn pressing_reminders_opens_the_page_and_moves_the_card() {
     assert_eq!(rail.selected(), Some(RailTarget::Reminders));
 }
 
+/// A leaf list's swatch is the list's colour: a press on it asks for the
+/// colour picker, not the page — the Tasks page's heading swatch does the
+/// same.
+#[test]
+fn pressing_a_leaf_swatch_asks_for_the_colour_picker() {
+    let mut rail = rail(2);
+    let (a, t) = (area(), top());
+    let (_, r) = rail
+        .rows(a, t)
+        .into_iter()
+        .find(|(row, _)| *row == RailRow::List(0))
+        .unwrap();
+    let id = rail.lists()[0].id;
+    let parts = rail.row_parts(RailRow::List(0), r);
+    let (x, y) = parts.icon.centre();
+    assert_eq!(
+        rail.mouse_down(a, t, x, y, false, false),
+        Some(TasksRailRequest::ListColor { id, at: (x, y) })
+    );
+}
+
 /// Ctrl on the Reminders row carries the queue rows' disposition too: a new
 /// tab, and the card stays on the page still in front.
 #[test]

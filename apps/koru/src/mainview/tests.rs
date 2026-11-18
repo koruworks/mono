@@ -9105,13 +9105,19 @@ fn no_tooltip_shows_while_a_rail_view_is_carried() {
 }
 
 #[test]
-fn the_plus_tooltip_names_new_without_claiming_the_launcher_shortcut() {
+fn the_plus_tooltip_names_new_tab_and_teaches_its_chord() {
     let (v, _workspace) = container();
     let tip = v
         .caption_tooltip(Hit::NewTab)
         .expect("the visible plus has a tooltip");
-    assert_eq!(tip.label, "New…");
-    assert_eq!(tip.shortcut, None);
+    assert_eq!(
+        tip.label,
+        koru_keys::label_of(koru_keys::ShortcutId::NewTab)
+    );
+    assert_eq!(
+        tip.shortcut,
+        koru_keys::show_hint(koru_keys::ShortcutId::NewTab, koru_keys::Section::Tooltip)
+    );
 }
 
 #[test]

@@ -9373,6 +9373,23 @@ impl MainView {
                 true
             }
             Request::RowMenu { target, at } => self.open_rail_menu(target, at),
+            // The swatch's press: the list's colour rows, at the press — the
+            // same picker the Tasks page's heading swatch opens.
+            Request::ListColor { id, at } => {
+                self.close_list_field();
+                let mut menu = ContextMenu::new(
+                    &mut self.engine,
+                    MenuSubject::List(id),
+                    at,
+                    context_menu::list_color_items(),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+                true
+            }
             Request::RenameList { id, name } => {
                 self.list_edits
                     .push(koru_workspace_host::tasks::ListEdit::Rename { id, name });
@@ -18840,8 +18857,9 @@ impl MainView {
                     TooltipContent::new(
                         4,
                         slot,
-                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
+                        koru_keys::label_of(koru_keys::ShortcutId::NewTab),
                     )
+                    .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
                 })
             }
             // A hovered history row answers with the exact moment behind its
