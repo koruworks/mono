@@ -2,7 +2,7 @@
 //! Person commands after gateway authentication. This core owns no Store,
 //! process or network. The gateway vouches current owner and page placement;
 //! neither identity nor workspace authority is read from a public body.
-mod change;
+pub(crate) mod change;
 mod read;
 
 use crate::{

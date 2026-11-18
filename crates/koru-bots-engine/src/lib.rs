@@ -9,6 +9,7 @@ pub mod bot_worker;
 pub mod capacity;
 pub mod carrier;
 pub mod configuration;
+pub mod creation;
 pub mod folders;
 mod database;
 pub mod door;

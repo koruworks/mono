@@ -1,3 +1,16 @@
+-- New-engine creation intents reserve Bot ids before any external effect.
+-- No Store or legacy AI schema is changed by this development schema.
+CREATE TABLE creations (
+    request TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    bot TEXT NOT NULL UNIQUE,
+    digest BLOB NOT NULL CHECK(length(digest)=32),
+    terminal INTEGER NOT NULL DEFAULT 0 CHECK (terminal IN (0,1)),
+    record BLOB NOT NULL,
+    PRIMARY KEY(owner,request)
+);
+CREATE INDEX creations_pending ON creations(owner,request) WHERE terminal=0;
+
 CREATE TABLE bots (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,

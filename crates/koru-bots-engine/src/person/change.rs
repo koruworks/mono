@@ -38,6 +38,35 @@ fn policy(access: &CapturedBotPolicy) -> Result<(), Error> {
         Ok(())
     }
 }
+pub(crate) fn validate_definition(d: &Definition) -> Result<(), Error> {
+    name(&d.name)?;
+    pages(d.role, &d.knowledge, d.memory)?;
+    policy(&d.access)
+}
+/// Caller owns the transaction and has checked any creation reservation.
+pub(crate) fn create(
+    c: &Connection,
+    who: &Person,
+    bot: Uuid,
+    d: &Definition,
+    now: i64,
+) -> Result<Value, Error> {
+    if bot.is_nil() {
+        return Err(Error::InvalidRequest);
+    }
+    validate_definition(d)?;
+    let exists: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM bots WHERE id=?1)",
+        [bot.to_string()],
+        |r| r.get(0),
+    )?;
+    if exists {
+        return Err(Error::Conflict);
+    }
+    c.execute("INSERT INTO bots(id,owner,name,settings,access,role_page,knowledge_pages,memory_page,visibility,created_at_ms,updated_at_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'private',?9,?9)",params![bot.to_string(),who.owner,d.name,encode(&d.configuration)?,encode(&d.access)?,d.role.map(|id|id.to_string()),encode(&d.knowledge)?,d.memory.map(|id|id.to_string()),now])?;
+    conversation(c, who, bot, "main", "", now)?;
+    value(read::bot(c, who, bot)?)
+}
 pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result<(), Error> {
     match action {
         Change::Create { bot, .. } => {
@@ -141,23 +170,15 @@ pub(super) fn apply(
     }
     let answer = match action {
         Change::Create { bot, definition: d } => {
-            if bot.is_nil() {
-                return Err(Error::InvalidRequest);
-            }
-            name(&d.name)?;
-            pages(d.role, &d.knowledge, d.memory)?;
-            policy(&d.access)?;
-            let exists: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM bots WHERE id=?1)",
+            let reserved: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM creations WHERE bot=?1)",
                 [bot.to_string()],
                 |r| r.get(0),
             )?;
-            if exists {
+            if reserved {
                 return Err(Error::Conflict);
             }
-            tx.execute("INSERT INTO bots(id,owner,name,settings,access,role_page,knowledge_pages,memory_page,visibility,created_at_ms,updated_at_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'private',?9,?9)",params![bot.to_string(),who.owner,d.name,encode(&d.configuration)?,encode(&d.access)?,d.role.map(|id|id.to_string()),encode(&d.knowledge)?,d.memory.map(|id|id.to_string()),now])?;
-            conversation(&tx, who, *bot, "main", "", now)?;
-            value(read::bot(&tx, who, *bot)?)?
+            create(&tx, who, *bot, d, now)?
         }
         Change::Configure {
             bot,

@@ -16,6 +16,7 @@ enum ActorCommand {
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
     Person(crate::person::Request, mpsc::SyncSender<Reply>),
+    Creation(crate::creation::Request, mpsc::SyncSender<Reply>),
     Operation(crate::operations::control::Command, mpsc::SyncSender<Reply>),
     SessionCatalog(crate::authority::Secret, mpsc::SyncSender<Reply>),
     ResolveCall(
@@ -199,6 +200,10 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::Creation(request, reply) => {
+                let result = crate::creation::handle(&mut database, request, now_ms());
+                let _ = reply.try_send(result.map(Reply::Creation).unwrap_or_else(Reply::Refused));
+            }
             ActorCommand::Person(request, reply) => {
                 let changes = request.command.changes();
                 let result = crate::person::handle(
@@ -302,6 +307,19 @@ fn handle(
         Reply::Refused(Error::Unauthenticated)
     } else {
         match request.command {
+            Command::Creation(request) => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                if actor
+                    .try_send(ActorCommand::Creation(request, reply))
+                    .is_err()
+                {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
             Command::Person(request) => {
                 let (reply, answer) = mpsc::sync_channel(1);
                 if actor
