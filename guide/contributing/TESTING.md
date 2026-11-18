@@ -9,6 +9,12 @@ test in `koru-agent-worker` uses the production supervisor and provider launcher
 with a stand-in provider, and proves descendant death plus ancestor survival
 after killing each supervisor in a fresh five-process chain.
 
+`cargo test -p koru-bots-engine --features active --test bot_process -- --run --root <new-absolute-directory>`
+proves the actual Windows engine/launcher/Bot worker registration and idle
+lifetime, registration timeout, wake during shutdown, and nested containment
+with a scripted provider. It opens new engine.db and bot.db files only under
+that fresh root. No Store or account is used; ordinary suite invocation skips it.
+
 A rejected account repair can preserve the stored credential and immediately
 restore it into a fresh held context, whose legitimate refresh changes those
 bytes. The switching fixture holds that account's existing inspection gate while

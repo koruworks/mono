@@ -36,12 +36,15 @@ pub fn endpoint(root: &Path, segment: &str) -> Result<koru_ipc::Endpoint, Error>
         .map_err(|_| Error::EngineUnavailable)
 }
 
-#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Command {
     Hello,
     Status,
+    Capacity,
     Stop,
+    WakeBot { bot: Uuid },
+    StopBot { bot: Uuid },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -56,6 +59,8 @@ pub enum Reply {
     Hello { launch_id: Uuid },
     Status(Status),
     Stopping,
+    Queued,
+    Capacity { sessions: u32 },
     Refused(Error),
 }
 
@@ -85,6 +90,15 @@ pub fn request(
 }
 
 pub fn run_supervised(root: &Path) -> Result<(), Error> {
+    run_supervised_with_policy(root, crate::launcher::Policy::default())
+}
+
+/// Allows the explicit process harness to use a short idle/registration clock.
+/// Production dispatch always uses the default policy above.
+pub fn run_supervised_with_policy(
+    root: &Path,
+    policy: crate::launcher::Policy,
+) -> Result<(), Error> {
     let mut input = std::io::stdin();
     let bytes =
         koru_agent_worker::read_bootstrap_line(&mut input).map_err(|_| Error::InvalidRequest)?;
@@ -97,5 +111,5 @@ pub fn run_supervised(root: &Path) -> Result<(), Error> {
     {
         return Err(Error::InvalidRequest);
     }
-    server::serve(bootstrap, input)
+    server::serve(bootstrap, input, policy)
 }

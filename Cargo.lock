@@ -6009,11 +6009,14 @@ dependencies = [
  "koru-agent-worker",
  "koru-channel",
  "koru-ipc",
+ "koru-session-runtime",
+ "koru-settings",
  "koru-sqlite",
  "rusqlite",
  "serde",
  "serde_json",
  "uuid",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

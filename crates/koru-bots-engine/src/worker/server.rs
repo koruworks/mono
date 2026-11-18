@@ -11,14 +11,27 @@ use crate::Database;
 
 enum ActorCommand {
     Status(mpsc::SyncSender<Reply>),
+    Capacity(mpsc::SyncSender<Reply>),
+    WakeBot(uuid::Uuid, mpsc::SyncSender<Reply>),
+    StopBot(uuid::Uuid, mpsc::SyncSender<Reply>),
     Stop,
 }
 
-pub(super) fn serve(bootstrap: Bootstrap, input: std::io::Stdin) -> Result<(), Error> {
+pub(super) fn serve(
+    bootstrap: Bootstrap,
+    input: std::io::Stdin,
+    policy: crate::launcher::Policy,
+) -> Result<(), Error> {
     let listener = koru_ipc::Listener::bind(endpoint(&bootstrap.root, &bootstrap.segment)?)
         .map_err(|_| Error::EngineUnavailable)?;
     crate::claim_root(&bootstrap.root)?;
     let database = Database::open(&bootstrap.root)?;
+    database.connection.execute("DELETE FROM workers", [])?;
+    let launcher = crate::launcher::Launcher::start(
+        bootstrap.root.clone(),
+        bootstrap.segment.clone(),
+        policy,
+    )?;
     let (sender, receiver) = mpsc::sync_channel(64);
     let parent = sender.clone();
     koru_agent_worker::ParentPipe::new(input)
@@ -50,14 +63,75 @@ pub(super) fn serve(bootstrap: Bootstrap, input: std::io::Stdin) -> Result<(), E
             }
         })
         .map_err(|_| Error::EngineUnavailable)?;
-    while let Ok(command) = receiver.recv() {
+    loop {
+        for event in launcher.events() {
+            match event {
+                crate::launcher::Event::Registered {
+                    bot,
+                    incarnation,
+                    at_ms,
+                } if launcher.last_heard(bot, incarnation).is_some() => {
+                    database.connection.execute("INSERT INTO workers(bot,incarnation,started_at_ms,last_heard_at_ms) VALUES (?1,?2,?3,?3) ON CONFLICT(bot) DO UPDATE SET incarnation=excluded.incarnation,started_at_ms=excluded.started_at_ms,last_heard_at_ms=excluded.last_heard_at_ms",rusqlite::params![bot.to_string(),incarnation.to_string(),at_ms])?;
+                }
+                crate::launcher::Event::Ended { bot, incarnation } => {
+                    database.connection.execute(
+                        "DELETE FROM workers WHERE bot=?1 AND incarnation=?2",
+                        rusqlite::params![bot.to_string(), incarnation.to_string()],
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        let command = match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match command {
+            ActorCommand::Capacity(reply) => {
+                let _ = reply.try_send(Reply::Capacity {
+                    sessions: launcher.capacity(),
+                });
+            }
             ActorCommand::Status(reply) => {
                 let response = database
                     .status()
-                    .map(Reply::Status)
+                    .map(|mut status| {
+                        for worker in &mut status.workers {
+                            if let (Ok(bot), Ok(incarnation)) = (
+                                uuid::Uuid::parse_str(&worker.bot),
+                                uuid::Uuid::parse_str(&worker.incarnation),
+                            ) {
+                                if let Some(at) = launcher.last_heard(bot, incarnation) {
+                                    worker.last_heard_at_ms = at;
+                                }
+                            }
+                        }
+                        Reply::Status(status)
+                    })
                     .unwrap_or_else(Reply::Refused);
                 let _ = reply.try_send(response);
+            }
+            ActorCommand::WakeBot(bot, reply) => {
+                let enabled:bool=database.connection.query_row("SELECT EXISTS(SELECT 1 FROM bots WHERE id=?1 AND paused=0 AND lifecycle='active')",[bot.to_string()],|row|row.get(0))?;
+                let result = if enabled {
+                    launcher.ensure(bot)
+                } else {
+                    Err(Error::InvalidRequest)
+                };
+                let _ = reply.try_send(
+                    result
+                        .map(|()| Reply::Queued)
+                        .unwrap_or_else(Reply::Refused),
+                );
+            }
+            ActorCommand::StopBot(bot, reply) => {
+                let _ = reply.try_send(
+                    launcher
+                        .stop(bot)
+                        .map(|()| Reply::Queued)
+                        .unwrap_or_else(Reply::Refused),
+                );
             }
             ActorCommand::Stop => break,
         }
@@ -91,9 +165,29 @@ fn handle(
             Command::Hello => Reply::Hello {
                 launch_id: bootstrap.launch_id,
             },
-            Command::Status => {
+            Command::Status | Command::Capacity => {
                 let (reply, answer) = mpsc::sync_channel(1);
-                if actor.try_send(ActorCommand::Status(reply)).is_err() {
+                let command = if matches!(request.command, Command::Status) {
+                    ActorCommand::Status(reply)
+                } else {
+                    ActorCommand::Capacity(reply)
+                };
+                if actor.try_send(command).is_err() {
+                    Reply::Refused(Error::EngineUnavailable)
+                } else {
+                    answer
+                        .recv_timeout(TIMEOUT)
+                        .unwrap_or(Reply::Refused(Error::EngineUnavailable))
+                }
+            }
+            Command::WakeBot { bot } | Command::StopBot { bot } => {
+                let (reply, answer) = mpsc::sync_channel(1);
+                let command = if matches!(request.command, Command::WakeBot { .. }) {
+                    ActorCommand::WakeBot(bot, reply)
+                } else {
+                    ActorCommand::StopBot(bot, reply)
+                };
+                if actor.try_send(command).is_err() {
                     Reply::Refused(Error::EngineUnavailable)
                 } else {
                     answer

@@ -348,6 +348,7 @@ pub(crate) const OWNED_DESKTOP_KEYS: &[&str] = &[
     "global_dictation_enabled",
     "global_dictation_shortcut",
     "start_on_login",
+    "bots_session_capacity",
     "reminder_start_on_login_explained",
     "automatic_checks",
     "delegate_temporary_root",
@@ -412,6 +413,12 @@ pub fn apply_desktop(bytes: &[u8], into: &mut GlobalSettings) -> DesktopFile {
                 if let Some(flag) = value.as_bool() {
                     into.start_on_login = flag;
                 }
+            }
+            "bots_session_capacity" => {
+                into.bots_session_capacity = value
+                    .as_u64()
+                    .and_then(|n| u32::try_from(n).ok())
+                    .filter(|n| *n > 0);
             }
             "reminder_start_on_login_explained" => {
                 if let Some(flag) = value.as_bool() {
@@ -518,6 +525,10 @@ pub fn render_desktop(settings: &GlobalSettings, file: &DesktopFile) -> Vec<u8> 
         settings.global_dictation_shortcut.as_str().into(),
     );
     object.insert("start_on_login".into(), settings.start_on_login.into());
+    object.insert(
+        "bots_session_capacity".into(),
+        settings.bots_session_capacity.into(),
+    );
     object.insert(
         "reminder_start_on_login_explained".into(),
         settings.reminder_start_on_login_explained.into(),

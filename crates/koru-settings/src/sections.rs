@@ -219,6 +219,9 @@ pub struct GlobalSettings {
     /// registered fallback separately; this is intent, not availability.
     pub global_dictation_shortcut: DictationShortcut,
     pub start_on_login: bool,
+    /// Live Bot agent sessions on this device; None uses installed RAM / 2 GB.
+    #[serde(default)]
+    pub bots_session_capacity: Option<u32>,
     pub reminder_start_on_login_explained: bool,
     pub automatic_update_checks: bool,
     /// **Where Koru makes a folder for a delegated run that belongs to no
@@ -321,6 +324,7 @@ impl Default for GlobalSettings {
             global_dictation_enabled: None,
             global_dictation_shortcut: DictationShortcut::default(),
             start_on_login: false,
+            bots_session_capacity: None,
             reminder_start_on_login_explained: false,
             // **True, not `false`.** `koru-update`'s own default is `true`,
             // and a bool that defaulted the other way here would silently stop
@@ -433,6 +437,8 @@ pub struct GlobalPatch {
     pub global_dictation_shortcut: Option<DictationShortcut>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_on_login: Option<bool>,
+    #[serde(skip_serializing_if = "Field::is_unchanged")]
+    pub bots_session_capacity: Field<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reminder_start_on_login_explained: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -514,6 +520,7 @@ impl GlobalPatch {
             || self.global_dictation_enabled.is_some()
             || self.global_dictation_shortcut.is_some()
             || self.start_on_login.is_some()
+            || !self.bots_session_capacity.is_unchanged()
             || self.reminder_start_on_login_explained.is_some()
             || self.automatic_update_checks.is_some()
             || !self.delegate_temporary_root.is_unchanged()
@@ -534,6 +541,12 @@ impl GlobalPatch {
     /// Validation runs before a single byte is staged, so a rejected patch
     /// leaves the disk exactly as it was.
     pub fn validate(&self) -> Result<(), Invalid> {
+        if matches!(self.bots_session_capacity, Field::Set(0)) {
+            return Err(Invalid::new(
+                "bots_session_capacity",
+                "capacity must be at least one, or null for automatic",
+            ));
+        }
         // An agent key is a profile key's shape — short, lowercase, ASCII —
         // and the list is bounded, so a hand-edit cannot grow the file.
         if let Some(agents) = &self.disabled_agents {
@@ -699,6 +712,8 @@ impl GlobalPatch {
             default_permission_other,
         );
         self.base_color_light.apply(&mut current.base_color_light);
+        self.bots_session_capacity
+            .apply(&mut current.bots_session_capacity);
         self.base_color_dark.apply(&mut current.base_color_dark);
         self.accent_color_light
             .apply(&mut current.accent_color_light);

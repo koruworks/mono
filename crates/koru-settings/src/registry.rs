@@ -432,6 +432,14 @@ pub const REGISTRY: &[SettingSpec] = &[
               is a lie the person cannot see.",
     },
     SettingSpec {
+        field: "bots_session_capacity",
+        section: Section::Global,
+        storage: StorageClass::DeviceLocal,
+        backing: Backing::DesktopJson,
+        kind: ValueKind::Nullable,
+        doc: "Maximum live Bot agent sessions, running or idle. A positive integer; null uses one per 2 GB of installed RAM, at least one. Applied at the next admission; reducing it does not kill running work.",
+    },
+    SettingSpec {
         field: "reminder_start_on_login_explained",
         section: Section::Global,
         storage: StorageClass::DeviceLocal,

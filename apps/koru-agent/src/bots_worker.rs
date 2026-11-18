@@ -8,6 +8,43 @@ pub fn role() -> koru_agent_worker::Role {
     koru_agent_worker::Role { name: "bots", run }
 }
 
+pub fn bot_role() -> koru_agent_worker::Role {
+    koru_agent_worker::Role {
+        name: "bot",
+        run: run_bot,
+    }
+}
+
+pub fn parse_bot(args: &[String]) -> Result<uuid::Uuid, &'static str> {
+    let [flag, id] = args else {
+        return Err("invalid_request");
+    };
+    if flag != "--bot" {
+        return Err("invalid_request");
+    }
+    uuid::Uuid::parse_str(id)
+        .ok()
+        .filter(|id| !id.is_nil())
+        .ok_or("invalid_request")
+}
+
+fn run_bot(args: Vec<String>) -> ! {
+    let bot = match parse_bot(&args) {
+        Ok(bot) => bot,
+        Err(code) => {
+            eprintln!("{code}\nusage: koru-agent --worker bot --bot <id>");
+            std::process::exit(2)
+        }
+    };
+    match koru_bots_engine::bot_worker::run_supervised(bot) {
+        Ok(()) => std::process::exit(0),
+        Err(error) => {
+            eprintln!("{error}");
+            std::process::exit(1)
+        }
+    }
+}
+
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<PathBuf, &'static str> {
     let mut args = args.into_iter();
     if args.next().as_deref() != Some("--root") {

@@ -9,6 +9,7 @@
 //! `TESTING.md`'s third exception covers.
 
 use super::*;
+mod bots_capacity;
 use crate::sections::GlobalSettings;
 
 #[test]

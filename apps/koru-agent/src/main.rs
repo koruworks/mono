@@ -37,6 +37,7 @@ fn main() {
             koru_agent::session_worker::role(),
             koru_agent::delegate_worker::role(),
             koru_agent::bots_worker::role(),
+            koru_agent::bots_worker::bot_role(),
         ],
     );
 
