@@ -5353,6 +5353,7 @@ dependencies = [
  "koru-artifact-core",
  "koru-artifact-sqlite",
  "koru-artifact-wire",
+ "koru-bots-engine",
  "koru-channel",
  "koru-cli-updates",
  "koru-core",
@@ -5768,6 +5769,7 @@ dependencies = [
  "koru-artifact-sqlite",
  "koru-autostart",
  "koru-bot-client-wire",
+ "koru-bots-engine",
  "koru-channel",
  "koru-delegate-api",
  "koru-device",
@@ -6001,6 +6003,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "koru-bots-engine"
+version = "0.0.3"
+dependencies = [
+ "koru-agent-worker",
+ "koru-channel",
+ "koru-ipc",
+ "koru-sqlite",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
 name = "koru-browser-control"
 version = "0.0.3"
 dependencies = [
@@ -6221,6 +6237,7 @@ dependencies = [
  "koru-agent-worker",
  "koru-api-client",
  "koru-artifact-wire",
+ "koru-bots-engine",
  "koru-channel",
  "koru-delegate-api",
  "koru-delegate-context",

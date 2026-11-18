@@ -127,6 +127,9 @@ impl Actor {
     }
 
     pub(super) fn bot_command(&mut self, command: BotCommand) -> Result<BotReply, Failure> {
+        if !self.legacy_bots {
+            return Err(unavailable("root_engine_owned"));
+        }
         if self.device.as_uuid().is_nil()
             || command
                 .owner()
@@ -760,6 +763,9 @@ impl Actor {
     }
 
     pub(super) fn wake_bots(&mut self) {
+        if !self.legacy_bots {
+            return;
+        }
         if !self.bot_drain_pending {
             self.bot_queue_cursor = 0;
             self.bot_drain_pending = self.commands.send(Command::BotDrain).is_ok();
@@ -775,6 +781,9 @@ impl Actor {
         }
     }
     pub(super) fn drain_one_bot(&mut self) {
+        if !self.legacy_bots {
+            return;
+        }
         // One lightweight candidate and at most its one selected payload per
         // mailbox turn. Paused/busy entries advance the cursor, never starve
         // later pages. A completed sweep sleeps until a relevant event.

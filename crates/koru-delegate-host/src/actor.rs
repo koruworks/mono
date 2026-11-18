@@ -238,6 +238,7 @@ pub struct Actor {
     commands: mpsc::Sender<Command>,
     device: DeviceId,
     bot_queue_cursor: u64,
+    pub(crate) legacy_bots: bool,
     bot_drain_pending: bool,
     bot_drain_again: bool,
     pumps: HashMap<RunId, Pump>,
@@ -301,6 +302,7 @@ impl Actor {
             commands,
             device,
             bot_queue_cursor: 0,
+            legacy_bots: true,
             bot_drain_pending: false,
             bot_drain_again: false,
             pumps: HashMap::new(),
@@ -476,9 +478,10 @@ impl Actor {
                 tracing::error!(target: "koru::delegate", %error, "restart could not classify the ledger");
             }
         }
-        if let Err(error) = self
-            .orchestrator
-            .recover_unused_bot_reservations(self.device)
+        if self.legacy_bots
+            && let Err(error) = self
+                .orchestrator
+                .recover_unused_bot_reservations(self.device)
         {
             tracing::warn!(target: "koru::delegate", %error, "unused Bot reservations remain held");
         }

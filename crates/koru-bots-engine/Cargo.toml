@@ -1,0 +1,27 @@
+[package]
+name = "koru-bots-engine"
+rust-version.workspace = true
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "The Bots engine worker, its durable ledger and local control interface."
+
+[features]
+default = []
+active = []
+
+[dependencies]
+koru-agent-worker = { path = "../koru-agent-worker" }
+koru-channel = { path = "../koru-channel" }
+koru-ipc = { path = "../koru-ipc" }
+koru-sqlite = { path = "../koru-sqlite" }
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+[[test]]
+name = "engine_process"
+harness = false
+

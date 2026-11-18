@@ -1,5 +1,14 @@
 # Test architecture
 
+The Bots engine foundation has in-memory schema/diagnostic tests in
+`crates/koru-bots-engine/src/database/tests.rs`. Its process proof is opt-in:
+`cargo test -p koru-bots-engine --features active --test engine_process -- --run --root <new-absolute-directory>`.
+It uses the production supervisor and worker composition on disposable data;
+ordinary suite invocation skips it. The Windows `bots_containment` integration
+test in `koru-agent-worker` uses the production supervisor and provider launcher
+with a stand-in provider, and proves descendant death plus ancestor survival
+after killing each supervisor in a fresh five-process chain.
+
 A rejected account repair can preserve the stored credential and immediately
 restore it into a fresh held context, whose legitimate refresh changes those
 bytes. The switching fixture holds that account's existing inspection gate while

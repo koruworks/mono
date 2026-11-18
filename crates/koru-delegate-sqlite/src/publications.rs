@@ -182,6 +182,17 @@ impl RunsDb {
         through: PendingPublicationRunCursor,
         before_or_at: Option<PendingPublicationRunCursor>,
     ) -> Result<PendingPublicationRunSeek, LedgerError> {
+        self.next_pending_publication_run_for_mode(after, through, before_or_at, true)
+    }
+
+    /// The retirement filter applies before the bounded seek selects a Run.
+    pub fn next_pending_publication_run_for_mode(
+        &self,
+        after: Option<PendingPublicationRunCursor>,
+        through: PendingPublicationRunCursor,
+        before_or_at: Option<PendingPublicationRunCursor>,
+        legacy_bots: bool,
+    ) -> Result<PendingPublicationRunSeek, LedgerError> {
         let stamp = publication_change_stamp(self.conn())?;
         if !cursor_present(self, through, stamp)?
             || after
@@ -217,11 +228,15 @@ impl RunsDb {
              WHERE acknowledged_at_ms IS NULL
                AND run_id>(SELECT run_id FROM pending_publications WHERE rowid=?1)
                AND run_id<=(SELECT run_id FROM pending_publications WHERE rowid=?2)
+               AND (?3 OR EXISTS (SELECT 1 FROM run_intents i WHERE i.run_id=pending_publications.run_id
+                   AND json_extract(i.payload_json, '$.scope.kind') <> 'bot_folder'))
              ORDER BY run_id LIMIT 1"
         } else {
             "SELECT rowid,event_id,run_id FROM pending_publications INDEXED BY pending_publications_open_run
              WHERE acknowledged_at_ms IS NULL
                AND run_id<=(SELECT run_id FROM pending_publications WHERE rowid=?2)
+               AND (?3 OR EXISTS (SELECT 1 FROM run_intents i WHERE i.run_id=pending_publications.run_id
+                   AND json_extract(i.payload_json, '$.scope.kind') <> 'bot_folder'))
              ORDER BY run_id LIMIT 1"
         };
         let mut statement = self
@@ -229,7 +244,7 @@ impl RunsDb {
             .prepare(query)
             .map_err(|e| LedgerError::sql("seek pending publication Run", e))?;
         let mut rows = statement
-            .query(params![after.map(|c| c.rowid), through.rowid])
+            .query(params![after.map(|c| c.rowid), through.rowid, legacy_bots])
             .map_err(|e| LedgerError::sql("seek pending publication Run", e))?;
         match rows
             .next()
@@ -390,6 +405,17 @@ impl RunsDb {
         run: Option<RunId>,
         limit: usize,
     ) -> Result<Vec<OpenPublication>, LedgerError> {
+        self.open_publications_for_mode(run, limit, true)
+    }
+
+    /// Retirement gate: filter before LIMIT so an old Bot's retained backlog
+    /// cannot starve ordinary publications. No Bot record is acknowledged.
+    pub fn open_publications_for_mode(
+        &self,
+        run: Option<RunId>,
+        limit: usize,
+        legacy_bots: bool,
+    ) -> Result<Vec<OpenPublication>, LedgerError> {
         let mut statement = self
             .conn()
             .prepare(
@@ -397,6 +423,11 @@ impl RunsDb {
                    FROM pending_publications
                   WHERE acknowledged_at_ms IS NULL
                     AND (?2 IS NULL OR run_id = ?2)
+                    AND (?3 OR EXISTS (
+                        SELECT 1 FROM run_intents i
+                        WHERE i.run_id = pending_publications.run_id
+                        AND json_extract(i.payload_json, '$.scope.kind') <> 'bot_folder'
+                    ))
                   ORDER BY rowid
                   LIMIT ?1",
             )
@@ -405,7 +436,8 @@ impl RunsDb {
             .query_map(
                 params![
                     i64::try_from(limit).unwrap_or(i64::MAX),
-                    run.map(|id| id.to_string())
+                    run.map(|id| id.to_string()),
+                    legacy_bots
                 ],
                 |row| {
                     Ok((

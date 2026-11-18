@@ -24,6 +24,7 @@ path = "src/lib.rs"
 test-support = []
 
 [dependencies]
+koru-bots-engine = { path = "../koru-bots-engine" }
 blake3.workspace = true
 # The bounded bootstrap reader and the parent-death watcher.
 koru-agent-worker = { path = "../koru-agent-worker" }

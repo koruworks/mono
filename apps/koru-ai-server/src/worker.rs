@@ -89,6 +89,7 @@ const PROMPT_TEMPLATE_VERSION: &str = "koru-chat-v1";
 const CHAT_PROMPT: &str = include_str!("../prompts/chat-v1.md");
 
 pub struct WorkerConfig {
+    legacy_bots: bool,
     native_recovery: Option<native_recovery::NativeRecoveryConfig>,
     bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>>,
     bot_authority: Option<Arc<dyn koru_ai_core::bots::BotAuthority>>,
@@ -154,6 +155,12 @@ pub struct WorkerConfig {
 }
 
 impl WorkerConfig {
+    /// The new Bots engine owns Bots on this root. Ordinary AI chats stay
+    /// available; legacy Bot recovery, commands and M8 mirrors stay closed.
+    pub fn without_legacy_bots(mut self) -> Self {
+        self.legacy_bots = false;
+        self
+    }
     /// The process host shares this same gate across AI-thread restarts.
     pub fn with_native_effect_recovery(
         mut self,
@@ -221,6 +228,7 @@ impl WorkerConfig {
     }
     pub fn new(root: PathBuf, channel: impl Into<String>, providers: ProviderRegistry) -> Self {
         Self {
+            legacy_bots: true,
             root,
             channel: channel.into(),
             providers,
@@ -263,6 +271,7 @@ impl WorkerConfig {
         let channel = channel.into();
         let runtime = ProviderRuntime::with_os_vault(&channel)?;
         Ok(Self {
+            legacy_bots: true,
             root,
             channel,
             providers: runtime.registry(),
@@ -310,6 +319,7 @@ impl WorkerConfig {
         let channel = channel.into();
         let runtime = ProviderRuntime::new(None, credentials, openai_account)?;
         Ok(Self {
+            legacy_bots: true,
             root,
             channel,
             providers: runtime.registry(),
@@ -459,6 +469,15 @@ impl AiWorker {
     }
 
     pub fn spawn(mut self) -> Result<WorkerHandle, WorkerError> {
+        let legacy_bots = self.config.legacy_bots;
+        if !self.config.legacy_bots {
+            self.config.bot_authority = None;
+            self.config.bot_delegate = None;
+            self.config.bot_admission = None;
+            self.config.decision_wait_delegate = None;
+            self.config.native_recovery = None;
+            self.config.connections = None;
+        }
         let (sender, receiver) = sync_channel(WORKER_COMMAND_CAPACITY);
         let routine_calls = routine_call::RoutineCallGates::default();
         let worker_routine_calls = routine_calls.clone();
@@ -556,6 +575,7 @@ impl AiWorker {
             Ok(Ok(info)) => {
                 set_status(&status, WorkerStatus::Ready(info));
                 Ok(WorkerHandle {
+                    legacy_bots,
                     sender,
                     attachments,
                     store_context,
@@ -594,6 +614,7 @@ impl AiWorker {
 }
 
 pub struct WorkerHandle {
+    legacy_bots: bool,
     /// What the owner server of linked desktops is built from (M8), when
     /// this worker has a Bot authority and an admission port.
     pub(crate) bot_owner: Option<bots::client::owner::Parts>,
@@ -625,6 +646,7 @@ impl std::fmt::Debug for WorkerHandle {
 impl WorkerHandle {
     pub fn client(&self) -> AiWorkerClient {
         AiWorkerClient {
+            legacy_bots: self.legacy_bots,
             sender: self.sender.clone(),
             attachments: self.attachments.clone(),
             store_context: self.store_context.clone(),
@@ -743,6 +765,7 @@ impl Drop for WorkerHandle {
 
 #[derive(Clone)]
 pub struct AiWorkerClient {
+    legacy_bots: bool,
     /// The private connections this worker hosts (M5), if any.
     connections: Option<connections::Hosted>,
     routine_calls: routine_call::RoutineCallGates,
@@ -767,6 +790,9 @@ impl AiServerPort for AiWorkerClient {
         context: RequestContext,
         request: koru_ai_wire::BotCommand,
     ) -> ApiResult<koru_ai_wire::BotResponse> {
+        if !self.legacy_bots {
+            return Err(bots::bot_failure(koru_ai_core::bots::BotError::Unavailable));
+        }
         // A worker keeps no copy of another computer's Bots by itself: the
         // two linked reads answer "no linked Bots" here. When a mirror runs
         // the routing port answers them from the copy and they never reach
@@ -1948,6 +1974,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    legacy_bots: bool,
     /// Where the six diagnostic events of M8 go (`bots::events`).
     bot_events: bots::events::BotEvents,
     /// What the writer keeps for linked desktops (M8): this start, the
@@ -2096,10 +2123,15 @@ fn run_worker(
     // marker, the restart sweep below included: it is what lets a linked
     // desktop's cursor from a history this database lost be refused.
     let mut bot_clients = bots::client::owner::Writer::new(config.bot_client_hint.take());
-    bot_clients.started(&mut repository);
-    let recovery = repository
-        .recover_interrupted(Timestamp::now())
-        .map_err(|error| error.public_message)?;
+    if config.legacy_bots {
+        bot_clients.started(&mut repository);
+    }
+    let recovery = (if config.legacy_bots {
+        repository.recover_interrupted(Timestamp::now())
+    } else {
+        repository.recover_ordinary_interrupted(Timestamp::now())
+    })
+    .map_err(|error| error.public_message)?;
     if let Some(runtime) = &config.provider_runtime {
         let mut settings = repository
             .settings()
@@ -2257,6 +2289,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        legacy_bots: config.legacy_bots,
         bot_events: config.bot_events.clone(),
         bot_clients,
         connections: config.connections_hosted.take(),
@@ -2349,26 +2382,32 @@ fn run_worker(
     // already reads documents through; a Store that does not answer leaves
     // them for the next pass.
     state.place_unplaced_chats();
-    state.recover_bot_operations();
-    state.recover_bot_policy(false);
-    state.recover_bot_chats();
-    state.schedule_native_recovery();
-    while !shutdown.load(Ordering::Acquire) {
-        state.schedule_bot_boot();
+    if state.legacy_bots {
+        state.recover_bot_operations();
+        state.recover_bot_policy(false);
+        state.recover_bot_chats();
         state.schedule_native_recovery();
-        if state.bot_policy_recovery.due(Instant::now()) {
-            state.recover_bot_policy(false);
-        }
-        if state.bot_recovery_retry.due(Instant::now()) {
-            state.retry_bot_operations();
+    }
+    while !shutdown.load(Ordering::Acquire) {
+        if state.legacy_bots {
+            state.schedule_bot_boot();
+            state.schedule_native_recovery();
+            if state.bot_policy_recovery.due(Instant::now()) {
+                state.recover_bot_policy(false);
+            }
+            if state.bot_recovery_retry.due(Instant::now()) {
+                state.retry_bot_operations();
+            }
         }
         state.drain_agent_commands();
-        state.schedule_bot_chat_step();
-        state.schedule_bot_resends();
-        state.schedule_bot_lifecycle();
-        state.schedule_routine_access_recovery();
-        state.schedule_creation_lanes();
-        state.schedule_occurrence_recovery();
+        if state.legacy_bots {
+            state.schedule_bot_chat_step();
+            state.schedule_bot_resends();
+            state.schedule_bot_lifecycle();
+            state.schedule_routine_access_recovery();
+            state.schedule_creation_lanes();
+            state.schedule_occurrence_recovery();
+        }
         match state.next_envelope(&receiver) {
             Ok(Envelope::NativeDrainWake) => state.schedule_native_recovery(),
             Ok(Envelope::NativeDrained(result)) => state.complete_native_recovery(result),
@@ -2660,6 +2699,10 @@ fn grant_targets_in_profile(
 
 impl WorkerState {
     fn handle_command(&mut self, command: WorkerCommand) {
+        if !self.legacy_bots && matches!(&command, WorkerCommand::Bots { .. }) {
+            command.refuse(bots::bot_failure(koru_ai_core::bots::BotError::Unavailable));
+            return;
+        }
         if matches!(
             &command,
             WorkerCommand::Bots {

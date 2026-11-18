@@ -5123,6 +5123,7 @@ impl Agent {
             .spawn(move || {
                 // The delegate worker first: it reaches the gateway, and a
                 // run's last commit must not race the Store it goes to.
+                crate::bots_host::stop();
                 if let Some(delegate) = crate::delegate_host::current() {
                     routing_log.event(format_args!(
                         "{reason}: delegate {}",

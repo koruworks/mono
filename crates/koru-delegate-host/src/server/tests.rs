@@ -3,6 +3,7 @@
 //! The stale-worker guard rejects frames before any actor command exists.
 use super::*;
 use koru_delegate_api::ipc::Caller;
+mod engine_retirement;
 
 #[test]
 fn admission_read_server_requires_private_capability_device_and_current_frame() {

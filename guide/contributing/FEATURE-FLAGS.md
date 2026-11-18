@@ -1,5 +1,13 @@
 # Product feature flags
 
+The Bots engine rollout uses a separate **compile-time** Cargo feature:
+`cargo build -p koru-agent --features bots-engine`. It is off by default during
+implementation and has no environment override. An enabled build claims its
+root permanently for the new engine; a legacy build refuses to serve that root.
+Use a disposable `--root`. This foundation does not yet provide the new Bot UI.
+`koru-agent bots --root <path>` reads its database diagnostic without starting
+the engine. The existing UI flags below do not select a Bot implementation.
+
 **What a build shows.** Decided by the maintainers on 2026-10-08: the next release of
 Koru shows documents, files and terminal/shell session tabs — plus Welcome,
 Settings, Manage, Trash, Feedback, Search, Updates, What's New, Linked devices

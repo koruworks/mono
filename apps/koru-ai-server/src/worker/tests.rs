@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: MPL-2.0
+mod engine_retirement;
 
 use std::sync::Arc;
 use std::sync::mpsc::sync_channel;

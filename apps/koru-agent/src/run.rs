@@ -778,6 +778,12 @@ pub(crate) fn start_device_services(
     agent: &Arc<Mutex<Agent>>,
     waker: &crate::event::Waker,
 ) -> Result<DeviceServices, StartError> {
+    if !koru_bots_engine::ENABLED
+        && !koru_bots_engine::legacy_allowed(paths.root())
+            .map_err(|error| StartError::Failed(error.to_string()))?
+    {
+        return Err(StartError::Failed("root_engine_owned".into()));
+    }
     let network = crate::network::AgentNetwork::start(paths, endpoint_secret)
         .and_then(|network| network.install().cloned())
         .map_err(|error| StartError::Failed(format!("device network: {error}")))?;
@@ -808,6 +814,7 @@ pub(crate) fn start_device_services(
     // The delegate worker (D12), after the sessions and gateway workers
     // it reaches. Like the gateway's, its supervision returns at once;
     // the child waits for the gateway to publish on its own thread.
+    crate::bots_host::start(paths).map_err(|error| StartError::Failed(error.to_string()))?;
     if let Err(error) = crate::delegate_host::start(paths, local_device, bot_authority) {
         tracing::error!(
             target: "koru::delegate_host",

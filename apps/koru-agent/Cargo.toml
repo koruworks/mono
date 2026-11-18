@@ -7,6 +7,10 @@ license.workspace = true
 publish = false
 description = "The Koru Agent: owns device integration, supervises the gateway, holds the hotkey, and routes search results."
 
+[features]
+default = []
+bots-engine = ["koru-bots-engine/active"]
+
 # A library with a thin binary: the lifecycle gate needs
 # `CARGO_BIN_EXE_koru-agent`, which
 # exists only inside this package's own tests, and those tests drive the
@@ -20,6 +24,7 @@ name = "koru-agent"
 path = "src/main.rs"
 
 [dependencies]
+koru-bots-engine = { path = "../../crates/koru-bots-engine" }
 koru-store-wire = { path = "../../crates/koru-store-wire" }
 koru-socials-publisher = { path = "../../crates/koru-socials-publisher" }
 koru-features = { path = "../../crates/koru-features" }

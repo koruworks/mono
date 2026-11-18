@@ -14,6 +14,7 @@ description = "Desktop host for Koru's public API gateway and embedded domain wo
 # executable to stamp a Windows resource onto.
 
 [dependencies]
+koru-bots-engine = { path = "../koru-bots-engine" }
 # The Artifact Store the gateway worker hosts (D13): the SQLite database
 # and the service over it, composed beside the AI worker.
 koru-artifact-api = { path = "../koru-artifact-api" }

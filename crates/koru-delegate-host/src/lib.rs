@@ -136,6 +136,8 @@ fn serve(
     debug: bool,
 ) -> Result<(), String> {
     let deadline = Instant::now() + PEERS_DEADLINE;
+    let legacy_bots =
+        koru_bots_engine::legacy_allowed(&bootstrap.root).map_err(|error| error.to_string())?;
     let session_endpoint = sessions::endpoint(&bootstrap.segment, explicit_root)
         .map_err(|error| format!("session endpoint: {error}"))?;
     let sessions =
@@ -162,7 +164,8 @@ fn serve(
             Box::new(stubs::WallClock),
         )
         .map_err(|error| format!("runs.db: {error}"))?,
-    );
+    )
+    .with_legacy_bots(legacy_bots);
     // The gateway builds a run's endpoint URL from the address it published,
     // so this worker overrides it only when a person named one.
     let mcp_base = koru_env::value(koru_env::name::KORU_DELEGATE_MCP_ENDPOINT);
@@ -256,12 +259,16 @@ fn serve(
     .with_events(Box::new(schedule_events::BusScheduleEvents::new(
         gateway.client.clone(),
         ledger.clone(),
-    )))
-    .with_routines(
-        Box::new(ledger.clone()),
-        Box::new(routine_bridge),
-        Box::new(schedule_event_authority.as_ref().clone()),
-    );
+    )));
+    let scheduler = if legacy_bots {
+        scheduler.with_routines(
+            Box::new(ledger.clone()),
+            Box::new(routine_bridge),
+            Box::new(schedule_event_authority.as_ref().clone()),
+        )
+    } else {
+        scheduler
+    };
     let schedule_publisher = Box::new(schedule_events::BusScheduleEvents::publisher(
         gateway.client.clone(),
         ledger.clone(),
@@ -270,6 +277,7 @@ fn serve(
 
     let (commands, inbox) = mpsc::channel();
     let mut actor = actor::Actor::new(orchestrator, commands.clone(), device.clone());
+    actor.legacy_bots = legacy_bots;
     actor
         .attach_decision_bridge(Box::new(decision_bridge))
         .map_err(|error| format!("could not start the publication worker: {error}"))?;
@@ -303,6 +311,7 @@ fn serve(
         stop_tx,
         actor.active_runs(),
         scheduler.control(),
+        legacy_bots,
     )?;
     tracing::info!(
         target: "koru::delegate",

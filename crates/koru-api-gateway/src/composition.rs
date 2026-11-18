@@ -270,6 +270,8 @@ pub(crate) fn open(
     };
     // One private capability, composed independently of AI startup. Discovery
     // must also work while an AI worker is unavailable; effects still require it.
+    let legacy_bots = koru_bots_engine::legacy_allowed(&config.channel_root)
+        .map_err(|error| error.to_string())?;
     let bot_authority = config.bootstrap.as_ref().and_then(|bootstrap| {
         koru_delegate_api::bots::BotDelegateAuthority::new(
             bootstrap.bot_delegate.as_ref()?.expose().to_owned(),
@@ -277,11 +279,13 @@ pub(crate) fn open(
     });
     let routine_bridge_authority = bot_authority
         .as_ref()
+        .filter(|_| legacy_bots)
         .map(|authority| authority.routine_bridge_authority());
     // The decision bridge's own domain: same bootstrap parent, separate derive
     // context and header scheme, so neither credential opens the other's routes.
     let decision_bridge_authority = bot_authority
         .as_ref()
+        .filter(|_| legacy_bots)
         .map(|authority| authority.decision_bridge_authority());
     let bot_delegate: Option<Arc<dyn koru_delegate_api::bots::BotDelegatePort>> = bot_authority
         .and_then(|authority| {
@@ -336,6 +340,13 @@ pub(crate) fn open(
         }
     });
     let state = match ai_config.and_then(|ai_config| {
+        let ai_config = if koru_bots_engine::legacy_allowed(&config.channel_root)
+            .map_err(|error| error.to_string())?
+        {
+            ai_config
+        } else {
+            ai_config.without_legacy_bots()
+        };
         koru_ai_server::AiWorker::new(ai_config)
             .spawn()
             .map_err(|error| error.to_string())

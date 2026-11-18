@@ -69,6 +69,30 @@ fn admits_bot_command(
         })
 }
 
+fn permits_legacy_command(
+    legacy_bots: bool,
+    command: &koru_delegate_api::bots::BotCommand,
+) -> bool {
+    // This shared lookup also authorizes ordinary delegated-run page tools.
+    // Retiring Bots must not remove that unrelated authority path.
+    legacy_bots
+        || matches!(
+            command,
+            koru_delegate_api::bots::BotCommand::ResolveRunAuthority { .. }
+        )
+}
+
+fn permits_resolved_authority(
+    legacy_bots: bool,
+    authority: &koru_delegate_core::RunToolAuthority,
+) -> bool {
+    legacy_bots
+        || matches!(
+            authority,
+            koru_delegate_core::RunToolAuthority::Ordinary { .. }
+        )
+}
+
 pub fn spawn(
     listener: Listener,
     identity: Identity,
@@ -76,6 +100,7 @@ pub fn spawn(
     stop: mpsc::Sender<&'static str>,
     active_runs: Arc<AtomicU32>,
     scheduler: crate::scheduler::Control,
+    legacy_bots: bool,
 ) -> Result<(), String> {
     std::thread::Builder::new()
         .name("koru-delegate accept".into())
@@ -89,7 +114,7 @@ pub fn spawn(
                 let spawned = std::thread::Builder::new()
                     .name("koru-delegate connection".into())
                     .stack_size(256 * 1024)
-                    .spawn(move || handle(stream, identity, commands, stop, active, scheduler));
+                    .spawn(move || handle(stream, identity, commands, stop, active, scheduler, legacy_bots));
                 if let Err(error) = spawned {
                     tracing::warn!(target: "koru::delegate", %error, "a connection could not be served");
                 }
@@ -145,6 +170,7 @@ fn handle(
     stop: mpsc::Sender<&'static str>,
     active_runs: Arc<AtomicU32>,
     scheduler: crate::scheduler::Control,
+    legacy_bots: bool,
 ) {
     koru_ipc::set_timeouts(&stream, Some(REQUEST_TIMEOUT));
     let mut reader = &stream;
@@ -154,7 +180,9 @@ fn handle(
     let (reply_tx, reply_rx) = mpsc::sync_channel::<Response>(1);
     let command = match request {
         Request::Bot { authority, command } => {
-            if !admits_bot_command(&identity, &authority, &command) {
+            if !admits_bot_command(&identity, &authority, &command)
+                || !permits_legacy_command(legacy_bots, &command)
+            {
                 write(
                     &stream,
                     &Response::Failure(Failure::new(
@@ -169,9 +197,14 @@ fn handle(
                 command
             {
                 let response = match identity.run_authorities.resolve(run, generation) {
-                    Ok(authority) => {
+                    Ok(authority) if permits_resolved_authority(legacy_bots, &authority) => {
                         Response::Bot(koru_delegate_api::bots::BotReply::RunAuthority { authority })
                     }
+                    Ok(_) => Response::Failure(Failure::new(
+                        "bot_authority_unavailable",
+                        "The Bot authority is unavailable.",
+                        false,
+                    )),
                     Err(failure) => Response::Failure(failure),
                 };
                 write(&stream, &response);

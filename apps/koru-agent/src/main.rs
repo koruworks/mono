@@ -36,6 +36,7 @@ fn main() {
             koru_agent::gateway_worker::role(),
             koru_agent::session_worker::role(),
             koru_agent::delegate_worker::role(),
+            koru_agent::bots_worker::role(),
         ],
     );
 
@@ -331,6 +332,13 @@ fn main() {
                 fatal(&why);
             }
         }
+        cli::Command::Bots => match koru_bots_engine::inspect(paths.root()) {
+            Ok(report) => println!(
+                "{}",
+                serde_json::to_string_pretty(&report).expect("diagnostic JSON")
+            ),
+            Err(error) => fatal(&error.to_string()),
+        },
         cli::Command::Open => {
             if let Err(why) = koru_agent::client::open_workspace(
                 &paths,

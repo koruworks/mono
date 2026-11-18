@@ -66,6 +66,15 @@ pub struct Repository {
 }
 
 impl Repository {
+    /// Recover ordinary AI work while leaving retired Bot-owned work intact.
+    /// The ownership index is consulted only to exclude those shared rows;
+    /// no Bot payload or replay record is opened or updated.
+    pub fn recover_ordinary_interrupted(
+        &mut self,
+        now: Timestamp,
+    ) -> Result<RecoveryCounts, AiError> {
+        recover_interrupted(self, now, false)
+    }
     /// In a test build a database opened from a file carries the feed audit
     /// too (`repository/bots/client_feed/audit.rs`), reporting only: a
     /// commit that moves no marker for what it changed is named on stderr
@@ -1656,63 +1665,83 @@ impl AiPersistence for Repository {
     }
 
     fn recover_interrupted(&mut self, now: Timestamp) -> Result<RecoveryCounts, AiError> {
-        let started = Instant::now();
-        let transaction = self.connection.transaction().map_err(storage_failed)?;
-        // The replies of Bot conversations this is about to end, read before
-        // the three statements below end them as a set: each gets a marker,
-        // and so does its conversation.
-        let interrupted = bots::client_feed::open_replies(&transaction).map_err(storage_failed)?;
+        recover_interrupted(self, now, true)
+    }
+}
+
+fn recover_interrupted(
+    repository: &mut Repository,
+    now: Timestamp,
+    legacy_bots: bool,
+) -> Result<RecoveryCounts, AiError> {
+    let started = Instant::now();
+    let transaction = repository
+        .connection
+        .transaction()
+        .map_err(storage_failed)?;
+    // The replies of Bot conversations this is about to end, read before
+    // the three statements below end them as a set: each gets a marker,
+    // and so does its conversation.
+    let interrupted = if legacy_bots {
+        bots::client_feed::open_replies(&transaction).map_err(storage_failed)?
+    } else {
+        Vec::new()
+    };
+    if legacy_bots {
         transaction.execute("UPDATE bot_run_replay SET stop_reason='ai_restart',updated_at_ms=?1
             WHERE ai_attempt_id IN (SELECT id FROM inference_attempts WHERE status IN ('pending','streaming'))
             AND stop_reason IS NULL", [now.millis()]).map_err(storage_failed)?;
-        let attempts = transaction
-            .execute(
-                "UPDATE inference_attempts
+    }
+    let attempts = transaction
+        .execute(
+            "UPDATE inference_attempts
                     SET status = 'interrupted',
                         completed_at_ms = max(queued_at_ms, ?1)
-                  WHERE status IN ('pending', 'streaming')",
-                [now.millis()],
-            )
-            .map_err(storage_failed)?;
-        let messages = transaction
-            .execute(
-                "UPDATE messages
+                  WHERE status IN ('pending', 'streaming')
+                    AND (?2 OR chat_id NOT IN (SELECT chat_id FROM bot_chats))",
+            [now.millis(), i64::from(legacy_bots)],
+        )
+        .map_err(storage_failed)?;
+    let messages = transaction
+        .execute(
+            "UPDATE messages
                     SET state = 'interrupted',
                         completed_at_ms = max(created_at_ms, ?1)
-                  WHERE role = 'assistant' AND state = 'pending'",
-                [now.millis()],
-            )
-            .map_err(storage_failed)?;
-        transaction
-            .execute(
-                "UPDATE tool_invocations
+                  WHERE role = 'assistant' AND state = 'pending'
+                    AND (?2 OR chat_id NOT IN (SELECT chat_id FROM bot_chats))",
+            [now.millis(), i64::from(legacy_bots)],
+        )
+        .map_err(storage_failed)?;
+    transaction
+        .execute(
+            "UPDATE tool_invocations
                     SET status = 'cancelled', approval = CASE
                             WHEN approval = 'pending' THEN 'denied' ELSE approval END,
                         completed_at_ms = max(proposed_at_ms, ?1),
                         error_code = 'cancelled',
                         error_message = 'The workspace tool was cancelled.'
-                  WHERE status IN ('proposed', 'approval_required', 'running')",
-                [now.millis()],
-            )
+                  WHERE status IN ('proposed', 'approval_required', 'running')
+                    AND (?2 OR chat_id NOT IN (SELECT chat_id FROM bot_chats))",
+            [now.millis(), i64::from(legacy_bots)],
+        )
+        .map_err(storage_failed)?;
+    for message in &interrupted {
+        bots::client_feed::touch_message_by_id(&transaction, message, true)
             .map_err(storage_failed)?;
-        for message in &interrupted {
-            bots::client_feed::touch_message_by_id(&transaction, message, true)
-                .map_err(storage_failed)?;
-        }
-        transaction.commit().map_err(storage_failed)?;
-        tracing::debug!(
-            target: "koru_ai::sqlite",
-            transaction = "recover_interrupted",
-            attempts,
-            messages,
-            elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
-            "AI SQLite transaction committed"
-        );
-        Ok(RecoveryCounts {
-            attempts: attempts as u64,
-            messages: messages as u64,
-        })
     }
+    transaction.commit().map_err(storage_failed)?;
+    tracing::debug!(
+        target: "koru_ai::sqlite",
+        transaction = "recover_interrupted",
+        attempts,
+        messages,
+        elapsed_ms = started.elapsed().as_secs_f64() * 1_000.0,
+        "AI SQLite transaction committed"
+    );
+    Ok(RecoveryCounts {
+        attempts: attempts as u64,
+        messages: messages as u64,
+    })
 }
 
 fn trace_attempt_transaction(

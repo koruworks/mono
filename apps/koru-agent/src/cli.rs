@@ -37,6 +37,8 @@ pub enum Command {
     /// reads `projection.db`, because a worker that will not answer is
     /// exactly when its ledger is worth looking at (P1.17).
     Delegate(Option<String>),
+    /// Read the Bots engine ledger without starting or contacting its worker.
+    Bots,
     /// Ask a running Agent to focus or launch a Koru workspace window.
     Open,
     /// Display a short-lived device-pairing QR from the running Agent.
@@ -207,6 +209,7 @@ const FLAGS: &[Flag] = &[
 const COMMANDS: &[(&str, &str)] = &[
     ("run", "run the agent (the default)"),
     ("status", "report on the running agent"),
+    ("bots", "read the Bots engine diagnostic from its database"),
     (
         "delegate",
         "what the delegate worker holds (a run id prints that run)",
@@ -385,6 +388,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Invocation, Reje
         let chosen = match token.as_str() {
             "run" => Command::Run,
             "status" => Command::Status,
+            "bots" => Command::Bots,
             "delegate" => {
                 // Like `projection`, an optional target follows the verb.
                 let target = tokens.get(i + 1).filter(|next| !next.starts_with('-'));

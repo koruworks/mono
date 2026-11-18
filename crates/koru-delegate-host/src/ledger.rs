@@ -34,11 +34,28 @@ use koru_delegate_sqlite::{
 
 /// The ledger, held once and named by several ports.
 #[derive(Clone)]
-pub struct SharedLedger(Arc<Mutex<RunsDb>>);
+pub struct SharedLedger(Arc<Mutex<RunsDb>>, bool);
 
 impl SharedLedger {
     pub fn new(db: RunsDb) -> Self {
-        Self(Arc::new(Mutex::new(db)))
+        Self(Arc::new(Mutex::new(db)), true)
+    }
+
+    pub fn with_legacy_bots(mut self, allowed: bool) -> Self {
+        self.1 = allowed;
+        self
+    }
+
+    fn visible_run(&self, run: RunId) -> Result<bool, LedgerError> {
+        if self.1 {
+            return Ok(true);
+        }
+        Ok(self.intent_facts(run)?.is_some_and(|facts| {
+            !matches!(
+                facts.scope,
+                koru_delegate_core::WorkspaceScope::BotFolder { .. }
+            )
+        }))
     }
 
     /// The settled facts of a creation — the asker, the launch profile, the
@@ -324,6 +341,9 @@ impl RunStore for SharedLedger {
         after: Option<RunId>,
         limit: usize,
     ) -> Result<Vec<RunId>, LedgerError> {
+        if !self.1 {
+            return Ok(Vec::new());
+        }
         self.0
             .lock()
             .unwrap()
@@ -343,26 +363,29 @@ impl RunStore for SharedLedger {
         self.0
             .lock()
             .unwrap()
-            .next_pending_publication_run(after, through, before_or_at)
+            .next_pending_publication_run_for_mode(after, through, before_or_at, self.1)
     }
     fn decision_open_publications_for(
         &self,
         run: RunId,
         limit: usize,
     ) -> Result<Vec<OpenPublication>, LedgerError> {
+        if !self.visible_run(run)? {
+            return Ok(Vec::new());
+        }
         self.0
             .lock()
             .unwrap()
             .decision_open_publications_for(run, limit)
     }
     fn bots(&mut self) -> Option<&mut dyn koru_delegate_sqlite::BotLedger> {
-        Some(self)
+        if self.1 { Some(self) } else { None }
     }
     fn private_effects(&mut self) -> Option<&mut dyn koru_delegate_runtime::PrivateEffectLedger> {
-        Some(self)
+        if self.1 { Some(self) } else { None }
     }
     fn native_results(&mut self) -> Option<&mut dyn koru_delegate_sqlite::NativeResultLedger> {
-        Some(self)
+        if self.1 { Some(self) } else { None }
     }
 
     fn validate_intent(
@@ -394,15 +417,34 @@ impl RunStore for SharedLedger {
     }
 
     fn pending_intents(&self) -> Result<Vec<PendingIntent>, LedgerError> {
-        self.0.lock().unwrap().pending_intents()
+        let mut rows = self.0.lock().unwrap().pending_intents()?;
+        if !self.1 {
+            rows.retain(|row| {
+                !matches!(
+                    row.payload.scope,
+                    koru_delegate_core::WorkspaceScope::BotFolder { .. }
+                )
+            });
+        }
+        Ok(rows)
     }
 
     fn intent(&self, run: RunId) -> Result<Option<IntentRecord>, LedgerError> {
+        if !self.visible_run(run)? {
+            return Ok(None);
+        }
         self.0.lock().unwrap().intent(run)
     }
 
     fn intents(&self) -> Result<Vec<IntentRecord>, LedgerError> {
-        self.0.lock().unwrap().intents()
+        let rows = self.0.lock().unwrap().intents()?;
+        let mut visible = Vec::new();
+        for row in rows {
+            if self.visible_run(row.run)? {
+                visible.push(row);
+            }
+        }
+        Ok(visible)
     }
 
     fn intent_facts(
@@ -474,7 +516,14 @@ impl RunStore for SharedLedger {
     }
 
     fn live_attempts(&self) -> Result<Vec<AttemptRow>, LedgerError> {
-        self.0.lock().unwrap().live_attempts()
+        let rows = self.0.lock().unwrap().live_attempts()?;
+        let mut visible = Vec::new();
+        for row in rows {
+            if self.visible_run(row.run)? {
+                visible.push(row);
+            }
+        }
+        Ok(visible)
     }
 
     fn enqueue(
@@ -496,7 +545,10 @@ impl RunStore for SharedLedger {
     }
 
     fn open_publications(&self, limit: usize) -> Result<Vec<OpenPublication>, LedgerError> {
-        self.0.lock().unwrap().open_publications(limit)
+        self.0
+            .lock()
+            .unwrap()
+            .open_publications_for_mode(None, limit, self.1)
     }
 
     fn open_publications_for(
@@ -507,7 +559,7 @@ impl RunStore for SharedLedger {
         self.0
             .lock()
             .unwrap()
-            .open_publications_for(Some(run), limit)
+            .open_publications_for_mode(Some(run), limit, self.1)
     }
 
     fn publication(

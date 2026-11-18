@@ -3,6 +3,7 @@ use super::super::tests::{chat, complete_turn};
 use super::*;
 pub(super) mod branch;
 mod conversations;
+mod engine_retirement;
 use koru_ai_core::{
     AiSearchQuery, ChatAccessLens, ListChatsToolRequest, ReadChatToolRequest,
     SearchChatsToolRequest,

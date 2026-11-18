@@ -192,6 +192,7 @@ fn a_full_worker_mailbox_does_not_lose_the_admitted_uncertain_scope() {
     let (sender, _receiver) = sync_channel(1);
     assert!(sender.try_send(Envelope::NativeDrainWake).is_ok());
     let client = AiWorkerClient {
+        legacy_bots: true,
         connections: None,
         routine_calls: Default::default(),
         sender,
