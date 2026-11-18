@@ -148,7 +148,7 @@ fn amount(state: UsageState, reason: Option<UsageReason>, bytes: Option<Decimal>
         UsageState::Known => {
             return koru_i18n::fill(
                 koru_i18n::t(lang, TextKey::CloudStorageUsed),
-                &[&koru_i18n::number::decimal(
+                &[&koru_i18n::number::storage(
                     lang,
                     bytes.expect("validated known amount").get() as u64,
                 )],
@@ -314,7 +314,7 @@ impl ManageView {
                                 el::Key::model(profile.0.as_u128(), "inventory-profile-total"),
                                 koru_i18n::fill(
                                     t(TextKey::CloudInventoryProfileTotal),
-                                    &[&koru_i18n::number::decimal(lang, total as u64)],
+                                    &[&koru_i18n::number::storage(lang, total as u64)],
                                 ),
                                 false,
                             ));

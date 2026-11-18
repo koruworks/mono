@@ -44,15 +44,27 @@ pub fn decimal(lang: Lang, value: u64) -> String {
 /// from the locale — a comma where a comma is the decimal mark, and never
 /// the same character as the grouping separator in the same language.
 pub fn bytes(lang: Lang, value: u64) -> String {
-    const STEP: f64 = 1024.0;
+    rough(lang, value, 1024)
+}
+
+/// Cloud storage, as a plan names it: **steps of 1000**, so a 100 GB plan
+/// reads *100 GB* and not *93 GB*. Rounded as [`bytes`] rounds; only the
+/// step differs, because an allowance is sold in decimal gigabytes while a
+/// file's size is what the filesystem reports.
+pub fn storage(lang: Lang, value: u64) -> String {
+    rough(lang, value, 1000)
+}
+
+fn rough(lang: Lang, value: u64, step: u64) -> String {
     const UNITS: [Key; 3] = [Key::SizeKilobytes, Key::SizeMegabytes, Key::SizeGigabytes];
-    if value < 1024 {
+    let unit_step = step as f64;
+    if value < step {
         return fill(t(lang, Key::SizeBytes), &[&decimal(lang, value)]);
     }
-    let mut scaled = value as f64 / STEP;
+    let mut scaled = value as f64 / unit_step;
     let mut unit = 0;
-    while scaled >= STEP && unit + 1 < UNITS.len() {
-        scaled /= STEP;
+    while scaled >= unit_step && unit + 1 < UNITS.len() {
+        scaled /= unit_step;
         unit += 1;
     }
     // One decimal below ten, none above: the second digit of *4.2* carries
@@ -91,7 +103,7 @@ fn localize_digit(lang: Lang, ascii: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes, decimal};
+    use super::{bytes, decimal, storage};
     use crate::Lang;
 
     #[test]
@@ -161,5 +173,19 @@ mod tests {
     fn decimal_handles_u64_max() {
         assert_eq!(decimal(Lang::En, u64::MAX), "18,446,744,073,709,551,615");
         assert_eq!(decimal(Lang::Ar, u64::MAX), "١٨٬٤٤٦٬٧٤٤٬٠٧٣٬٧٠٩٬٥٥١٬٦١٥");
+    }
+
+    /// A plan's allowance reads as the plan is sold: decimal steps, so
+    /// 100,000,000,000 bytes is *100 GB*, not the *93 GB* `bytes` would say.
+    #[test]
+    fn storage_counts_in_thousands_and_rounds_like_file_sizes() {
+        assert_eq!(storage(Lang::En, 100_000_000_000), "100 GB");
+        assert_eq!(storage(Lang::En, 1_000_000_000), "1.0 GB");
+        assert_eq!(storage(Lang::En, 99_470_869_421), "99 GB");
+        assert_eq!(storage(Lang::En, 529_130_579), "529 MB");
+        assert_eq!(storage(Lang::En, 4_200_000), "4.2 MB");
+        assert_eq!(storage(Lang::En, 999), "999 B");
+        assert_eq!(storage(Lang::De, 4_200_000), "4,2 MB");
+        assert_ne!(storage(Lang::En, 100_000_000_000), bytes(Lang::En, 100_000_000_000));
     }
 }
