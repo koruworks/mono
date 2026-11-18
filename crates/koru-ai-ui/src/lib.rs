@@ -124,6 +124,7 @@ mod layout_cache;
 mod link_card;
 mod live_markdown;
 mod managed;
+mod managed_questions;
 mod managed_surface;
 mod microphone;
 mod model_picker;
@@ -322,6 +323,7 @@ enum Focus {
     /// An agent's waiting questions (koru-ai D108): the card's own cursor
     /// says which option, box or action.
     Questions(ToolInvocationId),
+    ManagedQuestion(uuid::Uuid),
     WorkspaceSearch,
     /// *Save chat*'s name field.
     SaveName,
@@ -525,6 +527,7 @@ pub struct ChatSurface {
     /// Uncertain submissions stay with their conversation when this surface
     /// is rebound. Reopening reconciles the same receipt, never a new send.
     managed_outbox: HashMap<ChatId, (koru_ai_wire::bot_threads::Command, Option<SentMessage>)>,
+    managed_cards: HashMap<uuid::Uuid, managed_questions::RequestCard>,
     /// **Replies the agent failed because it refused their pictures**
     /// (Bots P1.8, QUESTIONS O36): the live `failed` event's engine stop
     /// code said so, and the reply says it in words of its own instead of
@@ -1072,6 +1075,7 @@ impl ChatSurface {
             pending_assistant_message_id: None,
             managed: None,
             managed_outbox: HashMap::new(),
+            managed_cards: HashMap::new(),
             refused_pictures: HashSet::new(),
             pending_user: None,
             answering: false,
@@ -1347,6 +1351,7 @@ impl ChatSurface {
     ///   next send or lookup asks again; the documents that lookup named are
     ///   no longer marked as asked, so their titles are asked again too.
     fn settle_unanswerable(&mut self) {
+        self.suspend_managed_requests();
         // A send staged until the Store is durable has not reached the
         // client: it is given back with the message, never sent later.
         self.staged_embedded_send = None;
@@ -2083,6 +2088,19 @@ impl ChatSurface {
             && let Some(handled) = self.questions_key(tool, key, text, mods)
         {
             return handled;
+        }
+        if let Focus::ManagedQuestion(id) = self.focus
+            && let Some(handled) = self.managed_question_key(id, key, text, mods)
+        {
+            return handled;
+        }
+        if self.focus == Focus::Composer
+            && matches!(key, Key::Named(NamedKey::Tab))
+            && mods.shift_key()
+            && !koru_keys::is_chord(mods)
+            && self.step_managed_question(None, false)
+        {
+            return true;
         }
         // The split button is an independent keyboard stop. Its menu remains
         // reachable with an empty draft, when the send action is disabled.
@@ -2837,6 +2855,9 @@ impl ChatSurface {
                 self.composer.set_focused(false);
             }
             return self.toggle_work(hit);
+        }
+        if let Some(handled) = self.managed_question_press(x, y) {
+            return handled;
         }
         if let Some(handled) = self.question_mouse_down(x, y) {
             return handled;
@@ -7784,6 +7805,7 @@ impl ChatSurface {
         let lang = self.lang;
         let now_ms = koru_ai_core::Timestamp::now().millis();
         let work_width = (width - PAD * 2.0).max(1.0);
+        self.rebuild_managed_notices(work_width);
         let detail = |activity: &ToolActivity| {
             if is_agent_row(activity) {
                 agent_row_body(activity, lang, now_ms)
@@ -8278,6 +8300,7 @@ impl ChatSurface {
             }
         }
         self.message_layouts = messages;
+        self.rebuild_managed_cards(width);
         self.position_conversation_items();
         if let Some(state) = &mut self.managed
             && !state.history_pending
@@ -8371,6 +8394,9 @@ impl ChatSurface {
     /// it proposes tools, so the activity belongs immediately before that
     /// response, not in a second list at the end of the transcript.
     fn position_conversation_items(&mut self) -> f32 {
+        for card in self.managed_cards.values_mut() {
+            card.top = f32::NAN;
+        }
         let mut top = 0.0;
         let mut placed_work = vec![false; self.work_layouts.len()];
         let mut placed_cards = vec![false; self.tool_activity_layouts.len()];
@@ -8417,7 +8443,7 @@ impl ChatSurface {
                 top += notice.layout.height() + NOTICE_GAP;
             }
         }
-        top
+        self.place_managed_cards(None, top)
     }
 
     /// A reply's work view, then its cards, from `top`; where they end.
@@ -8450,7 +8476,7 @@ impl ChatSurface {
                 top += card.expanded_height + 6.0;
             }
         }
-        top
+        self.place_managed_cards(Some(message), top)
     }
 
     fn conversation_content_extent(&self) -> f32 {
@@ -8474,6 +8500,11 @@ impl ChatSurface {
             .chain(cards)
             .chain(work)
             .chain(notices)
+            .chain(
+                self.managed_cards
+                    .values()
+                    .map(|card| card.top + card.height + CARD_GAP),
+            )
             .fold(0.0, f32::max)
     }
 
@@ -8832,6 +8863,7 @@ impl ChatSurface {
                 &mut picture,
             );
         }
+        self.draw_managed_cards(canvas, root);
         for tool in &self.tool_activity_layouts {
             let row = Rect::new(
                 area.x,

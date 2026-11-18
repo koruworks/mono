@@ -35,6 +35,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn leave_managed(&mut self) {
+        self.managed_cards.clear();
         if let Some(mut state) = self.managed.take() {
             let thread = state.thread();
             if let Some(command) = state.pending_send.take() {
@@ -202,6 +203,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn managed_reply(&mut self, thread: ChatId, reply: R) -> bool {
+        self.settle_managed_request(thread, &reply);
         let Some(state) = &mut self.managed else {
             return false;
         };
@@ -299,6 +301,9 @@ impl ChatSurface {
         command: C,
         failure: koru_ai_wire::Failure,
     ) -> bool {
+        if self.failed_managed_request(thread, &command, &failure) {
+            return true;
+        }
         let Some(state) = &mut self.managed else {
             return false;
         };
@@ -338,6 +343,7 @@ impl ChatSurface {
     }
 
     pub(crate) fn maintain_managed(&mut self, now: Instant) -> bool {
+        self.maintain_managed_requests(now);
         let Some(reader) = &self.reader else {
             return false;
         };

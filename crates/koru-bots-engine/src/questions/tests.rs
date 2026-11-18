@@ -66,6 +66,14 @@ impl Fixture {
         }
     }
     fn ask(&mut self, secret: bool) -> Uuid {
+        self.ask_delivery(secret, true, protocol::QuestionsDelivery::InTurn)
+    }
+    fn ask_delivery(
+        &mut self,
+        secret: bool,
+        blocking: bool,
+        delivery: protocol::QuestionsDelivery,
+    ) -> Uuid {
         let key = protocol::QuestionRequestId::mint();
         self.db
             .question_event(
@@ -81,8 +89,8 @@ impl Fixture {
                         allow_other: true,
                         secret,
                     }],
-                    blocking: true,
-                    delivery: protocol::QuestionsDelivery::InTurn,
+                    blocking,
+                    delivery,
                 },
                 3,
             )
@@ -334,7 +342,110 @@ fn offline_secret_form_can_restart_its_request_without_storing_the_secret() {
     reask(&f.db.connection, &f.who, f.thread, q, 5).unwrap();
     assert_eq!(f.state(), "interrupted");
     assert!(f.db.read_questions(&f.who, f.thread).unwrap().is_empty());
+    assert_eq!(
+        f.count("inbox"),
+        2,
+        "the original work and explicit reask instruction are both owed"
+    );
+}
+
+#[test]
+fn reask_after_completed_next_message_form_enqueues_real_work_once() {
+    let mut f = Fixture::new();
+    let question = f.ask_delivery(true, false, protocol::QuestionsDelivery::NextMessage);
+    f.db.publish_reply(
+        &messages::Publish {
+            command: Uuid::new_v4(),
+            turn: f.turn,
+            body: "Please answer the form".into(),
+            outputs: vec![],
+        },
+        4,
+    )
+    .unwrap();
+    assert_eq!(f.state(), "answered");
+    assert_eq!(f.count("inbox"), 0);
+    f.db.recover_interrupted_turns().unwrap();
+    let request = crate::person::Request {
+        owner: f.who.owner.clone(),
+        sender: f.who.sender.clone(),
+        command: crate::person::Command::Change {
+            id: Uuid::new_v4(),
+            action: crate::person::Change::Reask {
+                thread: f.thread,
+                question,
+            },
+        },
+    };
+    let events = crate::observations::LiveEvents::default();
+    let first =
+        crate::person::handle(&mut f.db, &events, &mut f.transient, request.clone(), 5).unwrap();
+    let replay = crate::person::handle(&mut f.db, &events, &mut f.transient, request, 6).unwrap();
+    assert_eq!(first.0["answer"], replay.0["answer"]);
+    assert_eq!(replay.0["replayed"], true);
+    assert_eq!(f.state(), "interrupted");
     assert_eq!(f.count("inbox"), 1);
+    let bot: String =
+        f.db.connection
+            .query_row(
+                "SELECT bot FROM turns WHERE id=?1",
+                [f.turn.id.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    let delivery =
+        f.db.claim_messages(
+            id(bot).unwrap(),
+            f.thread,
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            messages::Resume::Rebuilt,
+            64 * 1024,
+            7,
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(delivery.work.len(), 1);
+    assert_eq!(
+        delivery.work[0].content.references[0]["notice"],
+        "question_reask"
+    );
+    assert!(f.db.read_questions(&f.who, f.thread).unwrap().is_empty());
+}
+
+#[test]
+fn reask_failure_rolls_back_question_history_and_receipt() {
+    let mut f = Fixture::new();
+    let question = f.ask(true);
+    f.db.recover_interrupted_turns().unwrap();
+    let messages = f.count("messages");
+    let receipts = f.count("receipts");
+    f.db.connection.execute_batch("CREATE TRIGGER refuse_reask BEFORE INSERT ON inbox BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    let request = crate::person::Request {
+        owner: f.who.owner.clone(),
+        sender: f.who.sender.clone(),
+        command: crate::person::Command::Change {
+            id: Uuid::new_v4(),
+            action: crate::person::Change::Reask {
+                thread: f.thread,
+                question,
+            },
+        },
+    };
+    assert!(
+        crate::person::handle(
+            &mut f.db,
+            &crate::observations::LiveEvents::default(),
+            &mut f.transient,
+            request,
+            5
+        )
+        .is_err()
+    );
+    assert_eq!(f.state(), "needs_you");
+    assert_eq!(f.count("messages"), messages);
+    assert_eq!(f.count("receipts"), receipts);
+    assert_eq!(f.db.read_questions(&f.who, f.thread).unwrap().len(), 1);
 }
 
 #[test]

@@ -279,6 +279,39 @@ pub(crate) fn tree(spec: &CardSpec) -> El {
     col(SLOT).child(card)
 }
 
+/// A request with immediate actions uses the same card and button leaves as
+/// the question form. Its owner supplies labels and handles the chosen key.
+pub(crate) fn actions_tree(heading: &str, body: &str, buttons: &[ButtonSpec]) -> El {
+    col(SLOT).child(
+        col(CARD)
+            .pad(CARD_INSET)
+            .gap(CARD_GAP)
+            .bg(Surface::Hover)
+            .radius(Radius::L)
+            .semantics(Role::Group)
+            .child(
+                text(heading.to_owned())
+                    .named(HEADING_WORDS)
+                    .role(roles::ROW)
+                    .ink(Ink::Primary)
+                    .emphasis(true)
+                    .wrap(),
+            )
+            .child(
+                text(body.to_owned())
+                    .named(WORDS)
+                    .role(roles::ROW)
+                    .ink(Ink::Primary)
+                    .wrap(),
+            )
+            .child(
+                col(ACTIONS)
+                    .gap(ACTION_GAP)
+                    .children(buttons.iter().map(|spec| button("Request action", spec))),
+            ),
+    )
+}
+
 /// **An answered set as one tree**: its heading and a line a question.
 pub(crate) fn summary_tree(spec: &SummarySpec) -> El {
     let card = col(SUMMARY)
@@ -378,8 +411,11 @@ pub(crate) struct ButtonLeaf {
 }
 
 impl Leaf for ButtonLeaf {
-    fn measure(&self, _width: Option<f32>) -> (f32, f32) {
-        (self.width, ActionButton::H)
+    fn measure(&self, width: Option<f32>) -> (f32, f32) {
+        (
+            width.map_or(self.width, |width| self.width.min(width)),
+            ActionButton::H,
+        )
     }
 
     fn paint(
@@ -396,7 +432,12 @@ impl Leaf for ButtonLeaf {
         } else {
             ActionStyle::Secondary
         };
-        let button = ActionButton::new(&self.label, style, None);
+        let shown = engine.elided(
+            &self.label,
+            koru_draw::theme::role::row(),
+            (at.w - ActionButton::PAD_X * 2.0).max(0.0),
+        );
+        let button = ActionButton::new(&shown, style, None);
         if self.disabled {
             button.draw_disabled(scene, root, engine, at);
         } else {

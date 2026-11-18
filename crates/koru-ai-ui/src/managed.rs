@@ -18,6 +18,7 @@ pub(crate) struct Opened {
     pub before: Option<u64>,
     pub after: u64,
     pub settings: Option<ProviderSettingsResponse>,
+    pub questions: Vec<wire::Question>,
 }
 
 #[cfg(test)]
@@ -33,6 +34,7 @@ pub(crate) struct Refreshed {
     pub messages: Vec<wire::Message>,
     pub after: u64,
     pub feed: Feed,
+    pub questions: Vec<wire::Question>,
 }
 pub(crate) struct Poll {
     pub thread: ChatId,
@@ -54,6 +56,8 @@ pub(crate) struct Live {
 
 pub(crate) struct State {
     pub snapshot: wire::Snapshot,
+    pub questions: Vec<wire::Question>,
+    pub requests_dirty: bool,
     pub messages: BTreeMap<u64, wire::Message>,
     /// Local rendering blocks, kept stable between deltas. These ids are not
     /// engine history identities and must never be used as durable links.
@@ -92,6 +96,8 @@ impl State {
             .collect();
         Self {
             snapshot: opened.snapshot.clone(),
+            questions: std::mem::take(&mut opened.questions),
+            requests_dirty: true,
             messages: std::mem::take(&mut opened.messages)
                 .into_iter()
                 .map(|m| (m.sequence, m))
@@ -137,7 +143,9 @@ impl State {
         self.snapshot
             .turns
             .iter()
-            .find(|t| t.bot == bot && t.state == "running")
+            .find(|t| {
+                t.bot == bot && matches!(t.state.as_str(), "running" | "needs_you" | "interrupted")
+            })
             .and_then(|t| {
                 Some(wire::Turn {
                     id: t.id,
@@ -185,10 +193,14 @@ impl State {
                     || a.details != b.details
             });
         self.snapshot = update.snapshot;
+        self.requests_dirty |= self.questions != update.questions;
+        changed |= self.questions != update.questions;
+        self.questions = update.questions;
         for message in update.messages {
             self.history_changed |= self.ingest(message);
         }
         changed |= self.history_changed;
+        self.requests_dirty |= self.history_changed;
         self.after = self.after.max(update.after);
         let count = self.live.len();
         self.live.retain(|id, live| {
@@ -303,7 +315,15 @@ impl State {
         let messages = self
             .messages
             .values()
-            .filter(|m| m.kind == "words" && m.sender != "engine")
+            .filter(|m| {
+                m.kind == "words"
+                    && m.sender != "engine"
+                    && !(m.content.body.is_empty()
+                        && m.content
+                            .references
+                            .iter()
+                            .any(|r| r.get("answer").is_some()))
+            })
             .enumerate()
             .map(|(index, m)| Message {
                 id: MessageId::from_uuid(m.id),
@@ -357,6 +377,7 @@ impl State {
         self.blocks
             .insert(message.sequence, render_blocks(&message));
         self.messages.insert(message.sequence, message);
+        self.requests_dirty = true;
         true
     }
 }

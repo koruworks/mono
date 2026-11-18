@@ -105,6 +105,7 @@ fn uncertain_send_reuses_id_after_rebinding_and_never_clears_other_chat() {
         before: None,
         after: 0,
         settings: None,
+        questions: vec![],
     });
     surface.maintain_managed(Instant::now() + Duration::from_secs(3));
     let retried = std::iter::from_fn(|| commands.try_recv().ok())

@@ -65,6 +65,7 @@ use winit::keyboard::{Key as WinitKey, ModifiersState, NamedKey};
 use crate::{ChatSurface, Focus, reader::Command};
 
 mod elements;
+pub(crate) mod input;
 mod tokens;
 
 /// **A question's answer box**, shared with the leaf that draws it: an
@@ -136,7 +137,7 @@ pub(crate) struct Card {
 }
 
 impl Card {
-    fn new(engine: &mut TextEngine, questions: &[AgentQuestion]) -> Self {
+    pub(crate) fn new(engine: &mut TextEngine, questions: &[AgentQuestion]) -> Self {
         Self {
             picks: vec![None; questions.len()],
             inputs: questions
@@ -208,7 +209,7 @@ pub(crate) fn controls(questions: &[AgentQuestion]) -> Vec<Control> {
 
 /// A control's element key: the row's id, the question and the option —
 /// never a label or a place in a list the agent could reorder.
-fn control_key(tool: ToolInvocationId, control: Control) -> ElKey {
+fn control_key(tool: impl std::fmt::Display, control: Control) -> ElKey {
     let id = |part: &str| crate::model_picker::stable_id(&format!("{tool}/{part}"));
     match control {
         Control::Option(question, option) => {
@@ -315,7 +316,7 @@ pub(crate) fn summary(activity: &ToolActivity, lang: Lang) -> elements::SummaryS
 fn spec(
     engine: &mut TextEngine,
     lang: Lang,
-    tool: ToolInvocationId,
+    tool: impl std::fmt::Display + Copy,
     questions: &[AgentQuestion],
     card: &Card,
     focused: Option<Control>,
@@ -683,80 +684,20 @@ impl ChatSurface {
             return None;
         };
         let questions = waiting(&activity)?.to_vec();
-        let order = controls(&questions);
-        let cursor = self.question_cards.get(&tool)?.cursor;
-        let step = |forward: bool| {
-            let at = order
-                .iter()
-                .position(|control| *control == cursor)
-                .unwrap_or(0);
-            let next = if forward {
-                (at + 1) % order.len()
-            } else {
-                (at + order.len() - 1) % order.len()
-            };
-            order[next]
-        };
-        match key {
-            WinitKey::Named(NamedKey::Escape) => {
+        let effect =
+            self.question_cards
+                .get_mut(&tool)?
+                .key(&mut self.engine, &questions, key, text, mods);
+        match effect {
+            input::Effect::Handled(changed) => Some(changed),
+            input::Effect::Activate(control) => {
+                Some(self.press_question_control(&activity, control))
+            }
+            input::Effect::Leave => {
                 self.give_keyboard_back();
-                return Some(true);
+                matches!(key, WinitKey::Named(NamedKey::Escape)).then_some(true)
             }
-            WinitKey::Named(NamedKey::Tab) if !koru_keys::is_chord(mods) => {
-                let next = step(!mods.shift_key());
-                self.question_cards.get_mut(&tool)?.cursor = next;
-                return Some(true);
-            }
-            _ => {}
         }
-        if let Control::Field(question) = cursor {
-            if matches!(key, WinitKey::Named(NamedKey::Enter)) {
-                // On from the box: to the next control, or — the set
-                // complete — Submit.
-                let card = self.question_cards.get(&tool)?;
-                if card.answers(&questions).is_some() && !card.sent {
-                    return Some(self.press_question_control(&activity, Control::Submit));
-                }
-                self.question_cards.get_mut(&tool)?.cursor = step(true);
-                return Some(true);
-            }
-            let card = self.question_cards.get_mut(&tool)?;
-            let input = card.inputs[question].clone()?;
-            let typed = input.0.borrow_mut().key(&mut self.engine, key, text, mods);
-            // Words typed into a question with options are its answer:
-            // *Other*. Emptied, it has none until an option is chosen.
-            if !questions[question].options.is_empty() {
-                card.picks[question] = if input.value().trim().is_empty() {
-                    None
-                } else {
-                    Some(Pick::Words)
-                };
-            }
-            return Some(typed == Typed::Handled);
-        }
-        let activates = match key {
-            WinitKey::Named(NamedKey::Enter | NamedKey::Space) => true,
-            WinitKey::Character(value) => value.as_str() == " ",
-            _ => false,
-        };
-        if activates && mods.is_empty() {
-            return Some(self.press_question_control(&activity, cursor));
-        }
-        // Up and Down walk a question's options as Tab does.
-        if mods.is_empty()
-            && let Control::Option(..) = cursor
-            && let WinitKey::Named(direction @ (NamedKey::ArrowUp | NamedKey::ArrowDown)) = key
-        {
-            let next = step(*direction == NamedKey::ArrowDown);
-            self.question_cards.get_mut(&tool)?.cursor = next;
-            return Some(true);
-        }
-        // A letter on an option or an action is typing: the composer's.
-        if text.is_some_and(|text| !text.trim().is_empty()) && !koru_keys::is_chord(mods) {
-            self.give_keyboard_back();
-            return None;
-        }
-        Some(false)
     }
 
     /// Cards whose sets are no longer waiting are dropped; a set sent and

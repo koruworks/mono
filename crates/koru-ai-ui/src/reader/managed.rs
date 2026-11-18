@@ -59,10 +59,17 @@ fn refreshed(
     else {
         return Err(malformed());
     };
+    let R::Questions { questions } = client.ai().bot_thread(&C::Questions {
+        thread: poll.thread,
+    })?
+    else {
+        return Err(malformed());
+    };
     Ok(Refreshed {
         snapshot,
         messages,
         after,
+        questions,
         feed: Feed {
             boot,
             cursor,
@@ -117,12 +124,18 @@ pub(super) fn handle(
                 else {
                     return Err(malformed());
                 };
+                let R::Questions { questions } =
+                    client.ai().bot_thread(&C::Questions { thread: *thread })?
+                else {
+                    return Err(malformed());
+                };
                 Ok(Opened {
                     snapshot,
                     messages,
                     before,
                     after,
                     settings,
+                    questions,
                 })
             })();
             let update = match opened {

@@ -523,7 +523,7 @@ fn history_note(
     bot: &str,
     reference: serde_json::Value,
     now: i64,
-) -> Result<(), Error> {
+) -> Result<Uuid, Error> {
     let content = messages::Content {
         body: String::new(),
         attachments: vec![],
@@ -532,8 +532,9 @@ fn history_note(
         deadline_ms: None,
         reply_to: messages::ReplyTo::Thread,
     };
-    c.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'setup_note',?5,'published',?6)",params![Uuid::new_v4().to_string(),thread.to_string(),messages::next_sequence(c,thread)?,bot,bytes(&content)?,now])?;
-    Ok(())
+    let message = Uuid::new_v4();
+    c.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'setup_note',?5,'published',?6)",params![message.to_string(),thread.to_string(),messages::next_sequence(c,thread)?,bot,bytes(&content)?,now])?;
+    Ok(message)
 }
 
 /// Only after credential revocation/confirmed process loss. Accepted ordinary
@@ -589,20 +590,23 @@ pub(crate) fn reask(
     now: i64,
 ) -> Result<(), Error> {
     messages::authorize_thread(c, who, thread)?;
-    let row:Option<(String,String)>=c.query_row("SELECT t.id,t.bot FROM questions q JOIN turns t ON t.id=q.turn WHERE q.id=?1 AND t.thread=?2 AND q.state='open' AND t.state='needs_you' AND t.stopped=0 AND NOT EXISTS(SELECT 1 FROM credentials cr WHERE cr.session=t.session AND cr.revoked=0)",params![question.to_string(),thread.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let row:Option<(String,String)>=c.query_row("SELECT t.id,t.bot FROM questions q JOIN turns t ON t.id=q.turn WHERE q.id=?1 AND t.thread=?2 AND q.state='open' AND (t.state IN ('needs_you','interrupted') OR (t.state='answered' AND json_extract(CAST(q.prompt AS TEXT),'$.delivery')='next_message')) AND t.stopped=0 AND NOT EXISTS(SELECT 1 FROM credentials cr WHERE cr.session=t.session AND cr.revoked=0) AND NOT EXISTS(SELECT 1 FROM turns newer WHERE newer.thread=t.thread AND newer.bot=t.bot AND newer.generation>t.generation)",params![question.to_string(),thread.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
     let (turn, bot) = row.ok_or(Error::StaleTurn)?;
     messages::authorize_bot(c, who, id(bot.clone())?)?;
     c.execute(
         "UPDATE questions SET state='cancelled',delivery_state='sent' WHERE id=?1",
         [question.to_string()],
     )?;
-    history_note(
+    let message = history_note(
         c,
         thread,
         &bot,
         serde_json::json!({"notice":"question_reask","question":question,"instruction":"Ask the person again in this session. The prior request's provider ended."}),
         now,
     )?;
+    // A next-message question can outlive its completed turn. Reasking it
+    // needs new owed work; changing an answered turn alone cannot wake it.
+    enqueue_answer(c, thread, id(bot)?, message, now)?;
     c.execute("UPDATE turns SET state='interrupted' WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM questions WHERE turn=?1 AND state='open' AND (json_extract(CAST(prompt AS TEXT),'$.kind')='approval' OR json_extract(CAST(prompt AS TEXT),'$.blocking')=1))",[turn])?;
     Ok(())
 }

@@ -1824,6 +1824,9 @@ pub enum Key {
     BotsEngineWaiting,
     BotsEngineLiveGap,
     BotsEngineSendUncertain,
+    BotsEngineQuestionLost,
+    BotsEngineAskAgain,
+    BotsEngineSecretLost,
     // A Bot's tab (Bots P1.8 S4): its header over its conversation.
     /// A Bot tab's name before the Bot service has said the Bot's: a restored tab, for a moment.
     BotsTabUnnamed,
@@ -4567,7 +4570,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3025] = [
+    pub const ALL: [Key; 3028] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5864,6 +5867,9 @@ impl Key {
         Key::BotsEngineWaiting,
         Key::BotsEngineLiveGap,
         Key::BotsEngineSendUncertain,
+        Key::BotsEngineQuestionLost,
+        Key::BotsEngineAskAgain,
+        Key::BotsEngineSecretLost,
         Key::BotsTabUnnamed,
         Key::BotsBotLoading,
         Key::BotsBotUnavailable,
@@ -17014,6 +17020,39 @@ pub const ROWS: &[Row] = &[
         ar: "جارٍ التحقق من استلام رسالتك…",
         zh_hans: "正在确认消息是否已收到…",
         ja: "メッセージが受信されたか確認しています…",
+    },
+    Row {
+        key: Key::BotsEngineQuestionLost,
+        en: "The agent is no longer waiting here. Ask again to continue; secret answers must be entered again.",
+        es: "El agente ya no está esperando aquí. Vuelve a preguntar para continuar; las respuestas secretas deben introducirse de nuevo.",
+        pt_br: "O agente não está mais aguardando aqui. Pergunte novamente para continuar; respostas secretas precisam ser inseridas novamente.",
+        de: "Der Agent wartet hier nicht mehr. Frage erneut, um fortzufahren; geheime Antworten müssen erneut eingegeben werden.",
+        fr: "L’agent n’attend plus ici. Redemandez pour continuer ; les réponses secrètes doivent être saisies à nouveau.",
+        ar: "لم يعد الوكيل ينتظر هنا. اسأل مجددًا للمتابعة؛ يجب إدخال الإجابات السرية مرة أخرى.",
+        zh_hans: "代理已不再在此等待。请重新提问以继续；秘密答案需要重新输入。",
+        ja: "エージェントはここでは待機していません。続行するにはもう一度尋ねてください。秘密の回答は再入力が必要です。",
+    },
+    Row {
+        key: Key::BotsEngineAskAgain,
+        en: "Ask again",
+        es: "Volver a preguntar",
+        pt_br: "Perguntar novamente",
+        de: "Erneut fragen",
+        fr: "Redemander",
+        ar: "اسأل مجددًا",
+        zh_hans: "重新提问",
+        ja: "もう一度尋ねる",
+    },
+    Row {
+        key: Key::BotsEngineSecretLost,
+        en: "A secret answer did not reach the agent. Enter it again when asked.",
+        es: "Una respuesta secreta no llegó al agente. Introdúcela de nuevo cuando se solicite.",
+        pt_br: "Uma resposta secreta não chegou ao agente. Insira-a novamente quando solicitado.",
+        de: "Eine geheime Antwort hat den Agenten nicht erreicht. Gib sie erneut ein, wenn du gefragt wirst.",
+        fr: "Une réponse secrète n’est pas parvenue à l’agent. Saisissez-la à nouveau lorsqu’elle sera demandée.",
+        ar: "لم تصل إجابة سرية إلى الوكيل. أدخلها مجددًا عند طلبها.",
+        zh_hans: "秘密答案未能送达代理。再次询问时请重新输入。",
+        ja: "秘密の回答がエージェントに届きませんでした。尋ねられたら再入力してください。",
     },
     Row {
         key: Key::BotsTabUnnamed,

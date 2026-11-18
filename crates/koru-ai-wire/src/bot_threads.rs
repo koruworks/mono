@@ -5,7 +5,9 @@ use koru_ai_core::{
     ChatId, ModelSelection,
     bots::{BotConversation, BotId},
 };
-pub use koru_session_protocol::AgentEvent;
+pub use koru_session_protocol::{
+    AgentEvent, ApprovalDecision, ApprovalIntent, QuestionAnswer, QuestionAnswerValue,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -150,7 +152,7 @@ pub struct Event {
     pub cursor: u64,
     pub observation: Observation,
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "BotThreadPrompt")]
 pub enum Prompt {
@@ -164,7 +166,7 @@ pub enum Prompt {
         delivery: koru_session_protocol::QuestionsDelivery,
     },
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "BotThreadAnswer")]
 pub enum Answer {
@@ -176,7 +178,7 @@ pub enum Answer {
         answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
     },
 }
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(rename = "BotThreadQuestion")]
 pub struct Question {
     pub id: Uuid,
