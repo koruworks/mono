@@ -41,7 +41,7 @@ impl Fixture {
                 definition,
                 authored: authored.then(|| AuthoredRole {
                     title: "Synthetic Role".into(),
-                    markdown: "Synthetic instructions".into(),
+                    source_hash: blake3::hash(b"Synthetic instructions").to_hex().to_string(),
                 }),
                 seed: authored.then(|| vec![10, 20, 30]),
             },
@@ -157,7 +157,7 @@ fn lost_begin_reply_keeps_exact_seed_and_reserves_bot_before_effects() {
         ..
     } = &mut f.begin
     {
-        role.markdown.push('!');
+        role.source_hash = blake3::hash(b"Changed instructions").to_hex().to_string();
     }
     assert_eq!(f.call(f.begin.clone()).err(), Some(Error::Conflict));
     assert_eq!(f.count("creations"), 1);
@@ -237,6 +237,7 @@ fn stale_effects_cannot_advance_abandoned_or_parked_creation() {
     assert_eq!(resumed.phase, Phase::FolderPending);
     assert!(resumed.failure.is_none());
     let abandoned = f.advance(&resumed, Step::Abandon).unwrap();
+    assert_eq!(abandoned.abandoned_from, Some(Phase::FolderPending));
     assert_eq!(
         f.advance(&resumed, Step::FolderReady { binding: folder() })
             .err(),
@@ -370,4 +371,63 @@ fn pending_limit_is_released_only_by_terminal_creation_and_pages_are_bounded() {
     f.advance(&failed, Step::Abandon).unwrap();
     f.call(next).unwrap();
     assert_eq!(f.count("creations"), 65);
+}
+
+#[test]
+fn compact_seed_transport_preserves_large_exports_and_rejects_malformed_or_oversize_input() {
+    let mut f = Fixture::new(true);
+    let bytes = vec![255; 300 * 1024];
+    if let Command::Begin { seed, .. } = &mut f.begin {
+        *seed = Some(bytes.clone());
+    }
+    let wire = serde_json::to_vec(&f.begin).unwrap();
+    assert!(wire.len() < 610 * 1024);
+    let decoded: Command = serde_json::from_slice(&wire).unwrap();
+    let record = record(f.call(decoded).unwrap());
+    assert_eq!(record.seed.unwrap().bytes, bytes);
+    let mut malformed = serde_json::to_value(&f.begin).unwrap();
+    malformed["seed"] = serde_json::json!("not-hex");
+    assert!(serde_json::from_value::<Command>(malformed).is_err());
+    let mut f = Fixture::new(true);
+    if let Command::Begin { seed, .. } = &mut f.begin {
+        *seed = Some(vec![1; MAX_RECORD_BYTES]);
+    }
+    assert_eq!(f.call(f.begin.clone()).err(), Some(Error::InputTooSmall));
+    assert_eq!(f.count("creations"), 0);
+}
+
+#[test]
+fn creation_reserves_space_for_the_retained_full_length_folder_binding() {
+    let mut f = Fixture::new(false);
+    let mut binding = folder();
+    binding.push_str(&"a".repeat(crate::folders::PATH_LIMIT - binding.len()));
+    if let Command::Begin { definition, .. } = &mut f.begin {
+        definition.configuration.working_folder = Some(binding.clone());
+    }
+    let record = f.begin();
+    let record = f.advance(&record, Step::StartFolder).unwrap();
+    assert_eq!(
+        f.advance(&record, Step::FolderReady { binding: folder() })
+            .err(),
+        Some(Error::Conflict)
+    );
+    let record = f
+        .advance(
+            &record,
+            Step::FolderReady {
+                binding: binding.clone(),
+            },
+        )
+        .unwrap();
+    let record = f.advance(&record, Step::Complete).unwrap();
+    assert_eq!(record.folder_binding.as_ref(), Some(&binding));
+    assert_eq!(
+        record
+            .result
+            .unwrap()
+            .definition
+            .configuration
+            .working_folder,
+        Some(binding)
+    );
 }

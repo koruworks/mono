@@ -7,6 +7,13 @@ use std::{
 };
 use uuid::Uuid;
 
+/// Retains the existing Bot creation contract's byte bound.
+pub const PATH_LIMIT: usize = 32768;
+
+pub fn valid_binding(path: &str) -> bool {
+    path.len() <= PATH_LIMIT && !path.contains('\0') && Path::new(path).is_absolute()
+}
+
 pub trait Folders {
     fn canonical(&self, path: &Path) -> io::Result<PathBuf>;
     fn occupied(&self, path: &Path) -> io::Result<bool>;
@@ -72,7 +79,7 @@ fn binding(fs: &dyn Folders, path: &Path) -> Result<PathBuf, Failure> {
     } else {
         path.to_path_buf()
     };
-    if shown.as_os_str().len() > 4096 || !shown.is_absolute() {
+    if !valid_binding(shown.to_str().ok_or(Failure::Invalid)?) {
         return Err(Failure::Invalid);
     }
     if shown != path && fs.canonical(&shown).map_err(|_| Failure::Unavailable)? != path {
@@ -134,7 +141,7 @@ pub fn managed(
 /// missing authority is never interpreted as permission to use Koru's data.
 pub fn selected(fs: &dyn Folders, path: &Path, reserved: &[PathBuf]) -> Result<PathBuf, Failure> {
     let text = path.to_str().ok_or(Failure::Invalid)?;
-    if !path.is_absolute() || text.len() > 4096 || text.contains('\0') {
+    if !valid_binding(text) {
         return Err(Failure::Invalid);
     }
     let path = fs.canonical(path).map_err(|e| {

@@ -23,9 +23,11 @@ pub struct Configuration {
 
 impl Configuration {
     pub(crate) fn validate(&self) -> Result<(), Error> {
-        if self.working_folder.as_ref().is_some_and(|path| {
-            path.len() > 4096 || path.contains('\0') || !std::path::Path::new(path).is_absolute()
-        }) {
+        if self
+            .working_folder
+            .as_ref()
+            .is_some_and(|path| !crate::folders::valid_binding(path))
+        {
             return Err(Error::InvalidRequest);
         }
         Ok(())

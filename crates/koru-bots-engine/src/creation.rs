@@ -10,12 +10,17 @@ use crate::{
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+mod bytes;
+
+pub const MAX_RECORD_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AuthoredRole {
     pub title: String,
-    pub markdown: String,
+    /// Hash of the authored Markdown validated by the gateway. The input
+    /// text need not travel beside its prepared snapshot a second time.
+    pub source_hash: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -24,6 +29,7 @@ pub struct Seed {
     pub request: Uuid,
     pub title: String,
     pub hash: String,
+    #[serde(with = "bytes")]
     pub bytes: Vec<u8>,
 }
 
@@ -63,6 +69,8 @@ pub struct Record {
     pub definition: Definition,
     pub seed: Option<Seed>,
     pub phase: Phase,
+    /// The last progress point, needed to explain effects after abandonment.
+    pub abandoned_from: Option<Phase>,
     pub failure: Option<Failure>,
     pub folder_binding: Option<String>,
     pub result: Option<person::Bot>,
@@ -88,6 +96,7 @@ pub enum Command {
         bot: Uuid,
         definition: Definition,
         authored: Option<AuthoredRole>,
+        #[serde(with = "bytes::optional")]
         seed: Option<Vec<u8>>,
     },
     Advance {
@@ -133,7 +142,7 @@ impl std::fmt::Debug for Reply {
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, Error> {
     let bytes = serde_json::to_vec(value).map_err(|_| Error::InvalidRequest)?;
-    if bytes.len() > person::MAX_COMMAND_BYTES {
+    if bytes.len() > MAX_RECORD_BYTES {
         return Err(Error::InputTooSmall);
     }
     Ok(bytes)
@@ -247,7 +256,12 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
                         && !bytes.is_empty()
                         && !role.title.trim().is_empty()
                         && role.title.chars().count() <= 256
-                        && role.markdown.len() <= 128 * 1024 =>
+                        && !role.title.chars().any(char::is_control)
+                        && role.source_hash.len() == 64
+                        && role
+                            .source_hash
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')) =>
                 {
                     let candidate = Uuid::new_v4();
                     definition.role = Some(candidate);
@@ -269,14 +283,18 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
                 definition,
                 seed,
                 phase: Phase::Intent,
+                abandoned_from: None,
                 failure: None,
                 folder_binding: None,
                 result: None,
                 created_at_ms: now,
             };
             // Leave room for the folder binding and completed Bot projection.
-            if encode(&record)?.len() + encode(&record.definition)?.len() + 16 * 1024
-                > person::MAX_COMMAND_BYTES
+            if encode(&record)?.len()
+                + encode(&record.definition)?.len()
+                + 6 * crate::folders::PATH_LIMIT
+                + 16 * 1024
+                > MAX_RECORD_BYTES
             {
                 return Err(Error::InputTooSmall);
             }
@@ -316,10 +334,7 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
                     record.phase = Phase::FolderPending
                 }
                 Step::FolderReady { binding } if record.phase == Phase::FolderPending => {
-                    if binding.len() > 4096
-                        || binding.contains('\0')
-                        || !std::path::Path::new(&binding).is_absolute()
-                    {
+                    if !crate::folders::valid_binding(&binding) {
                         return Err(Error::InvalidRequest);
                     }
                     if record
@@ -354,7 +369,10 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
                 }
                 Step::Failed { reason } => record.failure = Some(reason),
                 Step::Retry => record.failure = None,
-                Step::Abandon => record.phase = Phase::Abandoned,
+                Step::Abandon => {
+                    record.abandoned_from = Some(record.phase);
+                    record.phase = Phase::Abandoned;
+                }
                 _ => return Err(Error::NotAllowed),
             }
             record.revision = record.revision.checked_add(1).ok_or(Error::Conflict)?;
