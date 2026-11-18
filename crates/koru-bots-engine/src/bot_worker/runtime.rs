@@ -44,13 +44,27 @@ impl ManagedProviderFactory for Factory {
         // This creation edge runs inside the pool's session thread. Verify
         // every managed parent before creating a child; never follow a
         // junction out of the Bot's tree while recursively creating cwd.
-        request.working_directory = crate::folders::managed(
-            &crate::folders::Native,
-            &self.root,
-            self.bot,
-            crate::folders::Purpose::Run,
-        )
-        .map_err(|_| failed())?;
+        request.working_directory =
+            if request.working_directory == crate::folders::managed_path(&self.root, self.bot) {
+                crate::folders::managed(
+                    &crate::folders::Native,
+                    &self.root,
+                    self.bot,
+                    crate::folders::Purpose::Run,
+                )
+            } else {
+                let bound = crate::folders::selected(
+                    &crate::folders::Native,
+                    &request.working_directory,
+                    std::slice::from_ref(&self.root),
+                )
+                .map_err(|_| failed())?;
+                if bound != request.working_directory {
+                    return Err(failed());
+                }
+                Ok(bound)
+            }
+            .map_err(|_| failed())?;
         let registration = self
             .registry
             .registration(&request.provider)
@@ -229,11 +243,12 @@ pub(super) fn run(
                     let request = ManagedProviderRequest {
                         provider: configuration.provider,
                         executable: Default::default(),
-                        working_directory: bootstrap
-                            .root
-                            .join("bots")
-                            .join(bootstrap.bot.to_string())
-                            .join("workspace"),
+                        working_directory: configuration
+                            .working_folder
+                            .map(std::path::PathBuf::from)
+                            .unwrap_or_else(|| {
+                                crate::folders::managed_path(&bootstrap.root, bootstrap.bot)
+                            }),
                         delegation: None,
                         selection: Some(configuration.selection),
                         mcp_servers: vec![],

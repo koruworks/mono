@@ -322,6 +322,15 @@ pub fn handle(db: &mut Database, request: Request, now: i64) -> Result<Reply, Er
                     {
                         return Err(Error::InvalidRequest);
                     }
+                    if record
+                        .definition
+                        .configuration
+                        .working_folder
+                        .as_ref()
+                        .is_some_and(|selected| selected != &binding)
+                    {
+                        return Err(Error::Conflict);
+                    }
                     record.folder_binding = Some(binding);
                     record.phase = if record.seed.is_some() {
                         Phase::FolderReady

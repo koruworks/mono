@@ -22,11 +22,13 @@ pub(crate) struct Gateway {
     authority: Arc<dyn BotAuthority>,
     call: Call,
     permits: Arc<tokio::sync::Semaphore>,
+    root: std::path::PathBuf,
+    folders: Arc<dyn koru_bots_engine::folders::Folders + Send + Sync>,
 }
 impl GatewayState {
     /// Only the supervised host installs this capability. It is separate from
     /// a public bearer and never passed to a Bot worker or coding provider.
-    pub fn set_bots_engine(&self, engine: Engine, device: &str) -> bool {
+    pub fn set_bots_engine(&self, engine: Engine, device: &str, root: std::path::PathBuf) -> bool {
         let Some(authority) =
             koru_ai_server::BotAuthorityAdapter::from_device(self.store.client(), device)
         else {
@@ -34,6 +36,8 @@ impl GatewayState {
         };
         self.bots_engine
             .set(Arc::new(Gateway {
+                root,
+                folders: Arc::new(koru_bots_engine::folders::Native),
                 authority: Arc::new(authority),
                 call: Arc::new(move |request| {
                     match worker::request(
@@ -67,6 +71,32 @@ fn permitted(principal: &GatewayPrincipal) -> bool {
         .any(|scope| scope == koru_ai_api::AiScope::ManageBots.as_str())
 }
 impl Gateway {
+    fn configuration(
+        &self,
+        configuration: &koru_bots_engine::configuration::Configuration,
+        avatar: Option<u8>,
+    ) -> Result<(), Error> {
+        koru_ai_core::bots::validate_avatar(avatar).map_err(authority_error)?;
+        if let Some(path) = &configuration.working_folder {
+            let path = std::path::Path::new(path);
+            let bound = koru_bots_engine::folders::selected(
+                self.folders.as_ref(),
+                path,
+                std::slice::from_ref(&self.root),
+            )
+            .map_err(|error| match error {
+                koru_bots_engine::folders::Failure::Unavailable => Error::StorageUnavailable,
+                koru_bots_engine::folders::Failure::Reserved => Error::NotAllowed,
+                _ => Error::InvalidRequest,
+            })?;
+            // Store a binding, not an alias whose target can change later.
+            // The form's folder preparation supplies this canonical spelling.
+            if bound != path {
+                return Err(Error::InvalidRequest);
+            }
+        }
+        Ok(())
+    }
     fn execute(&self, principal: &GatewayPrincipal, command: Command) -> Result<Value, Error> {
         if !permitted(principal) {
             return Err(Error::NotAllowed);
@@ -105,6 +135,7 @@ impl Gateway {
                 action: Change::Create { definition, .. },
                 ..
             } => {
+                self.configuration(&definition.configuration, definition.avatar)?;
                 workspaces.push(definition.access.workspace);
                 pages.extend(
                     definition
@@ -127,6 +158,17 @@ impl Gateway {
                             document: *document,
                         }),
                 );
+            }
+            Command::Change {
+                action:
+                    Change::Configure {
+                        configuration,
+                        avatar,
+                        ..
+                    },
+                ..
+            } => {
+                self.configuration(configuration, *avatar)?;
             }
             Command::Change {
                 action:

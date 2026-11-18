@@ -133,6 +133,8 @@ impl Lifecycle {
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct Definition {
     pub name: String,
+    #[serde(default)]
+    pub avatar: Option<u8>,
     pub configuration: Configuration,
     pub access: CapturedBotPolicy,
     pub role: Option<Uuid>,
@@ -151,6 +153,8 @@ pub enum Change {
         bot: Uuid,
         revision: u64,
         name: String,
+        #[serde(default)]
+        avatar: Option<u8>,
         configuration: Configuration,
     },
     Library {

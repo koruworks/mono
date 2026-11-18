@@ -40,6 +40,7 @@ fn policy(access: &CapturedBotPolicy) -> Result<(), Error> {
 }
 pub(crate) fn validate_definition(d: &Definition) -> Result<(), Error> {
     name(&d.name)?;
+    d.configuration.validate()?;
     pages(d.role, &d.knowledge, d.memory)?;
     policy(&d.access)
 }
@@ -63,7 +64,7 @@ pub(crate) fn create(
     if exists {
         return Err(Error::Conflict);
     }
-    c.execute("INSERT INTO bots(id,owner,name,settings,access,role_page,knowledge_pages,memory_page,visibility,created_at_ms,updated_at_ms) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'private',?9,?9)",params![bot.to_string(),who.owner,d.name,encode(&d.configuration)?,encode(&d.access)?,d.role.map(|id|id.to_string()),encode(&d.knowledge)?,d.memory.map(|id|id.to_string()),now])?;
+    c.execute("INSERT INTO bots(id,owner,name,settings,access,role_page,knowledge_pages,memory_page,visibility,created_at_ms,updated_at_ms,avatar) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,'private',?9,?9,?10)",params![bot.to_string(),who.owner,d.name,encode(&d.configuration)?,encode(&d.access)?,d.role.map(|id|id.to_string()),encode(&d.knowledge)?,d.memory.map(|id|id.to_string()),now,d.avatar])?;
     conversation(c, who, bot, "main", "", now)?;
     value(read::bot(c, who, bot)?)
 }
@@ -184,13 +185,25 @@ pub(super) fn apply(
             bot,
             revision: rev,
             name: label,
+            avatar,
             configuration,
         } => {
-            revision(&tx, who, *bot, *rev, true)?;
+            let current = revision(&tx, who, *bot, *rev, true)?;
             name(label)?;
+            configuration.validate()?;
+            if current.definition.configuration.working_folder != configuration.working_folder {
+                let frozen: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM obligations WHERE bot=?1)",
+                    [bot.to_string()],
+                    |r| r.get(0),
+                )?;
+                if frozen {
+                    return Err(Error::NotAllowed);
+                }
+            }
             tx.execute(
-                "UPDATE bots SET name=?2,settings=?3 WHERE id=?1",
-                params![bot.to_string(), label, encode(configuration)?],
+                "UPDATE bots SET name=?2,settings=?3,avatar=?4 WHERE id=?1",
+                params![bot.to_string(), label, encode(configuration)?, avatar],
             )?;
             updated(&tx, *bot, now)?;
             value(read::bot(&tx, who, *bot)?)?

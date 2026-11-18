@@ -14,9 +14,11 @@ impl Fixture {
         let bot = Uuid::new_v4();
         let definition = Definition {
             name: "synthetic".into(),
+            avatar: Some(3),
             configuration: crate::configuration::Configuration {
                 provider: "claude-acp".parse().unwrap(),
                 selection: Default::default(),
+                working_folder: None,
             },
             access: koru_delegate_core::CapturedBotPolicy {
                 workspace,
@@ -176,6 +178,7 @@ fn completion_commits_bot_main_thread_and_receipt_once() {
         );
         let bot = completed.result.as_ref().unwrap();
         assert_eq!(bot.id, f.bot);
+        assert_eq!(bot.definition.avatar, Some(3));
         assert_eq!(bot.definition.role, completed.definition.role);
         assert_eq!(f.count("bots"), 1);
         assert_eq!(f.count("threads"), 1);

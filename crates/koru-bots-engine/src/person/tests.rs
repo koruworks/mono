@@ -18,9 +18,11 @@ impl Fixture {
         let workspace = koru_delegate_core::WorkspaceId::new();
         let definition = Definition {
             name: "Scout".into(),
+            avatar: None,
             configuration: Configuration {
                 provider: "claude-acp".parse().unwrap(),
                 selection: Default::default(),
+                working_folder: None,
             },
             access: CapturedBotPolicy {
                 workspace,
@@ -247,6 +249,7 @@ fn failed_configuration_transaction_rolls_back_and_setup_retry_is_exact() {
         bot: f.bot.id,
         revision: 1,
         name: "new".into(),
+        avatar: None,
         configuration: f.bot.definition.configuration.clone(),
     };
     assert_eq!(
@@ -276,6 +279,50 @@ fn failed_configuration_transaction_rolls_back_and_setup_retry_is_exact() {
         .err(),
         Some(Error::StaleTurn)
     );
+}
+
+#[test]
+fn selected_folder_freezes_on_accepted_input_but_model_and_face_stay_editable() {
+    let mut f = Fixture::new();
+    let mut config = f.bot.definition.configuration.clone();
+    let path = if cfg!(windows) {
+        r"C:\synthetic\project"
+    } else {
+        "/synthetic/project"
+    };
+    config.working_folder = Some(path.into());
+    let action = Change::Configure {
+        bot: f.bot.id,
+        revision: 1,
+        name: "Scout".into(),
+        avatar: Some(7),
+        configuration: config.clone(),
+    };
+    let value = f.change(action);
+    assert_eq!(value["definition"]["avatar"], 7);
+    assert_eq!(value["definition"]["configuration"]["working_folder"], path);
+    f.send(f.bot.main_thread);
+    config.working_folder = None;
+    let action = Change::Configure {
+        bot: f.bot.id,
+        revision: 2,
+        name: "Scout".into(),
+        avatar: Some(8),
+        configuration: config.clone(),
+    };
+    assert_eq!(
+        change::apply(&mut f.db, &f.who, Uuid::new_v4(), &action, 8).err(),
+        Some(Error::NotAllowed)
+    );
+    config.working_folder = Some(path.into());
+    let action = Change::Configure {
+        bot: f.bot.id,
+        revision: 2,
+        name: "Scout".into(),
+        avatar: Some(8),
+        configuration: config,
+    };
+    assert_eq!(f.change(action)["definition"]["avatar"], 8);
 }
 
 #[test]

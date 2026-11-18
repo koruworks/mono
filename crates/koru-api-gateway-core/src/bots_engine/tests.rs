@@ -84,6 +84,8 @@ impl Fixture {
         let retained = receipt.clone();
         let scope = authority.owner.user_scope.to_storage();
         let gateway = Gateway {
+            root: std::path::PathBuf::new(),
+            folders: Arc::new(koru_bots_engine::folders::Native),
             authority: authority.clone(),
             permits: Arc::new(tokio::sync::Semaphore::new(8)),
             call: Arc::new(move |request| {
@@ -111,9 +113,11 @@ impl Fixture {
                 bot: Uuid::new_v4(),
                 definition: person::Definition {
                     name: "synthetic".into(),
+                    avatar: None,
                     configuration: koru_bots_engine::configuration::Configuration {
                         provider: "claude-acp".parse().unwrap(),
                         selection: Default::default(),
+                        working_folder: None,
                     },
                     access: koru_delegate_core::CapturedBotPolicy {
                         workspace: home,
@@ -221,4 +225,121 @@ fn public_command_has_no_sender_or_bootstrap_authority_and_route_uses_vouched_sc
         !crate::effective_scopes(&["bots.manage".into()], crate::Admission::Ordinary)
             .contains(&"bots.manage".into())
     );
+}
+
+struct Folders {
+    root: std::path::PathBuf,
+    project: std::path::PathBuf,
+    available: AtomicBool,
+}
+impl Folders {
+    fn new() -> Self {
+        let base = if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\synthetic")
+        } else {
+            std::path::PathBuf::from("/synthetic")
+        };
+        Self {
+            root: base.join("data"),
+            project: base.join("project"),
+            available: AtomicBool::new(true),
+        }
+    }
+}
+impl koru_bots_engine::folders::Folders for Folders {
+    fn canonical(&self, path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        if path == self.project && !self.available.load(Ordering::Relaxed) {
+            return Err(std::io::ErrorKind::NotFound.into());
+        }
+        if path.file_name().is_some_and(|name| name == "alias") {
+            Ok(self.project.clone())
+        } else {
+            Ok(path.to_owned())
+        }
+    }
+    fn directory(&self, _: &std::path::Path) -> std::io::Result<bool> {
+        Ok(true)
+    }
+    fn occupied(&self, _: &std::path::Path) -> std::io::Result<bool> {
+        panic!("configuration must not create")
+    }
+    fn create(&self, _: &std::path::Path) -> std::io::Result<()> {
+        panic!("configuration must not create")
+    }
+    fn empty(&self, _: &std::path::Path) -> std::io::Result<bool> {
+        panic!("selected folders may contain work")
+    }
+}
+
+#[test]
+fn configuration_uses_shared_faces_and_requires_canonical_existing_nonreserved_folder() {
+    let mut f = Fixture::new();
+    let folders = Arc::new(Folders::new());
+    f.gateway.root = folders.root.clone();
+    f.gateway.folders = folders.clone();
+    let Command::Change {
+        action: Change::Create { definition, .. },
+        ..
+    } = &f.command
+    else {
+        panic!()
+    };
+    let mut config = definition.configuration.clone();
+    assert_eq!(
+        f.gateway
+            .configuration(&config, Some(koru_ai_core::bots::BOT_AVATAR_COUNT))
+            .err(),
+        Some(Error::InvalidRequest)
+    );
+    config.working_folder = Some(folders.project.to_str().unwrap().into());
+    assert!(f.gateway.configuration(&config, Some(7)).is_ok());
+    config.working_folder = Some(
+        folders
+            .project
+            .with_file_name("alias")
+            .to_str()
+            .unwrap()
+            .into(),
+    );
+    assert_eq!(
+        f.gateway.configuration(&config, None).err(),
+        Some(Error::InvalidRequest)
+    );
+    config.working_folder = Some(folders.root.join("store").to_str().unwrap().into());
+    assert_eq!(
+        f.gateway.configuration(&config, None).err(),
+        Some(Error::NotAllowed)
+    );
+    config.working_folder = Some("relative".into());
+    assert_eq!(
+        f.gateway.configuration(&config, None).err(),
+        Some(Error::InvalidRequest)
+    );
+}
+
+#[test]
+fn committed_configuration_retry_does_not_reopen_a_removed_folder() {
+    let mut f = Fixture::new();
+    let folders = Arc::new(Folders::new());
+    f.gateway.root = folders.root.clone();
+    f.gateway.folders = folders.clone();
+    let Command::Change {
+        action: Change::Create { definition, .. },
+        ..
+    } = &mut f.command
+    else {
+        panic!()
+    };
+    definition.configuration.working_folder = Some(folders.project.to_str().unwrap().into());
+    f.gateway
+        .execute(&Fixture::principal(), f.command.clone())
+        .unwrap();
+    folders.available.store(false, Ordering::Relaxed);
+    assert_eq!(
+        f.gateway
+            .execute(&Fixture::principal(), f.command.clone())
+            .unwrap()["replayed"],
+        true
+    );
+    assert_eq!(f.changed.load(Ordering::Relaxed), 1);
 }

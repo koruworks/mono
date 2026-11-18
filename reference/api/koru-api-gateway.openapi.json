@@ -8708,6 +8708,14 @@
           {
             "additionalProperties": false,
             "properties": {
+              "avatar": {
+                "default": null,
+                "format": "uint8",
+                "maximum": 255,
+                "minimum": 0,
+                "nullable": true,
+                "type": "integer"
+              },
               "bot": {
                 "format": "uuid",
                 "type": "string"
@@ -9912,6 +9920,12 @@
               }
             ],
             "default": {}
+          },
+          "working_folder": {
+            "default": null,
+            "description": "A selected folder's verified canonical display binding. None uses the\nBot's managed workspace. It freezes when the first input is accepted.",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -10494,6 +10508,14 @@
         "properties": {
           "access": {
             "$ref": "#/components/schemas/CapturedBotPolicy"
+          },
+          "avatar": {
+            "default": null,
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "nullable": true,
+            "type": "integer"
           },
           "configuration": {
             "$ref": "#/components/schemas/Configuration"

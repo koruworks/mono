@@ -15,6 +15,21 @@ pub struct Configuration {
     pub provider: ProviderKind,
     #[serde(default)]
     pub selection: LaunchSelection,
+    /// A selected folder's verified canonical display binding. None uses the
+    /// Bot's managed workspace. It freezes when the first input is accepted.
+    #[serde(default)]
+    pub working_folder: Option<String>,
+}
+
+impl Configuration {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        if self.working_folder.as_ref().is_some_and(|path| {
+            path.len() > 4096 || path.contains('\0') || !std::path::Path::new(path).is_absolute()
+        }) {
+            return Err(Error::InvalidRequest);
+        }
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Serialize, Deserialize)]

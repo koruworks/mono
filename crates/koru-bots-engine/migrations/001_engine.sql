@@ -15,6 +15,7 @@ CREATE TABLE bots (
     id TEXT PRIMARY KEY,
     owner TEXT NOT NULL,
     name TEXT NOT NULL,
+    avatar INTEGER CHECK(avatar BETWEEN 0 AND 255),
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
