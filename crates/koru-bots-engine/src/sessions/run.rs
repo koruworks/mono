@@ -215,7 +215,7 @@ fn drive(
         fast: None,
         reasoning: None,
         model: None,
-        skills: vec![],
+        skills: crate::messages::work_skills(&delivery)?,
     };
     input.validate(MAX_INPUT_BYTES)?;
     journal(
@@ -441,11 +441,12 @@ fn steer(
         return Err(Error::StaleTurn.into());
     }
     // Both native steering adapters currently carry text only.
-    // Files remain structured and owed for the next ordinary submission.
+    // Files and skills remain owed for the next ordinary submission.
     if delivery
         .work
         .iter()
         .any(|message| !message.content.attachments.is_empty())
+        || !crate::messages::work_skills(&delivery)?.is_empty()
     {
         start.port.reject_steer(turn, delivery.id)?;
         return Ok(true);

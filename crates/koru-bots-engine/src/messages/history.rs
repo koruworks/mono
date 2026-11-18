@@ -69,6 +69,7 @@ pub(super) fn input(message: Message) -> InputMessage {
 /// The budget includes all serialized framing and uncertainty metadata. Work
 /// identities survive truncation; history can be read later with the tool.
 pub(super) fn bound(delivery: &mut Delivery, budget: usize) -> Result<(), Error> {
+    work_skills(delivery)?;
     let work_files: usize = delivery
         .work
         .iter()

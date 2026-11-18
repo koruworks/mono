@@ -23,13 +23,14 @@ fn attachment_send_keeps_ids_and_receipt_identity_on_the_engine_carrier() {
         replace_pinned_documents: true,
         attachment_ids: vec![attachment],
         answers: None,
-        skills: vec![],
+        skills: vec!["review-doc".into()],
     };
     let Some(Command::Engine {
         command:
             C::Send {
                 id,
                 attachments,
+                references,
                 thread: sent_thread,
                 ..
             },
@@ -41,6 +42,10 @@ fn attachment_send_keeps_ids_and_receipt_identity_on_the_engine_carrier() {
     assert_eq!(id, operation_id);
     assert_eq!(sent_thread, thread);
     assert_eq!(attachments, vec![serde_json::json!(attachment.as_uuid())]);
+    assert_eq!(
+        references,
+        vec![serde_json::json!({"kind":"skill","name":"review-doc"})]
+    );
 }
 
 fn surface() -> (ChatSurface, Receiver<Command>, SyncSender<Update>) {

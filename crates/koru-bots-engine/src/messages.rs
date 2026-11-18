@@ -9,6 +9,8 @@ mod history;
 mod publish;
 pub(crate) mod receipts;
 mod refusal;
+mod skills;
+pub(crate) use skills::work_skills;
 mod steering;
 pub(crate) mod turns;
 

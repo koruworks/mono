@@ -1,6 +1,36 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
 
+#[test]
+fn selected_skills_validate_before_acceptance_and_split_work_without_reactivating_history() {
+    let mut f = Fixture::new();
+    let mut invalid = f.envelope("invalid skill");
+    invalid.references = vec![serde_json::json!({"kind":"skill","name":"two words"})];
+    assert_eq!(
+        f.db.accept_message(&f.person, &invalid, 1).err(),
+        Some(Error::InvalidRequest)
+    );
+    assert_eq!(f.count("messages"), 0);
+    for group in 0..2 {
+        let mut envelope = f.envelope("selected skills");
+        envelope.references = (0..10)
+            .map(|n| serde_json::json!({"kind":"skill","name":format!("skill-{}",group*10+n)}))
+            .collect();
+        f.db.accept_message(&f.person, &envelope, 1).unwrap();
+    }
+    let first = f.claim(Resume::Rebuilt);
+    assert_eq!(first.work.len(), 1);
+    assert_eq!(work_skills(&first).unwrap().len(), 10);
+    f.db.delivery_accepted(first.turn, first.id).unwrap();
+    f.db.publish_reply(&reply(&first), 3).unwrap();
+    let second = f.claim(Resume::Rebuilt);
+    assert_eq!(second.work.len(), 1);
+    assert!(!second.context.is_empty());
+    let skills = work_skills(&second).unwrap();
+    assert_eq!(skills.len(), 10);
+    assert_eq!(skills[0], "skill-10");
+}
+
 fn staged(f: &mut Fixture, length: usize) -> serde_json::Value {
     let record = crate::attachments::tests::record(f.thread, length);
     f.db.stage_attachment(&f.person, &record).unwrap();

@@ -39,6 +39,7 @@ impl Database {
         {
             return Err(Error::InvalidRequest);
         }
+        skills::selected(&envelope.references)?;
         let digest = receipts::digest("accept", envelope)?;
         let subject = person.receipt_subject();
         let tx = self.connection.transaction()?;

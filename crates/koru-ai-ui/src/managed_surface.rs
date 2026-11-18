@@ -62,7 +62,6 @@ impl ChatSurface {
                 // admitted. Never silently discard part of a person's send.
                 if request.chat_id != thread
                     || request.answers.is_some()
-                    || !request.skills.is_empty()
                     || request.system_prompt_override.is_some()
                 {
                     self.status = Some(
@@ -70,12 +69,18 @@ impl ChatSurface {
                     );
                     return None;
                 }
-                let references = request
+                let mut references = request
                     .explicit_refs
                     .into_iter()
                     .map(serde_json::to_value)
                     .collect::<Result<Vec<_>, _>>()
                     .ok()?;
+                references.extend(
+                    request
+                        .skills
+                        .into_iter()
+                        .map(|name| serde_json::json!({"kind": "skill", "name": name})),
+                );
                 C::Send {
                     id: request.operation_id,
                     bot,

@@ -35,6 +35,7 @@ struct Plan {
 }
 #[derive(Default)]
 struct Records {
+    skills: Vec<Vec<String>>,
     attachment_counts: Vec<usize>,
     plans: VecDeque<Plan>,
     inputs: Vec<String>,
@@ -155,6 +156,7 @@ impl AgentControl for Agent {
         {
             let mut records = self.records.lock().unwrap();
             records.attachment_counts.push(input.attachments.len());
+            records.skills.push(input.skills);
             records
                 .histories
                 .entry(self.history.clone())
@@ -569,6 +571,51 @@ impl Fixture {
     fn input(&self, index: usize) -> serde_json::Value {
         serde_json::from_str(&self.records.lock().unwrap().inputs[index]).unwrap()
     }
+}
+
+#[test]
+fn selected_skills_reach_the_provider_once_in_first_seen_order() {
+    let f = Fixture::new();
+    for names in [vec!["review-doc", "build"], vec!["build", "test"]] {
+        f.port
+            .db
+            .lock()
+            .unwrap()
+            .accept_message(
+                &Person {
+                    owner: "owner".into(),
+                    sender: "person".into(),
+                },
+                &Envelope {
+                    id: Uuid::new_v4(),
+                    to: f.port.bot,
+                    thread: Some(f.thread),
+                    in_reply_to: None,
+                    body: "Use the selected skills".into(),
+                    attachments: vec![],
+                    references: names
+                        .into_iter()
+                        .map(|name| serde_json::json!({"kind":"skill","name":name}))
+                        .collect(),
+                    deadline_ms: None,
+                    reply_to: Default::default(),
+                },
+                1,
+            )
+            .unwrap();
+    }
+    f.run().unwrap();
+    assert_eq!(
+        f.records.lock().unwrap().skills,
+        vec![vec!["review-doc", "build", "test"]]
+    );
+    assert!(
+        f.input(0)["delivery"]["work"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["content"]["references"][0]["name"] == "review-doc")
+    );
 }
 
 #[test]
