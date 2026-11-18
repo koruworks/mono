@@ -87,9 +87,9 @@ impl Gateway {
                 .files
                 .iter()
                 .map(|record| {
-                    if record.thread != grant.resolution.thread {
-                        return Err(Error::NotAllowed);
-                    }
+                    // The private engine grant has checked exact delivery
+                    // metadata, including authoritative branch-copy links.
+                    // Physical bytes remain under their original owner.
                     files::input_file(self.files.as_ref(), &self.root, record)
                 })
                 .collect::<Result<_, _>>()?,

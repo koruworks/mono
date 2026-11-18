@@ -21,10 +21,11 @@ pub fn until(label: &str, timeout: Duration, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + timeout;
     while !ready() {
         assert!(Instant::now() < deadline, "timed out: {label}");
-        std::thread::sleep(Duration::from_millis(25));
+        std::thread::sleep(Duration::from_millis(250));
     }
 }
 pub struct Stack {
+    http: reqwest::blocking::Client,
     pub root: PathBuf,
     pub workspace: WorkspaceId,
     pub role: Uuid,
@@ -198,6 +199,11 @@ impl Stack {
             koru_api_gateway_core::now_millis(),
         );
         Self {
+            http: reqwest::blocking::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(20))
+                .build()
+                .unwrap(),
             root: root.into(),
             launch: command,
             bootstrap,
@@ -266,11 +272,8 @@ impl Stack {
             other => panic!("status refused: {other:?}"),
         }
     }
-    pub fn http(&self) -> reqwest::blocking::Client {
-        reqwest::blocking::Client::builder()
-            .timeout(Duration::from_secs(20))
-            .build()
-            .unwrap()
+    pub fn http(&self) -> &reqwest::blocking::Client {
+        &self.http
     }
     pub fn send(&self, envelope: koru_bots_engine::messages::Envelope) -> Value {
         self.thread(koru_ai_wire::bot_threads::Command::Send {

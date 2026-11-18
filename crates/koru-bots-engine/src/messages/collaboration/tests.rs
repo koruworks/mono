@@ -2,6 +2,7 @@
 use super::*;
 use crate::{authority::Binding, person};
 mod returns;
+mod branches;
 
 struct Fixture {
     db: Database,

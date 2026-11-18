@@ -126,6 +126,12 @@ CREATE TABLE attachments (
     CHECK ((message IS NULL) = (ordinal IS NULL)),
     CHECK (removed=0 OR message IS NULL)
 );
+-- A branch copies history, never work or operation ownership. Flattened source
+-- identities retain immutable attachment/output authority without file copies.
+CREATE TABLE message_copies (
+    message TEXT PRIMARY KEY REFERENCES messages(id),
+    source TEXT NOT NULL REFERENCES messages(id)
+);
 CREATE INDEX attachments_thread ON attachments(thread, id);
 CREATE INDEX attachments_message ON attachments(message, ordinal);
 CREATE TABLE inbox (

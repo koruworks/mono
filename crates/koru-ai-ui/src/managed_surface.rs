@@ -4,14 +4,14 @@ use super::*;
 use koru_ai_wire::bot_threads::{Command as C, Response as R};
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 impl ChatSurface {
     pub(super) fn response_action_count(&self) -> usize {
         // Engine blocks are local layout keys, not durable chat-block links.
-        // Branch and Store need their engine-owned command paths.
+        // Store and durable block links still need their engine command paths.
         if self.managed.is_some() {
-            1
+            2
         } else {
             RESPONSE_ACTIONS
         }
@@ -57,6 +57,18 @@ impl ChatSurface {
         let bot = state.snapshot.conversation.label.bot_id;
         let chat = &state.snapshot.conversation.chat;
         let command = match command {
+            Command::Branch(id, request) if id == thread => {
+                if state.navigation.pending.is_some() {
+                    return None;
+                }
+                C::Branch {
+                    id: request.branch_chat_id.as_uuid(),
+                    thread,
+                    branch: request.branch_chat_id,
+                    through: request.through_message_id.as_uuid(),
+                    title: request.title,
+                }
+            }
             Command::Send(request) => {
                 // These inputs need their engine carrier before they can be
                 // admitted. Never silently discard part of a person's send.
@@ -147,6 +159,10 @@ impl ChatSurface {
         {
             state.pending_send = old.pending_send;
             state.retry_send = state.pending_send.is_some();
+            if old.navigation.pending.is_some() {
+                state.navigation.pending = old.navigation.pending;
+                state.navigation.retry = Some(now);
+            }
             if old.attention.pending.is_some() {
                 state.attention = old.attention;
                 state.attention.retry = Some(now);
@@ -224,7 +240,28 @@ impl ChatSurface {
             return false;
         }
         let accepted = matches!(reply, R::Accepted { .. });
+        let receipt = match &reply {
+            R::Changed { request, .. }
+            | R::Branched { request, .. }
+            | R::Stopped { request, .. } => Some(*request),
+            _ => None,
+        };
+        let pending = match &state.navigation.pending {
+            Some(C::Join { id, .. } | C::Branch { id, .. } | C::Stop { id, .. }) => Some(*id),
+            _ => None,
+        };
+        if matches!(&reply, R::Branched { .. }) && receipt != pending {
+            return false;
+        }
+        if receipt.is_some() && receipt == pending {
+            state.navigation.pending = None;
+            state.navigation.retry = None;
+        }
         match reply {
+            R::Branched { thread: branch, .. } => {
+                let label = &state.snapshot.conversation.label;
+                state.navigation.open = Some((label.bot_id, label.bot_name.clone(), branch));
+            }
             R::History {
                 messages, before, ..
             } => {
@@ -326,6 +363,29 @@ impl ChatSurface {
         if state.thread() != thread {
             return false;
         }
+        let navigation_id = |c: &C| match c {
+            C::Join { id, .. } | C::Branch { id, .. } | C::Stop { id, .. } => Some(*id),
+            _ => None,
+        };
+        if navigation_id(&command).is_some()
+            && state.navigation.pending.as_ref().and_then(navigation_id) == navigation_id(&command)
+        {
+            if failure.retryable
+                || matches!(
+                    failure.code.as_str(),
+                    "ai_unavailable"
+                        | "gateway_unavailable"
+                        | "engine_unavailable"
+                        | "storage_unavailable"
+                        | "invalid_response"
+                )
+            {
+                state.navigation.retry = Some(Instant::now() + Duration::from_secs(2));
+            } else {
+                state.navigation.pending = None;
+                state.navigation.retry = None;
+            }
+        }
         if matches!(command, C::History { .. }) {
             state.history_pending = false;
             state.history_anchor = None;
@@ -367,6 +427,19 @@ impl ChatSurface {
         let Some(state) = &mut self.managed else {
             return false;
         };
+        if state.navigation.retry.is_some_and(|at| now >= at)
+            && let Some(command) = state.navigation.pending.clone()
+        {
+            if reader
+                .send(Command::Engine {
+                    thread: state.thread(),
+                    command,
+                })
+                .is_ok()
+            {
+                state.navigation.retry = None;
+            }
+        }
         if !self.follow_tail
             && self.conversation_scroll <= 1.0
             && !state.history_pending

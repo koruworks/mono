@@ -1146,6 +1146,15 @@ impl BotView {
     /// the tab knows its Bot, and never for a Bot in Trash or a create tab.
     /// `true` when what the band says changed.
     fn children_pass(&mut self, root: Option<PathBuf>) -> bool {
+        if self
+            .conversation
+            .as_ref()
+            .is_some_and(|c| c.is_engine_owned())
+        {
+            let changed = self.children.shows();
+            self.children.show(false);
+            return changed;
+        }
         if self.create.is_some() {
             return false;
         }
@@ -1233,6 +1242,15 @@ impl BotView {
     /// answered, and a read come due — for a tab already shown, which only
     /// its draw makes it.
     fn children_maintain(&mut self, now: std::time::Instant) -> bool {
+        if self
+            .conversation
+            .as_ref()
+            .is_some_and(|c| c.is_engine_owned())
+        {
+            let changed = self.children.shows();
+            self.children.show(false);
+            return changed;
+        }
         let answered = self.children.pass(now);
         if let Some((chat, asker)) = self.children.take_origin_news() {
             self.conversations.know_asked_by(chat, &asker);
@@ -1244,6 +1262,13 @@ impl BotView {
     /// (M6, contract 7.5): the Bot, its name for the tab until it is read,
     /// and the conversation. Taken once by the window.
     pub(crate) fn take_open_request(&mut self) -> Option<crate::bots::children::OpenRequest> {
+        if let Some((bot, name, chat)) = self
+            .conversation
+            .as_mut()
+            .and_then(|c| c.take_open_bot_conversation())
+        {
+            return Some(crate::bots::children::OpenRequest { bot, name, chat });
+        }
         self.open_request.take()
     }
 

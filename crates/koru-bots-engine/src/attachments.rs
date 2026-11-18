@@ -188,6 +188,19 @@ pub(crate) fn load(c: &Connection, thread: Uuid, id: Uuid) -> Result<Option<Reco
     .transpose()
 }
 
+/// Only an engine-recorded history copy grants access to an original file.
+/// Keep its physical owner; project only the copied message's display identity.
+pub(crate) fn copied(c: &Connection, thread: Uuid, id: Uuid) -> Result<Option<Record>, Error> {
+    let row: Option<(String,String)> = c.query_row("SELECT a.thread,m.id FROM message_copies cp JOIN messages m ON m.id=cp.message JOIN attachments a ON a.message=cp.source WHERE m.thread=?1 AND a.id=?2 AND a.removed=0",params![thread.to_string(),id.to_string()],|r|Ok((r.get(0)?,r.get(1)?))).optional()?;
+    let Some((source, message)) = row else {
+        return Ok(None);
+    };
+    let parse = |s: &str| Uuid::parse_str(s).map_err(|_| Error::StorageUnavailable);
+    let mut record = load(c, parse(&source)?, id)?.ok_or(Error::StorageUnavailable)?;
+    record.attachment.message_id = Some(MessageId::from_uuid(parse(&message)?));
+    Ok(Some(record))
+}
+
 impl Database {
     /// Called only after the gateway has durably published and checked bytes.
     /// Repeating an upload ignores only its newly sampled creation timestamp.
@@ -235,7 +248,10 @@ impl Database {
         id: Uuid,
     ) -> Result<Option<Record>, Error> {
         messages::authorize_thread(&self.connection, who, thread)?;
-        load(&self.connection, thread, id)
+        match load(&self.connection, thread, id)? {
+            Some(record) => Ok(Some(record)),
+            None => copied(&self.connection, thread, id),
+        }
     }
 
     /// A tombstone wins a race against a late upload. Sent content is immutable.

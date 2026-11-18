@@ -1831,6 +1831,12 @@ pub enum Key {
     BotsEnginePageUncertainDetail,
     BotsEnginePageChecking,
     BotsEngineContinuePending,
+    BotsEngineBranchTitle,
+    BotsEngineReadAlong,
+    BotsEngineJoin,
+    BotsEngineOrigin,
+    BotsEngineThreadSummary,
+    BotsEngineChainLimit,
     BotsEnginePageNumber,
     BotsEngineCapacityWait,
     BotsEngineCapacityWaitNamed,
@@ -4584,7 +4590,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3042] = [
+    pub const ALL: [Key; 3048] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -5888,6 +5894,12 @@ impl Key {
         Key::BotsEnginePageUncertainDetail,
         Key::BotsEnginePageChecking,
         Key::BotsEngineContinuePending,
+        Key::BotsEngineBranchTitle,
+        Key::BotsEngineReadAlong,
+        Key::BotsEngineJoin,
+        Key::BotsEngineOrigin,
+        Key::BotsEngineThreadSummary,
+        Key::BotsEngineChainLimit,
         Key::BotsEnginePageNumber,
         Key::BotsEngineCapacityWait,
         Key::BotsEngineCapacityWaitNamed,
@@ -17125,6 +17137,30 @@ pub const ROWS: &[Row] = &[
         ar: "بانتظار التأكيد للمتابعة…",
         zh_hans: "正在等待继续的确认…",
         ja: "続行の確認を待っています…",
+    },
+    Row {
+        key: Key::BotsEngineBranchTitle,
+        en: "{} — branch", es: "{} — bifurcación", pt_br: "{} — ramificação", de: "{} — Abzweigung", fr: "{} — branche", ar: "{} — فرع", zh_hans: "{} — 分支", ja: "{} — 分岐",
+    },
+    Row {
+        key: Key::BotsEngineReadAlong,
+        en: "You are reading along", es: "Estás siguiendo la conversación", pt_br: "Você está acompanhando a conversa", de: "Du liest mit", fr: "Vous suivez la conversation", ar: "أنت تتابع المحادثة", zh_hans: "你正在旁观对话", ja: "会話を閲覧しています",
+    },
+    Row {
+        key: Key::BotsEngineJoin,
+        en: "Join conversation", es: "Unirse a la conversación", pt_br: "Participar da conversa", de: "An Unterhaltung teilnehmen", fr: "Rejoindre la conversation", ar: "الانضمام إلى المحادثة", zh_hans: "加入对话", ja: "会話に参加",
+    },
+    Row {
+        key: Key::BotsEngineOrigin,
+        en: "Started from", es: "Iniciada desde", pt_br: "Iniciada a partir de", de: "Gestartet von", fr: "Démarrée depuis", ar: "بدأت من", zh_hans: "源自", ja: "開始元",
+    },
+    Row {
+        key: Key::BotsEngineThreadSummary,
+        en: "{} messages · {} outputs", es: "{} mensajes · {} resultados", pt_br: "{} mensagens · {} resultados", de: "{} Nachrichten · {} Ergebnisse", fr: "{} messages · {} résultats", ar: "{} رسائل · {} نتائج", zh_hans: "{} 条消息 · {} 个成果", ja: "{} 件のメッセージ · {} 件の成果",
+    },
+    Row {
+        key: Key::BotsEngineChainLimit,
+        en: "The Bots reached the conversation limit. Send a message to continue.", es: "Los Bots alcanzaron el límite de la conversación. Envía un mensaje para continuar.", pt_br: "Os Bots atingiram o limite da conversa. Envie uma mensagem para continuar.", de: "Die Bots haben das Unterhaltungslimit erreicht. Sende eine Nachricht, um fortzufahren.", fr: "Les Bots ont atteint la limite de la conversation. Envoyez un message pour continuer.", ar: "وصلت البوتات إلى حد المحادثة. أرسل رسالة للمتابعة.", zh_hans: "Bot 已达到对话上限。发送消息以继续。", ja: "Bot が会話の上限に達しました。続けるにはメッセージを送信してください。",
     },
     Row {
         key: Key::BotsEnginePageNumber,

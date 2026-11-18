@@ -20,6 +20,16 @@ fn malformed() -> koru_ai_wire::Failure {
         details: Default::default(),
     }
 }
+fn navigation(
+    client: &koru_api_client::Client,
+    thread: ChatId,
+    after: Option<uuid::Uuid>,
+) -> Result<crate::managed_navigation::Page, koru_ai_wire::Failure> {
+    match client.ai().bot_thread(&C::Cards { thread, after })? {
+        R::Cards { items, next } => Ok(crate::managed_navigation::Page { after, items, next }),
+        _ => Err(malformed()),
+    }
+}
 fn read(
     client: &koru_api_client::Client,
     thread: ChatId,
@@ -79,6 +89,7 @@ fn refreshed(
         return Err(malformed());
     };
     Ok(Refreshed {
+        navigation: navigation(client, poll.thread, poll.navigation_after)?,
         attention: attention(client, poll.thread, poll.attention_after)?,
         snapshot,
         messages,
@@ -144,6 +155,7 @@ pub(super) fn handle(
                     return Err(malformed());
                 };
                 Ok(Opened {
+                    navigation: navigation(client, *thread, None)?,
                     attention: attention(client, *thread, None)?,
                     snapshot,
                     messages,
@@ -180,6 +192,7 @@ pub(super) fn handle(
         }
         Command::EnginePoll(poll) if *backend == Backend::Engine => {
             let poll = Poll {
+                navigation_after: poll.navigation_after,
                 attention_after: poll.attention_after.clone(),
                 thread: poll.thread,
                 after: poll.after,

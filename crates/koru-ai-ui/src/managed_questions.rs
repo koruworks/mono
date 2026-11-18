@@ -744,7 +744,9 @@ impl ChatSurface {
             self.composer.set_focused(false);
             self.conversation_scroll = card.top.max(0.0);
             self.follow_tail = false;
-        } else if !(forward && self.focus_managed_attention(false)) {
+        } else if !(forward
+            && (self.focus_managed_attention(false) || self.focus_managed_navigation(false)))
+        {
             self.focus = Focus::Composer;
             self.composer.set_focused(true);
         }
@@ -763,6 +765,7 @@ fn notice_words(lang: koru_i18n::Lang, reference: &serde_json::Value) -> Option<
     match reference.get("notice").and_then(|value| value.as_str())? {
         "secret_answer_not_delivered" => Some(t(lang, Words::BotsEngineSecretLost).to_owned()),
         "turn_stopped" => Some(t(lang, Words::BotsEngineStopped).to_owned()),
+        "bot_chain_limit" => Some(t(lang, Words::BotsEngineChainLimit).to_owned()),
         "input_too_large" => Some(t(lang, Words::BotsEngineInputTooLarge).to_owned()),
         "waiting_for_capacity" => {
             let names = reference

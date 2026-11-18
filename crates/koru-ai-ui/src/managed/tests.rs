@@ -37,7 +37,11 @@ pub(crate) fn opened() -> Opened {
     let bot = BotId::from_uuid(Uuid::new_v4());
     let now = Timestamp::from_millis(7);
     Opened {
+        navigation: Default::default(),
         snapshot: wire::Snapshot {
+            joined: true,
+            participants: vec![],
+            origin: None,
             conversation: BotConversation {
                 chat: Chat {
                     id: ChatId::new(),
@@ -204,6 +208,7 @@ fn publish_replaces_live_identity_and_preserves_real_history_facts() {
     let published = message(4, reply.as_uuid());
     assert!(state.refresh(
         Refreshed {
+            navigation: Default::default(),
             snapshot,
             messages: vec![published],
             attention: Default::default(),
@@ -239,6 +244,7 @@ fn poll_backpressure_and_old_settings_snapshot_are_safe() {
     state.snapshot.conversation.chat.agent_fast = Some(true);
     state.refresh(
         Refreshed {
+            navigation: Default::default(),
             snapshot,
             messages: vec![],
             attention: Default::default(),

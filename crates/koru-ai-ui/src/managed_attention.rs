@@ -248,6 +248,7 @@ impl ChatSurface {
                 } else if !mods.shift_key() && attention.cursor + 1 < count {
                     attention.cursor += 1;
                 } else if mods.shift_key() && self.step_managed_question(None, false) {
+                } else if !mods.shift_key() && self.focus_managed_navigation(false) {
                 } else {
                     self.focus = Focus::Composer;
                     self.composer.set_focused(true);

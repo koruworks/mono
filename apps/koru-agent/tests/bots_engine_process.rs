@@ -4,6 +4,8 @@
 mod provider;
 #[path = "bots_engine_process/real.rs"]
 mod real;
+#[path = "bots_engine_process/real_collaboration.rs"]
+mod real_collaboration;
 #[path = "bots_engine_process/scenarios.rs"]
 mod scenarios;
 #[path = "bots_engine_process/stack.rs"]
@@ -83,6 +85,7 @@ fn main() {
     let thread: Uuid = serde_json::from_value(created["answer"]["main_thread"].clone()).unwrap();
     if real.is_some() {
         real::run(&stack, bot, thread);
+        real_collaboration::run(&stack, bot);
         stack.finish();
         return;
     }
@@ -172,6 +175,7 @@ fn main() {
         "published attachment cannot be removed"
     );
     println!("PASS public HTTP Send/replay and native attachment delivery/read protection");
+    scenarios::branch_output(&stack, bot, thread, attachment);
     scenarios::run(&mut stack, bot);
     stack.finish();
 }

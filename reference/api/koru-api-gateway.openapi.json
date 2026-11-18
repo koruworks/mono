@@ -9039,8 +9039,196 @@
           }
         ]
       },
+      "BotThreadCard": {
+        "properties": {
+          "bot": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "bot_name": {
+            "type": "string"
+          },
+          "document": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DocumentId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "message": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "messages": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "outputs": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sequence": {
+            "format": "uint64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "type": "string"
+          },
+          "thread": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "workspace": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/WorkspaceId"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "sequence",
+          "message",
+          "kind",
+          "title",
+          "bot_name",
+          "messages",
+          "outputs",
+          "state"
+        ],
+        "type": "object"
+      },
       "BotThreadCommand": {
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "cards"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "join"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "branch"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              },
+              "through": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "thread",
+              "branch",
+              "through",
+              "title"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {
@@ -9589,6 +9777,50 @@
         ],
         "type": "object"
       },
+      "BotThreadOrigin": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "main": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "thread": {
+            "$ref": "#/components/schemas/ChatId"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "thread",
+          "bot",
+          "name",
+          "title",
+          "main"
+        ],
+        "type": "object"
+      },
+      "BotThreadParticipant": {
+        "properties": {
+          "bot": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bot",
+          "name"
+        ],
+        "type": "object"
+      },
       "BotThreadPrompt": {
         "oneOf": [
           {
@@ -9697,6 +9929,59 @@
       },
       "BotThreadResponse": {
         "oneOf": [
+          {
+            "properties": {
+              "items": {
+                "items": {
+                  "$ref": "#/components/schemas/BotThreadCard"
+                },
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "cards"
+                ],
+                "type": "string"
+              },
+              "next": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "items"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "kind": {
+                "enum": [
+                  "branched"
+                ],
+                "type": "string"
+              },
+              "replayed": {
+                "type": "boolean"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "thread": {
+                "$ref": "#/components/schemas/ChatId"
+              }
+            },
+            "required": [
+              "kind",
+              "request",
+              "thread",
+              "replayed"
+            ],
+            "type": "object"
+          },
           {
             "properties": {
               "items": {
@@ -10045,6 +10330,31 @@
             "format": "uint64",
             "minimum": 0,
             "type": "integer"
+          },
+          "joined": {
+            "default": false,
+            "type": "boolean"
+          },
+          "origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/BotThreadOrigin"
+              },
+              {
+                "enum": [
+                  null
+                ],
+                "nullable": true
+              }
+            ],
+            "default": null
+          },
+          "participants": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/BotThreadParticipant"
+            },
+            "type": "array"
           },
           "paused": {
             "type": "boolean"
@@ -10627,6 +10937,60 @@
       },
       "Change": {
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "join"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "branch": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "branch"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "through": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "branch",
+              "through",
+              "title"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {
@@ -19149,6 +19513,31 @@
       },
       "Query": {
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "after": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "cards"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {

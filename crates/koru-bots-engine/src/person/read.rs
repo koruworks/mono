@@ -156,6 +156,13 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
                 |r| r.get(0),
             )?;
             value(ThreadView {
+                origin: thread.origin_thread.map(|origin| {
+                    let origin= self::thread(c,who,origin)?;
+                    let bot=self::bot(c,who,origin.bot)?;
+                    Ok::<_,Error>(Origin{thread:origin.id,bot:bot.id,name:bot.definition.name,title:origin.title,main:origin.kind=="main"})
+                }).transpose()?,
+                joined: c.query_row("SELECT EXISTS(SELECT 1 FROM participants WHERE thread=?1 AND participant=?2 AND kind='person')",params![key.to_string(),who.sender],|r|r.get(0))?,
+                participants: c.prepare("SELECT b.id,b.name FROM participants p JOIN bots b ON b.id=p.participant WHERE p.thread=?1 AND p.kind='bot' ORDER BY b.id")?.query_map([key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))?.map(|row|{let (bot,name)=row?;Ok(Participant{bot:id(bot)?,name})}).collect::<Result<_,Error>>()?,
                 thread,
                 turns,
                 waiting_messages: waiting,
@@ -170,6 +177,7 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
         Query::OperationAttention { thread, after } => {
             value(db.operation_attention(who, thread, after)?)
         }
+        Query::Cards { thread, after } => cards::read(c, who, thread, after),
         Query::Outputs { thread, after } => {
             messages::authorize_thread(c, who, thread)?;
             let keys=c.prepare("SELECT id FROM outputs WHERE thread=?1 AND (?2 IS NULL OR id>?2) ORDER BY id LIMIT 65")?.query_map(params![thread.to_string(),after.map(|x|x.to_string())],|r|r.get(0))?.collect::<Result<Vec<String>,_>>()?;

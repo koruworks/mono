@@ -2,6 +2,8 @@
 //! Person commands after gateway authentication. This core owns no Store,
 //! process or network. The gateway vouches current owner and page placement;
 //! neither identity nor workspace authority is read from a public body.
+mod branches;
+mod cards;
 pub(crate) mod change;
 mod lifecycle_ops;
 mod lists;
@@ -80,6 +82,10 @@ impl Command {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    Cards {
+        thread: Uuid,
+        after: Option<Uuid>,
+    },
     OperationAttention {
         thread: Uuid,
         after: Option<crate::operations::AttentionCursor>,
@@ -180,6 +186,15 @@ pub struct Definition {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Change {
+    Join {
+        thread: Uuid,
+    },
+    Branch {
+        thread: Uuid,
+        branch: Uuid,
+        through: Uuid,
+        title: String,
+    },
     ConversationSettings {
         bot: Uuid,
         thread: Uuid,
@@ -325,6 +340,22 @@ pub struct ThreadView {
     pub turns: Vec<ActiveTurn>,
     pub waiting_messages: u64,
     pub head_sequence: u64,
+    pub joined: bool,
+    pub participants: Vec<Participant>,
+    pub origin: Option<Origin>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Origin {
+    pub thread: Uuid,
+    pub bot: Uuid,
+    pub name: String,
+    pub title: String,
+    pub main: bool,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Participant {
+    pub bot: Uuid,
+    pub name: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

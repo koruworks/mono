@@ -225,6 +225,11 @@ fn uncertain_answer_retries_same_receipt_and_tab_reaches_composer() {
         ),
         Some(true)
     );
+    assert_eq!(surface.focus, Focus::ManagedNavigation);
+    assert_eq!(
+        surface.managed_navigation_key(&Key::Named(NamedKey::Tab), ModifiersState::empty()),
+        Some(true)
+    );
     assert_eq!(surface.focus, Focus::Composer);
     assert!(surface.step_managed_question(None, false));
     assert_eq!(surface.focus, Focus::ManagedQuestion(id));

@@ -125,6 +125,7 @@ mod link_card;
 mod live_markdown;
 mod managed;
 mod managed_attention;
+mod managed_navigation;
 mod managed_questions;
 mod managed_surface;
 mod microphone;
@@ -326,6 +327,7 @@ enum Focus {
     Questions(ToolInvocationId),
     ManagedQuestion(uuid::Uuid),
     ManagedAttention,
+    ManagedNavigation,
     WorkspaceSearch,
     /// *Save chat*'s name field.
     SaveName,
@@ -2099,6 +2101,11 @@ impl ChatSurface {
         {
             return handled;
         }
+        if self.focus == Focus::ManagedNavigation
+            && let Some(handled) = self.managed_navigation_key(key, mods)
+        {
+            return handled;
+        }
         if self.focus == Focus::ManagedAttention
             && let Some(handled) = self.managed_attention_key(key, text, mods)
         {
@@ -2108,7 +2115,9 @@ impl ChatSurface {
             && matches!(key, Key::Named(NamedKey::Tab))
             && mods.shift_key()
             && !koru_keys::is_chord(mods)
-            && (self.focus_managed_attention(true) || self.step_managed_question(None, false))
+            && (self.focus_managed_navigation(true)
+                || self.focus_managed_attention(true)
+                || self.step_managed_question(None, false))
         {
             return true;
         }
@@ -2866,6 +2875,9 @@ impl ChatSurface {
             }
             return self.toggle_work(hit);
         }
+        if let Some(handled) = self.managed_navigation_press(x, y) {
+            return handled;
+        }
         if let Some(handled) = self.managed_attention_press(x, y) {
             return handled;
         }
@@ -3606,12 +3618,25 @@ impl ChatSurface {
             } => Some(command.clone()),
             _ => None,
         };
+        let navigation = match &command {
+            Command::Engine {
+                command: command @ koru_ai_wire::bot_threads::Command::Branch { .. },
+                ..
+            } => Some(command.clone()),
+            _ => None,
+        };
         let Some(reader) = &self.reader else {
             self.status = Some("Koru AI service is not connected.".into());
             return false;
         };
         match reader.send(command) {
             Ok(()) => {
+                if let Some(command) = navigation
+                    && let Some(state) = &mut self.managed
+                {
+                    state.navigation.pending = Some(command);
+                    state.navigation.retry = None;
+                }
                 if let Some(command) = pending
                     && let Some(state) = &mut self.managed
                 {
@@ -8320,6 +8345,7 @@ impl ChatSurface {
         self.message_layouts = messages;
         self.rebuild_managed_cards(width);
         self.rebuild_managed_attention(width);
+        self.rebuild_managed_navigation(width);
         self.position_conversation_items();
         if let Some(state) = &mut self.managed
             && !state.history_pending
@@ -8413,6 +8439,7 @@ impl ChatSurface {
     /// it proposes tools, so the activity belongs immediately before that
     /// response, not in a second list at the end of the transcript.
     fn position_conversation_items(&mut self) -> f32 {
+        self.reset_managed_navigation_positions();
         for card in self.managed_cards.values_mut() {
             card.top = f32::NAN;
         }
@@ -8437,6 +8464,7 @@ impl ChatSurface {
                 top += new_divider::NEW_DIVIDER_H + CARD_GAP;
             }
             if let Some(message_id) = self.message_layouts[message_index].id {
+                top = self.place_managed_navigation(Some(message_id), top);
                 top = self.place_turn(message_id, top, &mut placed_work, &mut placed_cards);
             }
             self.message_layouts[message_index].top = top;
@@ -8463,7 +8491,8 @@ impl ChatSurface {
             }
         }
         let top = self.place_managed_cards(None, top);
-        self.place_managed_attention(top)
+        let top = self.place_managed_attention(top);
+        self.place_managed_navigation(None, top)
     }
 
     /// A reply's work view, then its cards, from `top`; where they end.
@@ -8891,6 +8920,7 @@ impl ChatSurface {
         }
         self.draw_managed_cards(canvas, root);
         self.draw_managed_attention(canvas, root);
+        self.draw_managed_navigation(canvas, root);
         for tool in &self.tool_activity_layouts {
             let row = Rect::new(
                 area.x,
@@ -9865,7 +9895,10 @@ impl ChatSurface {
                 BranchChatRequest {
                     branch_chat_id: ChatId::new(),
                     through_message_id: message,
-                    title: format!("{} — branch", chat.title),
+                    title: koru_i18n::fill(
+                        koru_i18n::t(self.lang, koru_i18n::Key::BotsEngineBranchTitle),
+                        &[&chat.title],
+                    ),
                 },
             )),
             ResponseAction::Store(message) => {

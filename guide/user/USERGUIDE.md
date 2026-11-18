@@ -6737,6 +6737,31 @@ restart.
 | `Alt+1` … `Alt+8` | the views down the Explore column's rail, by place (top is `Alt+1`) |
 | `Ctrl+Shift+J` or **+ → AI Chat** | show / hide Koru AI in the right-hand pane slot (it replaces Context) |
 
+## Conversations in the new Bots engine
+
+In builds with the new Bots engine enabled, a Bot can ask another Bot in a side
+conversation. Its card appears in the originating conversation and in Main.
+Choose **Open conversation** to read along. **Join conversation** adds you
+without sending a message; sending a message also joins. Use `@` in the composer
+to address particular Bots. Without a mention, the conversation's starting Bot
+receives your message. When several Bots are working, each has its own Stop
+control beside its name.
+
+Messages arriving while a Bot is answering currently wait for its next turn.
+
+Use the branch button beneath a finished response to start a conversation with
+the history through that response. The original conversation keeps going
+independently. Files and saved outputs remain accessible from the copied
+history, and branching does not repeat earlier writes. **Started from** opens
+the originating conversation.
+
+Saved outputs appear as cards beside the conversation. Main also lists outputs
+from the Bot's other conversations under **Artifacts**. Open a card to view its
+page. A Bot's words alone do not count as a saved output.
+
+The new engine is still under development; its test builds require a fresh,
+disposable root. Routine and connection screens for this engine are later work.
+
 ## A Bot's Library
 
 Open a Bot, then **Settings → Library**. **Open role page** opens its standing

@@ -24,6 +24,50 @@ impl Gateway {
         let read = |query| self.execute_owner(owner, Command::Read { query });
         let execute = |command| self.validated_execute(principal, command, &validate);
         Ok(match command {
+            wire::Command::Cards { thread, after } => {
+                let page = read(Query::Cards {
+                    thread: thread.as_uuid(),
+                    after,
+                })?;
+                wire::Response::Cards {
+                    items: convert(page["items"].clone())?,
+                    next: convert(page["next"].clone())?,
+                }
+            }
+            wire::Command::Join { id, thread } => {
+                let result: Receipt<Value> = convert(execute(Command::Change {
+                    id,
+                    action: Change::Join {
+                        thread: thread.as_uuid(),
+                    },
+                })?)?;
+                wire::Response::Changed {
+                    request: id,
+                    replayed: result.replayed,
+                }
+            }
+            wire::Command::Branch {
+                id,
+                thread,
+                branch,
+                through,
+                title,
+            } => {
+                let result: Receipt<Value> = convert(execute(Command::Change {
+                    id,
+                    action: Change::Branch {
+                        thread: thread.as_uuid(),
+                        branch: branch.as_uuid(),
+                        through,
+                        title,
+                    },
+                })?)?;
+                wire::Response::Branched {
+                    request: id,
+                    thread: branch,
+                    replayed: result.replayed,
+                }
+            }
             wire::Command::Attention { thread, after } => {
                 let page: koru_bots_engine::operations::AttentionPage =
                     convert(read(Query::OperationAttention {
@@ -81,6 +125,9 @@ impl Gateway {
                         waiting_messages: view.waiting_messages,
                         head_sequence: view.head_sequence,
                         turns: convert(view.turns)?,
+                        joined: view.joined,
+                        participants: convert(view.participants)?,
+                        origin: convert(view.origin)?,
                     },
                 }
             }

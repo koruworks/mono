@@ -535,6 +535,14 @@ impl AiChatView {
     pub fn take_open_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.surface.take_open_document_request()
     }
+    pub(crate) fn is_engine_owned(&self) -> bool {
+        self.surface.is_engine_owned()
+    }
+    pub(crate) fn take_open_bot_conversation(
+        &mut self,
+    ) -> Option<(koru_ai_core::bots::BotId, String, koru_ai_core::ChatId)> {
+        self.surface.take_open_bot_conversation()
+    }
 
     pub fn take_place_document_request(&mut self) -> Option<koru_link::KoruLink> {
         self.surface.take_place_document_request()

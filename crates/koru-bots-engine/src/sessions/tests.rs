@@ -31,6 +31,7 @@ struct Plan {
     hold: bool,
     cancelled: bool,
     steering: Option<Steering>,
+    unqualified_claude: bool,
     question: Option<bool>,
 }
 #[derive(Default)]
@@ -120,15 +121,17 @@ impl AgentControl for Agent {
                 .unwrap_or_default();
         }
         let caps = AgentCapabilities {
-            provider: if self.plan.steering.is_some() {
+            provider: if self.plan.unqualified_claude {
                 "claude"
             } else {
                 "scripted"
             }
             .parse()
             .unwrap(),
-            executable_version: if self.plan.steering.is_some() {
+            executable_version: if self.plan.unqualified_claude {
                 "0.76.0"
+            } else if self.plan.steering.is_some() {
+                "steering-fixture"
             } else {
                 "1"
             }
@@ -786,7 +789,20 @@ fn provider_questions_deliver_once_and_finish_without_journaling_secret_text() {
 
 #[test]
 fn an_unqualified_route_leaves_input_for_the_next_turn() {
+    unqualified_input(false);
+}
+
+#[test]
+fn claude_076_queues_input_after_the_collaboration_completion_failure() {
+    unqualified_input(true);
+}
+
+fn unqualified_input(unqualified_claude: bool) {
     let f = Fixture::new();
+    f.plan(Plan {
+        unqualified_claude,
+        ..Default::default()
+    });
     *f.port.steering_message.lock().unwrap() = Some(Envelope {
         id: Uuid::new_v4(),
         to: f.port.bot,

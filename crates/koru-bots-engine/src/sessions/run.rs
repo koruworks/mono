@@ -275,12 +275,7 @@ fn observe(
     let mut answer_at = std::time::Instant::now();
     let mut questions = std::collections::BTreeMap::new();
     let mut answered = std::collections::BTreeSet::new();
-    // The isolated P1.7 probe qualifies this installed route. Until another
-    // route/version has explicit acknowledgement evidence its input simply
-    // waits for the next turn (D16), even if an adapter implements steer().
-    let mut steering = control.capabilities().is_some_and(|caps| {
-        caps.provider.as_str() == "claude" && caps.executable_version.as_str() == "0.76.0"
-    });
+    let mut steering = control.capabilities().is_some_and(qualified_steering);
     loop {
         if stop.load(Ordering::Acquire) {
             control.cancel(id)?;
@@ -421,6 +416,22 @@ fn observe(
             _ => {}
         }
     }
+}
+
+// Acknowledgement alone is insufficient qualification. The P2.2 installed
+// Claude ACP 0.76.0 collaboration run accepted two steers, emitted reply text,
+// then never completed its prompt. Until a route passes that production case,
+// incoming work stays owed for the next turn (D16). Never infer completion.
+fn qualified_steering(caps: &koru_session_runtime::providers::AgentCapabilities) -> bool {
+    #[cfg(test)]
+    if caps.provider.as_str() == "scripted"
+        && caps.executable_version.as_str() == "steering-fixture"
+    {
+        // Exercises the driver protocol, not a production qualification.
+        return true;
+    }
+    const QUALIFIED: &[(&str, &str)] = &[];
+    QUALIFIED.contains(&(caps.provider.as_str(), caps.executable_version.as_str()))
 }
 
 fn steer(

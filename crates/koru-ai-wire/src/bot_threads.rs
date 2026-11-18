@@ -17,6 +17,21 @@ use uuid::Uuid;
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[schemars(rename = "BotThreadCommand")]
 pub enum Command {
+    Cards {
+        thread: ChatId,
+        after: Option<Uuid>,
+    },
+    Join {
+        id: Uuid,
+        thread: ChatId,
+    },
+    Branch {
+        id: Uuid,
+        thread: ChatId,
+        branch: ChatId,
+        through: Uuid,
+        title: String,
+    },
     Attention {
         thread: ChatId,
         after: Option<OperationRef>,
@@ -116,6 +131,46 @@ pub struct Snapshot {
     pub waiting_messages: u64,
     pub head_sequence: u64,
     pub turns: Vec<ActiveTurn>,
+    #[serde(default)]
+    pub joined: bool,
+    #[serde(default)]
+    pub participants: Vec<Participant>,
+    #[serde(default)]
+    pub origin: Option<Origin>,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotThreadOrigin")]
+pub struct Origin {
+    pub thread: ChatId,
+    pub bot: Uuid,
+    pub name: String,
+    pub title: String,
+    pub main: bool,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotThreadParticipant")]
+pub struct Participant {
+    pub bot: Uuid,
+    pub name: String,
+}
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(rename = "BotThreadCard")]
+pub struct Card {
+    pub id: Uuid,
+    pub sequence: u64,
+    pub message: Uuid,
+    pub kind: String,
+    pub title: String,
+    pub thread: Option<ChatId>,
+    pub bot: Option<BotId>,
+    pub bot_name: String,
+    pub workspace: Option<koru_ai_core::WorkspaceId>,
+    pub document: Option<koru_ai_core::DocumentId>,
+    pub messages: u64,
+    pub outputs: u64,
+    pub state: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, JsonSchema)]
@@ -194,6 +249,15 @@ pub struct Question {
 #[serde(tag = "kind", rename_all = "snake_case")]
 #[schemars(rename = "BotThreadResponse")]
 pub enum Response {
+    Cards {
+        items: Vec<Card>,
+        next: Option<Uuid>,
+    },
+    Branched {
+        request: Uuid,
+        thread: ChatId,
+        replayed: bool,
+    },
     Attention {
         items: Vec<OperationAttention>,
         next: Option<OperationRef>,

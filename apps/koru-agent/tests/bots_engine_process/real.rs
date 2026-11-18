@@ -83,6 +83,23 @@ pub fn proxy() {
     forwarding.join().unwrap();
 }
 
+pub(super) fn ends_with_marker(message: &Value, marker: &str) -> bool {
+    // ACP may stream progress narration before its final answer. Completion
+    // is checked separately through the settled snapshot and ledger audit.
+    message["kind"] == "words"
+        && message["content"]["body"]
+            .as_str()
+            .is_some_and(|body| body.trim().ends_with(marker))
+}
+
+pub(super) fn settled(stack: &Stack, thread: Uuid) -> bool {
+    let view = stack.thread(koru_ai_wire::bot_threads::Command::Read {
+        thread: koru_ai_core::ChatId::from_uuid(thread),
+    });
+    view["snapshot"]["turns"].as_array().unwrap().is_empty()
+        && view["snapshot"]["waiting_messages"] == 0
+}
+
 pub fn run(stack: &Stack, bot: Uuid, thread: Uuid) {
     let operation = Uuid::new_v4();
     stack.send(messages::Envelope {
@@ -133,11 +150,11 @@ pub fn run(stack: &Stack, bot: Uuid, thread: Uuid) {
                     .any(|m| m["content"]["references"][0]["notice"] == "session_setup_failed"),
                 "installed provider setup refused"
             );
-            history.iter().any(|m| {
-                m["content"]["body"]
-                    .as_str()
-                    .is_some_and(|s| s.trim() == "SYNTHETIC COMPLETE")
-            })
+            settled(stack, thread)
+                && history.iter().any(|m| {
+                    m["sender"] == json!(bot.to_string())
+                        && ends_with_marker(m, "SYNTHETIC COMPLETE")
+                })
         },
     );
     let outputs = stack.person(person::Command::Read {

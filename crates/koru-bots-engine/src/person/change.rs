@@ -96,6 +96,8 @@ pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result
         | Change::ConversationLifecycle { bot, .. }
         | Change::Conversation { bot, .. } => owner(c, who, *bot),
         Change::ThreadLifecycle { thread, .. }
+        | Change::Join { thread }
+        | Change::Branch { thread, .. }
         | Change::RenameThread { thread, .. }
         | Change::Reask { thread, .. }
         | Change::RetrySetup { thread, .. } => messages::authorize_thread(c, who, *thread),
@@ -423,6 +425,24 @@ pub(super) fn apply(
                 params![thread.to_string(), title, now],
             )?;
             value(read::thread(&tx, who, *thread)?)?
+        }
+        Change::Join { thread } => {
+            let current = read::thread(&tx, who, *thread)?;
+            if current.lifecycle != Lifecycle::Active {
+                return Err(Error::NotAllowed);
+            }
+            tx.execute("INSERT OR IGNORE INTO participants(thread,participant,kind) VALUES (?1,?2,'person')",params![thread.to_string(),who.sender])?;
+            serde_json::json!({"thread":thread})
+        }
+        Change::Branch {
+            thread,
+            branch,
+            through,
+            title,
+        } => {
+            name(title)?;
+            branches::create(&tx, who, *thread, *branch, *through, title, now)?;
+            value(read::thread(&tx, who, *branch)?)?
         }
         Change::Reask { thread, question } => {
             crate::questions::reask(&tx, who, *thread, *question, now)?;

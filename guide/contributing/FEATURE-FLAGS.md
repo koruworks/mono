@@ -4,7 +4,10 @@ The Bots engine rollout uses a separate **compile-time** Cargo feature:
 `cargo build -p koru-agent --features bots-engine`. It is off by default during
 implementation and has no environment override. An enabled build claims its
 root permanently for the new engine; a legacy build refuses to serve that root.
-Use a disposable `--root`. This foundation does not yet provide the new Bot UI.
+Use a fresh disposable `--root`: the two new version-1 databases are still
+development-only. The shared Bot chat now supports engine messages, requests,
+side-thread/output cards, Join and Branch. Routines and connections remain later
+work; enabling the feature does not enable the old scheduler alongside it.
 `koru-agent bots --root <path>` reads its database diagnostic without starting
 the engine. The existing UI flags below do not select a Bot implementation.
 

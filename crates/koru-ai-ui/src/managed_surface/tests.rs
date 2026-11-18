@@ -48,7 +48,7 @@ fn attachment_send_keeps_ids_and_receipt_identity_on_the_engine_carrier() {
     );
 }
 
-fn surface() -> (ChatSurface, Receiver<Command>, SyncSender<Update>) {
+pub(crate) fn surface() -> (ChatSurface, Receiver<Command>, SyncSender<Update>) {
     let opened = opened();
     let mut surface = ChatSurface::new_owned_at(None);
     surface.bind_owned(crate::OwnedConversation {
@@ -144,6 +144,7 @@ fn uncertain_send_reuses_id_after_rebinding_and_never_clears_other_chat() {
     assert!(surface.managed.is_none());
     assert_eq!(surface.managed_outbox.len(), 1);
     surface.managed_opened(managed::Opened {
+        navigation: Default::default(),
         snapshot,
         messages: vec![],
         before: None,
@@ -253,6 +254,6 @@ fn history_loading_is_bounded_and_local_blocks_offer_no_durable_link() {
         })
         .count();
     assert_eq!(reads, 1);
-    assert_eq!(surface.response_action_count(), 1);
+    assert_eq!(surface.response_action_count(), 2);
     assert!(surface.managed.as_ref().unwrap().history_pending);
 }

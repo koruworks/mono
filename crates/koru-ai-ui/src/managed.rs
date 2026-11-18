@@ -13,6 +13,7 @@ pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_millis(500);
 const MAX_LIVE_BYTES: usize = 1024 * 1024;
 
 pub(crate) struct Opened {
+    pub navigation: crate::managed_navigation::Page,
     pub snapshot: wire::Snapshot,
     pub messages: Vec<wire::Message>,
     pub before: Option<u64>,
@@ -31,6 +32,7 @@ pub(crate) struct Feed {
     pub entries: Vec<wire::Event>,
 }
 pub(crate) struct Refreshed {
+    pub navigation: crate::managed_navigation::Page,
     pub snapshot: wire::Snapshot,
     pub messages: Vec<wire::Message>,
     pub after: u64,
@@ -39,6 +41,7 @@ pub(crate) struct Refreshed {
     pub attention: crate::managed_attention::Page,
 }
 pub(crate) struct Poll {
+    pub navigation_after: Option<Uuid>,
     pub thread: ChatId,
     pub after: u64,
     pub boot: Option<Uuid>,
@@ -58,6 +61,7 @@ pub(crate) struct Live {
 }
 
 pub(crate) struct State {
+    pub navigation: crate::managed_navigation::State,
     pub snapshot: wire::Snapshot,
     pub attention: crate::managed_attention::State,
     pub questions: Vec<wire::Question>,
@@ -99,6 +103,9 @@ impl State {
             .map(|m| (m.sequence, render_blocks(m)))
             .collect();
         Self {
+            navigation: crate::managed_navigation::State::new(std::mem::take(
+                &mut opened.navigation,
+            )),
             snapshot: opened.snapshot.clone(),
             attention: crate::managed_attention::State::new(std::mem::take(&mut opened.attention)),
             questions: std::mem::take(&mut opened.questions),
@@ -133,6 +140,7 @@ impl State {
         }
         self.polling = true;
         Some(Poll {
+            navigation_after: self.navigation.next,
             thread: self.thread(),
             after: self.after,
             boot: self.boot,
@@ -151,6 +159,12 @@ impl State {
             .iter()
             .find(|t| {
                 t.bot == bot && matches!(t.state.as_str(), "running" | "needs_you" | "interrupted")
+            })
+            .or_else(|| {
+                self.snapshot
+                    .turns
+                    .iter()
+                    .find(|t| matches!(t.state.as_str(), "running" | "needs_you" | "interrupted"))
             })
             .and_then(|t| {
                 Some(wire::Turn {
@@ -185,6 +199,9 @@ impl State {
         let old = &self.snapshot;
         let new = &update.snapshot;
         let mut changed = old.conversation.chat != new.conversation.chat
+            || old.joined != new.joined
+            || old.participants != new.participants
+            || old.origin != new.origin
             || old.waiting_messages != new.waiting_messages
             || old.paused != new.paused
             || old.team_paused != new.team_paused
@@ -199,6 +216,7 @@ impl State {
                     || a.details != b.details
             });
         self.snapshot = update.snapshot;
+        changed |= self.navigation.ingest(update.navigation);
         changed |= self.attention.ingest(update.attention);
         self.requests_dirty |= self.questions != update.questions;
         changed |= self.questions != update.questions;

@@ -81,7 +81,36 @@ pub fn run(stack: &Stack, asker: Uuid) {
                         .any(|m| m["content"]["body"] == "SYNTHETIC CHILD COMPLETE")
                 },
             );
+            let snapshot = stack.thread(Command::Read {
+                thread: ChatId::from_uuid(side),
+            });
+            assert_eq!(snapshot["snapshot"]["joined"], false);
+            let join = Command::Join {
+                id: Uuid::new_v4(),
+                thread: ChatId::from_uuid(side),
+            };
+            stack.thread(join.clone());
+            assert_eq!(stack.thread(join)["replayed"], true);
+            assert_eq!(
+                stack.thread(Command::Read {
+                    thread: ChatId::from_uuid(side)
+                })["snapshot"]["joined"],
+                true
+            );
         }
+        let cards = stack.thread(Command::Cards {
+            thread: ChatId::from_uuid(thread),
+            after: None,
+        });
+        assert_eq!(
+            cards["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|c| c["kind"] == "thread")
+                .count(),
+            2
+        );
     }
     println!(
         "PASS two origins each ask two Bots through authenticated tools; side answers return to each origin"

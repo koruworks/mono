@@ -19,6 +19,76 @@ fn conversation(stack: &Stack, bot: Uuid) -> Uuid {
     });
     serde_json::from_value(answer["answer"]["id"].clone()).unwrap()
 }
+pub fn branch_output(stack: &Stack, bot: Uuid, thread: Uuid, attachment: Uuid) {
+    let original = history(stack, thread);
+    let through: Uuid = serde_json::from_value(
+        original
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["content"]["body"] == "SYNTHETIC COMPLETE")
+            .unwrap()["id"]
+            .clone(),
+    )
+    .unwrap();
+    let branch = ChatId::new();
+    let id = Uuid::new_v4();
+    let request = Command::Branch {
+        id,
+        thread: ChatId::from_uuid(thread),
+        branch,
+        through,
+        title: "Synthetic branch".into(),
+    };
+    stack.thread(request.clone());
+    assert_eq!(stack.thread(request)["replayed"], true);
+    let cards = stack.thread(Command::Cards {
+        thread: branch,
+        after: None,
+    });
+    assert_eq!(
+        cards["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|c| c["kind"] == "output" && !c["document"].is_null())
+            .count(),
+        1
+    );
+    let url = format!(
+        "{}/v1/ai/chats/{}/attachments/{attachment}",
+        stack.endpoint,
+        branch.as_uuid()
+    );
+    let bytes = stack
+        .http()
+        .get(url)
+        .bearer_auth(&stack.bearer)
+        .send()
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .bytes()
+        .unwrap();
+    assert_eq!(&bytes[..], b"SYNTHETIC FILE");
+    send(stack, bot, branch.as_uuid(), "SYNTHETIC BRANCH CONTINUE");
+    until(
+        "branch uses copied attachment context",
+        Duration::from_secs(45),
+        || {
+            history(stack, branch.as_uuid())
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|m| m["content"]["body"] == "SYNTHETIC COMPLETE")
+                .count()
+                == 2
+        },
+    );
+    println!(
+        "PASS public Branch retry, output projection, copied attachment HTTP read and provider input"
+    );
+}
 fn send(stack: &Stack, bot: Uuid, thread: Uuid, body: &str) {
     stack.send(messages::Envelope {
         id: Uuid::new_v4(),

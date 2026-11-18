@@ -56,6 +56,11 @@ impl Database {
                     resolution.thread,
                     attachment.id.as_uuid(),
                 )?
+                .or(attachments::copied(
+                    &self.connection,
+                    resolution.thread,
+                    attachment.id.as_uuid(),
+                )?)
                 .ok_or(Error::NotAllowed)?;
                 if record.attachment != attachment {
                     return Err(Error::NotAllowed);
