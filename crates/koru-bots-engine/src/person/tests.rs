@@ -2,6 +2,7 @@
 use super::*;
 use crate::capacity::{Admission, Decision};
 use rusqlite::params;
+mod lifecycle;
 
 struct Fixture {
     db: Database,
@@ -157,10 +158,11 @@ fn trash_stops_reserved_work_restore_preserves_content_without_restart() {
     };
     let worker = Uuid::new_v4();
     admission.bind_worker(f.bot.id, worker);
-    f.change(Change::BotLifecycle {
+    let trashed = f.change(Change::BotLifecycle {
         bot: f.bot.id,
         revision: 1,
         lifecycle: Lifecycle::Trashed,
+        source: None,
     });
     admission.refresh_stops(&f.db).unwrap();
     assert_eq!(admission.retiring(f.bot.id, worker), vec![reservation]);
@@ -169,6 +171,7 @@ fn trash_stops_reserved_work_restore_preserves_content_without_restart() {
         bot: f.bot.id,
         revision: 2,
         lifecycle: Lifecycle::Active,
+        source: Some(serde_json::from_value(trashed["held_by"]["request"].clone()).unwrap()),
     });
     admission.retired(reservation, worker).unwrap();
     assert!(admission.next(&f.db, 9).unwrap().is_none());
@@ -208,10 +211,11 @@ fn conversation_card_commits_once_and_thread_trash_does_not_stop_a_sibling() {
     );
     f.send(thread.id);
     f.send(f.bot.main_thread);
-    f.change(Change::ThreadLifecycle {
+    let trashed = f.change(Change::ThreadLifecycle {
         thread: thread.id,
         revision: 1,
         lifecycle: Lifecycle::Trashed,
+        source: None,
     });
     assert_eq!(
         f.db.connection
@@ -237,6 +241,7 @@ fn conversation_card_commits_once_and_thread_trash_does_not_stop_a_sibling() {
         thread: thread.id,
         revision: 2,
         lifecycle: Lifecycle::Active,
+        source: Some(serde_json::from_value(trashed["held_by"]["request"].clone()).unwrap()),
     });
     assert_eq!(f.db.read_messages(&f.who, thread.id, 0).unwrap().len(), 1);
 }

@@ -4,7 +4,7 @@
 use super::*;
 
 impl Gateway {
-    fn window_change<T: serde::de::DeserializeOwned>(
+    pub(super) fn window_change<T: serde::de::DeserializeOwned>(
         &self,
         owner: BotOwner,
         id: BotRequestId,
@@ -55,6 +55,22 @@ impl Gateway {
         command: BotCommand,
     ) -> Result<BotResponse, Error> {
         match command {
+            BotCommand::CreateChat { request_id, bot_id } => {
+                let thread: person::Thread = self.window_change(
+                    owner,
+                    request_id,
+                    Change::Conversation {
+                        bot: bot_id.as_uuid(),
+                        title: String::new(),
+                    },
+                )?;
+                Ok(BotResponse::Chat {
+                    reference: BotChatReference {
+                        bot_id,
+                        chat_id: ChatId::from_uuid(thread.id),
+                    },
+                })
+            }
             BotCommand::Update {
                 request_id,
                 bot_id,
@@ -193,7 +209,7 @@ impl Gateway {
                 self.person_read(owner, Query::Team)?,
             )),
             // Remaining controls are composed in subsequent P1.7 increments.
-            _ => Err(Error::EngineUnavailable),
+            command => self.window_lifecycle(owner, command),
         }
     }
 }

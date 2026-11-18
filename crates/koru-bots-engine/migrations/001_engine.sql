@@ -28,6 +28,7 @@ CREATE TABLE bots (
     memory_page TEXT,
     visibility TEXT NOT NULL CHECK (visibility IN ('private', 'shared')),
     paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+    lifecycle_holder BLOB,
     lifecycle TEXT NOT NULL DEFAULT 'active' CHECK (lifecycle IN ('active', 'archived', 'trashed'))
 );
 CREATE TABLE team (
@@ -46,10 +47,21 @@ CREATE TABLE threads (
     lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'archived', 'trashed')),
     origin_thread TEXT REFERENCES threads(id),
     origin_message TEXT,
+    lifecycle_holder BLOB,
     CHECK ((origin_thread IS NULL) = (origin_message IS NULL))
 );
 CREATE UNIQUE INDEX one_main_thread ON threads(bot) WHERE kind = 'main';
 CREATE INDEX threads_roster ON threads(bot, lifecycle, id);
+-- Lifecycle history names the exact change a Restore reverses, including a
+-- prior Archive underneath a Trash. It shares the person command transaction.
+CREATE TABLE lifecycle_changes (
+    owner TEXT NOT NULL,
+    request TEXT NOT NULL,
+    bot TEXT NOT NULL REFERENCES bots(id),
+    thread TEXT REFERENCES threads(id),
+    record BLOB NOT NULL,
+    PRIMARY KEY (owner, request)
+);
 CREATE TABLE participants (
     thread TEXT NOT NULL REFERENCES threads(id),
     participant TEXT NOT NULL,

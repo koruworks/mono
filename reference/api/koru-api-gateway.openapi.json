@@ -8937,6 +8937,12 @@
                 "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
+              },
+              "source": {
+                "default": null,
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
               }
             },
             "required": [
@@ -8988,6 +8994,12 @@
                 "minimum": 0,
                 "type": "integer"
               },
+              "source": {
+                "default": null,
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
               "thread": {
                 "format": "uuid",
                 "type": "string"
@@ -8997,6 +9009,47 @@
               "kind",
               "thread",
               "revision",
+              "lifecycle"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Existing window controls are checked against the Bot revision they read.",
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "conversation_lifecycle"
+                ],
+                "type": "string"
+              },
+              "lifecycle": {
+                "$ref": "#/components/schemas/Lifecycle"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "source": {
+                "format": "uuid",
+                "nullable": true,
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "revision",
+              "thread",
               "lifecycle"
             ],
             "type": "object"
@@ -17238,6 +17291,31 @@
             },
             "required": [
               "kind"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "lifecycle_operation"
+                ],
+                "type": "string"
+              },
+              "request": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "request"
             ],
             "type": "object"
           }

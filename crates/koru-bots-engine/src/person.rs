@@ -3,6 +3,7 @@
 //! process or network. The gateway vouches current owner and page placement;
 //! neither identity nor workspace authority is read from a public body.
 pub(crate) mod change;
+mod lifecycle_ops;
 mod read;
 
 use crate::{
@@ -110,6 +111,10 @@ pub enum Query {
         after: Option<Uuid>,
     },
     Team,
+    LifecycleOperation {
+        bot: Uuid,
+        request: Uuid,
+    },
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -190,6 +195,8 @@ pub enum Change {
         bot: Uuid,
         revision: u64,
         lifecycle: Lifecycle,
+        #[serde(default)]
+        source: Option<Uuid>,
     },
     Conversation {
         bot: Uuid,
@@ -199,6 +206,16 @@ pub enum Change {
         thread: Uuid,
         revision: u64,
         lifecycle: Lifecycle,
+        #[serde(default)]
+        source: Option<Uuid>,
+    },
+    /// Existing window controls are checked against the Bot revision they read.
+    ConversationLifecycle {
+        bot: Uuid,
+        revision: u64,
+        thread: Uuid,
+        lifecycle: Lifecycle,
+        source: Option<Uuid>,
     },
     RenameThread {
         thread: Uuid,
@@ -222,6 +239,7 @@ pub struct Bot {
     pub definition: Definition,
     pub paused: bool,
     pub lifecycle: Lifecycle,
+    pub held_by: Option<LifecycleHolder>,
     pub main_thread: Uuid,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
@@ -234,9 +252,28 @@ pub struct Thread {
     pub title: String,
     pub kind: String,
     pub lifecycle: Lifecycle,
+    pub held_by: Option<LifecycleHolder>,
     pub revision: u64,
     pub origin_thread: Option<Uuid>,
     pub origin_message: Option<Uuid>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LifecycleHolder {
+    pub request: Uuid,
+    pub lifecycle: Lifecycle,
+    pub completed_at_ms: i64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct LifecycleOperation {
+    pub request: Uuid,
+    pub bot: Uuid,
+    pub thread: Option<Uuid>,
+    pub prior: Lifecycle,
+    pub lifecycle: Lifecycle,
+    pub prior_holder: Option<LifecycleHolder>,
+    pub source: Option<Uuid>,
+    pub reversed_by: Option<Uuid>,
+    pub completed_at_ms: i64,
 }
 #[derive(Serialize, Deserialize)]
 pub struct Team {

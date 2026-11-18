@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+mod lifecycle;
 use koru_ai_core::{
     DocumentId, ProfileId, WorkspaceId,
     bots::{BOT_ROLE_SCOPE, BotRoleProof},

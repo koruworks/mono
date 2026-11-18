@@ -8,6 +8,7 @@ use koru_bots_engine::{
     creation::{self as c, Phase, Record, Step},
 };
 use uuid::Uuid;
+mod lifecycle;
 mod management;
 
 fn configured(config: &BotCreationConfig, folder: Option<String>) -> Result<Configuration, Error> {
@@ -149,7 +150,7 @@ impl Gateway {
                 person::Lifecycle::Trashed => BotLifecycle::Trashed,
             },
             open_operation: None,
-            held_by: None,
+            held_by: bot.held_by.map(Self::holder_view).transpose()?,
             pending_change: None,
             connections: d.access.connections,
             may_ask: true,

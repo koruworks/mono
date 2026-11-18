@@ -88,6 +88,7 @@ pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result
         | Change::Access { bot, .. }
         | Change::Pause { bot, .. }
         | Change::BotLifecycle { bot, .. }
+        | Change::ConversationLifecycle { bot, .. }
         | Change::Conversation { bot, .. } => owner(c, who, *bot),
         Change::ThreadLifecycle { thread, .. }
         | Change::RenameThread { thread, .. }
@@ -137,7 +138,7 @@ pub(super) fn conversation(
 }
 /// Archive/trash cancel queued work as well as delivered work. Messages and
 /// operation evidence remain; restore never reconstructs an inbox.
-fn retire(c: &Connection, bot: Option<Uuid>, thread: Option<Uuid>) -> Result<(), Error> {
+pub(super) fn retire(c: &Connection, bot: Option<Uuid>, thread: Option<Uuid>) -> Result<(), Error> {
     let bot = bot.map(|id| id.to_string());
     let thread = thread.map(|id| id.to_string());
     c.execute("UPDATE obligations SET state='cancelled' WHERE state IN ('owed','delivered') AND (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2)",params![bot,thread])?;
@@ -287,18 +288,36 @@ pub(super) fn apply(
             bot,
             revision: rev,
             lifecycle,
+            source,
         } => {
             let prior = revision(&tx, who, *bot, *rev, false)?;
-            if prior.lifecycle != *lifecycle {
-                if *lifecycle != Lifecycle::Active {
-                    retire(&tx, Some(*bot), None)?;
-                }
-                tx.execute(
-                    "UPDATE bots SET lifecycle=?2 WHERE id=?1",
-                    params![bot.to_string(), lifecycle.token()],
-                )?;
-                updated(&tx, *bot, now)?;
+            let (lifecycle, holder) = lifecycle_ops::apply(
+                &tx,
+                who,
+                LifecycleOperation {
+                    request: command,
+                    bot: *bot,
+                    thread: None,
+                    prior: prior.lifecycle,
+                    lifecycle: *lifecycle,
+                    prior_holder: prior.held_by,
+                    source: *source,
+                    reversed_by: None,
+                    completed_at_ms: now,
+                },
+            )?;
+            if source.is_none() {
+                retire(&tx, Some(*bot), None)?;
             }
+            tx.execute(
+                "UPDATE bots SET lifecycle=?2,lifecycle_holder=?3,paused=1 WHERE id=?1",
+                params![
+                    bot.to_string(),
+                    lifecycle.token(),
+                    holder.as_ref().map(encode).transpose()?
+                ],
+            )?;
+            updated(&tx, *bot, now)?;
             value(read::bot(&tx, who, *bot)?)?
         }
         Change::Conversation { bot, title } => {
@@ -323,24 +342,27 @@ pub(super) fn apply(
             thread,
             revision,
             lifecycle,
+            source,
         } => {
             let prior = read::thread(&tx, who, *thread)?;
             if prior.revision != *revision {
                 return Err(Error::RevisionConflict);
             }
-            if prior.kind == "main" {
+            lifecycle_ops::change_thread(&tx, who, command, prior, *lifecycle, *source, now)?
+        }
+        Change::ConversationLifecycle {
+            bot,
+            revision: rev,
+            thread,
+            lifecycle,
+            source,
+        } => {
+            revision(&tx, who, *bot, *rev, true)?;
+            let prior = read::thread(&tx, who, *thread)?;
+            if prior.bot != *bot {
                 return Err(Error::NotAllowed);
             }
-            if prior.lifecycle != *lifecycle {
-                if *lifecycle != Lifecycle::Active {
-                    retire(&tx, None, Some(*thread))?;
-                }
-                tx.execute(
-                    "UPDATE threads SET lifecycle=?2,revision=revision+1 WHERE id=?1",
-                    params![thread.to_string(), lifecycle.token()],
-                )?;
-            }
-            value(read::thread(&tx, who, *thread)?)?
+            lifecycle_ops::change_thread(&tx, who, command, prior, *lifecycle, *source, now)?
         }
         Change::RenameThread {
             thread,
