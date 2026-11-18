@@ -15824,3 +15824,50 @@ fn delete_permanently_on_a_trashed_document_asks_the_shell_to_purge_it() {
         Some(koru_workspace_host::PaneRequest::PurgeDocuments(vec![doc])),
     );
 }
+
+/// **A Trash tab in the other half of a split still hears the bin change.**
+/// The push used to visit the focused group only, so with focus beside it the
+/// Trash tab kept the list it opened with while a file went into the bin.
+#[test]
+fn a_trash_tab_in_an_unfocused_group_takes_the_new_bin() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    use koru_core::explore::ExploreEntry;
+
+    let (mut v, _workspace) = container();
+    v.open_trash_tab();
+    v.panes
+        .split(&PanePath::root(), SplitDir::Right, Tab::welcome());
+    let left = PanePath::root().child(0);
+    v.panes.set_focus(PanePath::root().child(1));
+    assert!(
+        !matches!(v.tabs().active_tab().view, TabView::Trash(_)),
+        "focus is beside the Trash, not on it"
+    );
+
+    let binned = vec![ExploreEntry {
+        id: koru_core::DocumentId::new(),
+        parent: None,
+        ordinal: 0,
+        title: "setup.exe".to_owned(),
+        kind: koru_core::explore::KIND_FILE.to_owned(),
+        mime: None,
+        note: None,
+        trashed_at: Some(1),
+        trashed_by: None,
+    }];
+    View::set_trashed(&mut v, binned.clone());
+
+    let group = v.panes.group_mut(&left).expect("the left group");
+    let trash = group
+        .tabs_mut()
+        .iter_mut()
+        .find_map(|tab| match &mut tab.view {
+            TabView::Trash(t) => Some(t),
+            _ => None,
+        })
+        .expect("the Trash tab stayed on the left");
+    assert!(
+        !trash.set_documents(binned),
+        "the Trash tab already holds the new bin"
+    );
+}

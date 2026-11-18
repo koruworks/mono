@@ -13834,8 +13834,11 @@ impl View for MainView {
         let live = self.entity_live();
         let entity_titles = self.entity_titles.clone();
         let entity_trashed = self.entity_trashed.clone();
-        let mut acted = false;
-        for tab in self.tabs_mut().iter_mut() {
+        // **Every group, not the focused one.** A Trash tab in the other half
+        // of a split kept the list it opened with: moving a file to the Trash
+        // from the Files column, with focus beside it, never reached it.
+        let mut acted = self.each_tab_mut(|tab| {
+            let mut acted = false;
             if let TabView::Trash(t) = &mut tab.view {
                 acted |= t.set_documents(trashed.clone());
             }
@@ -13848,7 +13851,8 @@ impl View for MainView {
             if let Some(leaf) = leaf {
                 acted |= leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
             }
-        }
+            acted
+        });
         if changed {
             self.sync_trash_count();
             acted = true;
@@ -13925,7 +13929,9 @@ impl View for MainView {
         let live = self.entity_live();
         let entity_titles = self.entity_titles.clone();
         let entity_trashed = self.entity_trashed.clone();
-        for tab in self.tabs_mut().iter_mut() {
+        // Every group, as `set_trashed` does: a link in the other half of a
+        // split names the document as it is now too.
+        self.each_tab_mut(|tab| {
             let leaf = match &mut tab.view {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
@@ -13935,7 +13941,8 @@ impl View for MainView {
             if let Some(leaf) = leaf {
                 leaf.set_entity_titles(&entity_titles, &entity_trashed, &live);
             }
-        }
+            false
+        });
         self.relabel_background_tabs();
         // **The parent chains now, the rows at the next draw.** A reveal — a
         // search result unfolding the branch it lives in — runs *before* that
