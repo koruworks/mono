@@ -72,7 +72,6 @@ pub fn run_supervised(bot: Uuid) -> Result<(), Error> {
             alive.store(false, std::sync::atomic::Ordering::Release);
         })
         .map_err(|_| Error::EngineUnavailable)?;
-    let _database = BotDatabase::open(&bootstrap.root, bot)?;
     let mut stream =
         koru_ipc::connect_timed(&endpoint(&bootstrap.root, &bootstrap.segment)?, TIMEOUT)
             .map_err(|_| Error::EngineUnavailable)?;
@@ -92,6 +91,7 @@ pub fn run_supervised(bot: Uuid) -> Result<(), Error> {
     if version != VERSION || !matches!(reply, Reply::Registered) {
         return Err(Error::Unauthenticated);
     }
+    let _database = BotDatabase::open(&bootstrap.root, bot)?;
     while parent_alive.load(std::sync::atomic::Ordering::Acquire) {
         // P1.4 replaces this empty shell with its owned provider-session set.
         koru_ipc::frame::write_frame(&mut stream, VERSION, &Heartbeat { live_sessions: 0 })

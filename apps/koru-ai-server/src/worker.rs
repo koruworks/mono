@@ -228,7 +228,7 @@ impl WorkerConfig {
     }
     pub fn new(root: PathBuf, channel: impl Into<String>, providers: ProviderRegistry) -> Self {
         Self {
-            legacy_bots: true,
+            legacy_bots: !koru_bots_engine::ENABLED,
             root,
             channel: channel.into(),
             providers,
@@ -271,7 +271,7 @@ impl WorkerConfig {
         let channel = channel.into();
         let runtime = ProviderRuntime::with_os_vault(&channel)?;
         Ok(Self {
-            legacy_bots: true,
+            legacy_bots: !koru_bots_engine::ENABLED,
             root,
             channel,
             providers: runtime.registry(),
@@ -319,7 +319,7 @@ impl WorkerConfig {
         let channel = channel.into();
         let runtime = ProviderRuntime::new(None, credentials, openai_account)?;
         Ok(Self {
-            legacy_bots: true,
+            legacy_bots: !koru_bots_engine::ENABLED,
             root,
             channel,
             providers: runtime.registry(),

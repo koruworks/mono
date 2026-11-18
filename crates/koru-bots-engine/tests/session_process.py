@@ -21,7 +21,7 @@ def main():
     spec.loader.exec_module(probe)
     endpoint = probe.LocalEndpoint()
     try:
-        command = ["cargo", "test", "-p", "koru-bots-engine", "--test", "session_process",
+        command = ["cargo", "test", "-p", "koru-bots-engine", "--features", "provider-runtime", "--test", "session_process",
                    "--locked", "--offline", "-j", "1", "--", "--run", "--root", args.root,
                    "--program", args.program, "--endpoint", endpoint.descriptor("initial")["url"]]
         process = subprocess.Popen([sys.executable, str(source), "--child", json.dumps(command)],

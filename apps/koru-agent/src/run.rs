@@ -778,12 +778,6 @@ pub(crate) fn start_device_services(
     agent: &Arc<Mutex<Agent>>,
     waker: &crate::event::Waker,
 ) -> Result<DeviceServices, StartError> {
-    if !koru_bots_engine::ENABLED
-        && !koru_bots_engine::legacy_allowed(paths.root())
-            .map_err(|error| StartError::Failed(error.to_string()))?
-    {
-        return Err(StartError::Failed("root_engine_owned".into()));
-    }
     let network = crate::network::AgentNetwork::start(paths, endpoint_secret)
         .and_then(|network| network.install().cloned())
         .map_err(|error| StartError::Failed(format!("device network: {error}")))?;
@@ -1087,7 +1081,9 @@ fn reminder_command(event: &AgentEvent) -> Option<crate::reminders::Command> {
 /// stretch in the routing log becomes attributable. The line carries the
 /// callsite and a duration, never content.
 #[track_caller]
-pub(crate) fn locked(agent: &Mutex<Agent>) -> std::sync::LockResult<std::sync::MutexGuard<'_, Agent>> {
+pub(crate) fn locked(
+    agent: &Mutex<Agent>,
+) -> std::sync::LockResult<std::sync::MutexGuard<'_, Agent>> {
     let started = std::time::Instant::now();
     let guard = agent.lock();
     let waited = started.elapsed();

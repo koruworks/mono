@@ -5610,6 +5610,7 @@ dependencies = [
  "koru-ai-sqlite",
  "koru-ai-wire",
  "koru-bot-client-wire",
+ "koru-bots-engine",
  "koru-connections",
  "koru-core",
  "koru-delegate-api",

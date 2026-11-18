@@ -29,6 +29,7 @@ koru-ai-wire = { path = "../../crates/koru-ai-wire" }
 # Bot client protocol 1: the pages and records a linked desktop is sent
 # (`src/worker/bots/client`).
 koru-bot-client-wire = { path = "../../crates/koru-bot-client-wire" }
+koru-bots-engine = { path = "../../crates/koru-bots-engine" }
 # Private connections (M5): the service this worker hosts and the credential
 # port it is composed with. **Never with `koru-oauth-credentials/desktop`**:
 # only the host that composes the worker constructs an OS credential store,

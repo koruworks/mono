@@ -222,7 +222,17 @@ fn run(
             Ok(Command::Shutdown) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
             _ => {}
         }
-        for (bot, incarnation, gone) in stop_results.try_iter() {
+        // A timeout keeps ownership, but the supervisor may reap the child
+        // later. Its terminal Stopped state is explicit confirmation of death,
+        // unlike an empty current payload during startup or a failed probe.
+        let completed: Vec<_> = entries
+            .iter()
+            .filter(|(_, entry)| {
+                entry.stop_started && entry.handle.status().state == State::Stopped
+            })
+            .map(|(bot, entry)| (*bot, entry.gate.bootstrap.incarnation, true))
+            .collect();
+        for (bot, incarnation, gone) in stop_results.try_iter().chain(completed) {
             if gone
                 && entries
                     .get(&bot)

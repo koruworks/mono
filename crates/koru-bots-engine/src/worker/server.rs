@@ -10,6 +10,7 @@ use super::*;
 use crate::Database;
 
 enum ActorCommand {
+    Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
     WakeBot(uuid::Uuid, mpsc::SyncSender<Reply>),
@@ -34,6 +35,7 @@ pub(super) fn serve(
         policy,
     )?;
     let (sender, receiver) = mpsc::sync_channel(64);
+    let launch_id = bootstrap.launch_id;
     let parent = sender.clone();
     koru_agent_worker::ParentPipe::new(input)
         .watch("koru-bots parent", move || {
@@ -64,24 +66,26 @@ pub(super) fn serve(
             }
         })
         .map_err(|_| Error::EngineUnavailable)?;
+    let mut pending = std::collections::VecDeque::new();
     loop {
-        for event in launcher.events() {
-            match event {
+        pending.extend(launcher.events());
+        while let Some(event) = pending.pop_front() {
+            let current = match &event {
                 crate::launcher::Event::Registered {
-                    bot,
-                    incarnation,
-                    at_ms,
-                } if launcher.last_heard(bot, incarnation).is_some() => {
-                    database.connection.execute("INSERT INTO workers(bot,incarnation,started_at_ms,last_heard_at_ms) VALUES (?1,?2,?3,?3) ON CONFLICT(bot) DO UPDATE SET incarnation=excluded.incarnation,started_at_ms=excluded.started_at_ms,last_heard_at_ms=excluded.last_heard_at_ms",rusqlite::params![bot.to_string(),incarnation.to_string(),at_ms])?;
+                    bot, incarnation, ..
+                } => launcher.last_heard(*bot, *incarnation).is_some(),
+                _ => true,
+            };
+            if current && record_worker_event(&mut database, &event).is_err() {
+                // Do not discard a death report or take down unrelated workers.
+                // Keep it pending; commands continue to receive stable errors
+                // while storage is unavailable. Failed registration cannot mint
+                // authority because its worker row does not exist.
+                if let crate::launcher::Event::Registered { bot, .. } = &event {
+                    let _ = launcher.stop(*bot);
                 }
-                crate::launcher::Event::Ended { bot, incarnation } => {
-                    database.interrupt_worker(incarnation)?;
-                    database.connection.execute(
-                        "DELETE FROM workers WHERE bot=?1 AND incarnation=?2",
-                        rusqlite::params![bot.to_string(), incarnation.to_string()],
-                    )?;
-                }
-                _ => {}
+                pending.push_front(event);
+                break;
             }
         }
         let command = match receiver.recv_timeout(std::time::Duration::from_millis(25)) {
@@ -90,6 +94,9 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::Hello(reply) => {
+                let _ = reply.try_send(Reply::Hello { launch_id });
+            }
             ActorCommand::Capacity(reply) => {
                 let _ = reply.try_send(Reply::Capacity {
                     sessions: launcher.capacity(),
@@ -115,17 +122,7 @@ pub(super) fn serve(
                 let _ = reply.try_send(response);
             }
             ActorCommand::WakeBot(bot, reply) => {
-                let enabled:bool=database.connection.query_row("SELECT EXISTS(SELECT 1 FROM bots WHERE id=?1 AND paused=0 AND lifecycle='active')",[bot.to_string()],|row|row.get(0))?;
-                let result = if enabled {
-                    launcher.ensure(bot)
-                } else {
-                    Err(Error::InvalidRequest)
-                };
-                let _ = reply.try_send(
-                    result
-                        .map(|()| Reply::Queued)
-                        .unwrap_or_else(Reply::Refused),
-                );
+                let _ = reply.try_send(wake_bot(&database, bot, || launcher.ensure(bot)));
             }
             ActorCommand::StopBot(bot, reply) => {
                 let _ = reply.try_send(
@@ -164,15 +161,12 @@ fn handle(
         Reply::Refused(Error::Unauthenticated)
     } else {
         match request.command {
-            Command::Hello => Reply::Hello {
-                launch_id: bootstrap.launch_id,
-            },
-            Command::Status | Command::Capacity => {
+            Command::Hello | Command::Status | Command::Capacity => {
                 let (reply, answer) = mpsc::sync_channel(1);
-                let command = if matches!(request.command, Command::Status) {
-                    ActorCommand::Status(reply)
-                } else {
-                    ActorCommand::Capacity(reply)
+                let command = match request.command {
+                    Command::Hello => ActorCommand::Hello(reply),
+                    Command::Status => ActorCommand::Status(reply),
+                    _ => ActorCommand::Capacity(reply),
                 };
                 if actor.try_send(command).is_err() {
                     Reply::Refused(Error::EngineUnavailable)
@@ -207,6 +201,45 @@ fn handle(
         }
     };
     let _ = koru_ipc::frame::write_frame(&mut stream, WIRE_VERSION, &response);
+}
+
+fn wake_bot(database: &Database, bot: Uuid, ensure: impl FnOnce() -> Result<(), Error>) -> Reply {
+    let result = (|| {
+        let enabled: bool = database.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bots b LEFT JOIN team t ON t.owner=b.owner WHERE b.id=?1 AND b.paused=0 AND b.lifecycle='active' AND COALESCE(t.paused,0)=0)",
+            [bot.to_string()], |row| row.get(0),
+        )?;
+        if !enabled {
+            return Err(Error::InvalidRequest);
+        }
+        ensure()
+    })();
+    result
+        .map(|()| Reply::Queued)
+        .unwrap_or_else(Reply::Refused)
+}
+
+fn record_worker_event(
+    database: &mut Database,
+    event: &crate::launcher::Event,
+) -> Result<(), Error> {
+    match event {
+        crate::launcher::Event::Registered {
+            bot,
+            incarnation,
+            at_ms,
+        } => {
+            database.connection.execute("INSERT INTO workers(bot,incarnation,started_at_ms,last_heard_at_ms) VALUES (?1,?2,?3,?3) ON CONFLICT(bot) DO UPDATE SET incarnation=excluded.incarnation,started_at_ms=excluded.started_at_ms,last_heard_at_ms=excluded.last_heard_at_ms",rusqlite::params![bot.to_string(),incarnation.to_string(),at_ms])?;
+        }
+        crate::launcher::Event::Ended { bot, incarnation } => {
+            database.interrupt_worker(*incarnation)?;
+            database.connection.execute(
+                "DELETE FROM workers WHERE bot=?1 AND incarnation=?2",
+                rusqlite::params![bot.to_string(), incarnation.to_string()],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn matches_authority(supplied: &str, expected: &str) -> bool {

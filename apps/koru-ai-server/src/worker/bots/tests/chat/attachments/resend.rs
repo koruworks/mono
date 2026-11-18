@@ -149,6 +149,30 @@ fn refused_pictures_are_sent_again_once_as_files_without_a_retry() {
     assert!(input.text.contains("picture.png"), "named by its path");
     assert_eq!(running.port.ingests.load(Ordering::SeqCst), 1);
     let chat = running.request.chat_id;
+    // Begin only acknowledges admission. Wait for the automatic turn's
+    // persisted reply before shutdown can cancel its still-pending work.
+    wait_for("the automatic re-send committed", || {
+        let (reply, response) = sync_channel(1);
+        running
+            .worker
+            .client()
+            .send(WorkerCommand::ReadChat {
+                context: running.context.clone(),
+                chat,
+                reply,
+            })
+            .unwrap();
+        response
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .messages
+            .iter()
+            .any(|message| {
+                message.origin_message_id == Some(first.accepted.assistant_message_id)
+                    && message.state == MessageState::Complete
+            })
+    });
     let repository = finish(running);
     let [refused, resent] = attempts(&repository, chat).try_into().unwrap();
     assert_eq!(refused.id, first.accepted.attempt_id);

@@ -120,6 +120,44 @@ fn failed_load_has_no_evidence_and_cannot_restart_in_the_same_process() {
 }
 
 #[test]
+fn replay_queued_after_load_response_is_suppressed_until_first_prompt() {
+    let mut h = qualified(vec![], response(2, json!({})));
+    load(&mut h).unwrap();
+    h.control.events.clear();
+    h.injected.lock().unwrap().extend([
+        update("user_message_chunk", "late original input"),
+        update("agent_message_chunk", "old reply must not appear"),
+        json!({"jsonrpc":"2.0","id":"late-permission","method":"session/request_permission","params":{"sessionId":SESSION}}),
+    ]);
+    let turn = AgentTurnId::mint();
+    h.control.submit(input(turn)).unwrap();
+    assert!(h.control.loading_session.is_none());
+    assert_eq!(
+        h.control.replayed_input_hashes(),
+        &[*blake3::hash(b"late original input").as_bytes()]
+    );
+    assert!(h.control.events.iter().all(|event| !matches!(
+        event,
+        AgentEvent::MessageDelta { .. }
+            | AgentEvent::ToolStarted { .. }
+            | AgentEvent::ApprovalRequired { .. }
+    )));
+    assert!(h.control.unsaid_notices.is_empty());
+    assert!(
+        h.state
+            .lock()
+            .unwrap()
+            .sent()
+            .iter()
+            .any(|frame| frame["id"] == "late-permission" && frame["error"]["code"] == -32601)
+    );
+    h.control
+        .handle_frame(update("agent_message_chunk", "live reply"))
+        .unwrap();
+    assert!(h.control.events.iter().any(|event| matches!(event, AgentEvent::MessageDelta { turn_id, text } if *turn_id == turn && text == "live reply")));
+}
+
+#[test]
 fn only_qualified_advertised_route_mints_or_accepts_tokens() {
     for route in [
         AcpRoute::opencode(),

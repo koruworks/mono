@@ -14,6 +14,28 @@ struct Saved {
 }
 
 impl AcpControl {
+    pub(super) fn finish_replay(&mut self) -> Result<(), ProviderFailure> {
+        if self.loading_session.is_none() {
+            return Ok(());
+        }
+        // Do not let notifications already queued behind the load response
+        // acquire the identity of the first live turn. A replay flood applies
+        // backpressure instead of creating an unbounded pre-prompt drain.
+        for _ in 0..self.config.event_capacity {
+            match self.transport()?.receive(Duration::ZERO)? {
+                TransportReceive::Frame(frame) => self.handle_frame(frame)?,
+                TransportReceive::Timeout | TransportReceive::Woken => {
+                    self.loading_session = None;
+                    return Ok(());
+                }
+            }
+        }
+        Err(failure(
+            ErrorCode::Backpressure,
+            ProviderStage::Submit,
+            ProviderDiagnostic::Backpressure,
+        ))
+    }
     pub(super) fn qualified_resume_route(&self) -> bool {
         // P0.2 qualified populated history and replacement MCP credentials
         // only on this exact route. A newer executable may start, but must
@@ -51,13 +73,13 @@ impl AcpControl {
         // The freshly built params contain this incarnation's endpoint and
         // credential. Neither lives in the saved token.
         let result = self.call("session/load", params);
-        self.loading_session = None;
         let session = match result.and_then(|value| {
             decode::<acp::LoadSessionResponse>(&value).map_err(|_| handshake_rejected())?;
             Ok(value)
         }) {
             Ok(session) => session,
             Err(error) => {
+                self.loading_session = None;
                 self.replayed_inputs.clear();
                 // A failed load may have partly initialized the native
                 // session. A caller must retire this process before rebuild.

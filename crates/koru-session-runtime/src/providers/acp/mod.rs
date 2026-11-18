@@ -1211,6 +1211,10 @@ impl AgentControl for AcpControl {
             self.apply_turn_reasoning(&native_session, level)?;
         }
         let params = json!({"sessionId":self.native_session,"prompt":prompt});
+        // Load may be followed by queued replay notifications. Keep their
+        // suppression through all pre-prompt configuration calls. The first
+        // actual prompt establishes the live-activity boundary.
+        self.finish_replay()?;
         let request_id = match self.send_request("session/prompt", params) {
             Ok(id) => id,
             Err(error) => {

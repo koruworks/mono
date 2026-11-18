@@ -10,6 +10,7 @@ mod database;
 mod error;
 pub mod launcher;
 pub mod messages;
+#[cfg(any(test, feature = "provider-runtime"))]
 pub mod sessions;
 mod ownership;
 pub mod worker;

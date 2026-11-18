@@ -302,7 +302,7 @@ impl Actor {
             commands,
             device,
             bot_queue_cursor: 0,
-            legacy_bots: true,
+            legacy_bots: !koru_bots_engine::ENABLED,
             bot_drain_pending: false,
             bot_drain_again: false,
             pumps: HashMap::new(),
