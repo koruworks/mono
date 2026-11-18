@@ -315,3 +315,79 @@ fn workspace_source_is_fresh_for_new_sends_but_cannot_revoke_a_retained_receipt(
         Ok(R::Accepted { replayed: true, .. })
     ));
 }
+
+#[test]
+fn startup_collects_unaccepted_uploads_but_preserves_recent_drafts_and_sent_bytes() {
+    let mut f = Fixture::new();
+    let bot = creation(f.gateway.window_command(form(&f)).unwrap())
+        .bot
+        .unwrap();
+    let native = f.gateway.attachments.clone();
+    let unavailable = Arc::new(AtomicBool::new(true));
+    let flag = unavailable.clone();
+    f.gateway.attachments = Arc::new(move |request| {
+        if flag.load(Ordering::Relaxed)
+            && matches!(
+                &request.command,
+                koru_bots_engine::attachments::Command::Stage(_)
+                    | koru_bots_engine::attachments::Command::Collect { .. }
+            )
+        {
+            return Err(Error::EngineUnavailable);
+        }
+        native(request)
+    });
+    let orphan = ChatAttachmentId::new();
+    assert_eq!(
+        run(&f, bot.main_chat, upload(orphan)).unwrap_err(),
+        Error::EngineUnavailable
+    );
+    unavailable.store(false, Ordering::Relaxed);
+    let recent = ChatAttachmentId::new();
+    let sent = ChatAttachmentId::new();
+    for id in [recent, sent] {
+        run(&f, bot.main_chat, upload(id)).unwrap();
+    }
+    assert!(
+        f.gateway
+            .thread_command(
+                &principal(),
+                C::Send {
+                    id: Uuid::new_v4(),
+                    bot: bot.id,
+                    thread: bot.main_chat,
+                    body: "keep".into(),
+                    in_reply_to: None,
+                    attachments: vec![serde_json::json!(sent.as_uuid())],
+                    references: vec![]
+                },
+                |_| Ok(())
+            )
+            .is_ok()
+    );
+    let path = |id: ChatAttachmentId| {
+        f.gateway
+            .root
+            .join("bots/attachments")
+            .join(bot.main_chat.to_storage())
+            .join(id.to_storage())
+    };
+    assert!(f.gateway.files.canonical(&path(orphan)).is_ok());
+    f.gateway
+        .recover_attachment_files(koru_ai_core::Timestamp::now().millis(), || false)
+        .unwrap();
+    assert!(f.gateway.files.canonical(&path(orphan)).is_err());
+    assert!(f.gateway.files.canonical(&path(recent)).is_ok());
+    assert!(f.gateway.files.canonical(&path(sent)).is_ok());
+    assert_eq!(
+        run(&f, bot.main_chat, upload(orphan)).unwrap_err(),
+        Error::NotAllowed
+    );
+    assert!(
+        f.gateway.files.canonical(&path(orphan)).is_err(),
+        "a late upload is cleaned after tombstone refusal"
+    );
+    run(&f, bot.main_chat, Operation::Remove(recent)).unwrap();
+    assert!(f.gateway.files.canonical(&path(recent)).is_err());
+    assert!(f.gateway.files.canonical(&path(sent)).is_ok());
+}

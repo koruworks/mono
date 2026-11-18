@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use uuid::Uuid;
+mod cleanup;
+pub use cleanup::Sweep;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -81,6 +83,15 @@ impl std::fmt::Debug for Request {
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Command {
+    Expire {
+        after: Option<Uuid>,
+        cutoff_ms: i64,
+    },
+    Collect {
+        thread: Uuid,
+        id: Uuid,
+        cutoff_ms: i64,
+    },
     SendReceipt {
         envelope: crate::messages::Envelope,
     },
@@ -101,6 +112,8 @@ pub enum Command {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Reply {
+    Sweep(Sweep),
+    Collect(bool),
     Receipt(Option<crate::messages::Receipt<crate::messages::Accepted>>),
     Thread(bool),
     Record(Option<Record>),
@@ -120,6 +133,16 @@ pub fn handle(db: &mut Database, request: Request) -> Result<Reply, Error> {
         sender: request.sender,
     };
     match request.command {
+        Command::Expire { after, cutoff_ms } => db
+            .expire_attachments(&who, after, cutoff_ms)
+            .map(Reply::Sweep),
+        Command::Collect {
+            thread,
+            id,
+            cutoff_ms,
+        } => db
+            .collect_attachment(&who, thread, id, cutoff_ms)
+            .map(Reply::Collect),
         Command::SendReceipt { envelope } => {
             db.message_receipt(&who, &envelope).map(Reply::Receipt)
         }

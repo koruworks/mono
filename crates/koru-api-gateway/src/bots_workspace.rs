@@ -49,6 +49,11 @@ pub(crate) fn start(
         .as_ref()
         .and_then(|b| b.device_id.as_deref())
         .ok_or_else(|| "engine_owner_unavailable".to_owned())?;
+    let attachment_started_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .min(i64::MAX as u128) as i64;
     if !state.set_bots_engine(engine.clone(), device, config.channel_root.clone()) {
         return Err("engine_owner_unavailable".into());
     }
@@ -60,8 +65,15 @@ pub(crate) fn start(
     let (stop, mut stopping) = oneshot::channel();
     let (recovery_stop, recovery_stopping) = tokio::sync::watch::channel(false);
     let recovery_state = state.clone();
+    let attachment_state = state.clone();
+    let attachment_stopping = recovery_stopping.clone();
     let task = tokio::spawn(async move {
         let mut calls = JoinSet::new();
+        calls.spawn(async move {
+            attachment_state
+                .recover_bots_attachments(attachment_started_ms, attachment_stopping)
+                .await;
+        });
         calls.spawn(async move {
             recovery_state
                 .recover_bots_creations(recovery_stopping)

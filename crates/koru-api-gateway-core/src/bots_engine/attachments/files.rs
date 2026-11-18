@@ -10,8 +10,17 @@ use std::{
     path::{Path, PathBuf},
 };
 use uuid::Uuid;
+mod cleanup;
+pub(super) use cleanup::{discard, sweep};
 
 pub(in crate::bots_engine) trait Files: Send + Sync {
+    fn entries(
+        &self,
+        path: &Path,
+    ) -> io::Result<Box<dyn Iterator<Item = io::Result<PathBuf>> + Send>>;
+    fn modified_ms(&self, path: &Path) -> io::Result<i64>;
+    fn remove_file(&self, path: &Path) -> io::Result<()>;
+    fn remove_dir(&self, path: &Path) -> io::Result<()>;
     fn canonical(&self, path: &Path) -> io::Result<PathBuf>;
     fn directory(&self, path: &Path) -> io::Result<()>;
     fn create(&self, path: &Path, bytes: &[u8]) -> io::Result<()>;
@@ -20,6 +29,28 @@ pub(in crate::bots_engine) trait Files: Send + Sync {
 }
 pub(in crate::bots_engine) struct Native;
 impl Files for Native {
+    fn entries(
+        &self,
+        path: &Path,
+    ) -> io::Result<Box<dyn Iterator<Item = io::Result<PathBuf>> + Send>> {
+        Ok(Box::new(
+            std::fs::read_dir(path)?.map(|entry| entry.map(|entry| entry.path())),
+        ))
+    }
+    fn modified_ms(&self, path: &Path) -> io::Result<i64> {
+        Ok(std::fs::symlink_metadata(path)?
+            .modified()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| io::ErrorKind::InvalidData)?
+            .as_millis()
+            .min(i64::MAX as u128) as i64)
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        std::fs::remove_file(path)
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        std::fs::remove_dir(path)
+    }
     fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
         std::fs::canonicalize(path)
     }

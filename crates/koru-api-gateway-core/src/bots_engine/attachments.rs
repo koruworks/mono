@@ -8,6 +8,7 @@ use koru_ai_core::{
 use koru_ai_wire::{ChatAttachmentResponse, ReferenceAttachmentRequest, RemoveAttachmentResponse};
 use koru_bots_engine::attachments::{Command as Control, Record, Reply, Request};
 use uuid::Uuid;
+mod cleanup;
 pub(super) mod files;
 pub(super) type Call = Arc<dyn Fn(Request) -> Result<Reply, Error> + Send + Sync>;
 
@@ -122,7 +123,27 @@ impl Gateway {
         }
     }
     fn stage_record(&self, owner: &str, record: Record) -> Result<Response, Error> {
-        match self.attachment_call(owner, Control::Stage(record))? {
+        let thread = record.thread;
+        let id = record.attachment.id.as_uuid();
+        let reply = self.attachment_call(owner, Control::Stage(record));
+        if reply.is_err() {
+            // An uncertain Stage may already have committed. Only a subsequent
+            // engine tombstone proof permits deleting the published files.
+            if matches!(
+                self.attachment_call(
+                    owner,
+                    Control::Collect {
+                        thread,
+                        id,
+                        cutoff_ms: i64::MIN
+                    }
+                ),
+                Ok(Reply::Collect(true))
+            ) {
+                self.discard_attachment_files(thread, id);
+            }
+        }
+        match reply? {
             Reply::Record(Some(record)) => Ok(Json(ChatAttachmentResponse {
                 attachment: record.attachment,
             })
@@ -275,8 +296,7 @@ impl Gateway {
                     Reply::Removed => (),
                     _ => return Err(Error::EngineUnavailable),
                 }
-                // Tombstones prevent late publication. Physical collection is
-                // deliberately separate from this acknowledgement.
+                self.discard_attachment_files(chat.as_uuid(), id.as_uuid());
                 Json(RemoveAttachmentResponse { removed: true }).into_response()
             }
             Operation::Read { id, thumbnail } => {

@@ -9,6 +9,7 @@ use std::{
 };
 #[derive(Default)]
 pub(in crate::bots_engine) struct Memory {
+    modified: Mutex<BTreeMap<PathBuf, i64>>,
     entries: Mutex<BTreeMap<PathBuf, Option<Vec<u8>>>>,
     aliases: Mutex<BTreeMap<PathBuf, PathBuf>>,
     fail_write: AtomicBool,
@@ -22,6 +23,42 @@ impl Memory {
     }
 }
 impl Files for Memory {
+    fn entries(
+        &self,
+        path: &Path,
+    ) -> io::Result<Box<dyn Iterator<Item = io::Result<PathBuf>> + Send>> {
+        let entries = self.entries.lock().unwrap();
+        if entries.get(path) != Some(&None) {
+            return Err(io::ErrorKind::NotFound.into());
+        }
+        let children: Vec<_> = entries
+            .keys()
+            .filter(|p| p.parent() == Some(path))
+            .cloned()
+            .map(Ok)
+            .collect();
+        Ok(Box::new(children.into_iter()))
+    }
+    fn modified_ms(&self, path: &Path) -> io::Result<i64> {
+        self.canonical(path)?;
+        Ok(*self.modified.lock().unwrap().get(path).unwrap_or(&0))
+    }
+    fn remove_file(&self, path: &Path) -> io::Result<()> {
+        let mut entries = self.entries.lock().unwrap();
+        if !matches!(entries.get(path), Some(Some(_))) {
+            return Err(io::ErrorKind::NotFound.into());
+        }
+        entries.remove(path);
+        Ok(())
+    }
+    fn remove_dir(&self, path: &Path) -> io::Result<()> {
+        let mut entries = self.entries.lock().unwrap();
+        if entries.get(path) != Some(&None) || entries.keys().any(|p| p.parent() == Some(path)) {
+            return Err(io::ErrorKind::Other.into());
+        }
+        entries.remove(path);
+        Ok(())
+    }
     fn canonical(&self, path: &Path) -> io::Result<PathBuf> {
         if let Some(other) = self.aliases.lock().unwrap().get(path) {
             return Ok(other.clone());
@@ -202,4 +239,77 @@ fn provider_paths_require_verified_originals_and_keep_path_references_metadata_o
         .unwrap()
         .remove(&PathBuf::from(input.path));
     assert!(input_file(&fs, &root, &saved).is_err());
+}
+
+#[test]
+fn sweep_keeps_protected_and_new_entries_and_removes_only_owned_old_leaves() {
+    let root = root();
+    let fs = Memory::new(&root);
+    let old = publish(&fs, &root, &upload(), b"hello").unwrap();
+    let kept = publish(&fs, &root, &upload(), b"hello").unwrap();
+    let fresh = publish(&fs, &root, &upload(), b"hello").unwrap();
+    let target = |record: &Record| {
+        root.join("bots/attachments")
+            .join(record.thread.to_string())
+            .join(record.attachment.id.to_storage())
+    };
+    fs.modified.lock().unwrap().insert(target(&fresh), 100);
+    let staging = target(&old)
+        .parent()
+        .unwrap()
+        .join(format!(".staging-{}", Uuid::new_v4()));
+    fs.directory(&staging).unwrap();
+    fs.directory(&staging.join("file")).unwrap();
+    let mut checked = vec![];
+    sweep(
+        &fs,
+        &root,
+        50,
+        |thread, id| {
+            checked.push((thread, id));
+            Ok(id != Some(kept.attachment.id.as_uuid()))
+        },
+        || false,
+    )
+    .unwrap();
+    assert!(fs.canonical(&target(&old)).is_err());
+    assert!(fs.canonical(&staging).is_err());
+    assert!(fs.canonical(&target(&kept)).is_ok());
+    assert!(fs.canonical(&target(&fresh)).is_ok());
+    assert!(
+        !checked
+            .iter()
+            .any(|(_, id)| *id == Some(fresh.attachment.id.as_uuid()))
+    );
+}
+
+#[test]
+fn deletion_checks_the_complete_shape_and_never_follows_a_redirect() {
+    let root = root();
+    let fs = Memory::new(&root);
+    let saved = publish(&fs, &root, &upload(), b"hello").unwrap();
+    let target = root
+        .join("bots/attachments")
+        .join(saved.thread.to_string())
+        .join(saved.attachment.id.to_storage());
+    let foreign = target.join("unrecognized.txt");
+    fs.create(&foreign, b"retain").unwrap();
+    assert_eq!(
+        discard(&fs, &root, saved.thread, saved.attachment.id.as_uuid()).unwrap_err(),
+        Error::NotAllowed
+    );
+    assert_eq!(read(&fs, &root, &saved, false).unwrap(), b"hello");
+    fs.remove_file(&foreign).unwrap();
+    fs.aliases
+        .lock()
+        .unwrap()
+        .insert(target.clone(), root.join("elsewhere"));
+    assert_eq!(
+        discard(&fs, &root, saved.thread, saved.attachment.id.as_uuid()).unwrap_err(),
+        Error::NotAllowed
+    );
+    fs.aliases.lock().unwrap().clear();
+    discard(&fs, &root, saved.thread, saved.attachment.id.as_uuid()).unwrap();
+    discard(&fs, &root, saved.thread, saved.attachment.id.as_uuid()).unwrap();
+    assert!(fs.canonical(&target).is_err());
 }
