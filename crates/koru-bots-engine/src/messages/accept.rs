@@ -39,6 +39,7 @@ impl Database {
             let thread = Uuid::new_v4();
             tx.execute("INSERT INTO threads(id,bot,kind,title,lifecycle,created_at_ms,updated_at_ms) VALUES (?1,?2,'conversation','','active',?3,?3)",rusqlite::params![thread.to_string(),envelope.to.to_string(),now])?;
             tx.execute("INSERT INTO participants(thread,participant,kind) VALUES (?1,?2,'person'),(?1,?3,'bot')",rusqlite::params![thread.to_string(),person.sender,envelope.to.to_string()])?;
+            crate::configuration::seed(&tx, envelope.to, thread)?;
             thread
         };
         if let Some(reply) = envelope.in_reply_to {

@@ -80,6 +80,10 @@ impl Command {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Query {
+    ConversationSettings {
+        bot: Uuid,
+        thread: Uuid,
+    },
     ChangeReceipt {
         id: Uuid,
         action: Change,
@@ -168,6 +172,13 @@ pub struct Definition {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub enum Change {
+    ConversationSettings {
+        bot: Uuid,
+        thread: Uuid,
+        revision: u64,
+        provider: koru_session_protocol::ProviderKind,
+        selection: koru_session_protocol::LaunchSelection,
+    },
     Create {
         bot: Uuid,
         definition: Definition,
@@ -286,6 +297,7 @@ pub struct Thread {
     pub origin_message: Option<Uuid>,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub settings: crate::configuration::ConversationSettings,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

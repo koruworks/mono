@@ -70,6 +70,10 @@ pub(crate) fn create(
 }
 pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result<(), Error> {
     match action {
+        Change::ConversationSettings { bot, thread, .. } => {
+            owner(c, who, *bot)?;
+            messages::authorize_thread(c, who, *thread)
+        }
         Change::Create { bot, .. } => {
             let other: bool = c.query_row(
                 "SELECT EXISTS(SELECT 1 FROM bots WHERE id=?1 AND owner<>?2)",
@@ -135,6 +139,7 @@ pub(super) fn conversation(
         "INSERT INTO participants(thread,participant,kind) VALUES (?1,?2,'bot'),(?1,?3,'person')",
         params![thread.to_string(), bot.to_string(), who.sender],
     )?;
+    crate::configuration::seed(c, bot, thread)?;
     Ok(thread)
 }
 /// Archive/trash cancel queued work as well as delivered work. Messages and
@@ -350,6 +355,15 @@ pub(super) fn apply(
             updated(&tx, *bot, now)?;
             value(read::bot(&tx, who, *bot)?)?
         }
+        Change::ConversationSettings {
+            bot,
+            thread,
+            revision,
+            provider,
+            selection,
+        } => value(crate::configuration::set_conversation(
+            &tx, who, *bot, *thread, *revision, provider, selection,
+        )?)?,
         Change::Conversation { bot, title } => {
             messages::authorize_bot(&tx, who, *bot)?;
             if title.chars().count() > 256 {

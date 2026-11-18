@@ -160,6 +160,15 @@ impl Gateway {
         let mut pages = vec![];
         match &command {
             Command::Change {
+                action: Change::ConversationSettings { bot, .. },
+                ..
+            }
+            | Command::Read {
+                query: Query::ConversationSettings { bot, .. },
+            } => {
+                workspaces.push(read_bot(*bot)?.definition.access.workspace);
+            }
+            Command::Change {
                 action: Change::Create { definition, .. },
                 ..
             } => {

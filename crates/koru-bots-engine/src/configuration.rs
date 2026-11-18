@@ -6,7 +6,81 @@ use crate::{
     authority::{self, Worker},
 };
 use koru_session_protocol::{LaunchSelection, ProviderKind};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ConversationSettings {
+    pub revision: u64,
+    /// Model choices belong to this participant; the folder is read from the
+    /// Bot at projection time and is never captured as a conversation choice.
+    pub configuration: Configuration,
+}
+
+pub(crate) fn seed(c: &Connection, bot: Uuid, thread: Uuid) -> Result<(), Error> {
+    c.execute("INSERT INTO conversation_settings(thread,bot,settings) SELECT ?1,id,CAST(json_remove(CAST(settings AS TEXT),'$.working_folder') AS BLOB) FROM bots WHERE id=?2",
+        params![thread.to_string(),bot.to_string()])?;
+    Ok(())
+}
+
+pub(crate) fn conversation(
+    c: &Connection,
+    bot: Uuid,
+    thread: Uuid,
+) -> Result<ConversationSettings, Error> {
+    let (revision, saved, current): (u64,Vec<u8>,Vec<u8>) = c.query_row(
+        "SELECT s.revision,s.settings,b.settings FROM conversation_settings s JOIN bots b ON b.id=s.bot WHERE s.bot=?1 AND s.thread=?2",
+        params![bot.to_string(),thread.to_string()], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional()?.ok_or(Error::NotAllowed)?;
+    let mut configuration: Configuration =
+        serde_json::from_slice(&saved).map_err(|_| Error::StorageUnavailable)?;
+    let current: Configuration =
+        serde_json::from_slice(&current).map_err(|_| Error::StorageUnavailable)?;
+    configuration.working_folder = current.working_folder;
+    Ok(ConversationSettings {
+        revision,
+        configuration,
+    })
+}
+
+pub(crate) fn set_conversation(
+    c: &Connection,
+    who: &crate::messages::Person,
+    bot: Uuid,
+    thread: Uuid,
+    revision: u64,
+    provider: &ProviderKind,
+    selection: &LaunchSelection,
+) -> Result<ConversationSettings, Error> {
+    crate::messages::authorize_bot(c, who, bot)?;
+    crate::messages::authorize_thread(c, who, thread)?;
+    let allowed: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM participants p JOIN threads t ON t.id=p.thread WHERE p.thread=?1 AND p.participant=?2 AND p.kind='bot' AND t.lifecycle='active')", params![thread.to_string(),bot.to_string()], |r| r.get(0))?;
+    if !allowed {
+        return Err(Error::NotAllowed);
+    }
+    let prior = conversation(c, bot, thread)?;
+    if prior.revision != revision {
+        return Err(Error::RevisionConflict);
+    }
+    let current: Vec<u8> = c.query_row(
+        "SELECT settings FROM bots WHERE id=?1",
+        [bot.to_string()],
+        |r| r.get(0),
+    )?;
+    let current: Configuration =
+        serde_json::from_slice(&current).map_err(|_| Error::StorageUnavailable)?;
+    if prior.configuration.provider != *provider || current.provider != *provider {
+        return Err(Error::InvalidRequest);
+    }
+    let saved = Configuration {
+        provider: provider.clone(),
+        selection: selection.clone(),
+        working_folder: None,
+    };
+    c.execute("UPDATE conversation_settings SET settings=?3,revision=revision+1 WHERE thread=?1 AND bot=?2",
+        params![thread.to_string(),bot.to_string(),serde_json::to_vec(&saved).map_err(|_| Error::InvalidRequest)?])?;
+    conversation(c, bot, thread)
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -51,7 +125,13 @@ impl Database {
             [who.bot.to_string()],
             |r| r.get(0),
         )?;
-        serde_json::from_slice(&bytes).map_err(|_| Error::InvalidRequest)
+        let current: Configuration =
+            serde_json::from_slice(&bytes).map_err(|_| Error::InvalidRequest)?;
+        let saved = conversation(&self.connection, who.bot, thread)?.configuration;
+        if current.provider != saved.provider {
+            return Err(Error::InvalidRequest);
+        }
+        Ok(saved)
     }
     pub(crate) fn setup_failure(
         &mut self,

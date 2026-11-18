@@ -118,8 +118,17 @@ impl Gateway {
             return Ok(());
         };
         let configuration = match action {
-            Change::Create { definition, .. } => &definition.configuration,
-            Change::Configure { configuration, .. } => configuration,
+            Change::Create { definition, .. } => definition.configuration.clone(),
+            Change::Configure { configuration, .. } => configuration.clone(),
+            Change::ConversationSettings {
+                provider,
+                selection,
+                ..
+            } => Configuration {
+                provider: provider.clone(),
+                selection: selection.clone(),
+                working_folder: None,
+            },
             _ => return Ok(()),
         };
         let receipt: Value = self.person_read(
@@ -134,14 +143,14 @@ impl Gateway {
         }
         let workspace = match action {
             Change::Create { definition, .. } => definition.access.workspace,
-            Change::Configure { bot, .. } => {
+            Change::Configure { bot, .. } | Change::ConversationSettings { bot, .. } => {
                 let bot: person::Bot = self.person_read(owner, Query::Bot { bot: *bot })?;
                 bot.definition.access.workspace
             }
             _ => unreachable!(),
         };
         self.window_workspace(owner, workspace)?;
-        validate(configuration).map_err(Refusal::Runtime)
+        validate(&configuration).map_err(Refusal::Runtime)
     }
 
     pub(in crate::bots_engine) fn validated_execute(

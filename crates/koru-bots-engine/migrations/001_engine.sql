@@ -72,6 +72,16 @@ CREATE TABLE participants (
     read_sequence INTEGER NOT NULL DEFAULT 0 CHECK (read_sequence >= 0),
     PRIMARY KEY (thread, participant)
 );
+-- Each Bot's conversation captures its own model defaults. Working-folder
+-- authority remains with the Bot, never with this participant setting.
+CREATE TABLE conversation_settings (
+    thread TEXT NOT NULL,
+    bot TEXT NOT NULL REFERENCES bots(id),
+    revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
+    settings BLOB NOT NULL,
+    PRIMARY KEY (thread, bot),
+    FOREIGN KEY (thread, bot) REFERENCES participants(thread, participant)
+);
 CREATE TABLE messages (
     id TEXT PRIMARY KEY,
     thread TEXT NOT NULL REFERENCES threads(id),

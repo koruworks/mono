@@ -5,6 +5,7 @@ use rusqlite::params;
 mod lifecycle;
 mod lists;
 mod permissions;
+mod settings;
 
 struct Fixture {
     db: Database,

@@ -8688,6 +8688,45 @@
                 "format": "uuid",
                 "type": "string"
               },
+              "kind": {
+                "enum": [
+                  "conversation_settings"
+                ],
+                "type": "string"
+              },
+              "provider": {
+                "$ref": "#/components/schemas/ProviderKind"
+              },
+              "revision": {
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "selection": {
+                "$ref": "#/components/schemas/LaunchSelection"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "thread",
+              "revision",
+              "provider",
+              "selection"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
               "definition": {
                 "$ref": "#/components/schemas/Definition"
               },
@@ -17164,6 +17203,31 @@
       },
       "Query": {
         "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "bot": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "conversation_settings"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "bot",
+              "thread"
+            ],
+            "type": "object"
+          },
           {
             "additionalProperties": false,
             "properties": {

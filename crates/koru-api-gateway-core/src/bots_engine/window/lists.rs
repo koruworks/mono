@@ -23,7 +23,7 @@ impl Gateway {
         bot: &Bot,
         thread: &person::Thread,
         profile: ProfileId,
-    ) -> BotConversation {
+    ) -> Result<BotConversation, Error> {
         let label = BotChatLabel {
             bot_id: bot.id,
             bot_name: bot.config.name.clone(),
@@ -33,7 +33,7 @@ impl Gateway {
                 BotChatPurpose::Additional
             },
         };
-        BotConversation {
+        Ok(BotConversation {
             label: label.clone(),
             chat: Chat {
                 id: ChatId::from_uuid(thread.id),
@@ -43,7 +43,7 @@ impl Gateway {
                     thread.title.clone()
                 },
                 private: true,
-                current_model: bot.config.model.clone(),
+                current_model: model_view(&thread.settings.configuration)?,
                 branched_from: if thread.kind == "branch" {
                     thread
                         .origin_thread
@@ -56,15 +56,21 @@ impl Gateway {
                     None
                 },
                 agent_working_folder: Some(bot.config.working_folder.clone()),
-                agent_mode: bot.config.mode.clone(),
-                agent_fast: bot.config.fast,
+                agent_mode: thread
+                    .settings
+                    .configuration
+                    .selection
+                    .mode
+                    .as_ref()
+                    .map(|mode| mode.as_str().to_owned()),
+                agent_fast: thread.settings.configuration.selection.fast,
                 pinned_at: None,
                 profile_id: Some(profile),
                 bot: Some(label),
                 created_at: Timestamp::from_millis(thread.created_at_ms),
                 updated_at: Timestamp::from_millis(thread.updated_at_ms),
             },
-        }
+        })
     }
 
     pub(super) fn window_lists(
@@ -105,7 +111,7 @@ impl Gateway {
                 let mut last = None;
                 let mut more = page.next.is_some();
                 for thread in page.items {
-                    let item = Self::conversation_view(&bot, &thread, profile);
+                    let item = Self::conversation_view(&bot, &thread, profile)?;
                     let size = serde_json::to_vec(&item)
                         .map_err(|_| Error::EngineUnavailable)?
                         .len();
@@ -170,7 +176,7 @@ impl Gateway {
                         (holder.request_id, holder.kind, holder.completed_at_ms)
                     };
                     let item = BotTrashedChat {
-                        conversation: Self::conversation_view(bot, &thread, profile),
+                        conversation: Self::conversation_view(bot, &thread, profile)?,
                         trashed_by: BotTrashedBy { request_id, kind },
                         trashed_at_ms: at,
                         restore: if bot.lifecycle == BotLifecycle::Active {

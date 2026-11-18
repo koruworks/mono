@@ -31,6 +31,7 @@ pub(super) fn bot(c: &Connection, who: &Person, key: Uuid) -> Result<Bot, Error>
 pub(super) fn thread(c: &Connection, who: &Person, key: Uuid) -> Result<Thread, Error> {
     messages::authorize_thread(c, who, key)?;
     let row=c.query_row("SELECT bot,title,kind,lifecycle,revision,origin_thread,origin_message,lifecycle_holder,created_at_ms,updated_at_ms FROM threads WHERE id=?1",[key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get::<_,String>(3)?,r.get(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<Vec<u8>>>(7)?,r.get(8)?,r.get(9)?)))?;
+    let settings = crate::configuration::conversation(c, id(row.0.clone())?, key)?;
     Ok(Thread {
         id: key,
         bot: id(row.0)?,
@@ -43,6 +44,7 @@ pub(super) fn thread(c: &Connection, who: &Person, key: Uuid) -> Result<Thread, 
         origin_message: row.6.map(id).transpose()?,
         created_at_ms: row.8,
         updated_at_ms: row.9,
+        settings,
     })
 }
 pub(super) fn team(c: &Connection, who: &Person) -> Result<Team, Error> {
@@ -94,6 +96,11 @@ fn page<T: Serialize>(
 pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, Error> {
     let c = &db.connection;
     match query {
+        Query::ConversationSettings { bot, thread } => {
+            owner(c, who, bot)?;
+            messages::authorize_thread(c, who, thread)?;
+            value(crate::configuration::conversation(c, bot, thread)?)
+        }
         Query::ControlReceipt { bot, request } => {
             owner(c, who, bot)?;
             let token: Option<String> = c.query_row("SELECT control_kind FROM receipts WHERE sender=?1 AND id=?2 AND control_bot=?3",

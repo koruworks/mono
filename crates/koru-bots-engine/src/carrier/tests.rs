@@ -71,6 +71,7 @@ fn configuration_is_current_and_a_registered_worker_cannot_publish_another_assig
     f.db.connection
         .execute("UPDATE bots SET settings=?1", [settings])
         .unwrap();
+    crate::configuration::seed(&f.db.connection, f.who.bot, f.reservation.key.thread).unwrap();
     assert!(matches!(
         f.request(Command::Configuration {
             reservation: f.reservation

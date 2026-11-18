@@ -16,14 +16,23 @@ fn threads(
     mut keys: Vec<String>,
     limit: usize,
 ) -> Result<(Vec<Thread>, bool), Error> {
-    let more = keys.len() > limit;
+    let mut more = keys.len() > limit;
     keys.truncate(limit);
-    let items = keys
-        .into_iter()
-        .map(|key| read::thread(c, who, id(key)?))
-        .collect::<Result<Vec<_>, _>>()?;
-    if encode(&items)?.len() > MAX_COMMAND_BYTES {
-        return Err(Error::InputTooSmall);
+    let mut items = vec![];
+    // Reserve the page wrapper and cursor as well as array punctuation.
+    let mut bytes = 256;
+    for key in keys {
+        let item = read::thread(c, who, id(key)?)?;
+        let size = encode(&item)?.len() + 1;
+        if bytes + size > MAX_COMMAND_BYTES {
+            if items.is_empty() {
+                return Err(Error::InputTooSmall);
+            }
+            more = true;
+            break;
+        }
+        bytes += size;
+        items.push(item);
     }
     Ok((items, more))
 }
