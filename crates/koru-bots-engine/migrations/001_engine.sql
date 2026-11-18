@@ -44,6 +44,7 @@ CREATE TABLE threads (
     title TEXT NOT NULL,
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at_ms INTEGER NOT NULL DEFAULT 0,
     lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'archived', 'trashed')),
     origin_thread TEXT REFERENCES threads(id),
     origin_message TEXT,
@@ -52,6 +53,7 @@ CREATE TABLE threads (
 );
 CREATE UNIQUE INDEX one_main_thread ON threads(bot) WHERE kind = 'main';
 CREATE INDEX threads_roster ON threads(bot, lifecycle, id);
+CREATE INDEX threads_conversations ON threads(bot, lifecycle, (kind='main') DESC, updated_at_ms DESC, id);
 -- Lifecycle history names the exact change a Restore reverses, including a
 -- prior Archive underneath a Trash. It shares the person command transaction.
 CREATE TABLE lifecycle_changes (
@@ -80,6 +82,11 @@ CREATE TABLE messages (
     accepted_at_ms INTEGER NOT NULL,
     UNIQUE (thread, sequence)
 );
+-- Recency is maintained by message commits, never by rescanning history on a
+-- window refresh. This also covers setup notes and side-thread cards.
+CREATE TRIGGER message_thread_recency AFTER INSERT ON messages BEGIN
+    UPDATE threads SET updated_at_ms=MAX(updated_at_ms,NEW.accepted_at_ms) WHERE id=NEW.thread;
+END;
 CREATE TABLE inbox (
     id TEXT PRIMARY KEY,
     thread TEXT NOT NULL REFERENCES threads(id),

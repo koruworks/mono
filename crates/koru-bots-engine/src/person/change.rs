@@ -129,7 +129,7 @@ pub(super) fn conversation(
     now: i64,
 ) -> Result<Uuid, Error> {
     let thread = Uuid::new_v4();
-    c.execute("INSERT INTO threads(id,bot,kind,title,lifecycle,created_at_ms) VALUES (?1,?2,?3,?4,'active',?5)",params![thread.to_string(),bot.to_string(),kind,title,now])?;
+    c.execute("INSERT INTO threads(id,bot,kind,title,lifecycle,created_at_ms,updated_at_ms) VALUES (?1,?2,?3,?4,'active',?5,?5)",params![thread.to_string(),bot.to_string(),kind,title,now])?;
     c.execute(
         "INSERT INTO participants(thread,participant,kind) VALUES (?1,?2,'bot'),(?1,?3,'person')",
         params![thread.to_string(), bot.to_string(), who.sender],
@@ -375,8 +375,8 @@ pub(super) fn apply(
                 return Err(Error::RevisionConflict);
             }
             tx.execute(
-                "UPDATE threads SET title=?2,revision=revision+1 WHERE id=?1",
-                params![thread.to_string(), title],
+                "UPDATE threads SET title=?2,revision=revision+1,updated_at_ms=MAX(updated_at_ms,?3) WHERE id=?1",
+                params![thread.to_string(), title, now],
             )?;
             value(read::thread(&tx, who, *thread)?)?
         }

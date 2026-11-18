@@ -4,6 +4,7 @@
 //! neither identity nor workspace authority is read from a public body.
 pub(crate) mod change;
 mod lifecycle_ops;
+mod lists;
 mod read;
 
 use crate::{
@@ -95,6 +96,19 @@ pub enum Query {
         bot: Uuid,
         after: Option<Uuid>,
         lifecycle: Lifecycle,
+    },
+    Conversations {
+        bot: Uuid,
+        after: Option<ConversationCursor>,
+        limit: u16,
+    },
+    TrashedConversations {
+        workspace: Uuid,
+        after: Option<Uuid>,
+        limit: u16,
+    },
+    Activity {
+        workspace: Uuid,
     },
     Thread {
         thread: Uuid,
@@ -256,6 +270,16 @@ pub struct Thread {
     pub revision: u64,
     pub origin_thread: Option<Uuid>,
     pub origin_message: Option<Uuid>,
+    pub created_at_ms: i64,
+    pub updated_at_ms: i64,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct ConversationCursor {
+    pub main: bool,
+    pub updated_at_ms: i64,
+    pub thread: Uuid,
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LifecycleHolder {

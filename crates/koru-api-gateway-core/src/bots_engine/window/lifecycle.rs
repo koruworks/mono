@@ -138,7 +138,7 @@ impl Gateway {
                 (bot_id, request_id)
             }
             BotCommand::ReadLifecycleOperation { request_id, bot_id } => (bot_id, request_id),
-            _ => return Err(Error::EngineUnavailable),
+            command => return self.window_lists(owner, command),
         };
         Self::lifecycle_view(self.person_read(
             owner,

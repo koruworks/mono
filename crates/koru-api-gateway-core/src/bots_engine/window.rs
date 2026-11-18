@@ -9,6 +9,7 @@ use koru_bots_engine::{
 };
 use uuid::Uuid;
 mod lifecycle;
+mod lists;
 mod management;
 
 fn configured(config: &BotCreationConfig, folder: Option<String>) -> Result<Configuration, Error> {
@@ -55,6 +56,13 @@ fn configured(config: &BotCreationConfig, folder: Option<String>) -> Result<Conf
 
 impl Gateway {
     fn window_workspace(&self, owner: BotOwner, workspace: WorkspaceId) -> Result<(), Error> {
+        self.window_profile(owner, workspace).map(|_| ())
+    }
+    fn window_profile(
+        &self,
+        owner: BotOwner,
+        workspace: WorkspaceId,
+    ) -> Result<koru_ai_core::ProfileId, Error> {
         let snapshot = self
             .authority
             .inspect(&[workspace], &[])
@@ -62,10 +70,7 @@ impl Gateway {
         if snapshot.owner != owner {
             return Err(Error::NotAllowed);
         }
-        snapshot
-            .workspace(workspace)
-            .map_err(authority_error)
-            .map(|_| ())
+        snapshot.workspace(workspace).map_err(authority_error)
     }
     fn person_read<T: serde::de::DeserializeOwned>(
         &self,

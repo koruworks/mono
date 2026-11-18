@@ -260,8 +260,16 @@ impl Gateway {
                 }));
             }
             Command::Read {
-                query: Query::Bots { workspace, .. },
+                query:
+                    Query::Bots { workspace, .. }
+                    | Query::Activity { workspace }
+                    | Query::TrashedConversations { workspace, .. },
             } => workspaces.push(koru_ai_core::WorkspaceId::from_uuid(*workspace)),
+            Command::Read {
+                query: Query::Conversations { bot, .. },
+            } => {
+                workspaces.push(read_bot(*bot)?.definition.access.workspace);
+            }
             Command::Send { envelope } => {
                 // The attachment owner is composed with the shared composer in
                 // P1.7. Until then reject, never accept files that cannot travel.

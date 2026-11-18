@@ -29,7 +29,7 @@ pub(super) fn bot(c: &Connection, who: &Person, key: Uuid) -> Result<Bot, Error>
 }
 pub(super) fn thread(c: &Connection, who: &Person, key: Uuid) -> Result<Thread, Error> {
     messages::authorize_thread(c, who, key)?;
-    let row=c.query_row("SELECT bot,title,kind,lifecycle,revision,origin_thread,origin_message,lifecycle_holder FROM threads WHERE id=?1",[key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get::<_,String>(3)?,r.get(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<Vec<u8>>>(7)?)))?;
+    let row=c.query_row("SELECT bot,title,kind,lifecycle,revision,origin_thread,origin_message,lifecycle_holder,created_at_ms,updated_at_ms FROM threads WHERE id=?1",[key.to_string()],|r|Ok((r.get::<_,String>(0)?,r.get(1)?,r.get(2)?,r.get::<_,String>(3)?,r.get(4)?,r.get::<_,Option<String>>(5)?,r.get::<_,Option<String>>(6)?,r.get::<_,Option<Vec<u8>>>(7)?,r.get(8)?,r.get(9)?)))?;
     Ok(Thread {
         id: key,
         bot: id(row.0)?,
@@ -40,6 +40,8 @@ pub(super) fn thread(c: &Connection, who: &Person, key: Uuid) -> Result<Thread, 
         revision: row.4,
         origin_thread: row.5.map(id).transpose()?,
         origin_message: row.6.map(id).transpose()?,
+        created_at_ms: row.8,
+        updated_at_ms: row.9,
     })
 }
 pub(super) fn team(c: &Connection, who: &Person) -> Result<Team, Error> {
@@ -154,6 +156,15 @@ pub(super) fn query(db: &Database, who: &Person, query: Query) -> Result<Value, 
             })
         }
         Query::Team => value(team(c, who)?),
+        Query::Conversations { bot, after, limit } => {
+            lists::conversations(c, who, bot, after, limit)
+        }
+        Query::TrashedConversations {
+            workspace,
+            after,
+            limit,
+        } => lists::trashed(c, who, workspace, after, limit),
+        Query::Activity { workspace } => lists::activity(c, who, workspace),
         Query::LifecycleOperation { bot, request } => {
             value(lifecycle_ops::read(c, who, bot, request)?)
         }

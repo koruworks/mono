@@ -3,6 +3,7 @@ use super::*;
 use crate::capacity::{Admission, Decision};
 use rusqlite::params;
 mod lifecycle;
+mod lists;
 
 struct Fixture {
     db: Database,
