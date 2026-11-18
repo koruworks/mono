@@ -126,10 +126,7 @@ fn a_document_moved_from_another_workspace_still_counts_its_files() {
         .insert("id", uuid::Uuid::new_v4().to_string())
         .unwrap();
     let references = restored(&doc).strict_blob_references().unwrap();
-    assert_eq!(
-        references.hashes().iter().collect::<Vec<_>>(),
-        vec![&hash]
-    );
+    assert_eq!(references.hashes().iter().collect::<Vec<_>>(), vec![&hash]);
 }
 
 #[test]
@@ -293,5 +290,52 @@ fn strict_helper_reference_proof_refuses_blob_parent_with_children() {
     assert_eq!(
         restored(&doc).strict_blob_references().unwrap_err(),
         StrictReferenceError::Shape
+    );
+}
+
+/// Found in production 2026-11-17: 34 helper documents (the Workspace system
+/// document and OCR readings) were refused as unsupported, so their owner's
+/// accounting never completed. They use no file of their own.
+#[test]
+fn helper_documents_use_no_files_and_near_misses_stay_refused() {
+    let system = LoroDoc::new();
+    system
+        .get_map("meta")
+        .insert("system_schema_version", 1)
+        .unwrap();
+    system.get_map("tags").insert("t1", "work").unwrap();
+    system.get_map("lists").insert("l1", "inbox").unwrap();
+    let references = restored(&system).strict_blob_references().unwrap();
+    assert!(references.hashes().is_empty());
+    assert_eq!(references.schema_version(), 0);
+
+    let reading = LoroDoc::new();
+    let hash = format!("b3:{}", "cd".repeat(32));
+    reading.get_map("readings").insert(&hash, "text").unwrap();
+    let references = restored(&reading).strict_blob_references().unwrap();
+    assert!(
+        references.hashes().is_empty(),
+        "a reading names a file; it does not use it"
+    );
+
+    // A system-shaped document with an extra meta key is not recognized.
+    let extra = LoroDoc::new();
+    extra
+        .get_map("meta")
+        .insert("system_schema_version", 1)
+        .unwrap();
+    extra.get_map("meta").insert("other", 1).unwrap();
+    extra.get_map("tags").insert("t1", "work").unwrap();
+    assert_eq!(
+        restored(&extra).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Unsupported
+    );
+    // A reading root beside a page tree is a page with an unknown root.
+    let mixed = LoroDoc::new();
+    mixed.get_map("readings").insert(&hash, "text").unwrap();
+    node(&mixed, TreeParentId::Root, "paragraph", None);
+    assert_eq!(
+        restored(&mixed).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Unsupported
     );
 }
