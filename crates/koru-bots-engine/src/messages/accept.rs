@@ -81,6 +81,24 @@ impl Database {
             thread,
             sequence: next_sequence(&tx, thread)?,
         };
+        let mut recipients = koru_ai_core::prompt_links::mentioned_bots(&envelope.body);
+        if recipients.len() > 8 {
+            return Err(Error::InvalidRequest);
+        }
+        if recipients.is_empty() {
+            let starter: String = tx.query_row(
+                "SELECT bot FROM threads WHERE id=?1",
+                [thread.to_string()],
+                |r| r.get(0),
+            )?;
+            recipients.push(id(starter)?);
+        }
+        for recipient in &recipients {
+            if *recipient != envelope.to {
+                collaboration::permitted(&tx, envelope.to, *recipient)?;
+            }
+            collaboration::participant(&tx, thread, *recipient)?;
+        }
         let content = Content {
             body: envelope.body.clone(),
             attachments: crate::attachments::prepare(
@@ -102,26 +120,23 @@ impl Database {
         }
         tx.execute("INSERT INTO messages(id,thread,sequence,sender,kind,payload,state,accepted_at_ms) VALUES (?1,?2,?3,?4,'words',?5,'accepted',?6)",rusqlite::params![answer.message.to_string(),thread.to_string(),answer.sequence,person.sender,payload,now])?;
         crate::attachments::bind(&tx, thread, answer.message, &envelope.attachments)?;
-        let obligation = Uuid::new_v4();
         let expired = envelope.deadline_ms.is_some_and(|deadline| now > deadline);
+        // Reading a side thread never joins it. Sending is the person's
+        // explicit intervention and records membership with the message.
         tx.execute(
-            "UPDATE bots SET folder_frozen_at_ms=COALESCE(folder_frozen_at_ms,?2) WHERE id=?1",
-            rusqlite::params![envelope.to.to_string(), now],
+            "INSERT OR IGNORE INTO participants(thread,participant,kind) VALUES (?1,?2,'person')",
+            rusqlite::params![thread.to_string(), person.sender],
         )?;
-        tx.execute("INSERT INTO obligations(id,thread,message,bot,state,accepted_at_ms) VALUES (?1,?2,?3,?4,?5,?6)",rusqlite::params![obligation.to_string(),thread.to_string(),answer.message.to_string(),envelope.to.to_string(),if expired{"expired"}else{"owed"},now])?;
-        if !expired {
+        collaboration::person_message(&tx, thread)?;
+        let chain = collaboration::chain(&tx, thread)?;
+        for recipient in recipients {
             tx.execute(
-                "INSERT INTO inbox(id,thread,message,bot,accepted_at_ms) VALUES (?1,?2,?3,?4,?5)",
-                rusqlite::params![
-                    obligation.to_string(),
-                    thread.to_string(),
-                    answer.message.to_string(),
-                    envelope.to.to_string(),
-                    now
-                ],
+                "INSERT OR IGNORE INTO chain_bots(chain,bot) VALUES (?1,?2)",
+                rusqlite::params![chain.to_string(), recipient.to_string()],
             )?;
+            collaboration::wake(&tx, thread, answer.message, recipient, expired, now)?;
+            tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE state='open' AND json_extract(CAST(prompt AS TEXT),'$.delivery')='next_message' AND turn IN (SELECT id FROM turns WHERE thread=?1 AND bot=?2 AND state='answered')",rusqlite::params![thread.to_string(),recipient.to_string()])?;
         }
-        tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE state='open' AND json_extract(CAST(prompt AS TEXT),'$.delivery')='next_message' AND turn IN (SELECT id FROM turns WHERE thread=?1 AND bot=?2 AND state='answered')",rusqlite::params![thread.to_string(),envelope.to.to_string()])?;
         receipts::save(&tx, &subject, envelope.id, &digest, &answer, now)?;
         tx.commit()?;
         Ok(Receipt {

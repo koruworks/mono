@@ -20,6 +20,14 @@ fn emit(value: Value) {
     output.write_all(b"\n").unwrap();
     output.flush().unwrap();
 }
+fn complete(text: &str) {
+    emit(
+        json!({"method":"item/agentMessage/delta","params":{"threadId":"synthetic-thread","turnId":"synthetic-turn","itemId":"synthetic-message","delta":text}}),
+    );
+    emit(
+        json!({"method":"turn/completed","params":{"threadId":"synthetic-thread","turn":{"id":"synthetic-turn","status":"completed","items":[],"error":null}}}),
+    );
+}
 fn call(name: &str, arguments: Value) -> Value {
     trace(name);
     let endpoint = std::env::args()
@@ -76,6 +84,45 @@ pub fn run() {
                     .unwrap();
                 let input: Value = serde_json::from_str(input).unwrap();
                 let work = input["delivery"]["work"].as_array().unwrap();
+                if let Some(message) = work.iter().find(|m| m["content"]["body"] == "COLLABORATE") {
+                    let roster = call("list_bots", json!({}));
+                    let targets = message["content"]["references"][0]["targets"]
+                        .as_array()
+                        .unwrap();
+                    for (index, target) in targets.iter().enumerate() {
+                        assert!(
+                            roster["items"]
+                                .as_array()
+                                .unwrap()
+                                .iter()
+                                .any(|b| b["id"] == *target)
+                        );
+                        let original: uuid::Uuid =
+                            serde_json::from_value(message["id"].clone()).unwrap();
+                        let mut bytes = *original.as_bytes();
+                        bytes[15] ^= index as u8;
+                        let args = json!({"id":uuid::Uuid::from_bytes(bytes),"to":target,"source_message":message["id"],"body":"SYNTHETIC CHILD","thread":null,"deadline_ms":null});
+                        let sent = call("message_bot", args.clone());
+                        assert_eq!(sent["status"], "accepted");
+                        assert_eq!(call("message_bot", args), sent);
+                    }
+                    complete("SYNTHETIC ASKS SENT");
+                    continue;
+                }
+                if work
+                    .iter()
+                    .any(|m| m["content"]["body"] == "SYNTHETIC CHILD")
+                {
+                    complete("SYNTHETIC CHILD COMPLETE");
+                    continue;
+                }
+                if work
+                    .iter()
+                    .any(|m| m["content"]["body"] == "SYNTHETIC CHILD COMPLETE")
+                {
+                    complete("SYNTHETIC COLLABORATION COMPLETE");
+                    continue;
+                }
                 if work
                     .iter()
                     .any(|message| message["content"]["body"] == "HOLD")
@@ -136,12 +183,7 @@ pub fn run() {
                         }
                     }
                 }
-                emit(
-                    json!({"method":"item/agentMessage/delta","params":{"threadId":"synthetic-thread","turnId":"synthetic-turn","itemId":"synthetic-message","delta":"SYNTHETIC COMPLETE"}}),
-                );
-                emit(
-                    json!({"method":"turn/completed","params":{"threadId":"synthetic-thread","turn":{"id":"synthetic-turn","status":"completed","items":[],"error":null}}}),
-                );
+                complete("SYNTHETIC COMPLETE");
             }
             "turn/interrupt" => emit(json!({"id":id,"result":{}})),
             _ if !id.is_null() => emit(json!({"id":id,"result":{}})),

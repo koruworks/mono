@@ -5,6 +5,7 @@
 //! Store, clock, process or network is opened by this core.
 
 mod accept;
+pub(crate) mod collaboration;
 mod history;
 mod publish;
 pub(crate) mod receipts;
@@ -236,7 +237,10 @@ pub(crate) fn authorize_thread(
     person: &Person,
     thread: Uuid,
 ) -> Result<(), Error> {
-    let allowed:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM threads t JOIN bots b ON b.id=t.bot JOIN participants p ON p.thread=t.id WHERE t.id=?1 AND b.owner=?2 AND p.participant=?3 AND p.kind='person')",rusqlite::params![thread.to_string(),person.owner,person.sender],|r|r.get(0))?;
+    if person.owner.is_empty() || person.sender.is_empty() {
+        return Err(Error::Unauthenticated);
+    }
+    let allowed:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM threads t JOIN bots b ON b.id=t.bot WHERE t.id=?1 AND b.owner=?2 AND (t.kind='between_bots' OR EXISTS(SELECT 1 FROM participants p WHERE p.thread=t.id AND p.participant=?3 AND p.kind='person')))",rusqlite::params![thread.to_string(),person.owner,person.sender],|r|r.get(0))?;
     if allowed {
         Ok(())
     } else {

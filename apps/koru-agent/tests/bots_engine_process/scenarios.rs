@@ -6,6 +6,8 @@ use koru_bots_engine::{messages, person};
 use serde_json::{Value, json};
 use std::time::Duration;
 use uuid::Uuid;
+#[path = "scenarios/collaboration.rs"]
+mod collaboration;
 
 fn conversation(stack: &Stack, bot: Uuid) -> Uuid {
     let answer = stack.person(person::Command::Change {
@@ -145,4 +147,5 @@ pub fn run(stack: &mut Stack, bot: Uuid) {
     println!(
         "PASS abrupt engine death after applied write; rebuilt input replays one native effect and publishes"
     );
+    collaboration::run(stack, bot);
 }

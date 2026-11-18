@@ -56,6 +56,21 @@ CREATE TABLE threads (
 CREATE UNIQUE INDEX one_main_thread ON threads(bot) WHERE kind = 'main';
 CREATE INDEX threads_roster ON threads(bot, lifecycle, id);
 CREATE INDEX threads_conversations ON threads(bot, lifecycle, (kind='main') DESC, updated_at_ms DESC, id);
+-- Automated conversations share the originating chain even when a Bot opens
+-- another side thread. A person's message resets the automatic exchange count.
+CREATE TABLE bot_chains (
+    id TEXT PRIMARY KEY REFERENCES threads(id),
+    messages INTEGER NOT NULL DEFAULT 0 CHECK(messages >= 0)
+);
+CREATE TABLE thread_chains (
+    thread TEXT PRIMARY KEY REFERENCES threads(id),
+    chain TEXT NOT NULL REFERENCES bot_chains(id)
+);
+CREATE TABLE chain_bots (
+    chain TEXT NOT NULL REFERENCES bot_chains(id),
+    bot TEXT NOT NULL REFERENCES bots(id),
+    PRIMARY KEY(chain,bot)
+);
 -- Lifecycle history names the exact change a Restore reverses, including a
 -- prior Archive underneath a Trash. It shares the person command transaction.
 CREATE TABLE lifecycle_changes (
@@ -119,7 +134,7 @@ CREATE TABLE inbox (
     message TEXT NOT NULL REFERENCES messages(id),
     bot TEXT NOT NULL REFERENCES bots(id),
     accepted_at_ms INTEGER NOT NULL,
-    UNIQUE (message, bot)
+    UNIQUE (message, bot, thread)
 );
 CREATE INDEX inbox_order ON inbox(bot, accepted_at_ms, id);
 CREATE INDEX inbox_thread ON inbox(thread);
@@ -131,7 +146,7 @@ CREATE TABLE obligations (
     state TEXT NOT NULL CHECK (state IN ('owed', 'delivered', 'answered', 'cancelled', 'expired', 'refused')),
     accepted_at_ms INTEGER NOT NULL,
     answered_by TEXT,
-    UNIQUE (message, bot)
+    UNIQUE (message, bot, thread)
 );
 CREATE INDEX owed_for_bot ON obligations(bot, thread, state, accepted_at_ms, id);
 CREATE TABLE turns (
@@ -153,6 +168,21 @@ CREATE TABLE turns (
 CREATE UNIQUE INDEX one_running_turn ON turns(thread, bot) WHERE state = 'running';
 CREATE INDEX turn_queue ON turns(state, created_at_ms, id);
 CREATE INDEX turns_by_participant ON turns(thread, bot, generation);
+-- Only explicit asks create a return address. An answer's continuation never
+-- creates another ask, preventing automatic reply-to-reply ping-pong.
+CREATE TABLE bot_dispatches (
+    message TEXT PRIMARY KEY REFERENCES messages(id),
+    origin_thread TEXT NOT NULL REFERENCES threads(id),
+    origin_message TEXT NOT NULL REFERENCES messages(id),
+    origin_turn TEXT NOT NULL REFERENCES turns(id),
+    sender TEXT NOT NULL REFERENCES bots(id),
+    recipient TEXT NOT NULL REFERENCES bots(id)
+);
+CREATE TABLE turn_recipients (
+    turn TEXT NOT NULL REFERENCES turns(id),
+    bot TEXT NOT NULL REFERENCES bots(id),
+    PRIMARY KEY(turn,bot)
+);
 CREATE TABLE deliveries (
     id TEXT PRIMARY KEY,
     turn TEXT NOT NULL REFERENCES turns(id),

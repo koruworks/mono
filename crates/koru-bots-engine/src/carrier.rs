@@ -310,7 +310,7 @@ fn execute(
         } => {
             check_session(db, admission, who, reservation, session, &secret)?;
             let call = authority::Call::parse(door_call, tool, &arguments)?;
-            return crate::own_tools::execute(db, &secret, binding, &call).map(Reply::Tool);
+            return crate::own_tools::execute(db, &secret, binding, &call, now).map(Reply::Tool);
         }
         Command::Mint { request, .. } => {
             if request.thread != reservation.key.thread {

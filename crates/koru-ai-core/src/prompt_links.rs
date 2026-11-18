@@ -21,6 +21,9 @@
 
 use koru_link::KoruLink;
 
+#[cfg(test)]
+mod mention_tests;
+
 /// The tool a mention tells the agent to use. Named once, here.
 const ASK_TOOL: &str = "ask_bot";
 
@@ -42,6 +45,24 @@ pub fn render_prompt_text(markdown: &str) -> String {
 /// as [`render_prompt_text`] renders it.
 pub fn render_bot_prompt_text(markdown: &str) -> String {
     render(markdown, true)
+}
+
+/// Structured Bot mentions outside code. The engine uses these identities for
+/// recipient fan-out; display names and ordinary typed `@words` confer no address.
+pub fn mentioned_bots(markdown: &str) -> Vec<uuid::Uuid> {
+    let code = code_ranges(markdown);
+    let mut result = Vec::new();
+    for token in koru_link::wrapped(markdown) {
+        if let KoruLink::Bot { bot, .. } = token.link
+            && !code
+                .iter()
+                .any(|r| r.start <= token.range.start && token.range.end <= r.end)
+            && !result.contains(&bot)
+        {
+            result.push(bot);
+        }
+    }
+    result
 }
 
 fn render(markdown: &str, ask: bool) -> String {

@@ -45,11 +45,15 @@ impl Database {
             |r| r.get::<_, String>(0),
         )?)?;
         let thread_id = id(thread.clone())?;
+        let reply_to: Option<String> = tx.query_row("SELECT m.id FROM messages m JOIN obligations o ON o.message=m.id JOIN delivery_obligations x ON x.obligation=o.id JOIN deliveries d ON d.id=x.delivery WHERE d.turn=?1 AND d.state='accepted' AND m.thread=?2 ORDER BY m.sequence LIMIT 1",
+            params![request.turn.id.to_string(),thread], |r| r.get(0)).optional()?;
         let content = Content {
             body: request.body.clone(),
             attachments: vec![],
-            references: vec![],
-            in_reply_to: None,
+            references: vec![serde_json::json!({"kind":"reply","thread":thread_id})],
+            in_reply_to: reply_to.map(id).transpose()?,
+            // Each ask's return address is checked against its own deadline.
+            // A batch's earliest deadline must not expire another recipient.
             deadline_ms: None,
             reply_to: ReplyTo::Thread,
         };
@@ -63,6 +67,7 @@ impl Database {
             "UPDATE turns SET state='answered',details=CAST(json_set(CAST(details AS TEXT),'$.published_message',?2) AS BLOB) WHERE id=?1",
             params![request.turn.id.to_string(), message.to_string()],
         )?;
+        collaboration::published(&tx, request.turn, message, thread_id, now)?;
         let unfinished:Vec<(String,Vec<u8>)>=tx.prepare("SELECT id,payload FROM deliveries WHERE turn=?1 AND state IN ('offered','unknown')")?.query_map([request.turn.id.to_string()],|r|Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<_,_>>()?;
         for (id, payload) in unfinished {
             let mut delivery: Delivery = decode(&payload)?;
