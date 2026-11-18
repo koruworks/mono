@@ -5462,7 +5462,9 @@ dependencies = [
 name = "koru-agent-worker"
 version = "0.0.3"
 dependencies = [
+ "koru-session-runtime",
  "libc",
+ "serde_json",
  "tracing",
  "windows-sys 0.59.0",
 ]

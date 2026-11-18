@@ -20,6 +20,14 @@ windows-sys = { workspace = true, features = ["Win32_System_IO"] }
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
+[target.'cfg(windows)'.dev-dependencies]
+koru-session-runtime = { path = "../koru-session-runtime" }
+serde_json.workspace = true
+
 [[test]]
 name = "worker_process"
+harness = false
+
+[[test]]
+name = "bots_containment"
 harness = false
