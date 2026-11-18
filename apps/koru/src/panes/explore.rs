@@ -667,9 +667,9 @@ pub struct WorkspaceRowParts {
 /// **A list, not a special case.** The column's standing places, as against
 /// the library's contents. They are reserved out of the rows' band, so the
 /// library scrolls *above* them, and adding one grows the stack upward without
-/// a second draw path. Trash was the first and is pinned no more (E63): it is
-/// the floor menu's row, and the Trash tab still names itself through
-/// [`ExploreView::set_footer_active`].
+/// a second draw path. Trash is the one row (back since 2026-11-18, after E63
+/// had moved it to a floor menu that no longer carries it); the Trash tab
+/// names itself through [`ExploreView::set_footer_active`].
 ///
 /// They are ordinary nav rows: no separator, no panel, the same hover fill and
 /// the same icon lane as a document row. A band with a rule over it would read
@@ -5090,13 +5090,16 @@ impl ExploreView {
     /// row at `x = 0` would answer for a click meant for the view beside it.
     /// Which rows are pinned to the floor, top to bottom.
     ///
-    /// **None, since the Trash row left** (the review's note, E63): the Trash is
-    /// the floor menu's row now, with its count, and a second door at the
-    /// nav's foot was one more thing on every glance. The stack stays —
-    /// the band the library gets, the hit test, the hover, the drawing all
-    /// follow from this one list — for the next standing place.
+    /// **The Trash, again** (CTO, 2026-11-18). E63 moved it to the floor
+    /// menu's row; that menu no longer carries it, which left the Trash
+    /// reachable from nowhere. It is back at the nav's foot until the floor
+    /// menu offers it. A Socials column shows no library, so no footer.
     fn footer_rows(&self) -> &'static [FooterRow] {
-        &[]
+        if self.showing_socials() {
+            &[]
+        } else {
+            &[FooterRow::Trash]
+        }
     }
 
     /// Where each pinned row sits.
