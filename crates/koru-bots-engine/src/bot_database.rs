@@ -52,8 +52,15 @@ impl BotDatabase {
     }
     /// Completion means SQLite FULL durability, before the session can yield.
     pub fn save(&self, state: &AgentState) -> Result<(), Error> {
-        self.connection.execute("INSERT INTO agent_state(thread,session,provider,resume_state,last_delivery,saved_at_ms) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(thread,session) DO UPDATE SET provider=excluded.provider,resume_state=excluded.resume_state,last_delivery=excluded.last_delivery,saved_at_ms=excluded.saved_at_ms",
+        let tx = self.connection.unchecked_transaction()?;
+        tx.execute("INSERT INTO agent_state(thread,session,provider,resume_state,last_delivery,saved_at_ms) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(thread,session) DO UPDATE SET provider=excluded.provider,resume_state=excluded.resume_state,last_delivery=excluded.last_delivery,saved_at_ms=excluded.saved_at_ms",
             rusqlite::params![state.thread.to_string(), state.session.to_string(), state.provider, state.resume_state, state.last_delivery.map(|id| id.to_string()), state.saved_at_ms])?;
+        // These are cumulative resume optimizations, not the journal. Keep
+        // the latest two incarnations per provider/thread; otherwise N resumes
+        // retain N copies of the growing proof list. Inputs/events stay in the
+        // append-only journal, and engine obligations remain authoritative.
+        tx.execute("DELETE FROM agent_state WHERE thread=?1 AND provider=?2 AND session NOT IN (SELECT session FROM agent_state WHERE thread=?1 AND provider=?2 ORDER BY saved_at_ms DESC,rowid DESC LIMIT 2)",rusqlite::params![state.thread.to_string(),state.provider])?;
+        tx.commit()?;
         Ok(())
     }
     pub fn load(&self, thread: Uuid, session: Uuid) -> Result<Option<AgentState>, Error> {

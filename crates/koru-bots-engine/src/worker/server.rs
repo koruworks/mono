@@ -147,6 +147,7 @@ pub(super) fn serve(
                     | crate::carrier::Command::Bind { .. }
                     | crate::carrier::Command::OwnTool { .. }
                     | crate::carrier::Command::Event { .. }
+                    | crate::carrier::Command::OfferSteer { .. }
             );
             let response = crate::carrier::handle(
                 &mut database,

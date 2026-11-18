@@ -78,6 +78,16 @@ pub enum Command {
         turn: Turn,
         delivery: Uuid,
     },
+    OfferSteer {
+        reservation: Reservation,
+        turn: Turn,
+        budget: usize,
+    },
+    RejectSteer {
+        reservation: Reservation,
+        turn: Turn,
+        delivery: Uuid,
+    },
     Unknown {
         reservation: Reservation,
         turn: Turn,
@@ -156,6 +166,8 @@ fn execute(
         | Command::Bind { reservation, .. }
         | Command::OwnTool { reservation, .. }
         | Command::Accepted { reservation, .. }
+        | Command::OfferSteer { reservation, .. }
+        | Command::RejectSteer { reservation, .. }
         | Command::Unknown { reservation, .. }
         | Command::Retired { reservation, .. } => *reservation,
     };
@@ -284,6 +296,14 @@ fn execute(
         Command::Accepted { turn, delivery, .. } => {
             check_turn(db, who, reservation, turn)?;
             db.delivery_accepted(turn, delivery)?;
+        }
+        Command::OfferSteer { turn, budget, .. } => {
+            check_turn(db, who, reservation, turn)?;
+            return db.offer_steer(turn, budget, now).map(Reply::Delivery);
+        }
+        Command::RejectSteer { turn, delivery, .. } => {
+            check_turn(db, who, reservation, turn)?;
+            db.reject_steer(turn, delivery)?;
         }
         Command::Unknown { turn, delivery, .. } => {
             check_turn(db, who, reservation, turn)?;

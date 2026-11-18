@@ -14,6 +14,13 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[derive(Clone, Copy)]
+enum Steering {
+    Accepted,
+    Rejected,
+    Lost,
+}
+
 #[derive(Clone, Default)]
 struct Plan {
     fail_resume: bool,
@@ -22,6 +29,7 @@ struct Plan {
     no_resume: bool,
     hold: bool,
     cancelled: bool,
+    steering: Option<Steering>,
 }
 #[derive(Default)]
 struct Records {
@@ -31,6 +39,7 @@ struct Records {
     credentials: Vec<String>,
     starts: Vec<bool>,
     stopped: usize,
+    steers: Vec<String>,
 }
 struct Factory(Arc<Mutex<Records>>);
 struct Wake;
@@ -100,8 +109,20 @@ impl AgentControl for Agent {
                 .unwrap_or_default();
         }
         let caps = AgentCapabilities {
-            provider: "scripted".parse().unwrap(),
-            executable_version: "1".parse().unwrap(),
+            provider: if self.plan.steering.is_some() {
+                "claude"
+            } else {
+                "scripted"
+            }
+            .parse()
+            .unwrap(),
+            executable_version: if self.plan.steering.is_some() {
+                "0.76.0"
+            } else {
+                "1"
+            }
+            .parse()
+            .unwrap(),
             protocol_version: "1".parse().unwrap(),
             capabilities: Default::default(),
             delegation: DelegationFacts::undeclared(),
@@ -140,6 +161,29 @@ impl AgentControl for Agent {
             });
         }
         Ok(())
+    }
+    fn steer(&mut self, input: AgentInput) -> Result<(), ProviderFailure> {
+        let mut records = self.records.lock().unwrap();
+        records.steers.push(input.text.clone());
+        match self.plan.steering {
+            Some(Steering::Accepted | Steering::Lost) => {
+                records
+                    .histories
+                    .entry(self.history.clone())
+                    .or_default()
+                    .push(*blake3::hash(input.text.as_bytes()).as_bytes());
+                if matches!(self.plan.steering, Some(Steering::Lost)) {
+                    Err(failure())
+                } else {
+                    Ok(())
+                }
+            }
+            _ => Err(ProviderFailure::new(
+                koru_session_protocol::ErrorCode::InvalidTransition,
+                ProviderStage::Submit,
+                ProviderDiagnostic::InvalidState,
+            )),
+        }
     }
     fn next_event(&mut self, _: Duration) -> Result<Option<AgentEvent>, ProviderFailure> {
         if self.plan.lost && self.events.is_empty() {
@@ -189,6 +233,7 @@ struct TestPort {
     events: Mutex<Vec<AgentEvent>>,
     issued: Mutex<std::collections::BTreeMap<Uuid, Uuid>>,
     fail_publish: AtomicBool,
+    steering_message: Mutex<Option<Envelope>>,
 }
 impl Port for TestPort {
     fn context(&self, _: Uuid) -> Result<Context, Error> {
@@ -257,8 +302,26 @@ impl Port for TestPort {
             .mark_delivery_unknown(turn, delivery)
     }
     fn event(&self, _: Turn, event: &AgentEvent) -> Result<(), Error> {
+        if matches!(event, AgentEvent::MessageDelta { .. })
+            && let Some(message) = self.steering_message.lock().unwrap().take()
+        {
+            self.db.lock().unwrap().accept_message(
+                &Person {
+                    owner: "owner".into(),
+                    sender: "person".into(),
+                },
+                &message,
+                10,
+            )?;
+        }
         self.events.lock().unwrap().push(event.clone());
         Ok(())
+    }
+    fn offer_steer(&self, turn: Turn, budget: usize) -> Result<Option<Delivery>, Error> {
+        self.db.lock().unwrap().offer_steer(turn, budget, 10)
+    }
+    fn reject_steer(&self, turn: Turn, delivery: Uuid) -> Result<(), Error> {
+        self.db.lock().unwrap().reject_steer(turn, delivery)
     }
     fn publish(&self, turn: Turn, command: Uuid, body: String) -> Result<(), Error> {
         if self.fail_publish.load(std::sync::atomic::Ordering::Acquire) {
@@ -303,6 +366,7 @@ impl Fixture {
                 events: Mutex::new(vec![]),
                 issued: Mutex::new(Default::default()),
                 fail_publish: AtomicBool::new(false),
+                steering_message: Mutex::new(None),
             }),
             records: Arc::new(Mutex::new(Records::default())),
             database: Arc::new(Mutex::new(BotDatabase::in_memory().unwrap())),
@@ -364,6 +428,90 @@ impl Fixture {
     }
     fn input(&self, index: usize) -> serde_json::Value {
         serde_json::from_str(&self.records.lock().unwrap().inputs[index]).unwrap()
+    }
+}
+
+#[test]
+fn an_unqualified_route_leaves_input_for_the_next_turn() {
+    let f = Fixture::new();
+    *f.port.steering_message.lock().unwrap() = Some(Envelope {
+        id: Uuid::new_v4(),
+        to: f.port.bot,
+        thread: Some(f.thread),
+        in_reply_to: None,
+        body: "wait for next turn".into(),
+        attachments: vec![],
+        references: vec![],
+        deadline_ms: None,
+        reply_to: ReplyTo::Thread,
+    });
+    f.run().unwrap();
+    assert!(f.records.lock().unwrap().steers.is_empty());
+    f.run().unwrap();
+    assert_eq!(
+        f.input(1)["delivery"]["work"][0]["content"]["body"],
+        "wait for next turn"
+    );
+}
+
+#[test]
+fn native_steer_confirmation_and_lost_confirmation_preserve_delivery_evidence() {
+    for outcome in [Steering::Accepted, Steering::Rejected, Steering::Lost] {
+        let f = Fixture::new();
+        f.plan(Plan {
+            steering: Some(outcome),
+            ..Default::default()
+        });
+        *f.port.steering_message.lock().unwrap() = Some(Envelope {
+            id: Uuid::new_v4(),
+            to: f.port.bot,
+            thread: Some(f.thread),
+            in_reply_to: None,
+            body: "new steering request".into(),
+            attachments: vec![],
+            references: vec![],
+            deadline_ms: None,
+            reply_to: ReplyTo::Thread,
+        });
+        let result = f.run();
+        assert_eq!(result.is_err(), matches!(outcome, Steering::Lost));
+        assert_eq!(f.records.lock().unwrap().steers.len(), 1);
+        let owed: u64 = f
+            .port
+            .db
+            .lock()
+            .unwrap()
+            .connection
+            .query_row(
+                "SELECT count(*) FROM obligations WHERE state IN ('owed','delivered')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        match outcome {
+            Steering::Accepted => assert_eq!(owed, 0),
+            Steering::Rejected => {
+                assert_eq!(owed, 1);
+                f.run().unwrap();
+                assert_eq!(
+                    f.input(1)["delivery"]["work"][0]["content"]["body"],
+                    "new steering request"
+                );
+            }
+            Steering::Lost => {
+                assert_eq!(owed, 2);
+                f.run().unwrap();
+                let input = f.input(1);
+                assert!(input["delivery"]["work"].as_array().unwrap().is_empty());
+                assert_eq!(
+                    input["delivery"]["resume_accepted"]
+                        .as_array()
+                        .unwrap()
+                        .len(),
+                    2
+                );
+            }
+        }
     }
 }
 

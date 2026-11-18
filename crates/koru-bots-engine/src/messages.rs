@@ -9,6 +9,7 @@ mod history;
 mod publish;
 pub(crate) mod receipts;
 mod refusal;
+mod steering;
 mod turns;
 
 use crate::{Database, Error};

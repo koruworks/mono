@@ -94,7 +94,7 @@ CREATE TABLE deliveries (
     turn TEXT NOT NULL REFERENCES turns(id),
     session TEXT NOT NULL,
     history_boundary INTEGER NOT NULL CHECK (history_boundary >= 0),
-    state TEXT NOT NULL CHECK (state IN ('offered', 'accepted', 'unknown', 'superseded')),
+    state TEXT NOT NULL CHECK (state IN ('offered', 'accepted', 'rejected', 'unknown', 'superseded')),
     payload BLOB NOT NULL
 );
 CREATE TABLE delivery_obligations (

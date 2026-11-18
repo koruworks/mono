@@ -202,6 +202,23 @@ impl sessions::Port for Port {
             delivery,
         })
     }
+    fn offer_steer(&self, turn: Turn, budget: usize) -> Result<Option<Delivery>, Error> {
+        match self.client.call(Command::OfferSteer {
+            reservation: self.reservation,
+            turn,
+            budget,
+        })? {
+            Reply::Delivery(delivery) => Ok(delivery),
+            _ => Err(Error::InvalidRequest),
+        }
+    }
+    fn reject_steer(&self, turn: Turn, delivery: Uuid) -> Result<(), Error> {
+        self.client.done(Command::RejectSteer {
+            reservation: self.reservation,
+            turn,
+            delivery,
+        })
+    }
     fn unknown(&self, turn: Turn, delivery: Uuid) -> Result<(), Error> {
         self.client.done(Command::Unknown {
             reservation: self.reservation,

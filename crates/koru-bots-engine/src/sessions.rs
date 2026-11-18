@@ -55,6 +55,14 @@ pub trait Port: Send + Sync + 'static {
     ) -> Result<Option<Delivery>, Error>;
     fn accepted(&self, turn: Turn, delivery: Uuid) -> Result<(), Error>;
     fn unknown(&self, turn: Turn, delivery: Uuid) -> Result<(), Error>;
+    /// Pull one new message for the running turn. Legacy/probe ports that do
+    /// not compose steering leave it queued for the next ordinary claim.
+    fn offer_steer(&self, _turn: Turn, _budget: usize) -> Result<Option<Delivery>, Error> {
+        Ok(None)
+    }
+    fn reject_steer(&self, _turn: Turn, _delivery: Uuid) -> Result<(), Error> {
+        Err(Error::InvalidRequest)
+    }
     /// Observations only. Completion separately invokes the Publish transaction.
     fn event(&self, turn: Turn, event: &AgentEvent) -> Result<(), Error>;
     /// Publish the completed reply together with this turn's recorded outputs.

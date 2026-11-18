@@ -205,7 +205,9 @@ fn drive(
         start.port.unknown(turn, delivery.id)?;
         return Err(error.into());
     }
-    let result = observe(start, database, stop, commands, control, &delivery);
+    let result = observe(
+        start, database, stop, commands, control, &delivery, &mut saved,
+    );
     saved.token = control.resume_token();
     save(database, start, session, &saved)?;
     if result.is_err() {
@@ -214,6 +216,7 @@ fn drive(
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn observe(
     start: &Start,
     database: &Mutex<BotDatabase>,
@@ -221,6 +224,7 @@ fn observe(
     commands: &mpsc::Receiver<Control>,
     control: &mut dyn AgentControl,
     delivery: &Delivery,
+    saved: &mut Saved,
 ) -> Result<(), Failure> {
     let turn = delivery.turn;
     let id: AgentTurnId = turn
@@ -230,6 +234,13 @@ fn observe(
         .map_err(|_| Error::InvalidRequest)?;
     let mut accepted = false;
     let mut reply = String::new();
+    let mut steer_at = std::time::Instant::now();
+    // The isolated P1.7 probe qualifies this installed route. Until another
+    // route/version has explicit acknowledgement evidence its input simply
+    // waits for the next turn (D16), even if an adapter implements steer().
+    let mut steering = control.capabilities().is_some_and(|caps| {
+        caps.provider.as_str() == "claude" && caps.executable_version.as_str() == "0.76.0"
+    });
     loop {
         if stop.load(Ordering::Acquire) {
             control.cancel(id)?;
@@ -249,6 +260,10 @@ fn observe(
                     choice,
                 } => control.answer_approval(id, decision, choice)?,
             }
+        }
+        if accepted && steering && std::time::Instant::now() >= steer_at {
+            steer_at = std::time::Instant::now() + Duration::from_millis(200);
+            steering = steer(start, database, control, turn, saved)?;
         }
         let Some(event) = control.next_event(Duration::from_millis(100))? else {
             continue;
@@ -286,7 +301,8 @@ fn observe(
             accepted = true;
         }
         start.port.event(turn, &event)?;
-        journal(database, turn.id, JournalEntry::EngineDelivery(&bytes))?;
+        // Event is already journaled above. The engine acknowledgement is
+        // control evidence, not another full copy of every text/tool event.
         match event {
             AgentEvent::MessageDelta { text, .. } => {
                 if reply.len().saturating_add(text.len()) > koru_bot_client_wire::MAX_FRAME_BYTES {
@@ -305,6 +321,103 @@ fn observe(
                 return Err(Failure::ProviderEnded);
             }
             _ => {}
+        }
+    }
+}
+
+fn steer(
+    start: &Start,
+    database: &Mutex<BotDatabase>,
+    control: &mut dyn AgentControl,
+    turn: Turn,
+    saved: &mut Saved,
+) -> Result<bool, Failure> {
+    const PREFIX: &str = "{\"version\":1,\"context\":null,\"delivery\":";
+    let Some(delivery) = start
+        .port
+        .offer_steer(turn, MAX_INPUT_BYTES - PREFIX.len() - 1)?
+    else {
+        return Ok(true);
+    };
+    if delivery.turn != turn {
+        return Err(Error::StaleTurn.into());
+    }
+    // Both native steering adapters currently carry text only.
+    // Files remain structured and owed for the next ordinary submission.
+    if delivery
+        .work
+        .iter()
+        .any(|message| !message.content.attachments.is_empty())
+    {
+        start.port.reject_steer(turn, delivery.id)?;
+        return Ok(true);
+    }
+    let text = format!(
+        "{PREFIX}{}}}",
+        serde_json::to_string(&delivery).map_err(|_| Error::InvalidRequest)?
+    );
+    let input = AgentInput {
+        turn_id: turn
+            .id
+            .to_string()
+            .parse()
+            .map_err(|_| Error::InvalidRequest)?,
+        text,
+        attachments: vec![],
+        references: vec![],
+        mode: None,
+        fast: None,
+        reasoning: None,
+        model: None,
+        skills: vec![],
+    };
+    input.validate(MAX_INPUT_BYTES)?;
+    journal(
+        database,
+        turn.id,
+        JournalEntry::Input(input.text.as_bytes()),
+    )?;
+    saved.inputs.push(InputProof {
+        delivery: delivery.id,
+        hash: *blake3::hash(input.text.as_bytes()).as_bytes(),
+    });
+    if saved.inputs.len() > MAX_SAVED_INPUTS {
+        saved.inputs.remove(0);
+    }
+    saved.token = control.resume_token();
+    let session = turn
+        .session
+        .to_string()
+        .parse()
+        .map_err(|_| Error::InvalidRequest)?;
+    save(database, start, session, saved)?;
+    match control.steer(input) {
+        Ok(()) => {
+            // steer() returns success only for the adapter's explicit native
+            // acknowledgement. Later text/completion cannot stand in for it.
+            start.port.accepted(turn, delivery.id)?;
+            journal(
+                database,
+                turn.id,
+                JournalEntry::EngineDelivery(&encode(
+                    &serde_json::json!({"accepted":delivery.id}),
+                )?),
+            )?;
+            Ok(true)
+        }
+        Err(error)
+            if matches!(
+                error.code,
+                koru_session_protocol::ErrorCode::InvalidTransition
+                    | koru_session_protocol::ErrorCode::DeliveryUnsupported
+            ) =>
+        {
+            start.port.reject_steer(turn, delivery.id)?;
+            Ok(false)
+        }
+        Err(error) => {
+            start.port.unknown(turn, delivery.id)?;
+            Err(error.into())
         }
     }
 }

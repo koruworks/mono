@@ -3,6 +3,7 @@ use super::*;
 use rusqlite::params;
 mod input_budget;
 mod scripted;
+mod steering;
 
 struct Fixture {
     db: Database,
