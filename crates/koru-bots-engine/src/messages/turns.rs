@@ -47,6 +47,11 @@ impl Database {
         budget: usize,
         now: i64,
     ) -> Result<Option<Delivery>, Error> {
+        // A caller that left no room for ordinary framing has a context/config
+        // error. It must not turn valid user work into a terminal refusal.
+        if budget < 1024 {
+            return Err(Error::InputTooSmall);
+        }
         let mut limit = DELIVERY_LIMIT;
         loop {
             match self.claim_bounded(bot, thread, worker, session, &resume, budget, now, limit) {
@@ -194,7 +199,17 @@ impl Database {
         for message in history.into_iter().take(HISTORY_LIMIT).rev() {
             delivery.context.push(history::input(message));
         }
-        history::bound(&mut delivery, budget)?;
+        if let Err(error) = history::bound(&mut delivery, budget) {
+            if error == Error::InputTooSmall && limit == 1 && fresh.len() == 1 {
+                let obligation = fresh.remove(0);
+                // Undo this tentative turn and all resume reconciliation.
+                // The actor owns the connection across the following atomic
+                // refusal, which rechecks the obligation's exact scope.
+                tx.rollback()?;
+                self.refuse_oversized(bot, thread, &obligation, now)?;
+            }
+            return Err(error);
+        }
         if matches!(resume, Resume::Rebuilt) {
             tx.execute("UPDATE deliveries SET state='superseded' WHERE turn IN (SELECT id FROM turns WHERE bot=?1 AND thread=?2 AND id<>?3) AND state<>'superseded' AND EXISTS(SELECT 1 FROM delivery_obligations x JOIN obligations o ON o.id=x.obligation WHERE x.delivery=deliveries.id AND o.state IN ('owed','delivered'))",params![bot.to_string(),thread.to_string(),turn.id.to_string()])?;
         }

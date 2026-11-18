@@ -58,7 +58,7 @@ CREATE TABLE obligations (
     thread TEXT NOT NULL REFERENCES threads(id),
     message TEXT NOT NULL REFERENCES messages(id),
     bot TEXT NOT NULL REFERENCES bots(id),
-    state TEXT NOT NULL CHECK (state IN ('owed', 'delivered', 'answered', 'cancelled', 'expired')),
+    state TEXT NOT NULL CHECK (state IN ('owed', 'delivered', 'answered', 'cancelled', 'expired', 'refused')),
     accepted_at_ms INTEGER NOT NULL,
     answered_by TEXT,
     UNIQUE (message, bot)
