@@ -67,7 +67,16 @@ version = 2
 # entry in Cargo.lock.
 yanked = "deny"
 unmaintained = "workspace"
-ignore = []
+ignore = [
+    # chrono and chrono-tz were marked unmaintained on 2026-11-17. No
+    # vulnerability is reported in either. Twenty workspace crates use them
+    # directly for dates, times and time zones, so acting on the notice means
+    # choosing their replacement, which is its own decision and not made yet
+    # (CTO, 2026-11-18: fix main now, replace later). Remove these two when
+    # that decision is taken, or at once if either gains a vulnerability.
+    { id = "RUSTSEC-2026-0543", reason = "chrono unmaintained, no known vulnerability; replacement not decided yet (2026-11-18)" },
+    { id = "RUSTSEC-2026-0555", reason = "chrono-tz unmaintained, no known vulnerability; replacement not decided yet (2026-11-18)" },
+]
 
 [bans]
 # Duplicate versions are a fact of a graph this size, not a defect.
