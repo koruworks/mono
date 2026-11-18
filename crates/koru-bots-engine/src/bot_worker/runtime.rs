@@ -24,7 +24,11 @@ use std::{
     time::Instant,
 };
 
-struct Factory(ManagedProviderRegistry);
+struct Factory {
+    registry: ManagedProviderRegistry,
+    root: std::path::PathBuf,
+    bot: Uuid,
+}
 impl ManagedProviderFactory for Factory {
     fn create(
         &self,
@@ -37,14 +41,24 @@ impl ManagedProviderFactory for Factory {
                 ProviderDiagnostic::Io,
             )
         };
-        // This creation edge runs inside the pool's session thread. The Bot
-        // owns this fixed working directory; no provider argument chooses it.
-        std::fs::create_dir_all(&request.working_directory).map_err(|_| failed())?;
-        let registration = self.0.registration(&request.provider).ok_or_else(failed)?;
+        // This creation edge runs inside the pool's session thread. Verify
+        // every managed parent before creating a child; never follow a
+        // junction out of the Bot's tree while recursively creating cwd.
+        request.working_directory = crate::folders::managed(
+            &crate::folders::Native,
+            &self.root,
+            self.bot,
+            crate::folders::Purpose::Run,
+        )
+        .map_err(|_| failed())?;
+        let registration = self
+            .registry
+            .registration(&request.provider)
+            .ok_or_else(failed)?;
         request.executable = koru_session_profiles::resolve_executable(registration.executable)
             .ok_or_else(failed)?
             .into_os_string();
-        self.0.create(request)
+        self.registry.create(request)
     }
 }
 struct Entry {
@@ -117,9 +131,11 @@ pub(super) fn run(
     let registry = Arc::new(door::http::Registry::default());
     let server = door::http::Server::start(Arc::clone(&registry))?;
     let workspace = crate::workspace::endpoint(&bootstrap.root, &bootstrap.segment)?;
-    let factory: Arc<dyn ManagedProviderFactory> = Arc::new(Factory(builtin_providers(Arc::new(
-        koru_session_runtime::NoopAttachmentPathResolver,
-    ))));
+    let factory: Arc<dyn ManagedProviderFactory> = Arc::new(Factory {
+        registry: builtin_providers(Arc::new(koru_session_runtime::NoopAttachmentPathResolver)),
+        root: bootstrap.root.clone(),
+        bot: bootstrap.bot,
+    });
     let mut pool = sessions::Pool::new(bootstrap.incarnation, database)?;
     let (sender, receiver) = mpsc::sync_channel::<client::Request>(64);
     let client = client::Client(sender);
