@@ -3132,9 +3132,9 @@ impl MainView {
     }
 
     /// A sidebar row's `+`: make a draft that becomes the row's last child on
-    /// promote, exactly as Ctrl+T makes a plain draft. No name prompt — the
-    /// name is typed in the draft's own title, and Escape cancels the whole
-    /// thing.
+    /// promote, exactly as *New document* makes a plain draft. No name prompt
+    /// — the name is typed in the draft's own title, and Escape cancels the
+    /// whole thing.
     fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
         self.menu = None;
         // The `+` was pressed in the sidebar, which took the keyboard for the
@@ -8115,9 +8115,9 @@ impl MainView {
 
     /// Fulfil the entity picker's create row. Once somebody has typed a name,
     /// there is no useful second prompt: create that page directly through the
-    /// shell. With no query this remains the lazy Ctrl+T draft, so merely
-    /// opening the picker and choosing Add new page does not leave an empty
-    /// document behind.
+    /// shell. With no query this remains the lazy draft, so merely opening the
+    /// picker and choosing Add new page does not leave an empty document
+    /// behind.
     fn new_page_from_entity(&mut self, title: String) -> bool {
         let title = title.trim();
         if title.is_empty() {
@@ -16942,7 +16942,8 @@ impl MainView {
                 return true;
             }
             return match chord {
-                Chord::NewTab => self.new_tab(),
+                // Ctrl+T is the tab strip's `+`: the New menu, not a document.
+                Chord::NewTab => self.open_new_tab_menu(),
                 Chord::New => self.open_launcher(),
                 Chord::CloseTab => self.close_requested(self.tabs().active()),
                 Chord::ReopenClosedTab => self.reopen_closed_tab(),
@@ -18884,8 +18885,12 @@ impl MainView {
             Hit::NewTab => {
                 let slot = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
                 (slot.w > 0.0).then(|| {
-                    TooltipContent::new(4, slot, koru_keys::label_of(koru_keys::ShortcutId::NewTab))
-                        .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
+                    TooltipContent::new(
+                        4,
+                        slot,
+                        koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label,
+                    )
+                    .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
                 })
             }
             // A hovered history row answers with the exact moment behind its

@@ -1760,14 +1760,18 @@ fn closing_the_active_tab_returns_to_the_previously_shown_tab() {
 }
 
 #[test]
-fn ctrl_w_closes_and_ctrl_t_opens() {
+fn ctrl_t_opens_the_new_menu_and_ctrl_w_closes_a_tab() {
     let (mut v, mut workspace) = container();
     let ws = &mut workspace.ws;
-    let before = v.tabs().len();
+    // Ctrl+T opens the New menu — the strip's `+` — not a document.
     assert!(v.key(ws, &ch("t"), Some("t"), PRIMARY));
-    assert_eq!(v.tabs().len(), before + 1);
+    assert!(v.menu.is_some(), "Ctrl+T opens the New menu");
+    v.menu = None;
+    // A document made through the menu, then closed by Ctrl+W.
+    assert!(v.new_tab());
+    let before = v.tabs().len();
     assert!(v.key(ws, &ch("w"), Some("w"), PRIMARY));
-    assert_eq!(v.tabs().len(), before);
+    assert_eq!(v.tabs().len(), before - 1);
 }
 
 /// **Ctrl+N opens the New… launcher**; Ctrl+Shift+A,
@@ -2201,8 +2205,8 @@ fn a_stale_active_document_does_not_make_a_welcome_tab_savable() {
 #[test]
 fn ctrl_s_does_nothing_on_a_draft_tab() {
     let (mut v, mut workspace) = on_a_savable_document();
-    // Ctrl+T opens a draft, which is how the app makes one.
-    assert!(v.key(&mut workspace.ws, &ch("t"), Some("t"), PRIMARY));
+    // A draft is how the app makes a page before it is named.
+    assert!(v.new_tab());
     assert!(
         v.tabs().active_tab().draft.is_some(),
         "the new tab is a draft"
@@ -9112,7 +9116,7 @@ fn the_plus_tooltip_names_new_tab_and_teaches_its_chord() {
         .expect("the visible plus has a tooltip");
     assert_eq!(
         tip.label,
-        koru_keys::label_of(koru_keys::ShortcutId::NewTab)
+        koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label
     );
     assert_eq!(
         tip.shortcut,

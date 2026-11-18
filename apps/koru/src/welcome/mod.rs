@@ -156,8 +156,8 @@ fn progress(done: usize, of: usize) -> String {
 /// performs — each of these is an existing command the container already has.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum WelcomeWant {
-    /// *Make your first document* — what Ctrl+T does: a new tab with a page
-    /// to type on, no name asked first.
+    /// *Make your first document* — a new tab with a page to type on, no name
+    /// asked first.
     NewDocument,
     /// *set up your mic* — Settings, scrolled to Voice.
     VoiceSettings,
