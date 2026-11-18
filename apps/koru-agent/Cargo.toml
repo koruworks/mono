@@ -354,3 +354,8 @@ tower = { version = "0.5", features = ["util"] }
 [build-dependencies]
 koru-channel = { path = "../../crates/koru-channel" }
 koru-winres = { path = "../../crates/koru-winres" }
+
+[[test]]
+name = "bots_engine_process"
+harness = false
+required-features = ["bots-engine"]
