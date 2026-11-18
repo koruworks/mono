@@ -191,6 +191,7 @@ impl Sections {
                 PageId::Terminal => self.terminal,
                 PageId::System => self.global || self.ai,
                 PageId::AgentProviders => self.agents,
+                PageId::Bots => self.agents && self.global,
             })
             .collect()
     }
@@ -554,6 +555,14 @@ impl SettingsSurface {
 
     pub fn set_ai_slot(&mut self, slot: AiSlot) {
         self.ai = slot;
+    }
+
+    /// The host's device-local Bot limit, or automatic. No machine read runs here.
+    pub fn set_bots_capacity(&mut self, value: Option<u32>) -> bool {
+        let value = value.filter(|value| *value > 0);
+        let moved = self.global.bots_session_capacity != value;
+        self.global.bots_session_capacity = value;
+        moved
     }
 
     /// The coding agents *Agent providers* lists, in the host's order, each
@@ -1036,6 +1045,7 @@ impl SettingsSurface {
             }
             PageId::Terminal => terminal::lay_out(&mut b, lang, terminal),
             PageId::System => global::system(&mut b, &rows),
+            PageId::Bots => global::bots(&mut b, &rows),
             PageId::AgentProviders => {
                 agents::lay_out(&mut b, lang, agent_providers, agent_defaults)
             }
@@ -2233,6 +2243,21 @@ impl SettingsSurface {
     /// was drawn as.
     fn perform(&mut self, action: Action) {
         match action {
+            Action::BotsCapacity(value) => {
+                if value == Some(0) {
+                    return;
+                }
+                if self.links.holds_global() {
+                    self.patch_global(GlobalPatch {
+                        bots_session_capacity: value
+                            .map_or(koru_settings::Field::Clear, koru_settings::Field::Set),
+                        ..GlobalPatch::default()
+                    });
+                } else {
+                    self.global.bots_session_capacity = value;
+                    self.requests.push(Request::SetBotsCapacity(value));
+                }
+            }
             Action::Theme(choice) => theme::set_theme_preference(theme_preference(choice)),
             Action::CaretColor(choice) => theme::set_caret_color(caret_color(choice)),
             Action::CaretWidth(choice) => theme::set_caret_width(caret_width(choice)),
@@ -2444,8 +2469,10 @@ impl SettingsSurface {
         let Some(outstanding) = self.links.take_outstanding_global() else {
             return;
         };
-        if outstanding.start_on_login.is_some()
-            && arriving.start_on_login != self.global.start_on_login
+        if (outstanding.start_on_login.is_some()
+            && arriving.start_on_login != self.global.start_on_login)
+            || (!outstanding.bots_session_capacity.is_unchanged()
+                && arriving.bots_session_capacity != self.global.bots_session_capacity)
         {
             self.notice = Some(self.not_saved());
         }
@@ -2525,6 +2552,7 @@ fn view_mode_choice(mode: theme::ViewMode) -> ViewModeChoice {
 /// that needs a copy names the cost rather than deriving it everywhere.
 fn clone_action(action: &Action) -> Action {
     match action {
+        Action::BotsCapacity(value) => Action::BotsCapacity(*value),
         Action::Theme(v) => Action::Theme(*v),
         Action::CaretColor(v) => Action::CaretColor(*v),
         Action::CaretWidth(v) => Action::CaretWidth(*v),

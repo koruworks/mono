@@ -454,10 +454,12 @@ impl MainView {
     pub(super) fn sync_agent_providers(&mut self) -> bool {
         let rows = self.agent_provider_rows();
         let defaults = self.agent_defaults(&rows);
+        let capacity = self.delegate_folder.authoritative().bots_session_capacity;
         self.each_tab_mut(|tab| match &mut tab.view {
             TabView::Settings(view) => {
                 let rows_moved = view.set_agent_providers(rows.clone());
-                view.set_agent_defaults(defaults.clone()) || rows_moved
+                let capacity_moved = view.set_bots_capacity(capacity);
+                view.set_agent_defaults(defaults.clone()) || capacity_moved || rows_moved
             }
             _ => false,
         })

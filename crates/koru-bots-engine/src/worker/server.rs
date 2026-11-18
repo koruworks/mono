@@ -15,6 +15,7 @@ enum ActorCommand {
     Hello(mpsc::SyncSender<Reply>),
     Status(mpsc::SyncSender<Reply>),
     Capacity(mpsc::SyncSender<Reply>),
+    RefreshCapacity(mpsc::SyncSender<Reply>),
     Person(crate::person::Request, mpsc::SyncSender<Reply>),
     Creation(crate::creation::Request, mpsc::SyncSender<Reply>),
     Operation(crate::operations::control::Command, mpsc::SyncSender<Reply>),
@@ -120,6 +121,7 @@ pub(super) fn serve(
                 break;
             }
             match event {
+                crate::launcher::Event::CapacityChanged => {}
                 crate::launcher::Event::Allocated { bot, incarnation }
                 | crate::launcher::Event::Registered {
                     bot, incarnation, ..
@@ -200,6 +202,7 @@ pub(super) fn serve(
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
+            ActorCommand::RefreshCapacity(reply) => launcher.refresh_capacity(reply),
             ActorCommand::Creation(request, reply) => {
                 let result = crate::creation::handle(&mut database, request, now_ms());
                 let _ = reply.try_send(result.map(Reply::Creation).unwrap_or_else(Reply::Refused));
@@ -378,11 +381,12 @@ fn handle(
                         .unwrap_or(Reply::Refused(Error::EngineUnavailable))
                 }
             }
-            Command::Hello | Command::Status | Command::Capacity => {
+            Command::Hello | Command::Status | Command::Capacity | Command::RefreshCapacity => {
                 let (reply, answer) = mpsc::sync_channel(1);
                 let command = match request.command {
                     Command::Hello => ActorCommand::Hello(reply),
                     Command::Status => ActorCommand::Status(reply),
+                    Command::RefreshCapacity => ActorCommand::RefreshCapacity(reply),
                     _ => ActorCommand::Capacity(reply),
                 };
                 if actor.try_send(command).is_err() {
@@ -459,7 +463,7 @@ fn record_worker_event(
     event: &crate::launcher::Event,
 ) -> Result<(), Error> {
     match event {
-        crate::launcher::Event::Allocated { .. } => {}
+        crate::launcher::Event::Allocated { .. } | crate::launcher::Event::CapacityChanged => {}
         crate::launcher::Event::Registered {
             bot,
             incarnation,

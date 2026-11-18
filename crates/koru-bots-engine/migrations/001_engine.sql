@@ -46,6 +46,7 @@ CREATE TABLE threads (
     revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
     created_at_ms INTEGER NOT NULL DEFAULT 0,
     updated_at_ms INTEGER NOT NULL DEFAULT 0,
+    capacity_wait_notified INTEGER NOT NULL DEFAULT 0 CHECK (capacity_wait_notified IN (0,1)),
     lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'archived', 'trashed')),
     origin_thread TEXT REFERENCES threads(id),
     origin_message TEXT,

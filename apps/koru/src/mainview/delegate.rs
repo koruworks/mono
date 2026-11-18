@@ -633,6 +633,7 @@ impl MainView {
     pub(crate) fn maintain_delegate_folder(&mut self) -> bool {
         let before = self.delegate_temporary_base();
         let agents_before = self.agent_settings_snapshot();
+        let capacity_before = self.delegate_folder.authoritative().bots_session_capacity;
         if self.delegate_folder.poll().is_none() {
             return false;
         }
@@ -640,13 +641,17 @@ impl MainView {
         // and where a new chat starts: what another window changed, or the
         // stored settings arriving at start, reach every surface here.
         let agents_moved = self.agent_settings_snapshot() != agents_before;
+        let capacity_moved =
+            self.delegate_folder.authoritative().bots_session_capacity != capacity_before;
         if agents_moved {
             self.apply_hidden_agents();
+        }
+        if agents_moved || capacity_moved {
             self.sync_agent_providers();
         }
         let after = self.delegate_temporary_base();
         if after == before {
-            return agents_moved;
+            return agents_moved || capacity_moved;
         }
         if let Some(modal) = self.delegation.as_mut() {
             modal.chose_temporary_base(Ok(after));

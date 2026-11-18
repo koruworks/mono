@@ -437,7 +437,7 @@ pub const REGISTRY: &[SettingSpec] = &[
         storage: StorageClass::DeviceLocal,
         backing: Backing::DesktopJson,
         kind: ValueKind::Nullable,
-        doc: "Maximum live Bot agent sessions, running or idle. A positive integer; null uses one per 2 GB of installed RAM, at least one. Applied at the next admission; reducing it does not kill running work.",
+        doc: "Maximum live Bot agent sessions, running or idle. A positive integer; null uses five, lowered to one per 2 GB of installed RAM, at least one. Applied at the next admission; reducing it does not kill running work.",
     },
     SettingSpec {
         field: "reminder_start_on_login_explained",

@@ -436,6 +436,7 @@ fn koru_lists_every_page_in_sidebar_order() {
             PageId::Reminders,
             PageId::Terminal,
             PageId::System,
+            PageId::Bots,
             PageId::AgentProviders,
         ]
     );

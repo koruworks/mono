@@ -4,6 +4,21 @@ use super::*;
 use crate::mainview::tab::TabView;
 use koru_session_protocol::{CapabilitySet, ErrorCode, ProviderKind};
 
+#[test]
+fn bots_capacity_uses_the_existing_global_owner_and_preserves_other_settings() {
+    let mut view = MainView::new();
+    let before = view.delegate_folder.authoritative().clone();
+    view.perform_settings_request(koru_settings_ui::Request::SetBotsCapacity(Some(7)));
+    let mut expected = before.clone();
+    expected.bots_session_capacity = Some(7);
+    assert_eq!(view.delegate_folder.authoritative(), &expected);
+    view.perform_settings_request(koru_settings_ui::Request::SetBotsCapacity(Some(0)));
+    assert_eq!(view.delegate_folder.authoritative(), &expected);
+    view.perform_settings_request(koru_settings_ui::Request::SetBotsCapacity(None));
+    expected.bots_session_capacity = None;
+    assert_eq!(view.delegate_folder.authoritative(), &expected);
+}
+
 fn profile(key: &str) -> LaunchProfile {
     koru_session_profiles::coding_agents()
         .into_iter()

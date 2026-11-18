@@ -42,6 +42,7 @@ pub enum Command {
     Hello,
     Status,
     Capacity,
+    RefreshCapacity,
     Person(crate::person::Request),
     Creation(crate::creation::Request),
     Operation(crate::operations::control::Command),

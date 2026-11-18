@@ -134,12 +134,14 @@ impl ChatSurface {
             .values()
             .filter(|message| message.kind == "setup_note")
         {
-            if !message.content.references.iter().any(|r| {
-                r.get("notice").and_then(|value| value.as_str())
-                    == Some("secret_answer_not_delivered")
-            }) {
+            let Some(words) = message
+                .content
+                .references
+                .iter()
+                .find_map(|r| notice_words(self.lang, r))
+            else {
                 continue;
-            }
+            };
             let anchor = state
                 .messages
                 .values()
@@ -152,11 +154,9 @@ impl ChatSurface {
             self.notice_layouts.push(NoticeLayout {
                 message: MessageId::from_uuid(anchor),
                 top: f32::NAN,
-                layout: self.engine.simple_layout_wrapped(
-                    t(self.lang, Words::BotsEngineSecretLost),
-                    role::meta(),
-                    width,
-                ),
+                layout: self
+                    .engine
+                    .simple_layout_wrapped(&words, role::meta(), width),
             });
         }
     }
@@ -756,6 +756,28 @@ impl ChatSurface {
 fn request_id(command: &wire::Command) -> Option<Uuid> {
     match command {
         wire::Command::Answer { id, .. } | wire::Command::Reask { id, .. } => Some(*id),
+        _ => None,
+    }
+}
+
+fn notice_words(lang: koru_i18n::Lang, reference: &serde_json::Value) -> Option<String> {
+    match reference.get("notice").and_then(|value| value.as_str())? {
+        "secret_answer_not_delivered" => Some(t(lang, Words::BotsEngineSecretLost).to_owned()),
+        "waiting_for_capacity" => {
+            let names = reference
+                .get("running_bots")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|bot| bot.get("name").and_then(|v| v.as_str()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Some(if names.is_empty() {
+                t(lang, Words::BotsEngineCapacityWait).to_owned()
+            } else {
+                koru_i18n::fill(t(lang, Words::BotsEngineCapacityWaitNamed), &[&names])
+            })
+        }
         _ => None,
     }
 }

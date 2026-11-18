@@ -1,5 +1,26 @@
 // SPDX-License-Identifier: MPL-2.0
 use super::*;
+
+#[test]
+fn waiting_notice_names_the_occupants_and_the_global_setting_without_an_attempt() {
+    let mut opened = crate::managed::tests::opened();
+    let mut notice = crate::managed::tests::message(1, Uuid::new_v4());
+    notice.kind = "setup_note".into();
+    notice.content.body.clear();
+    notice.content.references = vec![
+        serde_json::json!({"notice":"waiting_for_capacity","running_bots":[{"name":"First bot"},{"name":"Second bot"}],"limit":2}),
+    ];
+    let words = notice_words(koru_i18n::Lang::En, &notice.content.references[0]).unwrap();
+    assert!(words.contains("First bot, Second bot"));
+    assert!(words.contains("Settings > Bots > Bots that can work at once"));
+    opened.messages.push(notice);
+    let mut surface = ChatSurface::new_owned_at(None);
+    surface.managed_opened(opened);
+    surface.rebuild_managed_notices(400.0);
+    assert_eq!(surface.notice_layouts.len(), 1);
+    assert!(surface.attempt.is_none());
+    assert!(surface.transcript.as_ref().unwrap().messages.is_empty());
+}
 use crate::reader::Reader;
 use std::sync::mpsc::{Receiver, SyncSender};
 

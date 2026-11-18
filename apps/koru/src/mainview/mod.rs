@@ -10392,6 +10392,20 @@ impl MainView {
             Request::SetAgentOrder(keys) => {
                 self.set_agent_order(keys);
             }
+            Request::SetBotsCapacity(value) => {
+                if value == Some(0) {
+                    return;
+                }
+                self.delegate_folder.save(
+                    koru_settings::GlobalPatch {
+                        bots_session_capacity: value
+                            .map_or(koru_settings::Field::Clear, koru_settings::Field::Set),
+                        ..Default::default()
+                    },
+                    |patch, section| patch.clone().apply(section),
+                );
+                self.sync_agent_providers();
+            }
             // The Settings page carries these out itself, on its own thread
             // to the Store (`settings_view::reader_link`); none reaches here
             // from it, and nothing else raises them.

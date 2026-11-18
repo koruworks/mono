@@ -23,9 +23,11 @@ type CreationCall = Arc<
         + Send
         + Sync,
 >;
+mod capacity;
 mod creation;
 mod window;
 pub(crate) struct Gateway {
+    capacity: Arc<capacity::Refresh>,
     authority: Arc<dyn BotAuthority>,
     call: Call,
     creation: CreationCall,
@@ -43,8 +45,20 @@ impl GatewayState {
             return false;
         };
         let creation_engine = engine.clone();
+        let capacity_engine = engine.clone();
         self.bots_engine
             .set(Arc::new(Gateway {
+                capacity: capacity::Refresh::new(Arc::new(move || {
+                    match worker::request(
+                        &capacity_engine.endpoint,
+                        capacity_engine.authority.expose(),
+                        worker::Command::RefreshCapacity,
+                    )? {
+                        worker::Reply::Capacity { .. } => Ok(()),
+                        worker::Reply::Refused(error) => Err(error),
+                        _ => Err(Error::EngineUnavailable),
+                    }
+                })),
                 root,
                 folders: Arc::new(koru_bots_engine::folders::Native),
                 authority: Arc::new(authority),

@@ -7,6 +7,8 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+mod notices;
+
 /// One engine-owned record of every reserved or live provider session. Workers
 /// report lifecycle edges against its incarnation; they do not choose capacity.
 /// Queued work stays in engine.db and is never copied into a second queue.
@@ -254,17 +256,22 @@ impl Admission {
     }
 
     pub fn next(&mut self, db: &Database, now: u64) -> Result<Option<Decision>, Error> {
-        if let Some(mut key) = self.candidate(db, now, false)? {
+        if let Some(mut key) = self.candidate(db, now, false, false)? {
             if self.sessions.len() >= self.limit as usize && !self.sessions.contains_key(&key) {
                 // A blocked oldest request must not hide a lower-ranked request
                 // that can reuse its own slot without exceeding capacity.
-                if let Some(reusable) = self.candidate(db, now, true)? {
+                if let Some(reusable) = self.candidate(db, now, true, false)? {
                     key = reusable;
                 } else {
-                    return self.end_idle(db, now, true);
+                    let ending = self.end_idle(db, now, true)?;
+                    if ending.is_none() {
+                        self.notify_waiters(db, now)?;
+                    }
+                    return Ok(ending);
                 }
             }
             let reuse = self.sessions.contains_key(&key);
+            db.connection.execute("UPDATE threads SET capacity_wait_notified=0 WHERE id=?1 AND capacity_wait_notified=1", [key.thread.to_string()])?;
             let slot = self.sessions.entry(key).or_insert(Slot {
                 session: Uuid::new_v4(),
                 provider: None,
@@ -291,6 +298,7 @@ impl Admission {
         db: &Database,
         now: u64,
         reuse_only: bool,
+        unnotified_only: bool,
     ) -> Result<Option<SessionKey>, Error> {
         #[derive(Serialize)]
         struct Live {
@@ -322,12 +330,13 @@ impl Admission {
                AND EXISTS(SELECT 1 FROM participants p WHERE p.thread=i.thread AND p.participant=i.bot AND p.kind='bot')
                AND (o.state='delivered' OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms') IS NULL OR json_extract(CAST(m.payload AS TEXT),'$.deadline_ms')>=?2)
                AND (l.bot IS NULL OR l.idle=1) AND (?3=0 OR l.idle=1)
+               AND (?4=0 OR t.capacity_wait_notified=0)
                AND NOT EXISTS(SELECT 1 FROM turns r WHERE r.bot=i.bot AND r.thread=i.thread AND r.state IN ('running','needs_you','parked'))
                AND NOT EXISTS(SELECT 1 FROM operations w WHERE w.bot=i.bot AND w.thread=i.thread AND (w.state='leased' OR (w.state='unresolved' AND json_extract(CAST(w.recovery AS TEXT),'$.continued_by') IS NULL)))
                AND NOT EXISTS(SELECT 1 FROM deliveries d WHERE d.session=l.session AND d.state IN ('offered','unknown'))
              GROUP BY i.bot,i.thread,t.kind
              ORDER BY t.kind='routine',EXISTS(SELECT 1 FROM live a WHERE a.bot=i.bot AND a.active=1),MIN(i.accepted_at_ms),i.bot,i.thread LIMIT 1",
-            params![live, now.min(i64::MAX as u64) as i64, reuse_only], |r| Ok((r.get(0)?, r.get(1)?)),
+            params![live, now.min(i64::MAX as u64) as i64, reuse_only, unnotified_only], |r| Ok((r.get(0)?, r.get(1)?)),
         ).optional()?;
         row.map(|(bot, thread)| {
             Ok(SessionKey {

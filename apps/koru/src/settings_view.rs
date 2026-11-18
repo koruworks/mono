@@ -312,6 +312,10 @@ impl SettingsView {
         self.surface.set_agent_providers(rows)
     }
 
+    pub fn set_bots_capacity(&mut self, value: Option<u32>) -> bool {
+        self.surface.set_bots_capacity(value)
+    }
+
     /// Where a new chat starts, as *Agent providers* shows it. Answers
     /// whether it moved.
     pub fn set_agent_defaults(&mut self, defaults: koru_settings_ui::AgentDefaults) -> bool {

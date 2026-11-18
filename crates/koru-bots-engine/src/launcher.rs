@@ -33,6 +33,7 @@ impl Default for Policy {
 }
 
 pub enum Event {
+    CapacityChanged,
     Allocated {
         bot: Uuid,
         incarnation: Uuid,
@@ -48,6 +49,7 @@ pub enum Event {
     },
 }
 enum Command {
+    RefreshCapacity(mpsc::SyncSender<crate::worker::Reply>),
     Ensure(Uuid),
     Stop(Uuid),
     Shutdown,
@@ -132,6 +134,15 @@ impl Launcher {
     pub fn capacity(&self) -> u32 {
         self.capacity.load(Ordering::Acquire)
     }
+    pub(crate) fn refresh_capacity(&self, reply: mpsc::SyncSender<crate::worker::Reply>) {
+        if self
+            .sender
+            .try_send(Command::RefreshCapacity(reply.clone()))
+            .is_err()
+        {
+            let _ = reply.try_send(crate::worker::Reply::Refused(Error::EngineUnavailable));
+        }
+    }
     pub fn incarnation(&self, bot: Uuid) -> Option<Uuid> {
         self.registry
             .lock()
@@ -196,6 +207,12 @@ fn run(
             None => commands.recv_timeout(Duration::from_millis(25)),
         };
         match command {
+            Ok(Command::RefreshCapacity(reply)) => {
+                let sessions = crate::capacity::configured(&root);
+                capacity.store(sessions, Ordering::Release);
+                let _ = events.send(Event::CapacityChanged);
+                let _ = reply.try_send(crate::worker::Reply::Capacity { sessions });
+            }
             Ok(Command::Ensure(bot)) if !entries.contains_key(&bot) => {
                 capacity.store(crate::capacity::configured(&root), Ordering::Release);
                 let gate = Arc::new(Gate {

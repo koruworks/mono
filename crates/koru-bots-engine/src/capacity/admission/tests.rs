@@ -3,6 +3,122 @@
 use super::*;
 use crate::messages::{Delivery, Envelope, Person, Publish, ReplyTo, Resume};
 
+#[test]
+fn every_waiting_thread_gets_one_notice_per_wait_with_only_its_owners_names() {
+    let mut f = Fixture::new(1);
+    let active = f.key(1, 11);
+    let first = f.key(2, 22);
+    let second = f.key(3, 33);
+    f.send(active, 1);
+    let reservation = f.start(active, 2);
+    f.db.connection
+        .execute(
+            "UPDATE bots SET name='Working bot' WHERE id=?1",
+            [active.bot.to_string()],
+        )
+        .unwrap();
+    f.send(first, 3);
+    f.send(second, 4);
+    assert!(f.next(5).is_none());
+    let count = |db: &Database, thread: Uuid| {
+        db.connection
+            .query_row(
+                "SELECT COUNT(*) FROM messages WHERE thread=?1 AND kind='setup_note'",
+                [thread.to_string()],
+                |r| r.get::<_, u64>(0),
+            )
+            .unwrap()
+    };
+    assert_eq!(count(&f.db, first.thread), 1);
+    assert_eq!(count(&f.db, second.thread), 1);
+    f.send(first, 6);
+    assert!(f.next(7).is_none());
+    assert_eq!(
+        count(&f.db, first.thread),
+        1,
+        "additional input is still the same wait"
+    );
+    let note: Vec<u8> =
+        f.db.connection
+            .query_row(
+                "SELECT payload FROM messages WHERE thread=?1 AND kind='setup_note'",
+                [first.thread.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    let note: crate::messages::Content = serde_json::from_slice(&note).unwrap();
+    assert_eq!(note.references[0]["running_bots"][0]["name"], "Working bot");
+    assert_eq!(note.references[0]["limit"], 1);
+    // Reconstruct admission while retaining the registered live session. The
+    // once flag lives in the database, not this in-memory owner.
+    let sessions = std::mem::take(&mut f.admission.sessions);
+    f.admission = Admission::new(1);
+    f.admission.sessions = sessions;
+    assert!(f.next(7).is_none());
+    assert_eq!(count(&f.db, first.thread), 1);
+    f.finish(reservation, 7);
+    f.admission.sessions.remove(&active);
+    let start = f.start(first, 8);
+    f.finish(start, 9);
+    f.admission.retired(start, f.worker).unwrap();
+    f.send(first, 10);
+    f.admission.sessions.insert(
+        active,
+        Slot {
+            session: reservation.session,
+            provider: None,
+            assignment: reservation.assignment,
+            worker: Some(f.worker),
+            phase: Phase::Running,
+        },
+    );
+    f.db.connection
+        .execute(
+            "UPDATE bots SET owner='another-owner' WHERE id=?1",
+            [active.bot.to_string()],
+        )
+        .unwrap();
+    assert!(f.next(11).is_none());
+    assert_eq!(count(&f.db, first.thread), 2);
+    let note: Vec<u8> = f.db.connection.query_row("SELECT payload FROM messages WHERE thread=?1 AND kind='setup_note' ORDER BY sequence DESC LIMIT 1", [first.thread.to_string()], |r|r.get(0)).unwrap();
+    let note: crate::messages::Content = serde_json::from_slice(&note).unwrap();
+    assert_eq!(note.references[0]["running_bots"], serde_json::json!([]));
+}
+
+#[test]
+fn a_failed_waiting_notice_rolls_back_its_once_flag() {
+    let mut f = Fixture::new(1);
+    let active = f.key(1, 11);
+    let waiting = f.key(2, 22);
+    f.send(active, 1);
+    f.start(active, 2);
+    f.send(waiting, 3);
+    f.db.connection.execute_batch("CREATE TRIGGER reject_notice BEFORE INSERT ON messages WHEN NEW.kind='setup_note' BEGIN SELECT RAISE(ABORT,'fixture'); END;").unwrap();
+    assert!(f.admission.next(&f.db, 4).is_err());
+    let flagged: bool =
+        f.db.connection
+            .query_row(
+                "SELECT capacity_wait_notified FROM threads WHERE id=?1",
+                [waiting.thread.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert!(!flagged);
+    f.db.connection
+        .execute_batch("DROP TRIGGER reject_notice")
+        .unwrap();
+    assert!(f.next(5).is_none());
+    let flagged: bool =
+        f.db.connection
+            .query_row(
+                "SELECT capacity_wait_notified FROM threads WHERE id=?1",
+                [waiting.thread.to_string()],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert!(flagged);
+}
+
 struct Fixture {
     db: Database,
     admission: Admission,

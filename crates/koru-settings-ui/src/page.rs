@@ -36,6 +36,7 @@ pub enum PageId {
     Reminders,
     Terminal,
     System,
+    Bots,
     /// *Coding → Agent providers*: which coding agents Koru shows, and
     /// whether their CLIs are ready. The host fills its rows.
     AgentProviders,
@@ -57,12 +58,13 @@ impl PageGroup {
 }
 
 impl PageId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
         Self::Editor,
         Self::Reminders,
         Self::Terminal,
         Self::System,
+        Self::Bots,
         Self::AgentProviders,
     ];
 
@@ -71,9 +73,12 @@ impl PageId {
     pub fn group(self) -> Option<PageGroup> {
         match self {
             Self::AgentProviders => Some(PageGroup::Coding),
-            Self::Appearance | Self::Editor | Self::Reminders | Self::Terminal | Self::System => {
-                None
-            }
+            Self::Appearance
+            | Self::Editor
+            | Self::Reminders
+            | Self::Terminal
+            | Self::System
+            | Self::Bots => None,
         }
     }
 
@@ -84,12 +89,14 @@ impl PageId {
             Self::Reminders => koru_i18n::t(lang, Key::ReminderTitle),
             Self::Terminal => koru_i18n::t(lang, Key::SettingsTerminal),
             Self::System => koru_i18n::t(lang, Key::SettingsSystem),
+            Self::Bots => koru_i18n::t(lang, Key::BotsTitle),
             Self::AgentProviders => koru_i18n::t(lang, Key::SettingsAgentProviders),
         }
     }
 
     pub(crate) fn description(self, lang: Lang) -> &'static str {
         match self {
+            Self::Bots => koru_i18n::t(lang, Key::BotsEngineCapacityDescription),
             Self::Appearance => koru_i18n::t(lang, Key::SettingsAppearanceDescription),
             Self::Editor => koru_i18n::t(lang, Key::SettingsEditorDescription),
             Self::Reminders => koru_i18n::t(lang, Key::SettingsRemindersDescription),
@@ -103,6 +110,7 @@ impl PageId {
     /// the page holds, in the words a person would type for them.
     pub(crate) fn keywords(self) -> &'static str {
         match self {
+            Self::Bots => "bots capacity limit simultaneous concurrent sessions automatic memory",
             Self::Appearance => {
                 "theme dark light system font fonts typeface density pinned tabs caret color cursor typography icon icons phosphor tabler lucide remix sample preview"
             }
@@ -124,6 +132,10 @@ impl PageId {
 
     fn localized_keywords(self, lang: Lang) -> String {
         let keys: &[Key] = match self {
+            Self::Bots => &[
+                Key::BotsEngineCapacityLabel,
+                Key::BotsEngineCapacityAutomatic,
+            ],
             Self::Appearance => &[
                 Key::SettingsTheme,
                 Key::SettingsIconStyle,

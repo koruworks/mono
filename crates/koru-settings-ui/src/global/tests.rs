@@ -20,6 +20,91 @@ use koru_settings::{
     GlobalSettings,
 };
 
+#[test]
+fn bots_capacity_is_positive_resettable_and_sent_to_the_existing_host_owner() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface = koru();
+    surface.show_page(PageId::Bots);
+    assert!(switch_on(&mut surface, "Use the automatic limit"));
+    assert!(flip(&mut surface, "Use the automatic limit"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetBotsCapacity(Some(1))]
+    );
+    surface.relayout();
+    let stepper = |surface: &SettingsSurface| {
+        surface
+            .laid
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Card(card) => card.rows.iter().find_map(|row| match row.widget {
+                    crate::page::Widget::Stepper {
+                        control,
+                        less,
+                        more,
+                        ..
+                    } => Some((control, less, more)),
+                    _ => None,
+                }),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let (control, less, more) = stepper(&surface);
+    assert!(less.is_none() && more.is_some());
+    press_rect(&mut surface, control.more);
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetBotsCapacity(Some(2))]
+    );
+    surface.set_bots_capacity(Some(u32::MAX));
+    surface.relayout();
+    assert!(stepper(&surface).2.is_none());
+    assert!(flip(&mut surface, "Use the automatic limit"));
+    assert_eq!(
+        surface.take_requests(),
+        vec![Request::SetBotsCapacity(None)]
+    );
+    assert!(!Sections::terminal().pages().contains(&PageId::Bots));
+    for lang in koru_i18n::Lang::ALL {
+        assert!(PageId::Bots.matches(
+            lang,
+            koru_i18n::t(lang, koru_i18n::Key::BotsEngineCapacityLabel)
+        ));
+    }
+}
+
+#[test]
+fn bots_capacity_uses_one_field_patch_and_reconciles_a_refusal() {
+    let _guard = GLOBALS.lock().unwrap_or_else(|held| held.into_inner());
+    let mut surface =
+        SettingsSurface::with_links(Sections::koru(), crate::SettingsLinks::inert(true, false));
+    surface.perform(crate::action::Action::BotsCapacity(Some(3)));
+    assert!(surface.take_requests().is_empty());
+    let patch = surface.links.take_outstanding_global().unwrap();
+    assert_eq!(patch.bots_session_capacity, koru_settings::Field::Set(3));
+    assert_eq!(patch.start_on_login, None);
+    surface.perform(crate::action::Action::BotsCapacity(Some(4)));
+    surface.adopt_global(&GlobalSettings {
+        bots_session_capacity: Some(2),
+        ..Default::default()
+    });
+    assert_eq!(surface.global.bots_session_capacity, Some(2));
+    assert!(surface.notice().is_some());
+    surface.perform(crate::action::Action::BotsCapacity(None));
+    assert_eq!(
+        surface
+            .links
+            .take_outstanding_global()
+            .unwrap()
+            .bots_session_capacity,
+        koru_settings::Field::Clear
+    );
+    surface.perform(crate::action::Action::BotsCapacity(Some(0)));
+    assert!(surface.links.take_outstanding_global().is_none());
+}
+
 /// The names every setting is found under. If one disappears, a setting
 /// disappeared with it.
 const ROWS: [&str; 17] = [

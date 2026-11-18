@@ -645,6 +645,32 @@ fn voice(b: &mut Builder<'_>, rows: &Rows<'_>) {
 
 // ----------------------------------------------------------------- System
 
+pub(crate) fn bots(b: &mut Builder<'_>, rows: &Rows<'_>) {
+    let lang = rows.lang;
+    let selected = rows.section.bots_session_capacity;
+    b.card(None);
+    b.row_toggle(
+        koru_i18n::t(lang, Key::BotsEngineCapacityAutomatic),
+        Some(koru_i18n::t(lang, Key::BotsEngineCapacityDefault)),
+        selected.is_none(),
+        // Starting a manual limit at one is safe on any host. The adjacent
+        // stepper offers every positive integer, without assuming its RAM.
+        Action::BotsCapacity(if selected.is_none() { Some(1) } else { None }),
+    );
+    if let Some(value) = selected {
+        b.row_stepper(
+            koru_i18n::t(lang, Key::BotsEngineCapacityLabel),
+            Some(koru_i18n::t(lang, Key::BotsEngineCapacityHint)),
+            value.to_string(),
+            &value.max(999).to_string(),
+            (value > 1).then(|| Action::BotsCapacity(Some(value - 1))),
+            value
+                .checked_add(1)
+                .map(|value| Action::BotsCapacity(Some(value))),
+        );
+    }
+}
+
 pub(crate) fn system(b: &mut Builder<'_>, rows: &Rows<'_>) {
     let lang = rows.lang;
     b.card(Some(koru_i18n::t(lang, Key::SettingsStartupAndWindows)));

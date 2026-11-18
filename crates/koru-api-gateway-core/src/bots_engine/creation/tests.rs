@@ -3,8 +3,8 @@ use super::*;
 mod lifecycle;
 mod lists;
 mod permissions;
-mod recovery;
 mod readiness;
+mod recovery;
 mod settings;
 mod threads;
 use koru_ai_core::{
@@ -160,6 +160,7 @@ impl Fixture {
         let abandon = Arc::new(AtomicBool::new(false));
         let flag = abandon.clone();
         let gateway = Gateway {
+            capacity: super::super::capacity::Refresh::new(Arc::new(|| Ok(()))),
             authority: store.clone(),
             folders: fs.clone(),
             root,

@@ -384,8 +384,12 @@ async fn patch_section(
                 Err(why) => return invalid_request(&why.to_string()),
             };
             let fault_operation = FaultOperation::from_patch(&patch);
+            let capacity_changed = !patch.bots_session_capacity.is_unchanged();
             let response = match authority.patch_global(patch) {
                 Ok(settings) => {
+                    if capacity_changed && let Some(engine) = state.bots_engine.get() {
+                        engine.capacity_changed();
+                    }
                     if let Some(hold) = state.settings_write_fault.take(fault_operation) {
                         tokio::time::sleep(hold).await;
                     }

@@ -61,7 +61,10 @@ fn continue_requires_the_complete_drained_set_and_preserves_last_complete_view()
     });
     assert!(!state.ready());
     assert_eq!(state.cursor, 0);
-    assert_eq!(state.labels(koru_i18n::Lang::En, &HashMap::new()).len(), 2);
+    assert_eq!(
+        state.labels(koru_i18n::Lang::En, &HashMap::new()),
+        vec![("Page 1".into(), false), ("Page 2".into(), false)]
+    );
 }
 
 #[test]

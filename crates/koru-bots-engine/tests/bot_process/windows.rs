@@ -300,6 +300,22 @@ fn scenario(root: &Path, case: &str) {
             "saved host capacity is read by the launcher"
         );
         // A repeated wake shares the one Bot-keyed launcher entry.
+        std::fs::write(
+            root.join("settings/desktop-v1.json"),
+            br#"{"bots_session_capacity":3}"#,
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                worker::request(&ep, &config.engine.authority, Command::RefreshCapacity),
+                Ok(Reply::Capacity { sessions: 3 })
+            ),
+            "a committed limit can refresh without starting another worker"
+        );
+        assert!(matches!(
+            worker::request(&ep, &config.engine.authority, Command::Capacity),
+            Ok(Reply::Capacity { sessions: 3 })
+        ));
         assert!(matches!(
             worker::request(&ep, &config.engine.authority, Command::WakeBot { bot: BOT }),
             Ok(Reply::Queued)

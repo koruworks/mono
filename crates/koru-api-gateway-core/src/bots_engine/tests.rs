@@ -84,6 +84,7 @@ impl Fixture {
         let retained = receipt.clone();
         let scope = authority.owner.user_scope.to_storage();
         let gateway = Gateway {
+            capacity: capacity::Refresh::new(Arc::new(|| Ok(()))),
             creation: Arc::new(|_| Err(Error::EngineUnavailable)),
             root: std::path::PathBuf::new(),
             folders: Arc::new(koru_bots_engine::folders::Native),

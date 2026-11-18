@@ -99,6 +99,7 @@ impl FontRole {
 
 /// One control, named by what it sets.
 pub(crate) enum Action {
+    BotsCapacity(Option<u32>),
     // ------------------------------------------------------------- Global
     Theme(ThemeChoice),
     CaretColor(CaretColorChoice),
@@ -206,6 +207,8 @@ pub(crate) enum Action {
 /// and performs them in its own vocabulary.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Request {
+    /// Host-owned Global link: None restores the automatic device limit.
+    SetBotsCapacity(Option<u32>),
     /// *More fonts…* on a font list: the container opens the installed-font
     /// picker for this role (it owns the window the picker stands over).
     MoreFonts(FontRole),
