@@ -63,6 +63,12 @@ pub trait Port: Send + Sync + 'static {
     fn reject_steer(&self, _turn: Turn, _delivery: Uuid) -> Result<(), Error> {
         Err(Error::InvalidRequest)
     }
+    fn answers(&self, _turn: Turn) -> Result<Vec<crate::questions::Delivery>, Error> {
+        Ok(vec![])
+    }
+    fn answer_sent(&self, _turn: Turn, _question: Uuid, _command: Uuid) -> Result<(), Error> {
+        Err(Error::InvalidRequest)
+    }
     /// Observations only. Completion separately invokes the Publish transaction.
     fn event(&self, turn: Turn, event: &AgentEvent) -> Result<(), Error>;
     /// Publish the completed reply together with this turn's recorded outputs.

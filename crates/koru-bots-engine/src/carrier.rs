@@ -17,6 +17,16 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize)]
 pub enum Command {
     Poll,
+    Answers {
+        reservation: Reservation,
+        turn: Turn,
+    },
+    AnswerSent {
+        reservation: Reservation,
+        turn: Turn,
+        question: Uuid,
+        command: Uuid,
+    },
     Context {
         reservation: Reservation,
     },
@@ -107,6 +117,7 @@ pub enum Reply {
     },
     Issued(Issued),
     Delivery(Option<Delivery>),
+    Answers(Vec<crate::questions::Delivery>),
     CatalogGrant(serde_json::Value),
     Bound(Binding),
     Tool(serde_json::Value),
@@ -130,16 +141,18 @@ pub struct Request {
 pub(crate) fn handle(
     db: &mut Database,
     admission: &mut Admission,
+    answers: &mut crate::questions::Transient,
     who: Worker,
     command: Command,
     now: i64,
 ) -> Reply {
-    execute(db, admission, who, command, now).unwrap_or_else(Reply::Refused)
+    execute(db, admission, answers, who, command, now).unwrap_or_else(Reply::Refused)
 }
 
 fn execute(
     db: &mut Database,
     admission: &mut Admission,
+    answers: &mut crate::questions::Transient,
     who: Worker,
     command: Command,
     now: i64,
@@ -154,6 +167,8 @@ fn execute(
     let reservation = match &command {
         Command::Poll => unreachable!(),
         Command::Started { reservation }
+        | Command::Answers { reservation, .. }
+        | Command::AnswerSent { reservation, .. }
         | Command::Context { reservation }
         | Command::Configuration { reservation }
         | Command::Publish { reservation, .. }
@@ -180,6 +195,22 @@ fn execute(
     }
     match command {
         Command::Poll => unreachable!(),
+        Command::Answers { turn, .. } => {
+            check_turn(db, who, reservation, turn)?;
+            return db
+                .pending_question_answers(turn, answers)
+                .map(Reply::Answers);
+        }
+        Command::AnswerSent {
+            turn,
+            question,
+            command,
+            ..
+        } => {
+            check_turn(db, who, reservation, turn)?;
+            db.question_answer_sent(turn, question, command)?;
+            answers.prune(db);
+        }
         Command::Started { .. } => admission.started(reservation, who.incarnation)?,
         Command::Context { .. } => {
             return db
@@ -200,7 +231,7 @@ fn execute(
         Command::Event { turn, event, .. } => {
             check_turn(db, who, reservation, turn)?;
             let live: bool = db.connection.query_row(
-                "SELECT state='running' AND stopped=0 FROM turns WHERE id=?1",
+                "SELECT state IN ('running','needs_you') AND stopped=0 FROM turns WHERE id=?1",
                 [turn.id.to_string()],
                 |r| r.get(0),
             )?;
@@ -213,6 +244,17 @@ fn execute(
                 .is_some_and(|id| id.as_str() != Some(&turn.id.to_string()))
             {
                 return Err(Error::StaleTurn);
+            }
+            if matches!(
+                event,
+                koru_session_protocol::AgentEvent::ApprovalRequired { .. }
+                    | koru_session_protocol::AgentEvent::ApprovalResolved { .. }
+                    | koru_session_protocol::AgentEvent::ApprovalExpired { .. }
+                    | koru_session_protocol::AgentEvent::QuestionsRequired { .. }
+                    | koru_session_protocol::AgentEvent::QuestionsResolved { .. }
+            ) {
+                db.question_event(turn, &event, now)?;
+                answers.prune(db);
             }
             return Ok(Reply::Observed(crate::observations::Observation {
                 thread: reservation.key.thread,
@@ -346,6 +388,7 @@ fn execute(
             // turn. Confirmed retirement must revoke that authority too.
             db.connection.execute("UPDATE credentials SET revoked=1 WHERE bot=?1 AND thread=?2 AND worker_incarnation=?3",rusqlite::params![who.bot.to_string(),reservation.key.thread.to_string(),who.incarnation.to_string()])?;
             admission.retired(reservation, who.incarnation)?;
+            answers.prune(db);
         }
     }
     Ok(Reply::Done)

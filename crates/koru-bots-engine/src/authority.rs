@@ -220,7 +220,7 @@ impl Database {
             return Err(Error::SessionConflict);
         }
         let running: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM turns WHERE bot=?1 AND thread=?2 AND state='running')",
+            "SELECT EXISTS(SELECT 1 FROM turns WHERE bot=?1 AND thread=?2 AND state IN ('running','needs_you'))",
             params![who.bot.to_string(), request.thread.to_string()],
             |r| r.get(0),
         )?;

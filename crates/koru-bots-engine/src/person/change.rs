@@ -60,6 +60,7 @@ pub(super) fn authorize(c: &Connection, who: &Person, action: &Change) -> Result
         | Change::Conversation { bot, .. } => owner(c, who, *bot),
         Change::ThreadLifecycle { thread, .. }
         | Change::RenameThread { thread, .. }
+        | Change::Reask { thread, .. }
         | Change::RetrySetup { thread, .. } => messages::authorize_thread(c, who, *thread),
         Change::Team { .. } => Ok(()),
     }
@@ -115,7 +116,7 @@ fn retire(c: &Connection, bot: Option<Uuid>, thread: Option<Uuid>) -> Result<(),
     )?;
     c.execute("UPDATE turns SET state='stopped',stopped=1 WHERE state IN ('queued','running','needs_you','parked','interrupted') AND (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2)",params![bot,thread])?;
     c.execute("UPDATE credentials SET revoked=1 WHERE (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2)",params![bot,thread])?;
-    c.execute("UPDATE questions SET state='cancelled' WHERE state='open' AND turn IN (SELECT id FROM turns WHERE stopped=1 AND (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2))",params![bot,thread])?;
+    c.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE (state='open' OR delivery_state='pending') AND turn IN (SELECT id FROM turns WHERE stopped=1 AND (?1 IS NULL OR bot=?1) AND (?2 IS NULL OR thread=?2))",params![bot,thread])?;
     Ok(())
 }
 pub(super) fn apply(
@@ -310,6 +311,10 @@ pub(super) fn apply(
                 params![thread.to_string(), title],
             )?;
             value(read::thread(&tx, who, *thread)?)?
+        }
+        Change::Reask { thread, question } => {
+            crate::questions::reask(&tx, who, *thread, *question, now)?;
+            serde_json::json!({"question":question})
         }
         Change::RetrySetup { thread, turn } => {
             let current = read::thread(&tx, who, *thread)?;

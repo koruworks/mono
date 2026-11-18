@@ -235,6 +235,9 @@ fn observe(
     let mut accepted = false;
     let mut reply = String::new();
     let mut steer_at = std::time::Instant::now();
+    let mut answer_at = std::time::Instant::now();
+    let mut questions = std::collections::BTreeMap::new();
+    let mut answered = std::collections::BTreeSet::new();
     // The isolated P1.7 probe qualifies this installed route. Until another
     // route/version has explicit acknowledgement evidence its input simply
     // waits for the next turn (D16), even if an adapter implements steer().
@@ -261,7 +264,45 @@ fn observe(
                 } => control.answer_approval(id, decision, choice)?,
             }
         }
-        if accepted && steering && std::time::Instant::now() >= steer_at {
+        if !questions.is_empty() && std::time::Instant::now() >= answer_at {
+            answer_at = std::time::Instant::now() + Duration::from_millis(200);
+            for answer in start.port.answers(turn)? {
+                if answer.turn != turn {
+                    return Err(Error::StaleTurn.into());
+                }
+                if !answered.insert(answer.command) {
+                    continue;
+                }
+                match answer.answer {
+                    crate::questions::Answer::Approval { decision, choice } => control
+                        .answer_approval(
+                            answer
+                                .question
+                                .to_string()
+                                .parse()
+                                .map_err(|_| Error::InvalidRequest)?,
+                            decision,
+                            choice,
+                        )?,
+                    crate::questions::Answer::Questions { answers } => control.answer_questions(
+                        answer
+                            .question
+                            .to_string()
+                            .parse()
+                            .map_err(|_| Error::InvalidRequest)?,
+                        answers,
+                    )?,
+                }
+                start
+                    .port
+                    .answer_sent(turn, answer.question, answer.command)?;
+            }
+        }
+        if accepted
+            && steering
+            && !questions.values().any(|blocking| *blocking)
+            && std::time::Instant::now() >= steer_at
+        {
             steer_at = std::time::Instant::now() + Duration::from_millis(200);
             steering = steer(start, database, control, turn, saved)?;
         }
@@ -301,6 +342,26 @@ fn observe(
             accepted = true;
         }
         start.port.event(turn, &event)?;
+        match &event {
+            AgentEvent::ApprovalRequired { approval_id, .. } => {
+                questions.insert(approval_id.as_uuid(), true);
+            }
+            AgentEvent::QuestionsRequired {
+                request_id,
+                blocking,
+                ..
+            } => {
+                questions.insert(request_id.as_uuid(), *blocking);
+            }
+            AgentEvent::ApprovalResolved { approval_id, .. }
+            | AgentEvent::ApprovalExpired { approval_id, .. } => {
+                questions.remove(&approval_id.as_uuid());
+            }
+            AgentEvent::QuestionsResolved { request_id, .. } => {
+                questions.remove(&request_id.as_uuid());
+            }
+            _ => {}
+        }
         // Event is already journaled above. The engine acknowledgement is
         // control evidence, not another full copy of every text/tool event.
         match event {

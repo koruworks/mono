@@ -4,7 +4,7 @@ use rusqlite::{OptionalExtension, params};
 use std::collections::BTreeSet;
 
 type TurnRow = (String, String, String, u64, String, String);
-pub(super) fn turn_row(connection: &rusqlite::Connection, turn: Turn) -> Result<TurnRow, Error> {
+pub(crate) fn turn_row(connection: &rusqlite::Connection, turn: Turn) -> Result<TurnRow, Error> {
     let row: Option<TurnRow> = connection
         .query_row(
             "SELECT thread,bot,state,generation,worker_incarnation,session FROM turns WHERE id=?1",
@@ -101,6 +101,7 @@ impl Database {
             worker,
             session,
         };
+        tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE state='open' AND turn IN (SELECT id FROM turns WHERE bot=?1 AND thread=?2)",params![bot.to_string(),thread.to_string()])?;
         tx.execute("INSERT INTO turns(id,thread,bot,session,grant,state,generation,worker_incarnation,details,created_at_ms) SELECT ?1,?2,id,?3,access,'running',?4,?5,x'7b7d',?6 FROM bots WHERE id=?7",params![turn.id.to_string(),thread.to_string(),session.to_string(),generation,worker.to_string(),now,bot.to_string()])?;
         let boundary: u64 = tx.query_row(
             "SELECT COALESCE(MAX(sequence),0) FROM messages WHERE thread=?1",
@@ -278,6 +279,7 @@ impl Database {
             "UPDATE turns SET state='interrupted' WHERE worker_incarnation=?1 AND state='running'",
             [worker.to_string()],
         )?;
+        crate::questions::recover(&tx, Some(worker))?;
         tx.commit()?;
         Ok(count)
     }
@@ -300,6 +302,7 @@ impl Database {
                 [turn.id.to_string()],
             )?;
         }
+        crate::questions::recover(&tx, Some(turn.worker))?;
         tx.commit()?;
         Ok(())
     }
@@ -313,6 +316,7 @@ impl Database {
             "UPDATE turns SET state='interrupted' WHERE state='running'",
             [],
         )?;
+        crate::questions::recover(&tx, None)?;
         tx.commit()?;
         Ok(count)
     }

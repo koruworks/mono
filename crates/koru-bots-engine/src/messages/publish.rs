@@ -143,6 +143,7 @@ impl Database {
             "UPDATE credentials SET revoked=1 WHERE session=?1",
             [turn.session.to_string()],
         )?;
+        tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE turn=?1 AND (state='open' OR delivery_state='pending')",[turn.id.to_string()])?;
         receipts::save(&tx, &subject, command, &digest, &answer, now)?;
         tx.commit()?;
         Ok(Receipt {

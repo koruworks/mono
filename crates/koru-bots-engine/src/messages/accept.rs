@@ -80,6 +80,7 @@ impl Database {
                 ],
             )?;
         }
+        tx.execute("UPDATE questions SET state='cancelled',delivery_state='sent' WHERE state='open' AND json_extract(CAST(prompt AS TEXT),'$.delivery')='next_message' AND turn IN (SELECT id FROM turns WHERE thread=?1 AND bot=?2 AND state='answered')",rusqlite::params![thread.to_string(),envelope.to.to_string()])?;
         receipts::save(&tx, &subject, envelope.id, &digest, &answer, now)?;
         tx.commit()?;
         Ok(Receipt {

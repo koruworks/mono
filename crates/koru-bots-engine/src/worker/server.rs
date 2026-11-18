@@ -89,6 +89,7 @@ pub(super) fn serve(
         .map_err(|_| Error::EngineUnavailable)?;
     let mut pending = std::collections::VecDeque::new();
     let mut observations = crate::observations::LiveEvents::default();
+    let mut answers = crate::questions::Transient::default();
     let mut admission = crate::capacity::Admission::new(launcher.capacity());
     let mut dispatch = true;
     let mut retry_dispatch = None;
@@ -126,7 +127,8 @@ pub(super) fn serve(
                     launcher.occupied(bot, incarnation, admission.occupied_by(bot, incarnation));
                 }
                 crate::launcher::Event::Ended { incarnation, .. } => {
-                    admission.worker_ended(incarnation)
+                    admission.worker_ended(incarnation);
+                    answers.prune(&database);
                 }
             }
             dispatch = true;
@@ -148,10 +150,12 @@ pub(super) fn serve(
                     | crate::carrier::Command::OwnTool { .. }
                     | crate::carrier::Command::Event { .. }
                     | crate::carrier::Command::OfferSteer { .. }
+                    | crate::carrier::Command::Answers { .. }
             );
             let response = crate::carrier::handle(
                 &mut database,
                 &mut admission,
+                &mut answers,
                 who,
                 request.command,
                 now_ms(),
@@ -197,7 +201,14 @@ pub(super) fn serve(
         match command {
             ActorCommand::Person(request, reply) => {
                 let changes = request.command.changes();
-                let result = crate::person::handle(&mut database, &observations, request, now_ms());
+                let result = crate::person::handle(
+                    &mut database,
+                    &observations,
+                    &mut answers,
+                    request,
+                    now_ms(),
+                );
+                answers.prune(&database);
                 let _ = reply.try_send(result.map(Reply::Person).unwrap_or_else(Reply::Refused));
                 if changes {
                     dispatch = true;

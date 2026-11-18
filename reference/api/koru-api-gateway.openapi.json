@@ -1175,6 +1175,64 @@
         "minimum": 0,
         "type": "integer"
       },
+      "Answer": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "choice": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ApprovalChoiceId"
+                  },
+                  {
+                    "enum": [
+                      null
+                    ],
+                    "nullable": true
+                  }
+                ]
+              },
+              "decision": {
+                "$ref": "#/components/schemas/ApprovalDecision"
+              },
+              "kind": {
+                "enum": [
+                  "approval"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "decision"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answers": {
+                "items": {
+                  "$ref": "#/components/schemas/QuestionAnswer"
+                },
+                "nullable": true,
+                "type": "array"
+              },
+              "kind": {
+                "enum": [
+                  "questions"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "AppendReceipt": {
         "description": "What `POST /v1/events` answers. Duplicates are success — that is what\nmakes retrying under the same `event_id` idempotent.",
         "properties": {
@@ -1207,6 +1265,18 @@
           "last_seq"
         ],
         "type": "object"
+      },
+      "ApprovalChoiceId": {
+        "format": "uuid",
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string"
+      },
+      "ApprovalDecision": {
+        "enum": [
+          "approve",
+          "reject"
+        ],
+        "type": "string"
       },
       "ApprovalId": {
         "format": "uuid",
@@ -8936,6 +9006,31 @@
               "turn"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "kind": {
+                "enum": [
+                  "reask"
+                ],
+                "type": "string"
+              },
+              "question": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread",
+              "question"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -9617,6 +9712,35 @@
             "required": [
               "kind",
               "envelope"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "answer": {
+                "$ref": "#/components/schemas/Answer"
+              },
+              "id": {
+                "format": "uuid",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "answer"
+                ],
+                "type": "string"
+              },
+              "question": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "id",
+              "question",
+              "answer"
             ],
             "type": "object"
           },
@@ -16997,6 +17121,26 @@
           {
             "additionalProperties": false,
             "properties": {
+              "kind": {
+                "enum": [
+                  "questions"
+                ],
+                "type": "string"
+              },
+              "thread": {
+                "format": "uuid",
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "thread"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
               "after": {
                 "format": "uuid",
                 "nullable": true,
@@ -17025,6 +17169,80 @@
               "kind": {
                 "enum": [
                   "team"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "QuestionAnswer": {
+        "description": "One question's answer, by the question's id.",
+        "properties": {
+          "question_id": {
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/QuestionAnswerValue"
+          }
+        },
+        "required": [
+          "question_id",
+          "value"
+        ],
+        "type": "object"
+      },
+      "QuestionAnswerValue": {
+        "description": "What a question was answered with.",
+        "oneOf": [
+          {
+            "description": "One of its options, by label.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "option"
+                ],
+                "type": "string"
+              },
+              "label": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "label"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "The person's own words: *Other*, a secret, or a question with no\noptions.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "text"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "description": "A secret was given and is not repeated. Only ever in\n[`QuestionsOutcome::Answered`]; an answer sent with it is refused.",
+            "properties": {
+              "kind": {
+                "enum": [
+                  "withheld"
                 ],
                 "type": "string"
               }

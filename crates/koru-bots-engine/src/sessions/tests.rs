@@ -30,6 +30,7 @@ struct Plan {
     hold: bool,
     cancelled: bool,
     steering: Option<Steering>,
+    question: Option<bool>,
 }
 #[derive(Default)]
 struct Records {
@@ -40,6 +41,7 @@ struct Records {
     starts: Vec<bool>,
     stopped: usize,
     steers: Vec<String>,
+    answers: Vec<Vec<koru_session_protocol::QuestionAnswer>>,
 }
 struct Factory(Arc<Mutex<Records>>);
 struct Wake;
@@ -67,6 +69,7 @@ impl ManagedProviderFactory for Factory {
                 history: Uuid::new_v4().to_string(),
                 events: VecDeque::new(),
                 caps: None,
+                question: None,
             }),
             wake: Arc::new(Wake),
         })
@@ -79,6 +82,11 @@ struct Agent {
     history: String,
     events: VecDeque<AgentEvent>,
     caps: Option<AgentCapabilities>,
+    question: Option<(
+        koru_session_protocol::QuestionRequestId,
+        AgentTurnId,
+        Vec<koru_session_protocol::AgentQuestion>,
+    )>,
 }
 fn failure() -> ProviderFailure {
     ProviderFailure::new(
@@ -151,6 +159,24 @@ impl AgentControl for Agent {
                 turn_id: input.turn_id,
                 reason: koru_session_protocol::CancelReason::Run,
             });
+        } else if let Some(secret) = self.plan.question {
+            let request_id = koru_session_protocol::QuestionRequestId::mint();
+            let questions = vec![koru_session_protocol::AgentQuestion {
+                id: "q".into(),
+                header: String::new(),
+                question: "Synthetic question".into(),
+                options: vec![],
+                allow_other: true,
+                secret,
+            }];
+            self.question = Some((request_id, input.turn_id, questions.clone()));
+            self.events.push_back(AgentEvent::QuestionsRequired {
+                turn_id: input.turn_id,
+                request_id,
+                questions,
+                blocking: true,
+                delivery: koru_session_protocol::QuestionsDelivery::InTurn,
+            });
         } else if !self.plan.lost && !self.plan.hold {
             self.events.push_back(AgentEvent::MessageDelta {
                 turn_id: input.turn_id,
@@ -205,6 +231,31 @@ impl AgentControl for Agent {
     ) -> Result<(), ProviderFailure> {
         Ok(())
     }
+    fn answer_questions(
+        &mut self,
+        request: koru_session_protocol::QuestionRequestId,
+        answers: Option<Vec<koru_session_protocol::QuestionAnswer>>,
+    ) -> Result<(), ProviderFailure> {
+        let (expected, turn_id, questions) = self.question.take().ok_or_else(failure)?;
+        if request != expected {
+            return Err(failure());
+        }
+        let answers = answers.unwrap_or_default();
+        self.records.lock().unwrap().answers.push(answers.clone());
+        self.events.push_back(AgentEvent::QuestionsResolved {
+            turn_id,
+            request_id: request,
+            outcome: koru_session_protocol::QuestionsOutcome::Answered {
+                answers: koru_session_protocol::withhold_secrets(&questions, &answers),
+            },
+        });
+        self.events.push_back(AgentEvent::MessageDelta {
+            turn_id,
+            text: "finished".into(),
+        });
+        self.events.push_back(AgentEvent::TurnCompleted { turn_id });
+        Ok(())
+    }
     fn diagnostics(&self) -> ProviderDiagnostics {
         Default::default()
     }
@@ -234,6 +285,7 @@ struct TestPort {
     issued: Mutex<std::collections::BTreeMap<Uuid, Uuid>>,
     fail_publish: AtomicBool,
     steering_message: Mutex<Option<Envelope>>,
+    question_answers: Mutex<crate::questions::Transient>,
 }
 impl Port for TestPort {
     fn context(&self, _: Uuid) -> Result<Context, Error> {
@@ -251,6 +303,10 @@ impl Port for TestPort {
     }
     fn credential(&self, thread: Uuid, _: Uuid) -> Result<SessionGrant, Error> {
         let session = SessionId::mint();
+        let db = self.db.lock().unwrap();
+        db.connection.execute("INSERT OR IGNORE INTO workers(bot,incarnation,started_at_ms,last_heard_at_ms) VALUES (?1,?2,1,1)",rusqlite::params![self.bot.to_string(),self.worker.to_string()])?;
+        db.connection.execute("INSERT INTO credentials(digest,scope,bot,thread,session,worker_incarnation,grant) VALUES (?1,'owner',?2,?3,?4,?5,x'7b7d')",rusqlite::params![blake3::hash(session.to_string().as_bytes()).as_bytes().as_slice(),self.bot.to_string(),thread.to_string(),session.to_string(),self.worker.to_string()])?;
+        drop(db);
         self.issued
             .lock()
             .unwrap()
@@ -301,7 +357,34 @@ impl Port for TestPort {
             .unwrap()
             .mark_delivery_unknown(turn, delivery)
     }
-    fn event(&self, _: Turn, event: &AgentEvent) -> Result<(), Error> {
+    fn event(&self, turn: Turn, event: &AgentEvent) -> Result<(), Error> {
+        if matches!(
+            event,
+            AgentEvent::QuestionsRequired { .. } | AgentEvent::QuestionsResolved { .. }
+        ) {
+            let mut db = self.db.lock().unwrap();
+            db.question_event(turn, event, 10)?;
+            if let AgentEvent::QuestionsRequired { request_id, .. } = event {
+                db.answer_question(
+                    &Person {
+                        owner: "owner".into(),
+                        sender: "person".into(),
+                    },
+                    Uuid::new_v4(),
+                    request_id.as_uuid(),
+                    &crate::questions::Answer::Questions {
+                        answers: Some(vec![koru_session_protocol::QuestionAnswer {
+                            question_id: "q".into(),
+                            value: koru_session_protocol::QuestionAnswerValue::Text {
+                                text: "synthetic answer".into(),
+                            },
+                        }]),
+                    },
+                    &mut self.question_answers.lock().unwrap(),
+                    10,
+                )?;
+            }
+        }
         if matches!(event, AgentEvent::MessageDelta { .. })
             && let Some(message) = self.steering_message.lock().unwrap().take()
         {
@@ -316,6 +399,18 @@ impl Port for TestPort {
         }
         self.events.lock().unwrap().push(event.clone());
         Ok(())
+    }
+    fn answers(&self, turn: Turn) -> Result<Vec<crate::questions::Delivery>, Error> {
+        self.db
+            .lock()
+            .unwrap()
+            .pending_question_answers(turn, &self.question_answers.lock().unwrap())
+    }
+    fn answer_sent(&self, turn: Turn, question: Uuid, command: Uuid) -> Result<(), Error> {
+        self.db
+            .lock()
+            .unwrap()
+            .question_answer_sent(turn, question, command)
     }
     fn offer_steer(&self, turn: Turn, budget: usize) -> Result<Option<Delivery>, Error> {
         self.db.lock().unwrap().offer_steer(turn, budget, 10)
@@ -367,6 +462,7 @@ impl Fixture {
                 issued: Mutex::new(Default::default()),
                 fail_publish: AtomicBool::new(false),
                 steering_message: Mutex::new(None),
+                question_answers: Mutex::new(Default::default()),
             }),
             records: Arc::new(Mutex::new(Records::default())),
             database: Arc::new(Mutex::new(BotDatabase::in_memory().unwrap())),
@@ -428,6 +524,61 @@ impl Fixture {
     }
     fn input(&self, index: usize) -> serde_json::Value {
         serde_json::from_str(&self.records.lock().unwrap().inputs[index]).unwrap()
+    }
+}
+
+#[test]
+fn provider_questions_deliver_once_and_finish_without_journaling_secret_text() {
+    for secret in [false, true] {
+        let f = Fixture::new();
+        f.plan(Plan {
+            question: Some(secret),
+            ..Default::default()
+        });
+        let mut pool = Pool::new(f.port.worker, BotDatabase::in_memory().unwrap()).unwrap();
+        pool.admit(f.start()).unwrap();
+        let done = finish(&mut pool);
+        assert!(done.result.is_ok(), "{:?}", done.result);
+        assert_eq!(f.records.lock().unwrap().answers.len(), 1);
+        assert!(
+            f.port
+                .db
+                .lock()
+                .unwrap()
+                .read_questions(
+                    &Person {
+                        owner: "owner".into(),
+                        sender: "person".into()
+                    },
+                    f.thread
+                )
+                .unwrap()
+                .is_empty()
+        );
+        if secret {
+            assert!(
+                !serde_json::to_string(&*f.port.events.lock().unwrap())
+                    .unwrap()
+                    .contains("synthetic answer")
+            );
+            let payloads = f
+                .port
+                .db
+                .lock()
+                .unwrap()
+                .connection
+                .prepare("SELECT payload FROM messages")
+                .unwrap()
+                .query_map([], |r| r.get::<_, Vec<u8>>(0))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap();
+            assert!(
+                payloads
+                    .iter()
+                    .all(|v| !String::from_utf8_lossy(v).contains("synthetic answer"))
+            );
+        }
     }
 }
 

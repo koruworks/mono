@@ -318,7 +318,14 @@ impl Fixture {
         }
     }
     fn request(&mut self, command: Command) -> Reply {
-        handle(&mut self.db, &mut self.admission, self.who, command, 3)
+        handle(
+            &mut self.db,
+            &mut self.admission,
+            &mut crate::questions::Transient::default(),
+            self.who,
+            command,
+            3,
+        )
     }
     fn mint(&mut self, predecessor: Option<Uuid>) -> Issued {
         let Reply::Issued(issued) = self.request(Command::Mint {
@@ -358,6 +365,7 @@ fn registered_worker_still_needs_the_exact_reserved_assignment() {
         handle(
             &mut f.db,
             &mut f.admission,
+            &mut crate::questions::Transient::default(),
             other,
             Command::Started {
                 reservation: f.reservation

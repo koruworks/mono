@@ -49,6 +49,11 @@ pub enum Command {
     Send {
         envelope: messages::Envelope,
     },
+    Answer {
+        id: Uuid,
+        question: Uuid,
+        answer: crate::questions::Answer,
+    },
     Stop {
         id: Uuid,
         turn: messages::Turn,
@@ -96,6 +101,9 @@ pub enum Query {
     History {
         thread: Uuid,
         after: u64,
+    },
+    Questions {
+        thread: Uuid,
     },
     Outputs {
         thread: Uuid,
@@ -189,6 +197,10 @@ pub enum Change {
         thread: Uuid,
         turn: Uuid,
     },
+    Reask {
+        thread: Uuid,
+        question: Uuid,
+    },
 }
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Bot {
@@ -253,6 +265,7 @@ fn owner(connection: &rusqlite::Connection, who: &Person, bot: Uuid) -> Result<(
 pub(crate) fn handle(
     db: &mut Database,
     events: &crate::observations::LiveEvents,
+    answers: &mut crate::questions::Transient,
     request: Request,
     now: i64,
 ) -> Result<Reply, Error> {
@@ -272,6 +285,11 @@ pub(crate) fn handle(
         Command::Read { query } => read::query(db, &who, query),
         Command::Change { id, action } => value(change::apply(db, &who, id, &action, now)?),
         Command::Send { envelope } => value(db.accept_message(&who, &envelope, now)?),
+        Command::Answer {
+            id,
+            question,
+            answer,
+        } => value(db.answer_question(&who, id, question, &answer, answers, now)?),
         Command::Stop { id, turn } => value(db.stop_turn(&who, id, turn, now)?),
         Command::Continue {
             id,

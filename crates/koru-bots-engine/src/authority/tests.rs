@@ -205,6 +205,32 @@ fn failed_mint_receipt_rolls_back_replacement_and_revocation() {
 }
 
 #[test]
+fn a_question_hold_does_not_allow_a_second_provider_credential() {
+    let mut f = Fixture::new();
+    let issued = f.mint();
+    let delivery = f.claim(issued.session);
+    f.db.question_event(
+        delivery.turn,
+        &koru_session_protocol::AgentEvent::ApprovalRequired {
+            turn_id: delivery.turn.id.to_string().parse().unwrap(),
+            approval_id: koru_session_protocol::ApprovalId::mint(),
+            summary: "synthetic permission".into(),
+            choices: vec![],
+        },
+        4,
+    )
+    .unwrap();
+    assert_eq!(
+        f.db.mint_session(f.worker, f.request(), 5).err(),
+        Some(Error::TurnRunning)
+    );
+    assert_eq!(
+        f.db.session_head(f.worker, f.thread).unwrap(),
+        Some(issued.session)
+    );
+}
+
+#[test]
 fn binding_requires_an_open_turn_and_never_moves_to_the_next_turn() {
     let mut f = Fixture::new();
     let first = f.mint();

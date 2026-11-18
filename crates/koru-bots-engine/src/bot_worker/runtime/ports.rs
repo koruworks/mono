@@ -202,6 +202,23 @@ impl sessions::Port for Port {
             delivery,
         })
     }
+    fn answers(&self, turn: Turn) -> Result<Vec<crate::questions::Delivery>, Error> {
+        match self.client.call(Command::Answers {
+            reservation: self.reservation,
+            turn,
+        })? {
+            Reply::Answers(answers) => Ok(answers),
+            _ => Err(Error::InvalidRequest),
+        }
+    }
+    fn answer_sent(&self, turn: Turn, question: Uuid, command: Uuid) -> Result<(), Error> {
+        self.client.done(Command::AnswerSent {
+            reservation: self.reservation,
+            turn,
+            question,
+            command,
+        })
+    }
     fn offer_steer(&self, turn: Turn, budget: usize) -> Result<Option<Delivery>, Error> {
         match self.client.call(Command::OfferSteer {
             reservation: self.reservation,

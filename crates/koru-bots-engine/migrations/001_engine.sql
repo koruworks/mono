@@ -107,8 +107,13 @@ CREATE TABLE questions (
     turn TEXT NOT NULL REFERENCES turns(id),
     prompt BLOB NOT NULL,
     answer BLOB,
+    resolution BLOB,
+    command TEXT,
+    delivery_state TEXT NOT NULL DEFAULT 'idle' CHECK (delivery_state IN ('idle','pending','sent')),
     state TEXT NOT NULL CHECK (state IN ('open', 'answered', 'cancelled'))
 );
+CREATE INDEX questions_for_turn ON questions(turn,state,delivery_state);
+CREATE INDEX pending_questions ON questions(state,delivery_state) WHERE state='open' OR delivery_state='pending';
 CREATE TABLE credentials (
     digest BLOB PRIMARY KEY CHECK (length(digest) = 32),
     scope TEXT NOT NULL,
