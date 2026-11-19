@@ -14637,17 +14637,16 @@ fn the_help_rows_open_their_destinations() {
     let (mut v, _w) = container();
     while View::take_pane_request(&mut v).is_some() {}
     for (action, uri) in [
-        (
-            Action::Releases,
-            "https://github.com/koruworks/mono/releases",
-        ),
-        (Action::GitHub, "https://github.com/koruworks/mono"),
-        (Action::X, "https://x.com/korudotdo"),
+        (Action::Releases, "releases"),
+        (Action::GitHub, "github"),
+        (Action::X, "x"),
     ] {
         assert!(v.help_action(action));
         assert_eq!(
             View::take_pane_request(&mut v),
-            Some(PaneRequest::OpenUri(uri)),
+            Some(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                uri, None
+            ))),
             "{action:?}"
         );
         assert!(
@@ -14674,7 +14673,7 @@ fn the_help_rows_open_their_destinations() {
     );
     assert_eq!(
         View::take_pane_request(&mut v),
-        Some(PaneRequest::OpenWebsite(crate::whatsnew::release_url(
+        Some(PaneRequest::OpenWebsite(crate::whatsnew::release_link(
             koru_channel::build_info().version,
             koru_channel::ReleaseChannel::of_this_build(),
         )))

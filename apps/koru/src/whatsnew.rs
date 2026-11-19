@@ -31,14 +31,31 @@ use koru_workspace_host::{RichBlock, parse_markdown};
 /// The GitHub releases list, including release discussions and reactions.
 pub const RELEASES_URL: &str = "https://github.com/koruworks/mono/releases";
 
-/// Match the release tool's tags: moving `nightly`, otherwise `v<version>`.
-/// Internal builds have no published release, so use the releases list.
-pub fn release_url(version: &str, channel: koru_channel::ReleaseChannel) -> String {
+/// A Help destination on the site. No install, account or device id is put
+/// in a browser URL. The site allowlists the destination and returns 302.
+pub fn app_link(action: &str, tag: Option<&str>) -> String {
+    let info = koru_channel::build_info();
+    let mut url = url::Url::parse("https://www.koru.do/go/").expect("fixed site URL");
+    url.path_segments_mut()
+        .expect("site path")
+        .pop_if_empty()
+        .push(action);
+    url.query_pairs_mut()
+        .append_pair("v", info.version)
+        .append_pair("ch", koru_channel::ReleaseChannel::of_this_build().as_str())
+        .append_pair("os", info.platform);
+    if let Some(tag) = tag {
+        url.query_pairs_mut().append_pair("tag", tag);
+    }
+    url.into()
+}
+
+pub fn release_link(version: &str, channel: koru_channel::ReleaseChannel) -> String {
     use koru_channel::ReleaseChannel;
     match channel {
-        ReleaseChannel::Internal => RELEASES_URL.to_owned(),
-        ReleaseChannel::Nightly => format!("{RELEASES_URL}/tag/nightly"),
-        ReleaseChannel::Stable | ReleaseChannel::Beta => format!("{RELEASES_URL}/tag/v{version}"),
+        ReleaseChannel::Internal => app_link("releases", None),
+        ReleaseChannel::Nightly => app_link("release", Some("nightly")),
+        _ => app_link("release", Some(&format!("v{version}"))),
     }
 }
 
@@ -305,8 +322,8 @@ fn parse_releases_feed(xml: &str) -> Option<Vec<PublishedRelease>> {
 }
 
 /// Read the releases list off the window's thread. **Nothing about the
-/// person goes out**: a generic user agent, no token, no query but the page
-/// size. Any failure — offline, rate-limited, a changed body — is `None`,
+/// person goes out**: build dimensions only, no token or installation id.
+/// The site counts the request and serves a cached GitHub release list. Any failure — offline, rate-limited, a changed body — is `None`,
 /// and the popover keeps the row it had for this build.
 pub fn fetch_releases_async() -> std::sync::mpsc::Receiver<Option<Vec<PublishedRelease>>> {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -319,11 +336,22 @@ pub fn fetch_releases_async() -> std::sync::mpsc::Receiver<Option<Vec<PublishedR
         .spawn(move || {
             let answer = reqwest::blocking::Client::builder()
                 .timeout(std::time::Duration::from_secs(8))
-                .user_agent("Koru")
+                .user_agent(format!(
+                    "Koru/{} (build {})",
+                    koru_channel::build_info().version,
+                    koru_channel::build_info().build_number
+                ))
                 .build()
                 .ok()
                 .and_then(|client| {
-                    fetch_release_list(&client, RELEASES_API, parse_releases)
+                    let mut site = url::Url::parse("https://www.koru.do/v1/app/releases").ok()?;
+                    let info = koru_channel::build_info();
+                    site.query_pairs_mut()
+                        .append_pair("v", info.version)
+                        .append_pair("ch", koru_channel::ReleaseChannel::of_this_build().as_str())
+                        .append_pair("os", info.platform);
+                    fetch_release_list(&client, site.as_str(), parse_releases)
+                        .or_else(|| fetch_release_list(&client, RELEASES_API, parse_releases))
                         .or_else(|| fetch_release_list(&client, RELEASES_FEED, parse_releases_feed))
                 });
             let _ = tx.send(answer);

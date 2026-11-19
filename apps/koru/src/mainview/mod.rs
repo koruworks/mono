@@ -5549,11 +5549,18 @@ impl MainView {
             MenuSubject::Help => match action {
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
                 MenuAction::HelpStarOnGitHub => {
-                    self.ask_pane(PaneRequest::OpenUri(context_menu::GITHUB_URL));
+                    self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                        "github", None,
+                    )));
                     true
                 }
                 MenuAction::HelpSocial(social) => {
-                    self.ask_pane(PaneRequest::OpenUri(social.url()));
+                    self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                        match social {
+                            context_menu::Social::X => "x",
+                        },
+                        None,
+                    )));
                     true
                 }
                 _ => false,

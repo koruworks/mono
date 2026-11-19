@@ -69,7 +69,7 @@ impl MainView {
         match action {
             Action::Offer => self.help_offer_action(),
             Action::Current => {
-                let url = crate::whatsnew::release_url(
+                let url = crate::whatsnew::release_link(
                     koru_channel::build_info().version,
                     koru_channel::ReleaseChannel::of_this_build(),
                 );
@@ -85,7 +85,9 @@ impl MainView {
                 else {
                     return false;
                 };
-                let url = release.url.clone();
+                let tag = release.version.as_ref().map(|v| format!("v{v}"));
+                let url =
+                    crate::whatsnew::app_link("release", Some(tag.as_deref().unwrap_or("nightly")));
                 // The running build's notes are the ones the dot is about.
                 if help::Model::is_running(release) {
                     self.help_notes_read = true;
@@ -94,7 +96,9 @@ impl MainView {
                 self.ask_pane(PaneRequest::OpenWebsite(url))
             }
             Action::Releases => {
-                self.ask_pane(PaneRequest::OpenUri(crate::whatsnew::RELEASES_URL));
+                self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                    "releases", None,
+                )));
                 true
             }
             Action::Feedback => {

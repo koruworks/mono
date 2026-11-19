@@ -5,7 +5,7 @@ use koru_core::{Heading, ListStyle, Mark};
 use koru_workspace_host::{RichListSpec, RichTextKind};
 
 #[test]
-fn github_release_links_match_published_tags_and_local_builds_use_the_list() {
+fn site_release_links_match_published_tags_and_local_builds_use_the_list() {
     use koru_channel::ReleaseChannel;
     for (channel, version, expected) in [
         (
@@ -29,7 +29,12 @@ fn github_release_links_match_published_tags_and_local_builds_use_the_list() {
             "https://github.com/koruworks/mono/releases",
         ),
     ] {
-        assert_eq!(release_url(version, channel), expected);
+        let link = release_link(version, channel);
+        let tag = expected.strip_prefix(&format!("{RELEASES_URL}/tag/"));
+        assert_eq!(
+            link,
+            app_link(if tag.is_some() { "release" } else { "releases" }, tag)
+        );
     }
 }
 
@@ -262,5 +267,24 @@ fn only_the_three_newest_stable_releases_follow_the_nightly() {
         versions,
         ["0.1.10", "0.1.9", "0.1.2"],
         "by version, not by text"
+    );
+}
+
+#[test]
+fn help_site_links_have_only_build_dimensions_and_a_safely_encoded_tag() {
+    let raw = super::app_link("release", Some("v0.1.8"));
+    let link = url::Url::parse(&raw).unwrap();
+    assert_eq!(link.host_str(), Some("www.koru.do"));
+    assert_eq!(link.path(), "/go/release");
+    let pairs: std::collections::BTreeMap<_, _> = link.query_pairs().collect();
+    assert_eq!(pairs.len(), 4);
+    assert_eq!(pairs.get("tag").unwrap(), "v0.1.8");
+    assert!(pairs.contains_key("v") && pairs.contains_key("ch") && pairs.contains_key("os"));
+    assert!(
+        super::release_link("0.1.8", koru_channel::ReleaseChannel::Stable).contains("tag=v0.1.8")
+    );
+    assert!(
+        super::release_link("anything", koru_channel::ReleaseChannel::Nightly)
+            .contains("tag=nightly")
     );
 }

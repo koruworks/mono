@@ -6069,6 +6069,17 @@ releases**, **Send feedback**, **Star us on GitHub** and
 **Follow on X** are the remaining Help rows. The last three use feedback,
 GitHub and X icons.
 
+The release rows, **View all releases**, **Star us on GitHub** and **Follow on
+X** open through `www.koru.do/go/...`, which counts which row was opened and
+by which version, channel and operating system, then forwards to the release
+page, `koru.do/releases`, GitHub or X. **Send feedback** is not counted. The
+Help release list and the update check also go through `www.koru.do`: the
+site counts the version, channel and operating system asking, and the app
+marks its first check of the day so daily use can be counted without any
+install id. The site then serves the same list or the same manifest. If the
+site cannot be reached, the app asks the update server or GitHub directly, so
+an update is never missed.
+
 The account chooser —
 **Accounts…** on Manage's **Koru Cloud** page — switches between held accounts; **Add Account** starts
 sign-in or returns to an unfinished account choice. Switching keeps your open
