@@ -714,6 +714,32 @@ impl Host for MobileCloudHost {
         let downloads: Arc<dyn cloud_sync::Downloads> = Arc::new(OpenDocument(self.host.clone()));
         let blobs = host.blobs().cloned();
         let deferrals = Arc::clone(&self.deferrals);
+        if let (Some(workspace), Some(incarnation), Some(blobs)) =
+            (blob_workspace, blob_incarnation, blobs.as_ref())
+        {
+            let holds = deferrals
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .admissions
+                .entry(workspace)
+                .or_default()
+                .clone();
+            let live = Arc::clone(&self.live);
+            blobs.bind_admission(
+                &host.tokio(),
+                permit,
+                holds,
+                Arc::new(move |_| {
+                    lock(&live)
+                        .get(&permit_id)
+                        .is_some_and(|held| {
+                            held.session_generation == generation
+                                && held.session_connection_id == session_connection_id
+                        })
+                        .then_some(incarnation)
+                }),
+            );
+        }
         let live = Arc::clone(&self.live);
         let (reports, report) = tokio::sync::watch::channel::<Option<SessionReport>>(None);
         let (completed, mut completed_rx) =

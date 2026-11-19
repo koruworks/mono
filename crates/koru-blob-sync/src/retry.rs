@@ -92,6 +92,16 @@ pub fn classify(error: &TransferError) -> Disposition {
             | BlobCode::WrongObject
             | BlobCode::ObjectMissing
             | BlobCode::ObjectTooLarge
+            | BlobCode::CloudPolicyUnavailable
+            | BlobCode::CloudPlanRequired
+            | BlobCode::CloudDocumentCountLimit
+            | BlobCode::CloudStoredDocumentBytesLimit
+            | BlobCode::CloudPhysicalBytesLimit
+            | BlobCode::CloudStagingBytesLimit
+            | BlobCode::CloudRemovalCapacityLimit
+            | BlobCode::FileExceedsPlanAllowance
+            | BlobCode::UsageUnknown
+            | BlobCode::AccountOverQuota
             | BlobCode::RelayPathRefused => Disposition::ParkUnit,
 
             // Authorization has moved. The engine waits for the trigger that

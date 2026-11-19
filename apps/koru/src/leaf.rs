@@ -1016,6 +1016,18 @@ impl View for Leaf {
         }
     }
 
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        match self {
+            Self::Document(d) => View::take_wants_picture_texts(d),
+        }
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        match self {
+            Self::Document(d) => View::set_picture_text(d, hash, text),
+        }
+    }
+
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
         match self {
             Self::Document(d) => View::take_wants_copy_html(d),

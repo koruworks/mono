@@ -116,6 +116,12 @@ pub enum Control {
         version: Version1,
         policy_generation: i64,
         automatic_limit_bytes: usize,
+        /// The receiver answers every start before any body (M2 transfer
+        /// decision). Written only when true, and last, so a policy without
+        /// it is byte-identical to before; explicit `false` reads as absent.
+        /// A decoder older than the field refuses a policy that carries it.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        decision_required: bool,
     },
     TransferStart(Start),
     TransferDecision {
@@ -129,10 +135,16 @@ pub enum Control {
 }
 impl Control {
     pub fn policy(generation: i64, limit: usize) -> Self {
+        Self::policy_deciding(generation, limit, false)
+    }
+    /// [`Control::policy`] that also says whether every start waits for its
+    /// exact decision.
+    pub fn policy_deciding(generation: i64, limit: usize, decision_required: bool) -> Self {
         Self::TransferPolicy {
             version: Version1,
             policy_generation: generation,
             automatic_limit_bytes: limit,
+            decision_required,
         }
     }
     pub fn decision(start: &Start, decision: Decision) -> Self {

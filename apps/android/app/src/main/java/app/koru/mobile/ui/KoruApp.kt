@@ -1346,7 +1346,12 @@ private fun CloudSyncActionRow(
         is CloudSyncDetail.Complete -> stringResource(R.string.account_cloud_sync_complete)
         is CloudSyncDetail.Partial ->
             stringResource(R.string.account_cloud_sync_partial, value.synced, value.total)
-        is CloudSyncDetail.Failed -> value.code
+        is CloudSyncDetail.Failed ->
+            if (value.code == "cloud_free_capacity_full") {
+                stringResource(R.string.account_cloud_sync_free_full)
+            } else {
+                value.code
+            }
         is CloudSyncDetail.Unattached -> stringResource(R.string.account_cloud_sync_unattached)
     }
     val color = if (row.interactive) {

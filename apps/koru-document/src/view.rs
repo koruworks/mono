@@ -757,6 +757,14 @@ impl View for BuiltInDocument {
         BuiltInDocument::take_wants_read_again(self)
     }
 
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        BuiltInDocument::take_wants_picture_texts(self)
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        BuiltInDocument::set_picture_text(self, hash, text)
+    }
+
     fn set_reading_offers(
         &mut self,
         target: &koru_workspace_host::reading_file::ReadingTarget,

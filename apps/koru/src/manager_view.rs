@@ -543,6 +543,14 @@ impl View for DocumentPane {
         View::set_reading_offers(&mut self.doc, target, offers)
     }
 
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        View::take_wants_picture_texts(&mut self.doc)
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        View::set_picture_text(&mut self.doc, hash, text)
+    }
+
     fn take_wants_copy_html(&mut self) -> Option<(String, String)> {
         View::take_wants_copy_html(&mut self.doc)
     }
@@ -2289,6 +2297,20 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.set_reading_offers(target, offers),
             Self::Document(v) => v.set_reading_offers(target, offers),
+        }
+    }
+
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        match self {
+            Self::Container(v) => v.take_wants_picture_texts(),
+            Self::Document(v) => v.take_wants_picture_texts(),
+        }
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        match self {
+            Self::Container(v) => v.set_picture_text(hash, text),
+            Self::Document(v) => v.set_picture_text(hash, text),
         }
     }
 

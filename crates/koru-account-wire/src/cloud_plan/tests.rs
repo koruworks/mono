@@ -128,11 +128,13 @@ fn unknown_and_unassigned_placement_keep_required_null() {
 }
 
 #[test]
-fn fake_free_wire_is_finite_and_cannot_grant_mcp() {
+fn free_wire_is_finite_and_carries_cloud_mcp() {
     let policy = PolicyV1::try_from(&CloudPlanPolicy::fake_free()).unwrap();
+    policy.validate().unwrap();
     let json = serde_json::to_value(policy).unwrap();
+    assert_eq!(json["tier"], "free");
     assert_eq!(json["allowance"]["effective_bytes"], "1000000000");
-    assert_eq!(json["mcp_allowed"], false);
+    assert_eq!(json["mcp_allowed"], true);
     assert_eq!(json["access"]["state"], "read_write");
 }
 

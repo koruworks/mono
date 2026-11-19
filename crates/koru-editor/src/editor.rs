@@ -338,6 +338,34 @@ pub fn prepare(workspace: &mut Workspace) {
 }
 
 impl Editor {
+    /// The words read out of the picture whose blob address is `hash`, when
+    /// the host has them. See [`ViewState::picture_texts`].
+    pub fn picture_text(&self, hash: &str) -> Option<&str> {
+        self.view.picture_texts.get(hash).map(|text| &**text)
+    }
+
+    /// Record the words read out of one picture, or forget them with `None`.
+    /// Text that is only whitespace counts as none: there is nothing to find,
+    /// copy or say. Returns whether anything changed.
+    pub fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        let text = text.filter(|text| !text.trim().is_empty());
+        if self.picture_text(hash) == text {
+            return false;
+        }
+        match text {
+            Some(text) => {
+                self.view
+                    .picture_texts
+                    .insert(hash.to_owned(), std::sync::Arc::from(text));
+            }
+            None => {
+                self.view.picture_texts.remove(hash);
+            }
+        }
+        self.view.picture_texts_revision = self.view.picture_texts_revision.wrapping_add(1);
+        true
+    }
+
     /// A view over a document that already exists — another window, or a test.
     /// It adds nothing to the document — pair it with [`prepare`] when the
     /// workspace may be empty.
@@ -1869,6 +1897,35 @@ pub trait Editing {
         self.view_mut().search_flash = Some(SearchFlash {
             node: id,
             range,
+            until: Instant::now() + SEARCH_FLASH_DURATION,
+        });
+        true
+    }
+
+    /// **Land in-page find on a picture whose read words matched** (OCR
+    /// EXPERIENCE §3), the way global search lands on one: the picture's row
+    /// is brought into the search band and its frame flashed for the same
+    /// deadline. Like [`reveal_text_range`](Self::reveal_text_range) it leaves
+    /// the selection alone, so the find field keeps the keyboard; the words
+    /// that matched are not in the document, so there is nothing to light.
+    fn reveal_picture(&mut self, id: NodeId) -> bool {
+        let Some(i) = self.body().index_of(id) else {
+            return false;
+        };
+        self.shape_row_now(i);
+        let Some(row) = self.body().rows.get(i) else {
+            return false;
+        };
+        if row.image.is_none() {
+            return false;
+        }
+        let (top, bottom) = (row.y, row.y + row.height);
+        self.body_mut().focus = i;
+        self.view_mut().desired_x = None;
+        self.scroll_search_band_into_view(top, bottom);
+        self.view_mut().search_flash = Some(SearchFlash {
+            node: id,
+            range: 0..0,
             until: Instant::now() + SEARCH_FLASH_DURATION,
         });
         true

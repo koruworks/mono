@@ -309,8 +309,13 @@ fn sync_modes_profile_and_workspace_choices_show_saved_state_and_ceiling() {
         });
     view.delegate(|_| ());
     assert!(controls(&view).contains(&Control::SyncMode(None, TransportMode::P2p)));
+    assert!(controls(&view).contains(&Control::SyncMode(None, TransportMode::Cloud)));
+    // Koru Free (M3.2): an account with no Koru Cloud yet can still choose
+    // Cloud — turning it on is how it asks for a Free place — so the Cloud
+    // mode is offered, not dimmed, while the account has no subscription.
     assert!(
-        view.laid()
+        !view
+            .laid()
             .disabled
             .contains(&Control::SyncMode(None, TransportMode::Cloud))
     );

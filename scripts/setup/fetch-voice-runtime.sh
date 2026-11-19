@@ -12,11 +12,15 @@
 # same discipline `assets/fonts/*.ttf` follows through `koru.sh fonts`.
 #
 #   ./scripts/setup/fetch-voice-runtime.sh            this host's target
-#   ./scripts/setup/fetch-voice-runtime.sh --all      all three shipped targets
+#   ./scripts/setup/fetch-voice-runtime.sh --all      every pinned target
 #   ./scripts/setup/fetch-voice-runtime.sh --verify   check what is already here
 #
-# Exit status 3 means this host has nothing provisioned (Linux, for now): the
-# script placed nothing, and that is not a failure.
+# **On Linux x86_64 it provisions the reader, not voice.** Linux ships no voice
+# worker until its own rung (docs/features/linux/TECHNICAL.final.md, D4), but
+# the read worker's recognition links the ONNX Runtime library inside the same
+# upstream release's TTS-free Linux archive, so that archive is placed and the
+# library extracted. Nothing on Linux sets SHERPA_ONNX_ARCHIVE_DIR or builds
+# sherpa-onnx from it.
 #
 # Then, for a benchmark or a release build:
 #
@@ -34,17 +38,22 @@ BASE="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${VERSION}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 DEST="${ROOT}/third-party/sherpa-onnx/${VERSION}"
 
-# name<TAB>sha256<TAB>bytes — the same three columns as
-# `koru_voice_sherpa::artifacts::NAMES`, and a test there fails if the file
-# names drift from what sherpa-onnx-sys will look for.
+# name<TAB>sha256<TAB>bytes — the first three rows are the same three columns
+# as `koru_voice_sherpa::artifacts::NAMES`, and a test there fails if the file
+# names drift from what sherpa-onnx-sys will look for. The Linux row is the
+# reader's alone until Linux voice lands, pinned in
+# `koru_read_paddle::artifacts::READER_ARCHIVES`, and a test there fails if
+# this copy drifts.
 #
-# All three are upstream's TTS-free ("no-tts") archives: no espeak-ng, ucd or
+# All four are upstream's TTS-free ("no-tts") archives: no espeak-ng, ucd or
 # piper_phonemize, so no GPL-3.0 eSpeak NG in what links them
-# (`third-party/patches/sherpa-onnx.md`).
+# (`third-party/patches/sherpa-onnx.md`; the Linux one verified 2026-11-17,
+# `licensing/THIRD-PARTY.md`).
 ARTIFACTS=(
   "sherpa-onnx-v${VERSION}-win-x64-static-MT-Release-no-tts-lib.tar.bz2	6c746e0fabc52df40e185662faccb8dc03bcb1fd137394c3e9d3815e78ca9308	116816761"
   "sherpa-onnx-v${VERSION}-osx-arm64-static-no-tts-lib.tar.bz2	5df455ff1c262347dde37e5608d2a80ff948f9d65984709cf351c4d06edc931b	18717755"
   "sherpa-onnx-v${VERSION}-osx-x64-static-no-tts-lib.tar.bz2	adcc1de32d99410416a98d4f880ee2e2ef4343fad8b627e58d1cd1a5bd6d16b8	18413779"
+  "sherpa-onnx-v${VERSION}-linux-x64-static-no-tts-lib.tar.bz2	b6d61f8836ea247cf529ea411e12c9fc35314f0217278a3d61195672a4778e6a	21170001"
 )
 
 host_artifact() {
@@ -52,13 +61,10 @@ host_artifact() {
     MINGW*|MSYS*|CYGWIN*) echo "win-x64-static-MT-Release-no-tts-lib" ;;
     Darwin-arm64)         echo "osx-arm64-static-no-tts-lib" ;;
     Darwin-x86_64)        echo "osx-x64-static-no-tts-lib" ;;
-    # Not provisioned yet rather than unsupported: Linux voice is its own rung,
-    # gated by verifying the linux-x64 no-tts archive's licensing
-    # (docs/features/linux/TECHNICAL.final.md, D4 and D6). Status 3 lets a
-    # caller tell "nothing to place here" from a failure.
-    Linux-x86_64)         return 3 ;;
+    # The reader's archive; voice does not link it yet (see the top).
+    Linux-x86_64)         echo "linux-x64-static-no-tts-lib" ;;
     *)
-      echo "This product ships windows-x86_64, macos-aarch64 and macos-x86_64." >&2
+      echo "This product ships windows-x86_64, macos-aarch64, macos-x86_64 and linux-x86_64." >&2
       echo "There is no sherpa-onnx artifact provisioned for $(uname -s)-$(uname -m)." >&2
       exit 1
       ;;
@@ -170,10 +176,13 @@ place() {
 #
 # archive-dir<TAB>file<TAB>sha256<TAB>bytes — the same row as
 # `koru_read_paddle::artifacts::ONNXRUNTIME`, and a test there fails if they
-# drift. macOS is pinned when a Mac build first links it; Linux and Windows on
-# ARM have no archive.
+# drift. Apple silicon's comes from the archive Mac voice links (its objects are
+# built for macOS 13.4, the Mac release's minimum); Intel Macs ship no build,
+# and Windows on ARM and Linux aarch64 have no TTS-free archive.
 ORT_LIBRARIES=(
   "sherpa-onnx-v${VERSION}-win-x64-static-MT-Release-no-tts-lib	onnxruntime.lib	fc1f5722dd17cbe8c2131cad2b9da6e004392d45bbe71560ff5e54c9dee26f24	916804662"
+  "sherpa-onnx-v${VERSION}-linux-x64-static-no-tts-lib	libonnxruntime.a	9dbbd7bff1db5698d04ae6710a28e995a33d0409adc362f8ff2bb0bf7e8fc2ea	109507520"
+  "sherpa-onnx-v${VERSION}-osx-arm64-static-no-tts-lib	libonnxruntime.a	93850f85f3778a52d93f873da67d88c743cc9b43495af3e87e2b8df9b5a3998e	69439552"
 )
 
 # Extracted into a directory of its own beside the archive, verified, and only
@@ -240,15 +249,7 @@ for arg in "$@"; do
   esac
 done
 
-provisioned=0
-WANTED="$(host_artifact)" || provisioned=$?
-if [ "${provisioned}" = "3" ] && [ "${WANT_ALL}" = "0" ]; then
-  echo "voice runtime: not provisioned on this platform"
-  exit 3
-fi
-if [ "${provisioned}" != "0" ] && [ "${provisioned}" != "3" ]; then
-  exit "${provisioned}"
-fi
+WANTED="$(host_artifact)"
 status=0
 for row in "${ARTIFACTS[@]}"; do
   name="$(printf '%s' "${row}" | cut -f1)"
@@ -279,7 +280,11 @@ fi
 
 if [ "${status}" = "0" ]; then
   echo
-  echo "[voice] now:  export SHERPA_ONNX_ARCHIVE_DIR=\"${DEST}\""
+  if [ "${WANTED}" = "linux-x64-static-no-tts-lib" ]; then
+    echo "[voice] not built on this platform; the archive is the reader's"
+  else
+    echo "[voice] now:  export SHERPA_ONNX_ARCHIVE_DIR=\"${DEST}\""
+  fi
   if [ -n "${ORT_LIB_DIR}" ]; then
     echo "[read]  and:  export ORT_LIB_PATH=\"${ORT_LIB_DIR}\""
   fi

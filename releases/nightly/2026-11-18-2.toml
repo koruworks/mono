@@ -1,0 +1,30 @@
+title = "Read the words in pictures and scans on Linux and Mac"
+
+summary = [
+  "On Linux and on Macs with Apple silicon, Koru can now read the words in pictures and scanned pages, as it does on Windows.",
+  "Koru for Mac now needs macOS 13.4 or later.",
+]
+
+body = """
+## Text in pictures and scans, on Linux and Mac
+
+On Linux (x86_64) and on Macs with Apple silicon, Koru can now read the words
+in pictures and scanned pages, so search finds them, as it already does on
+Windows. Search and Settings (Editor, "Text in pictures and PDFs") offer to
+turn it on: it downloads a small model once, and the reading happens on your
+computer, not in the cloud.
+
+This is the first build that reads pictures on Linux and Mac, so tell us how
+it goes. On Mac and Linux, reading does not yet slow itself down or pause
+while your computer is on battery.
+
+## macOS 13.4 or later
+
+Koru for Mac now needs macOS 13.4 (Ventura) or later. A Mac on macOS 12, or
+on macOS 13 before 13.4, cannot open this build.
+
+## Fixes
+
+- Koru's MCP server no longer reports, now and then, that a document changed
+  when nothing had happened to it.
+"""

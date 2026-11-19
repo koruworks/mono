@@ -224,6 +224,8 @@ pub const MAX_TRACKED_UNITS: usize = 256;
 /// a restart would start to look like a durable verdict about a document.
 #[derive(Debug, Default)]
 pub struct Deferrals {
+    pub admissions:
+        HashMap<WorkspaceId, koru_network_iroh::cloud::client_io::reconcile::UploadAdmissionHolds>,
     units: HashMap<Unit, u32>,
 }
 
@@ -632,7 +634,13 @@ where
                 store_answer(store_result(Ok(reply)).await?)
             })))
         },
-    );
+    )
+    .with_admission_holds(ledger(&deferrals, |held| {
+        held.admissions
+            .entry(scope.eligibility_workspace)
+            .or_default()
+            .clone()
+    }));
 
     // Viewer rooms carry document bodies, which a manifest-stage credential
     // does not admit.
@@ -1139,6 +1147,15 @@ where
                     upload_deferred,
                     download_deferred,
                 });
+            }
+            Event::AdmissionHeld { unit, reason } => {
+                outcome.deferred.push(unit);
+                tracing::info!(
+                    ?unit,
+                    code = reason.code(),
+                    "cloud upload admission held; reads continue"
+                );
+                progress(Progress::Deferred { unit, upload: true });
             }
             Event::Refused { unit, code } => {
                 refused = true;

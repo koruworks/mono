@@ -69,6 +69,32 @@ impl CloudSyncPort for MobileCloudSync {
     fn store(&self, state: &DeviceCloudSync) -> Result<(), ServiceError> {
         self.state.store(state)
     }
+
+    /// The phone has a Store to open to Cloud, as the desktop does, so a
+    /// Profile created with the account starts with Cloud sync on here too
+    /// (ADR-000-createdwithaccount, M3.TECHNICAL.final §6).
+    fn starts_created_profiles_on(&self) -> bool {
+        true
+    }
+
+    /// The same group choice the desktop commits: the Profile and its
+    /// Workspaces to Cloud, leaving alone a Workspace somebody set
+    /// explicitly. A Profile already there writes nothing, so repeating it
+    /// is free. Whether the phone asks the transport-mode gate before moving
+    /// bytes is a separate decision this does not change.
+    fn open_to_cloud(&self, profile: ProfileId) -> Result<(), ServiceError> {
+        self.store
+            .with_store(move |store| {
+                store.choose_transport_mode(
+                    profile,
+                    koru_store_core::transport::TransportMode::Cloud,
+                    true,
+                )
+            })
+            .map_err(|_| ServiceError::retryable("store_unavailable"))?
+            .map(|_| ())
+            .map_err(|_| ServiceError::retryable("store_unavailable"))
+    }
 }
 
 /// The catalog row carries a name and an icon; the switch needs neither. This

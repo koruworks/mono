@@ -1043,6 +1043,21 @@ All the words of a search must be on the same page of a PDF, or in the same
 picture: `termination notice` does not find a PDF that says *termination* on
 page 2 and *notice* on page 39.
 
+**Inside one document.** `Ctrl+F` in a document also finds the words read from
+its pictures. Each time the word appears in a picture counts as one match, in
+the order the pictures sit on the page. Landing on one scrolls the picture into
+view and flashes its frame for about a second, as a search result does; no
+words are highlighted, because they are in the picture rather than in your
+text. **Replace** steps past a picture's match and **Replace all** leaves it
+alone. A picture pasted a moment ago is found once it has been read; if it is
+not found yet, close find and open it again.
+
+**Copy a picture's words.** Right-click a picture that has been read and choose
+**Copy text** to put its words on the clipboard as plain text. The item appears
+only when there are words to copy. A screen reader is given the same words as
+the picture's description, *Text in picture: ...*, up to the first 500
+characters. All of this happens on your computer; nothing is sent anywhere.
+
 **While a lot is being read** — after a large import, say — search finds what
 has been read already, and below the results it says how much is left:
 *"Still reading 1,240 of 8,300 pictures and PDFs."* A search that finds
