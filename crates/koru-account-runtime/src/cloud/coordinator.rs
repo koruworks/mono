@@ -1415,6 +1415,18 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         {
             return Err(Failure::NotReady);
         }
+        // **Selected up front, not only after a refusal** (CTO, 2026-11-18).
+        // Content admission stopped asking about the Profile, so the refusal
+        // below no longer comes — but the Cloud file routes still require this
+        // device to be provisioned for the Profile. A freshly signed-in device
+        // synced its documents and was refused every file, for ever. The
+        // signed-in account holds the Profile; selecting it is the service's
+        // idempotent "provision this device", asked once per Profile per
+        // authorization (`select_held_profile` remembers), and the pass runs
+        // again at once on the receipt it produced.
+        if self.select_held_profile(&candidate) {
+            return Err(Failure::NotReady);
+        }
         let token = match self.authorized(|api, authority| {
             api.issue_token_v2(
                 authority,

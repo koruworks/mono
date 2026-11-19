@@ -3186,14 +3186,16 @@ fn a_refused_workspace_of_a_profile_on_this_device_is_selected_and_then_admitted
 /// owns two Profiles with a Workspace each and this device holds the second.
 /// The first Profile's Workspace is never requested, selected or created
 /// here — which is the device's rule now that the service no longer requires
-/// a device to be bound to a Profile before it issues a credential.
+/// a device to be bound to a Profile before it issues a credential. The
+/// second, held here, is selected once (up front, for the file routes).
 #[test]
 fn a_workspace_of_a_profile_that_is_not_here_is_not_asked_for() {
     let world = hosted([1, 2]);
     lock(&world).held_profiles = Some(BTreeSet::from([profile(2)]));
     let harness = Harness::start(world);
     harness.control.update_authorization(authority("1"));
-    harness.wait_for(|world| {
+    // The pass that selects defers; the next comes at the debounce.
+    harness.tick_until(1_000, |world| {
         world
             .permits()
             .iter()
@@ -3203,7 +3205,19 @@ fn a_workspace_of_a_profile_that_is_not_here_is_not_asked_for() {
 
     let state = lock(&harness.world);
     assert_eq!(state.tokens("workspace:1"), 0, "{:?}", state.log);
-    assert_eq!(selections(&state.log), 0);
+    assert!(
+        !state
+            .log
+            .contains(&format!("select:{}", workspace(1).to_storage())),
+        "the Profile that is not here is never selected: {:?}",
+        state.log
+    );
+    assert_eq!(
+        selections(&state.log),
+        1,
+        "the held one, once: {:?}",
+        state.log
+    );
     assert!(
         state
             .permits()
@@ -3622,4 +3636,40 @@ fn every_stage_keeps_its_control_protocol_spelling() {
             "settled",
         ]
     );
+}
+
+/// **A held Profile is selected even when nothing is refused.** Content
+/// admission no longer asks about the Profile, so documents are admitted
+/// without it, but the Cloud file routes still require this device to be
+/// provisioned for the Profile — which only selection does for a device that
+/// has just signed in. Waiting for a refusal meant a new device synced its
+/// documents and was refused every file (dev build, 2026-11-18). Once per
+/// Profile per authorization, then the Workspaces are admitted as before.
+#[test]
+fn a_held_profile_is_selected_once_up_front_even_when_nothing_is_refused() {
+    let world = hosted([1, 2]);
+    lock(&world).held_profiles = Some(BTreeSet::from([profile(1), profile(2)]));
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.tick_until(1_000, |world| {
+        [profile(1), profile(2)].iter().all(|held| {
+            world
+                .permits()
+                .iter()
+                .any(|permit| is_workspace(permit) && placement_of(permit) == Some(*held))
+        })
+    });
+    harness.wait_snapshot(|snapshot| snapshot.failure_code.is_none());
+    let state = lock(&harness.world);
+    assert_eq!(
+        selections(&state.log),
+        2,
+        "one per held Profile: {:?}",
+        state.log
+    );
+    // A later pass under the same authorization does not ask again.
+    drop(state);
+    harness.control.wake();
+    harness.tick(2_000);
+    assert_eq!(selections(&harness.log()), 2, "not repeated");
 }
