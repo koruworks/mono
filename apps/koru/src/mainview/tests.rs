@@ -3345,6 +3345,43 @@ fn the_move_flyout_selects_its_arm_with_the_matching_arrow() {
     let _ = workspace;
 }
 
+/// Ctrl+T while the + menu stands moves it to the next pane's `+`, cycling the
+/// split panes' create points.
+#[test]
+fn ctrl_t_cycles_the_new_menu_through_the_panes() {
+    let (mut v, mut workspace) = two_document_tabs();
+    assert!(v.move_active_to_split(koru_editor::SplitSide::Right));
+    assert_eq!(v.panes.iter_groups().count(), 2);
+    // First press opens the menu for the focused pane.
+    assert!(v.key(&mut workspace.ws, &ch("t"), Some("t"), PRIMARY));
+    assert!(v.menu.is_some());
+    let first = v.panes.focused_path().clone();
+    // Second press moves the menu to the next pane.
+    assert!(v.key(&mut workspace.ws, &ch("t"), Some("t"), PRIMARY));
+    assert!(v.menu.is_some(), "still a + menu");
+    assert_ne!(
+        v.panes.focused_path(),
+        &first,
+        "focus moved to the next pane"
+    );
+}
+
+/// *Move* is dimmed when the focused pane has a single tab — there is nothing
+/// to split it away from.
+#[test]
+fn move_is_disabled_when_there_is_one_tab() {
+    let (mut v, _workspace) = container();
+    assert!(v.open_new_tab_menu());
+    let menu = v.menu.as_ref().expect("the + menu");
+    let enabled = v.enabled_items(menu);
+    let at = menu
+        .items()
+        .iter()
+        .position(|a| *a == MenuAction::Move)
+        .expect("Move is in the menu");
+    assert!(!enabled[at], "Move is dimmed with a single tab");
+}
+
 /// Drag a tab to the left edge of the view to create a vertical split with the
 /// dragged tab on the left.
 #[test]
@@ -9146,7 +9183,10 @@ fn no_tooltip_shows_while_a_rail_view_is_carried() {
 
 #[test]
 fn the_plus_tooltip_names_new_tab_and_teaches_its_chord() {
-    let (v, _workspace) = container();
+    let (mut v, _workspace) = container();
+    // Point at the + button so the tooltip anchors to it.
+    let slot = tabs::new_tab(v.strip(), v.tab_widths(), v.tab_scroll());
+    v.pointer = (slot.x + slot.w * 0.5, slot.y + slot.h * 0.5);
     let tip = v
         .caption_tooltip(Hit::NewTab)
         .expect("the visible plus has a tooltip");

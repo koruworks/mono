@@ -1822,6 +1822,20 @@ impl MainView {
         true
     }
 
+    /// Move focus to the next pane, in tree order, wrapping. `false` when the
+    /// window has a single pane, so there is nowhere to move to.
+    fn focus_next_pane(&mut self) -> bool {
+        let groups: Vec<panes::PanePath> = self.panes.iter_groups().map(|(path, _)| path).collect();
+        if groups.len() <= 1 {
+            return false;
+        }
+        let current = self.panes.focused_path().clone();
+        let at = groups.iter().position(|path| *path == current).unwrap_or(0);
+        let next = groups[(at + 1) % groups.len()].clone();
+        self.panes.set_focus(next);
+        true
+    }
+
     /// The one tail every drop path runs, **after** the tab has landed:
     /// emptied groups collapse (only now is it safe — the landing's paths were
     /// computed against the pre-collapse tree), and a document no longer shown
@@ -4492,6 +4506,9 @@ impl MainView {
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::NewTaskIn(_) => true,
                 MenuAction::TaskListRow(..) => true,
+                // Move splits the focused pane; with one tab there is nothing
+                // to split it away from.
+                MenuAction::Move => self.tabs().len() > 1,
                 // Dimmed, with its reason beside it, when this build carries
                 // no configuration for the importer (C6) — never hidden.
                 MenuAction::ImportFormat(id) => {
@@ -16632,6 +16649,17 @@ impl MainView {
             }
             return true;
         }
+        // **Ctrl+T while the + menu stands moves it to the next pane's `+`**,
+        // so the chord cycles the split panes' create points rather than being
+        // swallowed by the open menu.
+        if self.menu.is_some() && keys::resolve(key, text, mods) == Some(Chord::NewTab) {
+            self.menu = None;
+            self.submenu = None;
+            self.nested = None;
+            self.focus_next_pane();
+            self.open_new_tab_menu();
+            return true;
+        }
         // **Writing is using.** A key that types, with nothing standing over
         // the page to take it, stamps the tab in front as the one last used:
         // what the quick switch orders by.
@@ -18859,6 +18887,25 @@ impl MainView {
         })
     }
 
+    /// The `+` button the pointer is over, whichever pane it belongs to — the
+    /// New-tab tooltip anchors to this, not to the focused pane's `+`.
+    fn hovered_new_tab_rect(&self) -> Option<Rect> {
+        for (path, _) in self.panes.leaf_rects(self.content()) {
+            let Some(header) = self.lane_rect_for(&path) else {
+                continue;
+            };
+            if !header.contains(self.pointer.0, self.pointer.1) {
+                continue;
+            }
+            let group = self.panes.group(&path)?;
+            let button = tabs::new_tab(header, &group.widths, group.scroll);
+            if button.w > 0.0 {
+                return Some(button);
+            }
+        }
+        None
+    }
+
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
         if self.carrying() || self.sidebar.animating() {
             return None;
@@ -18924,17 +18971,14 @@ impl MainView {
                 ),
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReminderAttention),
             )),
-            Hit::NewTab => {
-                let slot = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
-                (slot.w > 0.0).then(|| {
-                    TooltipContent::new(
-                        4,
-                        slot,
-                        koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label,
-                    )
-                    .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
-                })
-            }
+            Hit::NewTab => self.hovered_new_tab_rect().map(|slot| {
+                TooltipContent::new(
+                    4,
+                    slot,
+                    koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label,
+                )
+                .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
+            }),
             // A hovered history row answers with the exact moment behind its
             // relative time. Keys sit past the caption buttons' 1..4 so a
             // pointer sliding between rows re-anchors while staying warm.
