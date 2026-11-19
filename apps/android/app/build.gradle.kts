@@ -533,7 +533,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.4")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.4")
-    implementation("androidx.navigation:navigation-compose:2.9.6")
+    implementation("androidx.navigation:navigation-compose:2.10.2")
     // WorkManager, for one thing only: resuming a blob transfer Android
     // interrupted by killing this process. It is never a tick — D244 makes the
     // account poll the phone's heartbeat and this does not compete with it.
