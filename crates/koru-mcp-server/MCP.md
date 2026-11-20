@@ -369,7 +369,12 @@ This file is the long form; the reply points here.
   input schemas retain every per-component `oneOf`, exact `id`/`component` pair,
   required field and task bucket/list exclusion. Only top-level `$schema` and
   `title` annotations are removed. Generic tagged-union flattening loses these
-  relationships and is not used for that catalog.
+  relationships and is not used for that catalog. **They are the one place a
+  local `$ref` is published**, with its `$defs`: inlined, the create schema
+  grows by about 3 KB and `create_task_document_app` no longer fits one page
+  of the [paged list](#pages-off-by-default) (7,970 bytes against 7,000, measured
+  2026-11-20). The compactness test exempts these three tools from the
+  `$ref` rule and no other.
 - **One type per branch.** Unions such as string-or-null are published as
   `anyOf: [{"type":"string"}, {"type":"null"}]` rather than a `type` array.
   This improves portability to clients that only accept a single type name.
@@ -414,9 +419,9 @@ group (maintainers, 2026-11-02).
 | `versions` | `save_document_version`, `list_document_versions`, `compare_document_versions`, `restore_document_version` | 2,074 | 519 | 2,250 |
 | `tasks` | `list_tasks`, `update_task` | 3,350 | 838 | 3,410 |
 | `chat` | `list_chats`, `search_chats`, `read_chat` | 1,483 | 371 | 1,510 |
-| `mini-apps` | `create_task_document_app`, `find_task_app_lists`, `update_task_document_app` | 5,019 | 1,255 | 5,550 |
+| `mini-apps` | `create_task_document_app`, `find_task_app_lists`, `update_task_document_app` | 11,738 | 2,935 | 12,900 |
 | the view tools — listed with `docs`, in no toolset | `show_document`, `read_image`, `watch_document` | 1,511 | 378 | 1,650 |
-| every toolset on | the whole reply, envelope included | 30,980 | 7,745 | 32,750 |
+| every toolset on | the whole reply, envelope included | 37,699 | 9,425 | 40,100 |
 
 A toolset's bytes are its tools as published, one separator each; the reply
 adds about 45 bytes of envelope. Tokens are bytes over four. Measured
@@ -424,6 +429,16 @@ adds about 45 bytes of envelope. Tokens are bytes over four. Measured
 `each_toolset_is_within_its_budget`, and the total by
 `the_published_tool_list_is_compact_and_within_its_budget`. Raising one is a
 decision recorded here.
+
+**The mini-apps budget was raised on 2026-11-20**, from 5,550 to 12,900
+bytes, and the total with it from 32,750 to 40,100. The toolset had grown to
+11,738 bytes when document mini apps joined task ones (`078001b6b`,
+`3f4f45e79`): the creation and update schemas carry the composed document's
+components as hand-written `oneOf` branches, which must stay whole. Raised
+to its measured size plus about 10% when the branch was merged into main,
+rather than cut down without the A2UI work's review. Since the toolset is on
+by default, every session pays about 2,900 tokens for it; turning it off by
+default, or shortening those schemas, is the way back down.
 
 **The view tools have a budget line of their own** (2026-11-11), and the
 total grew by it, from 25,550 to 27,200. They are in no router, so in no

@@ -7873,7 +7873,14 @@ mod tests {
             let schema = Value::Object(tool.input_schema.as_ref().clone());
             let mut found = Vec::new();
             keywords(&schema, false, &mut found);
+            // The native mini-app catalog keeps its local `$defs`: inlined,
+            // `create_task_document_app` alone outgrows one page of the
+            // paged list (MCP.md, What `tools/list` publishes).
+            let mini_app = crate::mini_apps::NAMES.contains(&tool.name.as_ref());
             for banned in ["$ref", "$defs", "$schema", "title"] {
+                if mini_app && matches!(banned, "$ref" | "$defs") {
+                    continue;
+                }
                 assert!(
                     !found.iter().any(|k| k == banned),
                     "{} publishes {banned}",

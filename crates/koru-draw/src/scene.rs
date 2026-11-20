@@ -885,11 +885,13 @@ pub fn floating_panel_scope(
                 "scene::Panel::elevation",
             );
             record.property("radius", panel.radius, "scene::Panel::radius");
-            record.property(
-                "shadow_alpha",
-                panel.shadow_alpha.clamp(0.0, 1.0),
-                "scene::Panel::shadow_alpha",
-            );
+            // Only when softened: a panel at the full theme shadow records
+            // exactly what it recorded before the control existed, so the
+            // popover baselines and every other inspector reading hold.
+            let shadow_alpha = panel.shadow_alpha.clamp(0.0, 1.0);
+            if shadow_alpha < 1.0 {
+                record.property("shadow_alpha", shadow_alpha, "scene::Panel::shadow_alpha");
+            }
         });
     let a = panel.alpha.clamp(0.0, 1.0);
     let dim = |c: Color| c.multiply_alpha(a);

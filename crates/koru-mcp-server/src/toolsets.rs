@@ -262,7 +262,9 @@ pub(crate) const BUDGETS: [(Toolset, usize); 7] = [
     (Toolset::Versions, 2_250),
     (Toolset::Tasks, 3_410),
     (Toolset::Chat, 1_510),
-    (Toolset::MiniApps, 5_550), // 5,019 bytes measured 2026-11-13; preserve normative oneOf branches.
+    // 11,738 bytes measured 2026-11-20, after the document mini apps; preserve
+    // normative oneOf branches. The raise is recorded in MCP.md's Toolsets table.
+    (Toolset::MiniApps, 12_900),
 ];
 
 /// What a `tools/list` reply line spends outside its tools: the JSON-RPC
