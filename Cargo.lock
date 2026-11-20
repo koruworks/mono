@@ -8157,6 +8157,7 @@ dependencies = [
  "koru-i18n",
  "koru-store-core",
  "koru-ui",
+ "tracing",
 ]
 
 [[package]]
