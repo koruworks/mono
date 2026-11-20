@@ -320,7 +320,10 @@ fn the_worker_says_which_request_it_is_on_and_what_waits() {
     assert_eq!(busy.queued.load(Ordering::Relaxed), 1);
     assert_eq!(busy.running().map(|(kind, _)| kind), Some("catalog"));
     assert!(busy.finish().is_some());
-    assert!(busy.running().is_none(), "a finished request is not running");
+    assert!(
+        busy.running().is_none(),
+        "a finished request is not running"
+    );
     assert!(busy.finish().is_none());
 
     let workspace = WorkspaceId::new();
