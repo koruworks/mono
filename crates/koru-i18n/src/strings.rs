@@ -4446,13 +4446,18 @@ pub enum Key {
     TasksFromSearchDismiss,
     /// A task result's menu: open the document the task is written in, at its line.
     SearchOpenInDocument,
+    UiLabOptionAbove,
+    UiLabTreeDragName,
+    UiLabTreeDragPurpose,
+    UiLabQuickSwitchName,
+    UiLabQuickSwitchPurpose,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 3367] = [
+    pub const ALL: [Key; 3372] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -7820,6 +7825,11 @@ impl Key {
         Key::TasksFromSearch,
         Key::TasksFromSearchDismiss,
         Key::SearchOpenInDocument,
+        Key::UiLabOptionAbove,
+        Key::UiLabTreeDragName,
+        Key::UiLabTreeDragPurpose,
+        Key::UiLabQuickSwitchName,
+        Key::UiLabQuickSwitchPurpose,
     ];
 }
 
@@ -20365,4 +20375,9 @@ Row { key: Key::MiniAppPreviousPins, en: "Previous pins", es: "Accesos anteriore
     Row { key: Key::TasksFromSearch, en: "From search", es: "Desde la búsqueda", pt_br: "Da busca", de: "Aus der Suche", fr: "Depuis la recherche", ar: "من البحث", zh_hans: "来自搜索", ja: "検索から" },
     Row { key: Key::TasksFromSearchDismiss, en: "Dismiss", es: "Descartar", pt_br: "Dispensar", de: "Ausblenden", fr: "Ignorer", ar: "تجاهل", zh_hans: "关闭", ja: "閉じる" },
     Row { key: Key::SearchOpenInDocument, en: "Open in document", es: "Abrir en el documento", pt_br: "Abrir no documento", de: "Im Dokument öffnen", fr: "Ouvrir dans le document", ar: "فتح في المستند", zh_hans: "在文档中打开", ja: "ドキュメントで開く" },
+    Row { key: Key::UiLabOptionAbove, en: "Above", es: "Encima", pt_br: "Acima", de: "Darüber", fr: "Dessus", ar: "أعلى", zh_hans: "上方", ja: "上" },
+    Row { key: Key::UiLabTreeDragName, en: "Tree drag arithmetic", es: "Cálculo del arrastre en árbol", pt_br: "Cálculo do arraste em árvore", de: "Rechnung zum Ziehen im Baum", fr: "Calcul du glisser dans l’arborescence", ar: "حساب السحب في الشجرة", zh_hans: "树形拖动计算", ja: "ツリーのドラッグ計算" },
+    Row { key: Key::UiLabTreeDragPurpose, en: "Where a row dragged in an indented list would land, when a closed row under it opens, and how fast the list scrolls at its edges. The document tree and the Lists section of the tasks rail share it.", es: "Dónde caería una fila arrastrada en una lista con sangría, cuándo se abre una fila cerrada bajo ella y a qué velocidad se desplaza la lista en sus bordes. Lo comparten el árbol de documentos y la sección Listas del panel de tareas.", pt_br: "Onde uma linha arrastada numa lista recuada cairia, quando uma linha fechada sob ela se abre e com que velocidade a lista rola nas bordas. A árvore de documentos e a seção Listas do painel de tarefas o compartilham.", de: "Wo eine in einer eingerückten Liste gezogene Zeile landen würde, wann sich eine geschlossene Zeile darunter öffnet und wie schnell die Liste an ihren Rändern scrollt. Der Dokumentbaum und der Bereich Listen der Aufgabenleiste teilen sie.", fr: "Où tomberait une ligne glissée dans une liste indentée, quand une ligne fermée sous elle s’ouvre et à quelle vitesse la liste défile à ses bords. L’arborescence des documents et la section Listes du rail des tâches le partagent.", ar: "أين سيستقر صف يُسحب في قائمة متدرجة، ومتى يُفتح صف مغلق تحته، وبأي سرعة تتمرر القائمة عند حوافها. تتشاركه شجرة المستندات وقسم القوائم في شريط المهام.", zh_hans: "在缩进列表中拖动一行时它会落在哪里、其下方折叠的行何时展开，以及列表在边缘滚动的速度。文档树和任务栏的“列表”部分共用它。", ja: "インデントされたリストでドラッグした行がどこに入るか、その下の閉じた行がいつ開くか、リストの端でどの速さでスクロールするかを決めます。ドキュメントツリーとタスクレールのリスト欄が共有します。" },
+    Row { key: Key::UiLabQuickSwitchName, en: "Quick switch", es: "Cambio rápido", pt_br: "Troca rápida", de: "Schnellwechsel", fr: "Changement rapide", ar: "التبديل السريع", zh_hans: "快速切换", ja: "クイック切り替え" },
+    Row { key: Key::UiLabQuickSwitchPurpose, en: "The list Ctrl+Tab shows of every open tab, most recently used first: hold Control and press Tab to move through it, let go to switch, and hover a row to close that tab.", es: "La lista que muestra Ctrl+Tab con todas las pestañas abiertas, la usada más recientemente primero: mantén Control y pulsa Tab para recorrerla, suelta para cambiar y pasa el puntero sobre una fila para cerrar esa pestaña.", pt_br: "A lista que Ctrl+Tab mostra com todas as abas abertas, a usada mais recentemente primeiro: segure Control e pressione Tab para percorrê-la, solte para trocar e passe o ponteiro sobre uma linha para fechar essa aba.", de: "Die Liste aller offenen Tabs, die Strg+Tab zeigt, der zuletzt benutzte zuerst: Strg halten und Tab drücken, um durchzugehen, loslassen, um zu wechseln, und mit dem Zeiger über eine Zeile fahren, um diesen Tab zu schließen.", fr: "La liste que Ctrl+Tab affiche de tous les onglets ouverts, le plus récemment utilisé d’abord : maintenez Ctrl et appuyez sur Tab pour la parcourir, relâchez pour changer, et survolez une ligne pour fermer cet onglet.", ar: "القائمة التي يعرضها Ctrl+Tab لكل التبويبات المفتوحة، الأحدث استخدامًا أولًا: اضغط مع الاستمرار على Control واضغط Tab للتنقل فيها، ثم اترك للتبديل، ومرّر المؤشر فوق صف لإغلاق ذلك التبويب.", zh_hans: "按 Ctrl+Tab 显示的所有已打开标签页列表，最近使用的在前：按住 Control 并按 Tab 在其中移动，松开即切换，将指针悬停在某一行上可关闭该标签页。", ja: "Ctrl+Tab で表示される、開いているすべてのタブのリストです。最近使ったものが先頭に並びます。Control を押したまま Tab を押して移動し、離すと切り替わります。行にポインターを合わせるとそのタブを閉じられます。" },
 ];

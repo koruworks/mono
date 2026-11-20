@@ -324,6 +324,7 @@ const TOKEN_RECORDS: [Entry; 11] = [
                     literal("POPOVER_HEADING"),
                     literal("SUBTITLE"),
                     literal("PANE_TITLE"),
+                    literal("PAGE_TITLE"),
                 ],
             )],
             A2ui::Values {

@@ -257,6 +257,10 @@ const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../crates/koru-ui/src/tooltip.rs"),
     ),
     (
+        "crates/koru-ui/src/tree_drag.rs",
+        include_str!("../../../../../../crates/koru-ui/src/tree_drag.rs"),
+    ),
+    (
         "crates/koru-ui/src/typography.rs",
         include_str!("../../../../../../crates/koru-ui/src/typography.rs"),
     ),
@@ -511,6 +515,7 @@ const KORU_UI_MODULES: &[(&str, Module)] = &[
     ("toast", Module::Records(&["C-TOAST"])),
     ("toggle", Module::Records(&["C-TOGGLE"])),
     ("tooltip", Module::Records(&["C-TOOLTIP"])),
+    ("tree_drag", Module::Records(&["H-TREE-DRAG"])),
     (
         "typography",
         Module::Excluded(
@@ -657,7 +662,7 @@ fn every_koru_ui_module_is_classified() {
         .iter()
         .filter(|(_, public)| *public)
         .count();
-    assert_eq!(public, 58, "the inventory's baseline is 58 public modules");
+    assert_eq!(public, 59, "the inventory's baseline is 59 public modules");
     // Each record of the shared widgets sits in the module that names it,
     // and every koru-ui record is reached from a module.
     for (name, module) in KORU_UI_MODULES {

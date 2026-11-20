@@ -121,7 +121,7 @@ pub(super) const RECORDS: &[Entry] = &[
                         literal("Reminders"),
                         literal("ListsHeading"),
                         literal("List"),
-                        literal("NewList"),
+                        literal("Compose"),
                     ],
                 )],
             ),

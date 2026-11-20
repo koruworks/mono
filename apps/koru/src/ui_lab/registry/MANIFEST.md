@@ -152,7 +152,7 @@ One list, deduplicated; each batch's section below has the lines.
   default copy; the workspace app's Tasks capture and empty state, mini-app
   failures and refusals, feedback form, Welcome rows, Manage pages, Trash,
   Jump List, Settings rows, Agent trouble lines and the container's modals,
-  toasts and tooltip; `koru-document`'s confirmations, menus, bubble and
+  toasts, tooltip and quick switch; `koru-document`'s confirmations, menus, bubble and
   find bar; the Agent's windows, tray and dialogs; the Store's tray menu,
   backup dialogs and failure box; `koru-native-notifications`'
   `ActionLabels::default()`, against its own doc; the macOS share
@@ -240,7 +240,7 @@ batch's counts.
 <!-- counts:begin -->
 | Count | Value |
 | --- | --- |
-| koru-ui public modules | 58 |
+| koru-ui public modules | 59 |
 | koru-ui private modules | 1 |
 | koru-draw public modules | 19 |
 | koru-draw theme public submodules | 5 |
@@ -250,11 +250,11 @@ batch's counts.
 | domain crate lib.rs public modules | 125 |
 | domain crate modules excluded | 78 |
 | app crates baselined | 5 |
-| app source files | 348 |
+| app source files | 368 |
 | app files baselined | 23 |
-| app modules classified | 273 |
-| app modules excluded | 141 |
-| records: app crates | 64 |
+| app modules classified | 278 |
+| app modules excluded | 144 |
+| records: app crates | 65 |
 | native files: Android | 24 |
 | native files: iOS | 10 |
 | native files: macOS | 1 |
@@ -262,38 +262,38 @@ batch's counts.
 | native views | 30 |
 | native entry points baselined | 30 |
 | records: native platforms | 35 |
-| records | 333 |
+| records | 335 |
 | records: foundations | 61 |
-| records: controls | 88 |
-| records: application compositions | 184 |
+| records: controls | 89 |
+| records: application compositions | 185 |
 | records: domain crates | 114 |
 | kind: token | 25 |
 | kind: primitive | 24 |
 | kind: widget | 61 |
-| kind: support | 72 |
+| kind: support | 73 |
 | kind: domain composition | 57 |
-| kind: app-local | 59 |
+| kind: app-local | 60 |
 | kind: native adapter | 35 |
-| token values listed | 174 |
-| symbols | 2391 |
+| token values listed | 175 |
+| symbols | 2400 |
 | symbols with typed recipes | 22 |
-| inspector identities | 61 |
-| inspector identity registration sites | 64 |
+| inspector identities | 62 |
+| inspector identity registration sites | 65 |
 | disposition: story exists | 21 |
-| disposition: no story yet | 192 |
-| disposition: nonvisual | 62 |
+| disposition: no story yet | 193 |
+| disposition: nonvisual | 63 |
 | disposition: platform-only | 33 |
 | disposition: boundary | 25 |
 | symbol story: available | 21 |
-| symbol story: no story yet | 432 |
-| symbol story: nonvisual | 1676 |
+| symbol story: no story yet | 433 |
+| symbol story: nonvisual | 1684 |
 | symbol story: platform-only | 98 |
 | symbol story: boundary | 164 |
 | A2UI: component | 11 |
 | A2UI: host-styled | 1 |
 | A2UI: declarable values | 9 |
 | A2UI: host only | 31 |
-| A2UI: not supported | 2339 |
+| A2UI: not supported | 2348 |
 <!-- counts:end -->
 
 Platform cells, by platform and availability: each record says one thing
@@ -302,11 +302,11 @@ about each platform.
 <!-- cells:begin -->
 | Platform | available | existing | shared source | native partial | planned | unavailable | not applicable | native-owned | not audited |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Windows | 21 | 266 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
-| macOS | 0 | 1 | 286 | 0 | 1 | 3 | 34 | 8 | 0 |
-| Linux | 0 | 0 | 286 | 0 | 0 | 7 | 36 | 3 | 1 |
-| Android | 0 | 18 | 0 | 73 | 13 | 196 | 28 | 3 | 2 |
-| iOS | 0 | 14 | 0 | 55 | 13 | 211 | 33 | 6 | 1 |
+| Windows | 21 | 268 | 0 | 0 | 0 | 0 | 36 | 10 | 0 |
+| macOS | 0 | 1 | 288 | 0 | 1 | 3 | 34 | 8 | 0 |
+| Linux | 0 | 0 | 288 | 0 | 0 | 7 | 36 | 3 | 1 |
+| Android | 0 | 18 | 0 | 73 | 13 | 198 | 28 | 3 | 2 |
+| iOS | 0 | 14 | 0 | 55 | 13 | 213 | 33 | 6 | 1 |
 <!-- cells:end -->
 
 ## Batch 1 — shared APIs and tokens
@@ -2433,6 +2433,82 @@ listed above.
   languages, and the painter it records now also shows extracted readings.
 - The OCR tab draws its toolbar buttons through a private element leaf
   round `ActionButton::draw_focused` rather than a shared button element.
+
+## Reconciled against main — 20 November 2026
+
+The UI Lab was merged into main (`0a177dbbc`), and main brought nested task
+lists, the sidebar's quick filter, Ctrl+Tab's quick switch, opening a list
+or a task from search in Tasks, the task list kept current from the Store's
+events, and the search scope chip. The drift checks failed on the merge,
+as they are meant to, and each new thing was read and classified by hand
+as every earlier one was.
+
+**New records: 2.**
+
+- `H-TREE-DRAG` (`crates/koru-ui/src/tree_drag.rs`, module
+  `koru_ui::tree_drag`): the arithmetic of a drag in an indented list —
+  where the dragged row lands (`drop_target` over `Row`, answering a
+  `Target` in a `Zone`), when a closed row under it springs open
+  (`SpringOpen`) and how fast the list scrolls at its edges
+  (`edge_scroll`). The document tree and the Lists section of the tasks
+  rail share it. Support, in the controls' support group, nonvisual; it
+  draws nothing and registers no identity.
+- `C-QUICK-SWITCH` (`apps/koru/src/mainview/quick_switch.rs`,
+  `QuickSwitch`): the list Ctrl+Tab shows of the window's open tabs, most
+  recently used first, with a ✕ on the hovered row. App-local, a
+  composition, desktop only, no story yet. Built purely from `Entry` rows
+  the container makes; `QuickSwitch::draw` is its painter. It registers no
+  component identity.
+
+**Records extended: 4.**
+
+- `C-SEARCH-SURFACE` gained the identity **Search scope chip** (the chip
+  that says which workspaces a search covers, `koru-search-ui/src/lib.rs`),
+  and its `Target` option set now reads Store, List, Task, Chat: the two
+  new members open a task list as its page in Tasks, and a task on the page
+  where it is now.
+- `C-TOOLTIP`'s placement option set gained **Above**
+  (`Tooltip::above`).
+- `T-TEXT-ROLES` gained `PAGE_TITLE`, the text role of a page's title.
+- `C-TASKS-RAIL`'s `RailRow` option set reads `Compose` where it read
+  `NewList`: the row a new list's name is typed on now sits first under
+  the heading, or first under its parent for a child list.
+
+**Modules classified: 6.**
+
+| Module | Disposition |
+| --- | --- |
+| `koru_ui::tree_drag` | record `H-TREE-DRAG` |
+| `koru::mainview::quick_switch` | record `C-QUICK-SWITCH` |
+| `koru::panes::explore::quick_filter` | `C-EXPLORE`: the sidebar's rows narrowed by name, a projection over the rows the pane holds |
+| `koru::mainview::task_events` | excluded, io: one live tail per window on the Store's tasks-changed event, the Tasks surfaces' trigger to read again |
+| `koru::tasks_view::landing` | excluded, io: one bounded query for a task opened from search, and the pure choice of the Tasks page it lands on |
+| `koru_agent::cloud_reconcile` | excluded, orchestration: re-applies the remembered Cloud sync choices on the Store's catalog watch; no window |
+
+**Source files added to the drift checks: 20.** Besides the six modules'
+files, the app's `SOURCES` lacked files that were already on disk when
+their modules were classified: the Store's `readings.rs` and its eleven
+submodules, `daemon/blob_sync/admission.rs`,
+`settings_view/reader_link.rs` and `manage/profiles/sync_modes.rs`. They
+are compiled in now, so the checks that read an app file can see them.
+
+**Strings: 5 new keys**, each in all eight languages: the two records'
+names and purposes and the option label **Above**.
+
+**Reading depth.** `tree_drag.rs` and `quick_switch.rs` were read in full;
+`quick_filter.rs`, `task_events.rs`, `landing.rs` and `cloud_reconcile.rs`
+at their module documentation and declarations. The search scope chip was
+read at its inspector scope and the text it paints. Changes main made
+inside files already baselined were checked only as far as the drift
+checks reach.
+
+**Added to the defects list by this reconciliation:**
+
+- The quick switch paints its status words (*Running*, *Needs you*, *New*)
+  and *Current* as English literals.
+- The search scope chip paints *All workspaces* and *Workspaces on/total*
+  in English; this falls under the existing `koru-search-ui` line, a crate
+  that does not link `koru-i18n`.
 
 ## L4b batch 1 — shared action and choice widgets
 

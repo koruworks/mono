@@ -27,6 +27,7 @@ const MOVE_TO: &str = "apps/koru/src/mainview/move_to.rs";
 const NEW_DOCUMENT: &str = "apps/koru/src/mainview/new_document.rs";
 const PANES: &str = "apps/koru/src/mainview/panes.rs";
 const PROFILE_WAIT: &str = "apps/koru/src/mainview/profile_wait.rs";
+const QUICK_SWITCH: &str = "apps/koru/src/mainview/quick_switch.rs";
 const RECORDING: &str = "apps/koru/src/mainview/recording/paint.rs";
 const REMINDER_CREATION: &str = "apps/koru/src/mainview/reminder_creation.rs";
 const SNAPSHOT: &str = "apps/koru/src/mainview/snapshot_prompt.rs";
@@ -148,6 +149,25 @@ pub(super) const RECORDS: &[Entry] = &[
         &[
             painter("koru::mainview::MainView::draw_zoom_label"),
             support("koru::mainview::zoomlabel::ZoomLabel"),
+        ],
+    ),
+    // Construction: pure: the window's open tabs, most recently used first,
+    // as the container builds them; Ctrl+Tab stands it up over the scrim
+    record(
+        "C-QUICK-SWITCH",
+        "QuickSwitch",
+        Key::UiLabQuickSwitchName,
+        Key::UiLabQuickSwitchPurpose,
+        Family::Compositions,
+        Kind::AppLocal,
+        None,
+        &[],
+        source(KORU, "koru::mainview", QUICK_SWITCH),
+        DESKTOP_NOT_ON_PHONES,
+        &[
+            painter("koru::mainview::quick_switch::QuickSwitch::draw"),
+            support("koru::mainview::quick_switch::QuickSwitch"),
+            support("koru::mainview::quick_switch::Entry"),
         ],
     ),
     // Construction: pure: the host's ErrorReport and its actions

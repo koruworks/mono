@@ -60,7 +60,7 @@ pub(super) const RECORDS: &[Entry] = &[
         Family::Compositions,
         Kind::DomainComposition,
         None,
-        &["Reading offer"],
+        &["Reading offer", "Search scope chip"],
         source(OWNER, "koru_search_ui", LIB),
         DESKTOP_NOT_ON_PHONES,
         &[
@@ -132,7 +132,12 @@ pub(super) const RECORDS: &[Entry] = &[
                     "koru_search_ui::Target",
                     LIB,
                     Declared::Enum,
-                    &[literal("Store"), literal("Chat")],
+                    &[
+                        literal("Store"),
+                        literal("List"),
+                        literal("Task"),
+                        literal("Chat"),
+                    ],
                 )],
             ),
             support_with(

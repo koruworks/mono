@@ -245,6 +245,7 @@ const TOOLTIP_PLACEMENT: OptionSet = values(
     &[
         labelled("Below", Key::UiLabOptionBelow),
         labelled("Beside", Key::UiLabOptionBeside),
+        labelled("Above", Key::UiLabOptionAbove),
     ],
 );
 
@@ -1241,7 +1242,7 @@ const TEXT_RECORDS: [Entry; 9] = [
     ),
 ];
 
-const SUPPORT_RECORDS: [Entry; 5] = [
+const SUPPORT_RECORDS: [Entry; 6] = [
     record(
         "H-CLIPBOARD",
         "koru_ui::clipboard",
@@ -1328,11 +1329,30 @@ const SUPPORT_RECORDS: [Entry; 5] = [
             support("koru_ui::dates::date_label"),
         ],
     ),
+    record(
+        "H-TREE-DRAG",
+        "koru_ui::tree_drag",
+        Key::UiLabTreeDragName,
+        Key::UiLabTreeDragPurpose,
+        Kind::Support,
+        H_INPUT,
+        &[],
+        ui("koru_ui::tree_drag", "crates/koru-ui/src/tree_drag.rs"),
+        DESKTOP_NOT_ON_PHONES,
+        &[
+            support("koru_ui::tree_drag::Row"),
+            support("koru_ui::tree_drag::Zone"),
+            support("koru_ui::tree_drag::Target"),
+            support("koru_ui::tree_drag::drop_target"),
+            support("koru_ui::tree_drag::edge_scroll"),
+            support("koru_ui::tree_drag::SpringOpen"),
+        ],
+    ),
 ];
 
 /// Every control record, in the order the navigator lists them.
 pub(super) const RECORDS: &[Entry] = &{
-    let mut all = [BUTTON_ENTRY; 57];
+    let mut all = [BUTTON_ENTRY; 58];
     let mut at = 1;
     let groups: [&[Entry]; 8] = [
         &ACTION_RECORDS,

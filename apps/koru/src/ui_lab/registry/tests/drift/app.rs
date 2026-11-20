@@ -378,6 +378,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/mainview/profile_wait.rs"),
     ),
     (
+        "apps/koru/src/mainview/quick_switch.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/quick_switch.rs"),
+    ),
+    (
         "apps/koru/src/mainview/rail_overflow.rs",
         include_str!("../../../../../../../apps/koru/src/mainview/rail_overflow.rs"),
     ),
@@ -460,6 +464,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/mainview/tab_rules.rs",
         include_str!("../../../../../../../apps/koru/src/mainview/tab_rules.rs"),
+    ),
+    (
+        "apps/koru/src/mainview/task_events.rs",
+        include_str!("../../../../../../../apps/koru/src/mainview/task_events.rs"),
     ),
     (
         "apps/koru/src/mainview/taskcounts.rs",
@@ -622,6 +630,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/manage/profiles/surface.rs"),
     ),
     (
+        "apps/koru/src/manage/profiles/sync_modes.rs",
+        include_str!("../../../../../../../apps/koru/src/manage/profiles/sync_modes.rs"),
+    ),
+    (
         "apps/koru/src/manage/recovery.rs",
         include_str!("../../../../../../../apps/koru/src/manage/recovery.rs"),
     ),
@@ -728,6 +740,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/panes/explore/organization_sync.rs"),
     ),
     (
+        "apps/koru/src/panes/explore/quick_filter.rs",
+        include_str!("../../../../../../../apps/koru/src/panes/explore/quick_filter.rs"),
+    ),
+    (
         "apps/koru/src/panes/explore/popover_elements.rs",
         include_str!("../../../../../../../apps/koru/src/panes/explore/popover_elements.rs"),
     ),
@@ -830,6 +846,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru/src/settings_view.rs"),
     ),
     (
+        "apps/koru/src/settings_view/reader_link.rs",
+        include_str!("../../../../../../../apps/koru/src/settings_view/reader_link.rs"),
+    ),
+    (
         "apps/koru/src/settings_view/reminders.rs",
         include_str!("../../../../../../../apps/koru/src/settings_view/reminders.rs"),
     ),
@@ -892,6 +912,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru/src/tasks_view/heading.rs",
         include_str!("../../../../../../../apps/koru/src/tasks_view/heading.rs"),
+    ),
+    (
+        "apps/koru/src/tasks_view/landing.rs",
+        include_str!("../../../../../../../apps/koru/src/tasks_view/landing.rs"),
     ),
     (
         "apps/koru/src/tasks_view/menu.rs",
@@ -1088,6 +1112,10 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru-agent/src/cloud_host.rs",
         include_str!("../../../../../../../apps/koru-agent/src/cloud_host.rs"),
+    ),
+    (
+        "apps/koru-agent/src/cloud_reconcile.rs",
+        include_str!("../../../../../../../apps/koru-agent/src/cloud_reconcile.rs"),
     ),
     (
         "apps/koru-agent/src/cloud_host/inspection.rs",
@@ -1313,6 +1341,12 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
         include_str!("../../../../../../../apps/koru-store-server/src/daemon/blob_sync.rs"),
     ),
     (
+        "apps/koru-store-server/src/daemon/blob_sync/admission.rs",
+        include_str!(
+            "../../../../../../../apps/koru-store-server/src/daemon/blob_sync/admission.rs"
+        ),
+    ),
+    (
         "apps/koru-store-server/src/daemon/cloud_driver.rs",
         include_str!("../../../../../../../apps/koru-store-server/src/daemon/cloud_driver.rs"),
     ),
@@ -1381,6 +1415,54 @@ pub(super) const SOURCES: &[(&str, &str)] = &[
     (
         "apps/koru-store-server/src/projection.rs",
         include_str!("../../../../../../../apps/koru-store-server/src/projection.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/applier.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/applier.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/coordinator.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/coordinator.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/corrections.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/corrections.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/feed.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/feed.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/hub.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/hub.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/installer.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/installer.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/items.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/items.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/launcher.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/launcher.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/mirror.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/mirror.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/power.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/power.rs"),
+    ),
+    (
+        "apps/koru-store-server/src/readings/supervised.rs",
+        include_str!("../../../../../../../apps/koru-store-server/src/readings/supervised.rs"),
     ),
     (
         "apps/koru-store-server/src/replication.rs",
@@ -1764,6 +1846,12 @@ pub(super) const ROOTS: &[Root] = &[
             ("client", Module::Excluded("io: the client connection")),
             ("cloud_host", Module::Excluded("io: the Cloud host")),
             (
+                "cloud_reconcile",
+                Module::Excluded(
+                    "orchestration: when the Agent re-applies the remembered Cloud sync choices, on the Store's catalog watch; no window",
+                ),
+            ),
+            (
                 "connection",
                 Module::Excluded("io: one window's connection"),
             ),
@@ -1884,6 +1972,7 @@ pub(super) const ROOTS: &[Root] = &[
                 "organization_sync",
                 Module::Excluded("data: the sync state behind the visible sync word"),
             ),
+            ("quick_filter", Module::Records(&["C-EXPLORE"])),
             ("rail", Module::Records(&["C-TASKS-RAIL"])),
             (
                 "rail_overflow",
@@ -2086,6 +2175,7 @@ pub(super) const ROOTS: &[Root] = &[
                 Module::Excluded("io: probes whether a Profile is reachable"),
             ),
             ("profile_wait", Module::Records(&["C-PROFILE-WAIT"])),
+            ("quick_switch", Module::Records(&["C-QUICK-SWITCH"])),
             ("rail_overflow", Module::Records(&["C-APP-MENUS"])),
             (
                 "reader_offer",
@@ -2139,6 +2229,12 @@ pub(super) const ROOTS: &[Root] = &[
             (
                 "tab_rules",
                 Module::Excluded("data: which views may share or replace a tab"),
+            ),
+            (
+                "task_events",
+                Module::Excluded(
+                    "io: one live tail per window on the Store's tasks-changed event, a trigger for the Tasks surfaces' own re-read; nothing runs on the frame",
+                ),
             ),
             (
                 "taskcounts",
@@ -2385,6 +2481,12 @@ pub(super) const ROOTS: &[Root] = &[
                 ),
             ),
             ("heading", Module::Records(&["C-TASKS-VIEW"])),
+            (
+                "landing",
+                Module::Excluded(
+                    "io: opening a task from search: one bounded query for that task and the pure choice of which Tasks page it lands on; draws nothing",
+                ),
+            ),
             ("menu", Module::Records(&["C-TASKS-VIEW"])),
             ("pickers", Module::Records(&["C-TASKS-VIEW"])),
             (
