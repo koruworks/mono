@@ -1816,6 +1816,20 @@ impl View for ManagerView {
         }
     }
 
+    fn set_pending_document_deletions(&mut self, count: usize) -> bool {
+        match self {
+            Self::Container(v) => v.set_pending_document_deletions(count),
+            Self::Document(_) => false,
+        }
+    }
+
+    fn take_review_document_deletions(&mut self) -> bool {
+        match self {
+            Self::Container(v) => v.take_review_document_deletions(),
+            Self::Document(_) => false,
+        }
+    }
+
     fn pinned_search_rows(
         &self,
     ) -> Vec<(String, koru_core::DocumentId, koru_core::WorkspaceId, bool)> {

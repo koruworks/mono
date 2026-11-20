@@ -271,6 +271,8 @@ pub enum Outcome {
     /// The pinned Trash row was pressed. Never raised while the bin is empty:
     /// a row that opens an empty list is a promise the list cannot keep.
     OpenTrash,
+    /// Reopen this workspace's unanswered local Keep/Delete dialogs.
+    ReviewDocumentDeletions,
     /// A press on the explore column's **tasks rail**: a bucket, a list, or the
     /// making of one.
     ///

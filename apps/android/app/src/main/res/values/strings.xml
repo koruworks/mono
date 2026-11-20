@@ -585,4 +585,5 @@
     <string name="document_delete_forever_title">Delete permanently?</string>
     <string name="document_delete_forever_body">“%1$s” will be removed for good. This cannot be undone.</string>
     <string name="document_delete_forever_confirm">Delete permanently</string>
+    <string name="document_delete_review">Review pending deletions</string>
 </resources>

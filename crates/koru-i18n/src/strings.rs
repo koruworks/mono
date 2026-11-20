@@ -3566,6 +3566,7 @@ pub enum Key {
     DocumentDeletedKeep,
     DocumentDeletedDelete,
     DocumentDeletePending,
+    DocumentDeleteReview,
     DocumentDeleteProgress,
     DocumentDeleteForeverTitle,
     DocumentDeleteForeverBody,
@@ -3576,7 +3577,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2505] = [
+    pub const ALL: [Key; 2506] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6078,6 +6079,7 @@ impl Key {
         Key::DocumentDeletedKeep,
         Key::DocumentDeletedDelete,
         Key::DocumentDeletePending,
+        Key::DocumentDeleteReview,
         Key::DocumentDeleteProgress,
         Key::DocumentDeleteForeverTitle,
         Key::DocumentDeleteForeverBody,
@@ -17760,6 +17762,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::DocumentDeletedKeep, en: "Keep my version", es: "Conservar mi versión", pt_br: "Manter minha versão", de: "Meine Version behalten", fr: "Conserver ma version", ar: "الاحتفاظ بنسختي", zh_hans: "保留我的版本", ja: "自分のバージョンを残す" },
     Row { key: Key::DocumentDeletedDelete, en: "Delete", es: "Eliminar", pt_br: "Excluir", de: "Löschen", fr: "Supprimer", ar: "حذف", zh_hans: "删除", ja: "削除" },
     Row { key: Key::DocumentDeletePending, en: "Deleting…", es: "Eliminando…", pt_br: "Excluindo…", de: "Wird gelöscht…", fr: "Suppression…", ar: "جارٍ الحذف…", zh_hans: "正在删除…", ja: "削除中…" },
+    Row { key: Key::DocumentDeleteReview, en: "Review pending deletions", es: "Revisar eliminaciones pendientes", pt_br: "Revisar exclusões pendentes", de: "Ausstehende Löschungen prüfen", fr: "Examiner les suppressions en attente", ar: "مراجعة عمليات الحذف المعلقة", zh_hans: "查看待处理的删除", ja: "保留中の削除を確認" },
     Row { key: Key::DocumentDeleteProgress, en: "Deleting {} from Koru Cloud…", es: "Eliminando {} de Koru Cloud…", pt_br: "Excluindo {} do Koru Cloud…", de: "{} werden aus Koru Cloud gelöscht…", fr: "Suppression de {} dans Koru Cloud…", ar: "جارٍ حذف {} من Koru Cloud…", zh_hans: "正在从 Koru Cloud 删除 {} 项…", ja: "Koru Cloud から {} 件を削除中…" },
     Row { key: Key::DocumentDeleteForeverTitle, en: "Delete permanently?", es: "¿Eliminar permanentemente?", pt_br: "Excluir permanentemente?", de: "Endgültig löschen?", fr: "Supprimer définitivement ?", ar: "هل تريد الحذف نهائيًا؟", zh_hans: "永久删除？", ja: "完全に削除しますか？" },
     Row { key: Key::DocumentDeleteForeverBody, en: "“{}” will be removed for good. This cannot be undone.", es: "“{}” se eliminará de forma permanente. Esta acción no se puede deshacer.", pt_br: "“{}” será excluído permanentemente. Esta ação não pode ser desfeita.", de: "„{}“ wird endgültig gelöscht. Dies kann nicht rückgängig gemacht werden.", fr: "« {} » sera supprimé définitivement. Cette action est irréversible.", ar: "سيُحذف «{}» نهائيًا. لا يمكن التراجع عن هذا الإجراء.", zh_hans: "“{}”将被永久删除。此操作无法撤销。", ja: "「{}」は完全に削除されます。この操作は取り消せません。" },

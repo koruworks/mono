@@ -9332,6 +9332,18 @@ fn close_all_still_leaves_a_welcome_tab_rather_than_closing_the_window() {
     assert_eq!(v.take_window_request(), None, "the window stays");
 }
 
+#[test]
+fn reviewing_deferred_deletions_is_a_host_request_and_does_not_cross_a_workspace_switch() {
+    let (mut view, workspace) = on_document();
+    assert!(!view.take_review_document_deletions());
+    assert!(view.apply(&workspace.ws, Outcome::ReviewDocumentDeletions));
+    assert!(view.take_review_document_deletions());
+    assert!(!view.take_review_document_deletions());
+    assert!(view.apply(&workspace.ws, Outcome::ReviewDocumentDeletions));
+    view.reseat(&workspace.ws);
+    assert!(!view.take_review_document_deletions());
+}
+
 // ------------------------------------------------------------ the update banner
 
 /// A report the agent would push on finding a build, with release notes.

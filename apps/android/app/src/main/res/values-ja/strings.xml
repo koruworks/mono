@@ -512,4 +512,5 @@
     <string name="document_delete_forever_title">完全に削除しますか？</string>
     <string name="document_delete_forever_body">「%1$s」は完全に削除されます。この操作は取り消せません。</string>
     <string name="document_delete_forever_confirm">完全に削除</string>
+    <string name="document_delete_review">保留中の削除を確認</string>
 </resources>

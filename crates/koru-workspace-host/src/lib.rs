@@ -806,6 +806,16 @@ pub trait View {
         false
     }
 
+    /// Unanswered local Keep/Delete choices in the current workspace.
+    fn set_pending_document_deletions(&mut self, _count: usize) -> bool {
+        false
+    }
+
+    /// Revisit deferred choices without restarting. Does not decide or release content.
+    fn take_review_document_deletions(&mut self) -> bool {
+        false
+    }
+
     fn pinned_search_rows(
         &self,
     ) -> Vec<(String, koru_core::DocumentId, koru_core::WorkspaceId, bool)> {

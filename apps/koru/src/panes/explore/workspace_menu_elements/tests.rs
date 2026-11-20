@@ -36,6 +36,56 @@ fn area() -> Rect {
 const VIEWPORT: (f32, f32) = (720.0, 600.0);
 
 #[test]
+fn pending_deletions_are_reachable_offline_by_pointer_keyboard_and_accessibility() {
+    use koru_workspace_host::accessibility::{ControlPart, Occurrence, ViewSlot, WindowSlot};
+    use winit::keyboard::{Key as WKey, NamedKey};
+
+    let action = MenuAction::ReviewDeletions;
+    let outcome = Outcome::ReviewDocumentDeletions;
+    let occurrence = Occurrence::surface(
+        WindowSlot::from_raw(1),
+        ViewSlot::from_raw(1),
+        popover_elements::SURFACE,
+        ControlPart::new(action.key().part),
+    );
+    let configured = || {
+        let mut view = opened();
+        view.set_pending_document_deletions(2);
+        view
+    };
+    let mut view = configured();
+    assert!(view.popover_rows().contains(&PopoverRow::WorkspaceAction(action)));
+    let (x, y) = view.with_page(area(), VIEWPORT, |frame| {
+        assert!(frame.diagnostics.is_empty(), "{:?}", frame.diagnostics);
+        let centre = frame.node(action.key()).unwrap().rect.centre();
+        assert_eq!(frame.hit_at(centre.0, centre.1), Some(action.key()));
+        centre
+    }).unwrap();
+    assert_eq!(view.mouse_down(area(), VIEWPORT, x, y, false), outcome);
+    assert!(!view.popover_open());
+    let mut view = configured();
+    assert_eq!(
+        view.accessibility_action(area(), occurrence, accesskit::Action::Click, VIEWPORT),
+        Some(outcome.clone()),
+    );
+    for key in [NamedKey::Enter, NamedKey::Space] {
+        let mut view = configured();
+        assert_eq!(
+            view.accessibility_action(area(), occurrence, accesskit::Action::Focus, VIEWPORT),
+            Some(Outcome::Consumed),
+        );
+        assert_eq!(view.popover_key(&WKey::Named(key)), Some(outcome.clone()));
+        assert!(!view.popover_open());
+    }
+    let mut view = configured();
+    view.set_pending_document_deletions(0);
+    assert!(!view.popover_rows().contains(&PopoverRow::WorkspaceAction(action)));
+    view.with_page(area(), VIEWPORT, |frame| {
+        assert!(frame.node(action.key()).is_none());
+    }).unwrap();
+}
+
+#[test]
 fn fixed_actions_have_distinct_reachable_targets_and_the_list_keeps_a_row() {
     let view = opened();
     view.with_page(area(), VIEWPORT, |frame| {

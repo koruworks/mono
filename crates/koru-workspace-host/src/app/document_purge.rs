@@ -83,6 +83,14 @@ impl<H: Host> App<H> {
             }
         }
         let prompts = self.runtime.workspace.document_purge_prompts();
+        for pane in self.panes.values_mut() {
+            if pane.view.take_review_document_deletions() {
+                self.document_purge_asked.clear();
+            }
+            if pane.view.set_pending_document_deletions(prompts.len()) {
+                pane.window.request_redraw();
+            }
+        }
         self.document_purge_asked
             .retain(|id| prompts.iter().any(|p| p.document == *id));
         if self.in_tray || self.panes.is_empty() {

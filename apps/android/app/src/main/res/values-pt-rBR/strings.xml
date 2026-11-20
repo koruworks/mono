@@ -522,4 +522,5 @@
     <string name="document_delete_forever_title">Excluir permanentemente?</string>
     <string name="document_delete_forever_body">“%1$s” será excluído permanentemente. Esta ação não pode ser desfeita.</string>
     <string name="document_delete_forever_confirm">Excluir permanentemente</string>
+    <string name="document_delete_review">Revisar exclusões pendentes</string>
 </resources>

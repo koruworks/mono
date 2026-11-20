@@ -881,6 +881,7 @@ pub struct ExploreView {
     /// How many items are in the Trash, as of the last [`rebuild`](Self::rebuild).
     /// **Never asked per frame** — see where it is set.
     trash_count: usize,
+    pending_document_deletions: usize,
     workspace_notice: Option<String>,
     /// **The quick switcher's query** (2026-11-10): `Some` while Ctrl+Alt+W
     /// shows the workspace page as a filtered list under a search field,
@@ -3848,6 +3849,11 @@ impl ExploreView {
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::New),
                     PopoverRow::WorkspaceAction(workspace_menu_elements::MenuAction::Import),
                 ]);
+                if self.pending_document_deletions > 0 {
+                    out.push(PopoverRow::WorkspaceAction(
+                        workspace_menu_elements::MenuAction::ReviewDeletions,
+                    ));
+                }
                 if self.workspace_waiting.is_some() || self.workspace_notice.is_some() {
                     out.push(PopoverRow::WorkspaceNotice);
                 }
