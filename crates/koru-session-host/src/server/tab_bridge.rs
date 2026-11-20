@@ -18,8 +18,8 @@
 //!   `--mcp-config <file>`: a `{"mcpServers": {…}}` file;
 //! - **GitHub Copilot** `--additional-mcp-config @<file>`: its own shape,
 //!   with `"type": "local"` and the tool filter that admits every tool;
-//! - **Codex** `-c mcp_servers.koru.command=… -c …args=[…]`: the overrides
-//!   the app-server launch already renders;
+//! - **Codex** disables inherited `koru` and supplies the stdio bridge under
+//!   reserved `koru_desktop`: the overrides the app-server launch renders;
 //! - **OpenCode** `OPENCODE_CONFIG_CONTENT`: an inline `opencode.json`.
 //!
 //! Grok, Kimi, Antigravity, Muse and Devin have no per-process form (their

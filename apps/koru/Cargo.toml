@@ -93,6 +93,8 @@ koru-recording = { path = "../../crates/koru-recording" }
 # itself — `koru-workspace-host` does, because the directory is the host's.
 koru-voice-consent = { path = "../../crates/koru-voice-consent" }
 koru-api-client = { path = "../../crates/koru-api-client" }
+koru-artifact-wire = { path = "../../crates/koru-artifact-wire" }
+blake3.workspace = true
 # **Delegating work to an agent** (ROADMAP P1.14). The run's vocabulary,
 # the `/v1/runs` bodies, and P1.7's pin — which this window performs over
 # the gateway rather than over a `Store` it does not have, by implementing
@@ -131,6 +133,7 @@ koru-workspaces-ui = { path = "../../crates/koru-workspaces-ui" }
 # connection — asking for the controller, giving it back, opening the tab.
 koru-runs-ui = { path = "../../crates/koru-runs-ui" }
 koru-ai-provider = { path = "../../crates/koru-ai-provider" }
+koru-ai-core = { path = "../../crates/koru-ai-core" }
 koru-ai-ui = { path = "../../crates/koru-ai-ui" }
 koru-socials-ui = { path = "../../crates/koru-socials-ui" }
 koru-session-profiles = { path = "../../crates/koru-session-profiles" }
@@ -233,8 +236,8 @@ tempfile.workspace = true
 # A drawn diagram for the leaf and container tests to open their viewer on.
 koru-diagram = { path = "../../crates/koru-diagram" }
 koru-workspace-host = { path = "../../crates/koru-workspace-host", features = ["no-model-reader"] }
-koru-ai-core = { path = "../../crates/koru-ai-core" }
 koru-ai-ui = { path = "../../crates/koru-ai-ui", features = ["no-client", "test-support"] }
+koru-ai-server = { path = "../koru-ai-server", features = ["test-support"] }
 koru-socials-ui = { path = "../../crates/koru-socials-ui", features = ["no-reader"] }
 # **The same crate, with `no-reader` on.** A `SearchSurface` built in a test must
 # not dial the store a developer has running, and `cfg(test)` inside

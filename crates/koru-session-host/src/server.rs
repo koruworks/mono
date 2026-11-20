@@ -2210,7 +2210,18 @@ fn attachment_failure(error: koru_session_attachments::AttachmentStoreError) -> 
 fn chat_bridge(
     explicit_root: Option<&Path>,
 ) -> Option<koru_session_runtime::providers::McpServerLaunch> {
-    let host = std::env::current_exe().ok()?;
+    let host = match std::env::current_exe() {
+        Ok(host) => host,
+        Err(error) => {
+            tracing::warn!(
+                event = "chat.bridge.missing",
+                reason = "current_exe_unavailable",
+                error_kind = ?error.kind(),
+                "chat bridge could not be located; chats run their agents without Koru's tools"
+            );
+            return None;
+        }
+    };
     let command = host.with_file_name(if cfg!(windows) {
         "koru-mcp.exe"
     } else {
@@ -2219,10 +2230,17 @@ fn chat_bridge(
     if !command.is_file() {
         tracing::warn!(
             event = "chat.bridge.missing",
+            reason = "sibling_not_file",
+            location = "sibling",
             "koru-mcp is not beside this host; chats run their agents without Koru's tools"
         );
         return None;
     }
+    tracing::info!(
+        event = "chat.bridge.ready",
+        location = "sibling",
+        "desktop MCP bridge launch configured for chat sessions"
+    );
     Some(bridge_launch(command, explicit_root))
 }
 

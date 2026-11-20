@@ -61,6 +61,9 @@ pub const TOOL_QUEUE_CAPACITY: usize = 8;
 pub const STREAM_CAPACITY: usize = 32;
 mod agents;
 mod attachments;
+mod mini_apps;
+#[cfg(feature = "test-support")]
+pub(crate) use mini_apps::mcp::fixture as scripted_mcp_result;
 mod removed;
 
 use crate::attachments::{AttachmentStore, Cleanup, CleanupJob};
@@ -669,6 +672,19 @@ impl AiServerPort for AiWorkerClient {
         receive_api(response)
     }
 
+    fn mini_app_tool(
+        &self,
+        context: RequestContext,
+        request: koru_ai_wire::MiniAppToolRequest,
+    ) -> ApiResult<koru_ai_wire::MiniAppToolResponse> {
+        let (reply, response) = sync_channel(1);
+        self.send(WorkerCommand::MiniAppTool {
+            context,
+            request,
+            reply,
+        })?;
+        receive_api(response)
+    }
     fn tool_list_chats(
         &self,
         context: RequestContext,
@@ -1072,6 +1088,11 @@ enum Envelope {
 }
 
 enum WorkerCommand {
+    MiniAppTool {
+        context: RequestContext,
+        request: koru_ai_wire::MiniAppToolRequest,
+        reply: SyncSender<ApiResult<koru_ai_wire::MiniAppToolResponse>>,
+    },
     Ping(SyncSender<()>),
     Info(SyncSender<AiWorkerInfo>),
     ProviderSettings {
@@ -1331,6 +1352,7 @@ enum WorkerCommand {
 impl WorkerCommand {
     fn diagnostic_name(&self) -> &'static str {
         match self {
+            Self::MiniAppTool { .. } => "mini_app_tool",
             Self::Ping(_) => "ping",
             Self::Info(_) => "info",
             Self::ProviderSettings { .. } => "provider_settings",
@@ -1419,6 +1441,7 @@ fn accept_command_listing(
 }
 
 struct WorkerState {
+    managed_mini_apps: bool,
     repository: Repository,
     /// The worker's stop flag, the one the pools' threads watch too.
     shutdown: Arc<AtomicBool>,
@@ -1429,6 +1452,7 @@ struct WorkerState {
     tool_pool: ToolPool,
     tool_definitions: Vec<AiToolDefinition>,
     tool_loops: HashMap<InferenceAttemptId, AiToolLoop>,
+    mini_apps: mini_apps::Deliveries,
     tool_batches: HashMap<InferenceAttemptId, PendingToolBatch>,
     tool_attempts: HashMap<ToolInvocationId, InferenceAttemptId>,
     provider_admin: Option<ProviderAdminPool>,
@@ -1544,6 +1568,16 @@ fn run_worker(
 
     let mut registry = config.providers;
     let mut agent_views = Vec::new();
+    let session_host_present = config.session_host.is_some();
+    let bridge_present = koru_ai_provider_agent::desktop_bridge_present();
+    let managed_mini_apps = session_host_present && bridge_present;
+    tracing::info!(
+        event = "ai.mini_apps.startup",
+        session_host_present,
+        bridge_present,
+        enabled = managed_mini_apps,
+        "managed mini-app startup eligibility checked"
+    );
     let agents = match config.session_host {
         Some(endpoint) => match AgentSessions::spawn(endpoint) {
             Ok(agents) => {
@@ -1644,6 +1678,7 @@ fn run_worker(
         .map_err(|_| "AI worker readiness receiver disappeared".to_owned())?;
 
     let mut state = WorkerState {
+        managed_mini_apps,
         repository,
         shutdown: Arc::clone(&shutdown),
         provider_runtime: config.provider_runtime,
@@ -1653,6 +1688,7 @@ fn run_worker(
         tool_pool,
         tool_definitions,
         tool_loops: HashMap::new(),
+        mini_apps: Default::default(),
         tool_batches: HashMap::new(),
         tool_attempts: HashMap::new(),
         provider_admin,
@@ -1952,6 +1988,11 @@ impl WorkerState {
             } => {
                 let _ = reply.send(self.tool_read_chat(context, request));
             }
+            WorkerCommand::MiniAppTool {
+                context,
+                request,
+                reply,
+            } => self.begin_mcp_mini_app(context, request, reply),
             WorkerCommand::UpdateChatToolPolicy {
                 context,
                 chat,
@@ -3557,6 +3598,10 @@ impl WorkerState {
         request: SendTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
+        mini_apps::validate_refinement(
+            request.mini_app_host,
+            request.mini_app_refinement.as_ref(),
+        )?;
         self.admit_chat_work(Some(request.chat_id))?;
         if let Some(existing) = self
             .repository
@@ -3762,6 +3807,12 @@ impl WorkerState {
         self.cancellations.insert(attempt_id, cancellation.clone());
         // Another message passes over the chat's open sets (D108).
         self.pass_over_questions(chat.id, attempt_id);
+        let native_tools = self.mini_app_tools(
+            attempt_id,
+            &attempt.provider,
+            request.mini_app_host,
+            request.mini_app_refinement,
+        );
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -3771,9 +3822,10 @@ impl WorkerState {
             system: system_prompt,
             messages: provider_messages,
             context: Vec::new(),
-            tools: self.tool_definitions.clone(),
+            tools: native_tools,
             tool_history: Vec::new(),
             options: AiRequestOptions {
+                mini_app: self.mini_app_runtime(attempt_id),
                 web_search: request.web_search,
                 chat_id: Some(chat.id),
                 working_folder: chat.agent_working_folder.clone(),
@@ -3824,6 +3876,10 @@ impl WorkerState {
         request: RetryTurnRequest,
     ) -> ApiResult<AiResponseStream> {
         authorize(&context, AiScope::Chat)?;
+        mini_apps::validate_refinement(
+            request.mini_app_host,
+            request.mini_app_refinement.as_ref(),
+        )?;
         if let Some(existing) = self
             .repository
             .attempt_by_operation(request.operation_id)
@@ -3973,6 +4029,12 @@ impl WorkerState {
         );
         let cancellation = Cancellation::default();
         self.cancellations.insert(attempt_id, cancellation.clone());
+        let native_tools = self.mini_app_tools(
+            attempt_id,
+            &attempt.provider,
+            request.mini_app_host,
+            request.mini_app_refinement,
+        );
         let base_request = AiRequest {
             attempt_id,
             provider: attempt.provider.clone(),
@@ -3982,9 +4044,10 @@ impl WorkerState {
             system: CHAT_PROMPT.into(),
             messages: provider_messages,
             context: Vec::new(),
-            tools: self.tool_definitions.clone(),
+            tools: native_tools,
             tool_history: Vec::new(),
             options: AiRequestOptions {
+                mini_app: self.mini_app_runtime(attempt_id),
                 web_search: request.web_search,
                 chat_id: Some(chat_id),
                 working_folder: chat.agent_working_folder.clone(),
@@ -4291,6 +4354,7 @@ impl WorkerState {
         self.publish(event);
         self.cancellations.remove(&attempt_id);
         self.tool_loops.remove(&attempt_id);
+        self.retire_mini_app(attempt_id);
         self.work_terminal(attempt_id);
         log_terminal_attempt(&updated);
         tracing::info!(attempt = %attempt_id, status = "cancelled", "AI attempt finished");
@@ -4321,6 +4385,21 @@ impl WorkerState {
             return;
         }
         if matches!(event, AiEvent::Notice { .. }) {
+            if matches!(
+                event,
+                AiEvent::Notice {
+                    notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+                    ..
+                }
+            ) {
+                tracing::warn!(
+                    event = "ai.mini_apps.provider_unavailable",
+                    attempt = %attempt_id,
+                    provider = %before.provider,
+                    "provider reported native mini-app tools unavailable; live authority retired"
+                );
+                self.retire_mini_app(attempt_id);
+            }
             self.publish(event);
             return;
         }
@@ -4395,6 +4474,7 @@ impl WorkerState {
                 if updated.status.is_terminal() {
                     self.cancellations.remove(&attempt_id);
                     self.tool_loops.remove(&attempt_id);
+                    self.retire_mini_app(attempt_id);
                     self.work_terminal(attempt_id);
                     log_terminal_attempt(&updated);
                     tracing::info!(
@@ -4413,6 +4493,10 @@ impl WorkerState {
     fn handle_tool_resolution(&mut self, resolution: ToolResolution) {
         let attempt_id = resolution.attempt_id;
         self.work_returned(attempt_id);
+        if resolution.external {
+            self.finish_mcp_mini_app(resolution);
+            return;
+        }
         let Ok(Some(attempt)) = self.repository.attempt(attempt_id) else {
             return;
         };
@@ -4548,7 +4632,9 @@ impl WorkerState {
         self.tool_batches.insert(attempt_id, pending);
         for (invocation_id, call) in automatic {
             match self.tool_pool.try_submit(ToolJob {
+                external: false,
                 context: AiToolExecutionContext {
+                    mini_app: self.mini_apps.authorities.get(&attempt_id).cloned(),
                     chat_id,
                     attempt_id,
                     invocation_id,
@@ -4577,6 +4663,30 @@ impl WorkerState {
         invocation_id: ToolInvocationId,
         result: AiToolResult,
     ) -> Result<(), AiError> {
+        // Validate correlation before publishing any side effect. The normal
+        // loop checks again after the whole batch, which is too late here.
+        let expected = self
+            .tool_batches
+            .get(&attempt_id)
+            .and_then(|batch| {
+                batch
+                    .slots
+                    .iter()
+                    .position(|slot| slot.activity.id == invocation_id)
+                    .and_then(|index| batch.calls.get(index))
+            })
+            .ok_or_else(tool_loop_missing)?;
+        mini_apps::correlated(expected, &result)?;
+        let already_finished = self.tool_batches.get(&attempt_id).is_some_and(|batch| {
+            batch
+                .slots
+                .iter()
+                .any(|slot| slot.activity.id == invocation_id && slot.result.is_some())
+        });
+        if already_finished {
+            return Ok(());
+        }
+        self.publish_mini_app(attempt_id, invocation_id, &result)?;
         let activity = {
             let batch = self
                 .tool_batches
@@ -4757,7 +4867,9 @@ impl WorkerState {
             .cloned()
             .ok_or_else(tool_not_resumable)?;
         match self.tool_pool.try_submit(ToolJob {
+            external: false,
             context: AiToolExecutionContext {
+                mini_app: self.mini_apps.authorities.get(&attempt_id).cloned(),
                 chat_id: activity.chat_id,
                 attempt_id,
                 invocation_id,
@@ -4876,6 +4988,7 @@ impl WorkerState {
             cancellation.cancel();
         }
         self.tool_loops.remove(&attempt_id);
+        self.retire_mini_app(attempt_id);
         if let Some(batch) = self.tool_batches.remove(&attempt_id) {
             for slot in batch.slots {
                 self.tool_attempts.remove(&slot.activity.id);
@@ -4896,30 +5009,7 @@ impl WorkerState {
     }
 
     fn publish_public(&mut self, event: PublicAiEvent) {
-        let attempt_id = event.attempt_id();
-        let terminal = event.is_terminal();
-        let mut remove = terminal;
-        if let Some(stream) = self.streams.get_mut(&attempt_id) {
-            let public = StreamEvent {
-                version: AI_STREAM_VERSION,
-                sequence: stream.next_sequence,
-                event,
-            };
-            stream.next_sequence = stream.next_sequence.saturating_add(1);
-            match stream.sender.try_send(public) {
-                Ok(()) => {}
-                Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
-                    remove = true;
-                    tracing::debug!(
-                        attempt = %attempt_id,
-                        "AI response stream dropped; authoritative state remains available"
-                    );
-                }
-            }
-        }
-        if remove {
-            self.streams.remove(&attempt_id);
-        }
+        mini_apps::publish_live(&mut self.streams, &mut self.mini_apps, event);
     }
 
     fn drain_agent_commands(&mut self) {
@@ -5936,12 +6026,14 @@ struct PendingToolCall {
 }
 
 struct ToolJob {
+    external: bool,
     context: AiToolExecutionContext,
     call: AiToolCall,
     cancellation: Cancellation,
 }
 
 struct ToolResolution {
+    external: bool,
     invocation_id: ToolInvocationId,
     attempt_id: InferenceAttemptId,
     call: AiToolCall,
@@ -6052,6 +6144,7 @@ impl ToolPool {
 
 fn run_tool_job(executor: &dyn AiToolExecutor, job: ToolJob) -> ToolResolution {
     let ToolJob {
+        external,
         context,
         call,
         cancellation,
@@ -6070,6 +6163,7 @@ fn run_tool_job(executor: &dyn AiToolExecutor, job: ToolJob) -> ToolResolution {
             .or_else(|error| Ok(tool_error_result(&call, error)))
     };
     ToolResolution {
+        external,
         invocation_id,
         attempt_id,
         call,
@@ -6268,7 +6362,7 @@ fn run_provider_job(
         // Keep this on one physical log line. `run-all` follows only records
         // carrying this marker; pretty JSON would leave the continuation lines
         // indistinguishable from unrelated gateway output.
-        match serde_json::to_string(&job.request) {
+        match mini_apps::payload_for_log(&job.request) {
             Ok(payload) => tracing::warn!(
                 target: "koru_ai::payload",
                 attempt = %attempt_id,

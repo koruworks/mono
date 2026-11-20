@@ -111,6 +111,17 @@ impl MainView {
     /// thing — and the second would take the strip's room and the person's
     /// attention to say nothing new.
     pub(super) fn open_artifact_tab(&mut self, opened: OpenedArtifact) -> bool {
+        // The existing availability-only result view has no body renderer.
+        // Preserve its remote-holder sentence even when this gateway cannot
+        // resolve metadata or read bytes; a hint never instantiates an app.
+        if opened.held_elsewhere.is_some() {
+            return self.open_markdown_artifact_tab(opened);
+        }
+        self.request_artifact_open(opened.version)
+    }
+
+    /// Only authoritative worker metadata can select the Markdown route.
+    pub(super) fn open_markdown_artifact_tab(&mut self, opened: OpenedArtifact) -> bool {
         // A result is reached from a run (Delegate) or the Artifacts column
         // (agent views); with both hidden there is no Result tab
         // (koru-features).

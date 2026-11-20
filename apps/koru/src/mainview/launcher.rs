@@ -47,6 +47,8 @@ pub(crate) enum NewKind {
     /// Never made on its own: it always asks what — files, or content in
     /// one of the import formats.
     Import,
+    /// The bounded task/document fixture opens as one transient tab.
+    MiniApp,
 }
 
 impl NewKind {
@@ -66,6 +68,9 @@ impl NewKind {
         }
         kinds.push(Self::Shell);
         kinds.push(Self::Import);
+        if koru_features::tasks() {
+            kinds.push(Self::MiniApp);
+        }
         kinds
     }
 
@@ -78,6 +83,9 @@ impl NewKind {
             Self::Agent => 'a',
             Self::Shell => 's',
             Self::Import => 'i',
+            // No mnemonic: retain the existing letters and use the launcher's
+            // arrows/Enter, pointer or accessible activation for this tile.
+            Self::MiniApp => '\0',
         }
     }
 
@@ -90,6 +98,7 @@ impl NewKind {
             Self::Agent => icons::ROBOT,
             Self::Shell => icons::TERMINAL,
             Self::Import => icons::IMPORT,
+            Self::MiniApp => icons::CHECK_SQUARE,
         }
     }
 
@@ -101,6 +110,7 @@ impl NewKind {
             Self::Agent => I18nKey::TerminalKindAgent,
             Self::Shell => I18nKey::TerminalKindShell,
             Self::Import => I18nKey::LauncherImport,
+            Self::MiniApp => I18nKey::MiniAppTitle,
         }
     }
 
@@ -231,6 +241,9 @@ impl MainView {
         if kind == NewKind::Import {
             return self.open_import_list(at);
         }
+        if kind == NewKind::MiniApp {
+            return self.open_mini_app_fixture();
+        }
         if alt {
             return self.open_place_chooser(PlaceTarget::New(kind), at.point());
         }
@@ -332,6 +345,7 @@ impl MainView {
             NewKind::Task => self.new_task(split),
             NewKind::Chat => self.new_chat(split),
             NewKind::Import => self.open_import_list(self.next_ask_at(false)),
+            NewKind::MiniApp => self.open_mini_app_fixture(),
             NewKind::Agent | NewKind::Shell => match self.default_profile(kind) {
                 Some(index) => self.open_session_tab_where(index, None, split),
                 // Nothing of that kind is installed: the list says so — a
@@ -344,6 +358,9 @@ impl MainView {
 
     /// A draft document, in a new tab or a split.
     fn new_document_tab(&mut self, split: Option<SplitSide>) -> bool {
+        if self.current_workspace().is_none() {
+            return self.new_tab();
+        }
         let Some(side) = split else {
             return self.new_tab();
         };

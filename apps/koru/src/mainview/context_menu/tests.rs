@@ -353,7 +353,7 @@ fn the_new_tab_menu_leads_to_content_importers_through_a_submenu() {
     assert_eq!(submenu(MenuAction::NewAgent), Some(flyout));
     assert_eq!(
         submenu(MenuAction::Documents),
-        Some(vec![MenuAction::NewDocument])
+        Some(vec![MenuAction::NewDocument, MenuAction::MiniApp])
     );
     assert_eq!(
         submenu(MenuAction::Chats),
@@ -424,6 +424,7 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
         document_plus_items(),
         vec![
             MenuAction::NewDocument,
+            MenuAction::MiniApp,
             MenuAction::Divider,
             MenuAction::OpenRecentDocument(doc),
             // Moved here from the Welcome page, and only offered when there
@@ -477,12 +478,15 @@ fn plus_flyouts_list_recents_and_running_sessions_under_new() {
     let eleventh = many[PLUS_RECENT_MAX].0;
     set_plus_snapshots(many, vec![], vec![], vec![]);
     let docs = document_plus_items();
-    assert_eq!(docs.len(), 1 + 1 + PLUS_RECENT_MAX + 2);
+    assert_eq!(docs.len(), 2 + 1 + PLUS_RECENT_MAX + 2);
     assert_eq!(docs.last(), Some(&MenuAction::ClearRecents));
     assert!(!docs.contains(&MenuAction::OpenRecentDocument(eleventh)));
 
     set_plus_snapshots(vec![], vec![], vec![], vec![]);
-    assert_eq!(document_plus_items(), vec![MenuAction::NewDocument]);
+    assert_eq!(
+        document_plus_items(),
+        vec![MenuAction::NewDocument, MenuAction::MiniApp]
+    );
     assert_eq!(chat_plus_items(), vec![MenuAction::NewAiChat]);
     assert_eq!(shell_plus_items(), shell_profile_items());
 }
@@ -1601,6 +1605,7 @@ fn the_canvases_flyout_offers_new_canvas_then_recent_canvases() {
         document_plus_items(),
         vec![
             MenuAction::NewDocument,
+            MenuAction::MiniApp,
             MenuAction::Divider,
             MenuAction::OpenRecentDocument(page),
             MenuAction::Divider,

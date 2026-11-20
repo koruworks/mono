@@ -167,6 +167,28 @@ impl<'a> Dropdown<'a> {
         hovered: bool,
         alpha: f32,
     ) {
+        self.draw_focused(canvas, root, engine, rect, hovered, false, alpha);
+    }
+
+    /// Draw the field with an optional keyboard-focus ring.
+    ///
+    /// The field's border is the ring: while `focused` it is drawn in the
+    /// palette's `focus_ring` at twice a border's weight, the mark
+    /// [`crate::chip::Chip`] and [`crate::toggle::Toggle`] draw. An open
+    /// field already wears that color at a border's weight, so a focused
+    /// field reads as the same field, more so.
+    #[allow(clippy::too_many_arguments)]
+    #[track_caller]
+    pub fn draw_focused(
+        self,
+        canvas: &mut Scene,
+        root: Affine,
+        engine: &mut TextEngine,
+        rect: Rect,
+        hovered: bool,
+        focused: bool,
+        alpha: f32,
+    ) {
         let _component = inspect::scope(
             "KoruDropdown",
             "component",
@@ -199,18 +221,22 @@ impl<'a> Dropdown<'a> {
         if (hovered || self.open) && self.enabled {
             scene::fill(canvas, root, p.hover_tint.multiply_alpha(alpha), &shape);
         }
-        scene::stroke(
-            canvas,
-            root,
-            if self.open {
-                p.focus_ring
-            } else {
-                p.panel_border
-            }
-            .multiply_alpha(alpha),
-            theme::BORDER_W,
-            &shape,
-        );
+        if focused {
+            crate::button::focus_stroke(canvas, root, p, rect, Self::RADIUS, alpha);
+        } else {
+            scene::stroke(
+                canvas,
+                root,
+                if self.open {
+                    p.focus_ring
+                } else {
+                    p.panel_border
+                }
+                .multiply_alpha(alpha),
+                theme::BORDER_W,
+                &shape,
+            );
+        }
         let value = self.value_layout(engine);
         let line_h = scene::first_line_height(&value);
         let chevron_x = rect.x + rect.w - Self::PAD_X - Self::CHEVRON;
@@ -290,6 +316,42 @@ mod tests {
         assert_eq!(menu.hover, Some(1));
         assert_eq!(menu.items()[1].checked(), Some(true));
         assert_eq!(menu.items()[0].checked(), Some(false));
+    }
+
+    fn painted(focused: Option<bool>) -> Scene {
+        let mut engine = TextEngine::new();
+        let mut canvas = Scene::new();
+        let root = Affine::IDENTITY;
+        let rect = Rect::new(4.0, 4.0, 160.0, Dropdown::H);
+        let field = Dropdown::new("Short");
+        match focused {
+            None => field.draw(&mut canvas, root, &mut engine, rect, false, 1.0),
+            Some(focused) => {
+                field.draw_focused(&mut canvas, root, &mut engine, rect, false, focused, 1.0);
+            }
+        }
+        canvas
+    }
+
+    /// `draw` is `draw_focused` without the ring, path for path, so no
+    /// existing caller changed. Focused, the border is the same one shape
+    /// drawn heavier: nothing is added and nothing moves.
+    #[test]
+    fn the_focus_ring_is_the_fields_own_border_drawn_heavier() {
+        let (plain, unfocused, focused) =
+            (painted(None), painted(Some(false)), painted(Some(true)));
+        let (a, b, c) = (plain.encoding(), unfocused.encoding(), focused.encoding());
+        assert!(a.path_tags == b.path_tags);
+        assert_eq!(a.path_data, b.path_data);
+        assert!(a.draw_tags == b.draw_tags);
+        assert_eq!(a.draw_data, b.draw_data);
+        assert_eq!(a.styles, b.styles);
+        assert!(
+            a.draw_tags == c.draw_tags,
+            "the same marks, in the same order"
+        );
+        assert_ne!(a.styles, c.styles, "the border is drawn at another weight");
+        assert_ne!(a.draw_data, c.draw_data, "and in the focus color");
     }
 
     #[test]

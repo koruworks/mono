@@ -52,6 +52,12 @@ pub(super) struct RailDrag {
     /// The pointer, down the rail.
     y: f32,
 }
+pub(super) struct PinDrag {
+    id: koru_settings::pins::PinId,
+    original: Vec<koru_settings::pins::Pin>,
+    grab: f32,
+    y: f32,
+}
 
 impl ExploreView {
     /// The views the rail draws, in the person's order.
@@ -88,7 +94,7 @@ impl ExploreView {
     /// Whether a view's square is held — what sends the pointer's moves, its
     /// release and Esc here wherever the pointer has gone.
     pub fn rail_dragging(&self) -> bool {
-        self.rail_drag.is_some() || self.workspace_drag.is_some()
+        self.rail_drag.is_some() || self.workspace_drag.is_some() || self.pin_drag.is_some()
     }
 
     /// A press on `mode`'s square, `square` being where it is: it is now
@@ -127,6 +133,18 @@ impl ExploreView {
     /// places once half of it is over a neighbour. Always a repaint — the
     /// square moved.
     pub fn rail_drag_move(&mut self, rail: Rect, y: f32) -> bool {
+        if let Some(drag) = &mut self.pin_drag {
+            drag.y = y;
+            let rects = self.apps_rail_rects(rail);
+            if let Some((from, carried)) = self.pin_carried(&rects) {
+                let slots: Vec<_> = rects.pins.iter().map(|(_, r)| (r.y, r.h)).collect();
+                let to = reorder::drop_index(&slots, from, carried.y + carried.h * 0.5);
+                if to != from {
+                    self.move_pin(rail, rects.pins[from].0, to);
+                }
+            }
+            return true;
+        }
         if self.workspace_drag.is_some() {
             return self.workspace_drag_move(rail, y);
         }
@@ -148,6 +166,13 @@ impl ExploreView {
     /// The release: the square drops into its slot from wherever the pointer
     /// left it. The order is already the one drawn.
     pub fn rail_drag_release(&mut self, rail: Rect) -> bool {
+        if let Some(drag) = self.pin_drag.take() {
+            self.pin_move = self
+                .pin_placement(drag.id)
+                .map(|placement| (drag.id, placement));
+            self.pin_slides.clear();
+            return true;
+        }
         if self.workspace_drag.take().is_some() {
             self.workspace_slides.clear();
             return true;
@@ -168,6 +193,11 @@ impl ExploreView {
     /// Esc while a square is held: it goes back where the press found it, and
     /// the views it passed slide back too.
     pub fn cancel_rail_drag(&mut self, rail: Rect) -> bool {
+        if let Some(drag) = self.pin_drag.take() {
+            self.mini_app_pins = drag.original;
+            self.pin_slides.clear();
+            return true;
+        }
         if self.workspace_drag.take().is_some() {
             self.workspace_slides.clear();
             return true;
@@ -283,6 +313,103 @@ impl ExploreView {
         self.rail_slides
             .moved(&before, &after, from, to, Instant::now());
         true
+    }
+
+    pub(super) fn begin_pin_drag(&mut self, id: koru_settings::pins::PinId, square: Rect, y: f32) {
+        if self.pins_busy {
+            return;
+        }
+        self.pin_drag = Some(PinDrag {
+            id,
+            original: self.mini_app_pins.clone(),
+            grab: y - square.y,
+            y,
+        });
+    }
+    pub(super) fn pin_carried(&self, rects: &apps_rail::Rects) -> Option<(usize, Rect)> {
+        let drag = self.pin_drag.as_ref()?;
+        let index = rects.pins.iter().position(|(id, _)| *id == drag.id)?;
+        let square = rects.pins[index].1;
+        let first = rects.pins.first()?.1;
+        let last = rects.pins.last()?.1;
+        let y = reorder::carry(drag.y - drag.grab, first.y, last.y + last.h, square.h);
+        Some((index, Rect::new(square.x, y, square.w, square.h)))
+    }
+    fn move_pin(&mut self, rail: Rect, id: koru_settings::pins::PinId, to: usize) -> bool {
+        let Some(from) = self.mini_app_pins.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        if to >= self.mini_app_pins.len() || to == from {
+            return false;
+        }
+        let before = self
+            .apps_rail_rects(rail)
+            .pins
+            .iter()
+            .map(|(_, r)| r.y)
+            .collect::<Vec<_>>();
+        let pin = self.mini_app_pins.remove(from);
+        self.mini_app_pins.insert(to, pin);
+        let after = self
+            .apps_rail_rects(rail)
+            .pins
+            .iter()
+            .map(|(_, r)| r.y)
+            .collect::<Vec<_>>();
+        if from < before.len() && to < after.len() {
+            self.pin_slides
+                .moved(&before, &after, from, to, Instant::now());
+        }
+        true
+    }
+    fn pin_placement(
+        &self,
+        id: koru_settings::pins::PinId,
+    ) -> Option<koru_settings::pins::Placement> {
+        let index = self.mini_app_pins.iter().position(|p| p.id == id)?;
+        Some(
+            self.mini_app_pins
+                .get(index + 1)
+                .map_or(koru_settings::pins::Placement::Last, |p| {
+                    koru_settings::pins::Placement::Before { neighbor: p.id }
+                }),
+        )
+    }
+    pub(crate) fn nudge_pin(
+        &mut self,
+        rail: Rect,
+        id: koru_settings::pins::PinId,
+        up: bool,
+    ) -> bool {
+        if self.pins_busy {
+            return false;
+        }
+        let Some(index) = self.mini_app_pins.iter().position(|p| p.id == id) else {
+            return false;
+        };
+        let Some(to) = (if up {
+            index.checked_sub(1)
+        } else {
+            (index + 1 < self.mini_app_pins.len()).then_some(index + 1)
+        }) else {
+            return false;
+        };
+        if !self.move_pin(rail, id, to) {
+            return false;
+        }
+        self.pin_move = self.pin_placement(id).map(|placement| (id, placement));
+        true
+    }
+    pub(crate) fn take_pin_move(
+        &mut self,
+    ) -> Option<(koru_settings::pins::PinId, koru_settings::pins::Placement)> {
+        self.pin_move.take()
+    }
+    pub(crate) fn replace_mini_app_pins(&mut self, pins: Vec<koru_settings::pins::Pin>) {
+        self.pin_drag = None;
+        self.pin_move = None;
+        self.pin_slides.clear();
+        self.mini_app_pins = pins;
     }
 }
 

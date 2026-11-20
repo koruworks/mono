@@ -330,6 +330,9 @@ struct Composition {
     /// The last provisional transcript. Kept so an ordinary local event can
     /// settle the composition without the caller having to supply it again.
     text: String,
+    /// Native and voice events never settle each other's composition.
+    native: bool,
+    cursor: Option<(usize, usize)>,
 }
 
 impl Composition {
@@ -348,6 +351,10 @@ impl Composition {
 }
 
 // ------------------------------------------------------------------ field
+
+#[cfg(test)]
+#[path = "text_field/ime_tests.rs"]
+mod ime_tests;
 
 /// One line of editable plain text, with its own undo and its own view onto
 /// itself.
@@ -368,6 +375,114 @@ pub struct TextField {
 }
 
 impl TextField {
+    /// Handle OS input without publishing provisional text through authored
+    /// getters or history. The host owns focus and fences stale native events.
+    pub fn ime(&mut self, engine: &mut TextEngine, event: &winit::event::Ime) -> bool {
+        use winit::event::Ime;
+        if matches!(event, Ime::Disabled) {
+            return self.ime_cancel(engine);
+        }
+        if self.composition.as_ref().is_some_and(|c| !c.native) {
+            return false;
+        }
+        if matches!(event, Ime::Enabled) {
+            return true;
+        }
+        if self.composition.is_none() {
+            self.begin_composition(engine);
+            self.composition.as_mut().unwrap().native = true;
+        }
+        match event {
+            Ime::Preedit(text, cursor) => {
+                let cursor = cursor.filter(|(a, f)| {
+                    *a <= text.len()
+                        && *f <= text.len()
+                        && text.is_char_boundary(*a)
+                        && text.is_char_boundary(*f)
+                });
+                let c = self.composition.as_mut().unwrap();
+                if c.text == *text && c.cursor == cursor {
+                    return true;
+                }
+                let changed = c.text != *text;
+                c.text.clone_from(text);
+                c.cursor = cursor;
+                if text.is_empty() {
+                    // The original selection remains the Commit anchor even
+                    // after the platform clears the visible preedit.
+                    restore(&c.before, &mut self.editor, engine);
+                } else {
+                    if changed {
+                        self.editor.set_text(&c.line_with(text));
+                    }
+                    let (a, f) = cursor.unwrap_or((text.len(), text.len()));
+                    self.editor
+                        .driver(&mut engine.font_cx, &mut engine.layout_cx)
+                        .select_byte_range(c.start + a, c.start + f);
+                }
+                true
+            }
+            Ime::Commit(text) => {
+                if text.is_empty() {
+                    self.ime_cancel(engine);
+                } else {
+                    let c = self.composition.take().unwrap();
+                    let line = c.line_with(text);
+                    self.set_line(engine, &line, c.start + text.len());
+                    self.history.record(c.before);
+                    self.history.drop_if_unchanged(true, &self.editor);
+                }
+                true
+            }
+            Ime::Enabled | Ime::Disabled => unreachable!(),
+        }
+    }
+
+    /// Discard only native input and restore its original directed selection.
+    pub fn ime_cancel(&mut self, engine: &mut TextEngine) -> bool {
+        if !self.composition.as_ref().is_some_and(|c| c.native) {
+            return false;
+        }
+        let c = self.composition.take().unwrap();
+        restore(&c.before, &mut self.editor, engine);
+        true
+    }
+
+    fn ime_caret_hidden(&self) -> bool {
+        self.composition
+            .as_ref()
+            .is_some_and(|c| c.native && c.cursor.is_none())
+    }
+
+    /// Candidate anchor in the caller's logical coordinate space. `rect` is
+    /// the exact box passed to draw_field, including its padding; the same
+    /// baseline centering and horizontal scroll conversion are applied here.
+    /// Call after preparing/drawing the field for its current rectangle.
+    pub fn ime_cursor_area(
+        &self,
+        rect: koru_draw::geometry::Rect,
+    ) -> Option<koru_draw::geometry::Rect> {
+        if self.ime_caret_hidden() {
+            return None;
+        }
+        let layout = self.editor.try_layout()?;
+        let bb = self
+            .editor
+            .raw_selection()
+            .focus()
+            .geometry(layout, theme::caret_w());
+        let dx = rect.x + PAD - self.scroll;
+        let dy = baseline_centred_y(layout, rect.y, rect.h);
+        let (baseline, ascent, descent) = TextEngine::line_ink(layout, bb);
+        let bb = theme::caret_rect(bb, baseline, ascent, descent, dx, dy);
+        Some(koru_draw::geometry::Rect::new(
+            bb.x0 as f32,
+            bb.y0 as f32,
+            (bb.x1 - bb.x0) as f32,
+            (bb.y1 - bb.y0) as f32,
+        ))
+    }
+
     pub fn new(engine: &mut TextEngine, style: koru_draw::theme::TextStyle) -> Self {
         let size = style.metrics.size;
         let mut editor = PlainEditor::<Brush>::new(size);
@@ -639,7 +754,22 @@ impl TextField {
 
         if focused {
             let text_w = self.editor.try_layout().map(|l| l.width()).unwrap_or(0.0);
-            if let Some(bb) = self.editor.cursor_geometry(koru_draw::theme::caret_w()) {
+            let cursor = self
+                .editor
+                .cursor_geometry(koru_draw::theme::caret_w())
+                .or_else(|| {
+                    self.composition
+                        .as_ref()
+                        .filter(|c| c.native && c.cursor.is_some())?;
+                    let layout = self.editor.try_layout()?;
+                    Some(
+                        self.editor
+                            .raw_selection()
+                            .focus()
+                            .geometry(layout, theme::caret_w()),
+                    )
+                });
+            if let Some(bb) = cursor {
                 // Left of the window, come back to the caret; right of it, put
                 // the caret at the far edge.
                 let cx = bb.x0 as f32;
@@ -918,6 +1048,8 @@ impl TextField {
             start,
             end,
             text: String::new(),
+            native: false,
+            cursor: None,
         });
         true
     }
@@ -932,6 +1064,9 @@ impl TextField {
             let Some(c) = self.composition.as_mut() else {
                 return;
             };
+            if c.native {
+                return;
+            }
             // A recogniser repeats itself; relaying the same line would cost a
             // parley layout for no visible change.
             if c.text == text {
@@ -955,6 +1090,9 @@ impl TextField {
     /// changes no text reads to a user as undo being broken, which is the rule
     /// `drop_if_unchanged` already applies to a backspace at offset zero.
     pub fn commit_composition(&mut self, engine: &mut TextEngine, text: &str) {
+        if self.composition.as_ref().is_some_and(|c| c.native) {
+            return;
+        }
         let Some(c) = self.composition.take() else {
             return;
         };
@@ -971,6 +1109,9 @@ impl TextField {
     /// sleeping. Half a sentence landing in something you were not looking at
     /// is worse than losing it.
     pub fn cancel_composition(&mut self, engine: &mut TextEngine) {
+        if self.composition.as_ref().is_some_and(|c| c.native) {
+            return;
+        }
         let Some(c) = self.composition.take() else {
             return;
         };
@@ -1045,6 +1186,9 @@ impl TextField {
     }
 
     fn settle(&mut self, engine: &mut TextEngine) {
+        if self.ime_cancel(engine) {
+            return;
+        }
         if let Some(text) = self.composition.as_ref().map(|c| c.text.clone()) {
             self.commit_composition(engine, &text);
         }
@@ -1563,6 +1707,11 @@ pub fn draw_field_with_caret(
     caret: CaretPaint,
 ) {
     let composition = field.composition_span();
+    let caret = if field.ime_caret_hidden() {
+        CaretPaint::Hidden
+    } else {
+        caret
+    };
     let window = (fw - PAD * 2.0).max(1.0);
     let (input, scroll) = field.prepare(engine, window, focused);
     // **Centred on the baseline, not on the line box.** Centring the box was

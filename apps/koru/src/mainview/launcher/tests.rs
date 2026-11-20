@@ -5,6 +5,7 @@
 //! press off it make nothing. The grid on its own — geometry, keys,
 //! semantics — is pinned beside the component, in `koru_ui::launcher`.
 
+use koru_workspace_host::View;
 use koru_workspace_host::routing::{Blockers, ModalKind};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 
@@ -31,8 +32,58 @@ fn the_launcher_opens_as_a_modal() {
     let ask = v.launcher.as_ref().unwrap();
     assert_eq!(
         ask.kinds.iter().map(|k| k.letter()).collect::<String>(),
-        "dtcasi"
+        "dtcasi\0"
     );
+}
+
+#[test]
+fn task_document_tile_opens_the_declared_host_from_the_live_launcher() {
+    use crate::mainview::context_menu::{ContextMenu, MenuAction, MenuSubject};
+    let (mut v, mut w) = container();
+    let count = v.tabs().len();
+    v.open_launcher();
+    let ask = v.launcher.as_ref().unwrap();
+    let index = ask
+        .kinds
+        .iter()
+        .position(|kind| *kind == NewKind::MiniApp)
+        .unwrap();
+    let tile = NewKind::MiniApp.tile(crate::format::lang());
+    assert_eq!(
+        tile.label,
+        koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
+    );
+    assert_eq!(tile.letter, '\0', "no additional mnemonic");
+    // Reach the third row with ordinary launcher navigation, then activate.
+    for _ in 0..2 {
+        assert!(v.key(
+            &mut w.ws,
+            &Key::Named(NamedKey::ArrowDown),
+            None,
+            ModifiersState::empty()
+        ));
+    }
+    assert_eq!(v.launcher.as_ref().unwrap().launcher.highlight(), index);
+    assert!(v.key(
+        &mut w.ws,
+        &Key::Named(NamedKey::Enter),
+        None,
+        ModifiersState::empty()
+    ));
+    assert!(v.launcher.is_none());
+    assert!(matches!(v.tabs().active_tab().view, TabView::MiniApp(_)));
+    assert_eq!(v.tabs().len(), count + 1);
+    assert!(
+        v.take_pane_request().is_none(),
+        "no shell navigation or reservation"
+    );
+    let menu = ContextMenu::new(
+        &mut v.engine,
+        MenuSubject::NewTab,
+        (0.0, 0.0),
+        vec![MenuAction::MiniApp],
+    );
+    assert!(v.item_is_enabled(&menu, MenuAction::MiniApp));
 }
 
 #[test]
@@ -72,6 +123,16 @@ fn the_tab_plus_opens_the_anchored_menu_and_its_flyouts() {
             .unwrap();
         assert!(v.open_submenu(index));
         assert!(!v.submenu.as_ref().unwrap().1.items().is_empty());
+        if parent == MenuAction::Documents {
+            assert!(
+                v.submenu
+                    .as_ref()
+                    .unwrap()
+                    .1
+                    .items()
+                    .contains(&MenuAction::MiniApp)
+            );
+        }
     }
     v.menu = None;
     v.submenu = None;
@@ -338,7 +399,15 @@ fn every_tile_and_the_footer_read_their_own_words() {
             .iter()
             .map(|t| t.label.as_str())
             .collect::<Vec<_>>(),
-        ["Document", "Task", "Chat", "Agent", "Shell", "Import"]
+        [
+            "Document",
+            "Task",
+            "Chat",
+            "Agent",
+            "Shell",
+            "Import",
+            "Tasks and document"
+        ]
     );
     assert!(
         launcher

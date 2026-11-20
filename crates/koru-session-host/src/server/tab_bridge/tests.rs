@@ -82,9 +82,13 @@ fn codex_tabs_take_the_app_servers_overrides_bare() {
             launch.args,
             [
                 "-c",
-                r"mcp_servers.koru.command='C:\Program Files\Koru\koru-mcp.exe'",
+                "mcp_servers.koru.enabled=false",
                 "-c",
-                "mcp_servers.koru.args=['serve','--stdio']",
+                "mcp_servers.koru_desktop.enabled=true",
+                "-c",
+                r"mcp_servers.koru_desktop.command='C:\Program Files\Koru\koru-mcp.exe'",
+                "-c",
+                "mcp_servers.koru_desktop.args=['serve','--stdio']",
             ]
         );
         assert!(launch.env.is_empty());

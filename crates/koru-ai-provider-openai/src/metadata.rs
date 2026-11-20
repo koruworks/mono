@@ -76,6 +76,7 @@ pub fn openai_model(model: &str) -> ModelDescriptor {
         },
         resolved_model: Some(model.to_owned()),
         capabilities: ModelCapabilities {
+            native_tools: true,
             streaming: true,
             structured_output: false,
             vision: false,

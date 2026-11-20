@@ -25,6 +25,21 @@ pub use koru_ai_core::{
     SearchChatsToolResponse, WorkspaceFileOrigin,
 };
 
+/// Desktop MCP delegates only these bounded calls to an exact live attempt.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MiniAppToolRequest {
+    pub capability: koru_ai_core::mini_apps::Capability,
+    pub name: String,
+    pub call_id: String,
+    pub arguments: serde_json::Value,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+pub struct MiniAppToolResponse {
+    pub content: serde_json::Value,
+    pub is_error: bool,
+}
+
 /// The stable failure codes of the attachment routes and of a send that
 /// names attachments. Product UI renders localized copy by code.
 pub mod attachment_codes {
@@ -355,6 +370,11 @@ pub struct BranchChatResponse {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetryTurnRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
+    /// Exact captured declaration paired with the live target; never persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_refinement: Option<koru_ai_core::mini_apps::RefinementContext>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub message_id: MessageId,
@@ -422,6 +442,13 @@ pub const MAX_CONTEXT_REFS: usize = 16;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SendTurnRequest {
+    /// Native host provenance for this live request only. Never persisted or
+    /// accepted from a model tool argument.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_host: Option<koru_ai_core::mini_apps::HostContext>,
+    /// Exact captured declaration paired with the live target; never persisted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mini_app_refinement: Option<koru_ai_core::mini_apps::RefinementContext>,
     #[schemars(with = "String")]
     pub operation_id: Uuid,
     pub chat_id: ChatId,
@@ -520,10 +547,33 @@ pub struct StreamEvent {
 /// Provider tool calls are deliberately absent: their arguments and reasoning
 /// continuity data remain inside the worker. Clients observe only the minimal
 /// [`ToolActivity`] projection: stable target ids and a bounded public failure
-/// summary, never raw tool arguments or results.
+/// summary, never raw tool arguments or general tool results. The registered
+/// reference-only mini-app result has a separate bounded, transient variant.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PublicAiEvent {
+    /// A live-only arrangement proposal. Native revision ownership is external
+    /// to the upstream A2UI envelope and must be rechecked before application.
+    MiniAppUpdated {
+        attempt_id: InferenceAttemptId,
+        chat_id: ChatId,
+        profile_id: ProfileId,
+        invocation_id: koru_ai_core::ToolInvocationId,
+        call_id: String,
+        host: koru_ai_core::mini_apps::HostContext,
+        envelope: koru_ai_core::mini_apps::UpdateEnvelope,
+    },
+    /// Only the registered, validated mini-app result crosses this boundary.
+    /// It is transient, never reconstructed from transcript or tool activity.
+    MiniAppCreated {
+        attempt_id: InferenceAttemptId,
+        chat_id: ChatId,
+        profile_id: ProfileId,
+        invocation_id: koru_ai_core::ToolInvocationId,
+        call_id: String,
+        host: koru_ai_core::mini_apps::HostContext,
+        envelope: koru_ai_core::mini_apps::Envelope,
+    },
     Started {
         attempt_id: InferenceAttemptId,
         provider_response_id: Option<String>,
@@ -606,6 +656,9 @@ pub enum PublicAiEvent {
 impl PublicAiEvent {
     pub const fn attempt_id(&self) -> InferenceAttemptId {
         match self {
+            Self::MiniAppCreated { attempt_id, .. } | Self::MiniAppUpdated { attempt_id, .. } => {
+                *attempt_id
+            }
             Self::Started { attempt_id, .. }
             | Self::Notice { attempt_id, .. }
             | Self::TextDelta { attempt_id, .. }
@@ -1213,6 +1266,67 @@ mod tests {
             ..decoded
         };
         assert_eq!(serde_json::to_value(armed).unwrap()["web_search"], true);
+    }
+
+    #[test]
+    fn mini_app_refinement_defaults_absent_and_round_trips_only_on_turn_requests() {
+        use koru_ai_core::mini_apps::{
+            Declaration, RefinementContext, RefinementTarget, composition,
+        };
+        let mut send: SendTurnRequest = serde_json::from_value(serde_json::json!({
+            "operation_id": Uuid::new_v4(), "chat_id": ChatId::new(),
+            "surface":"standalone", "markdown":"Change the spacing"
+        }))
+        .unwrap();
+        let mut retry: RetryTurnRequest = serde_json::from_value(serde_json::json!({
+            "operation_id": Uuid::new_v4(), "message_id": MessageId::new(), "surface":"standalone"
+        }))
+        .unwrap();
+        assert!(send.mini_app_refinement.is_none());
+        assert!(retry.mini_app_refinement.is_none());
+        assert!(
+            serde_json::to_value(&send)
+                .unwrap()
+                .get("mini_app_refinement")
+                .is_none()
+        );
+        assert!(
+            serde_json::to_value(&retry)
+                .unwrap()
+                .get("mini_app_refinement")
+                .is_none()
+        );
+        let target = RefinementTarget {
+            tab_id: 5,
+            surface_id: Uuid::new_v4(),
+            base_revision: 3,
+        };
+        let mut declaration = Declaration::parse(composition::FIXTURE.as_bytes())
+            .unwrap()
+            .envelope;
+        declaration.surface.surface_id = target.surface_name();
+        let captured = RefinementContext {
+            target,
+            declaration,
+        };
+        send.mini_app_refinement = Some(captured.clone());
+        retry.mini_app_refinement = Some(captured);
+        assert_eq!(
+            serde_json::from_value::<SendTurnRequest>(serde_json::to_value(&send).unwrap())
+                .unwrap(),
+            send
+        );
+        assert_eq!(
+            serde_json::from_value::<RetryTurnRequest>(serde_json::to_value(&retry).unwrap())
+                .unwrap(),
+            retry
+        );
+        assert!(
+            serde_json::to_value(transcript())
+                .unwrap()
+                .get("mini_app_refinement")
+                .is_none()
+        );
     }
 
     #[test]

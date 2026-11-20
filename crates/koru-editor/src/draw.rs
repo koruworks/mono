@@ -589,6 +589,7 @@ pub fn draw_document(
         if focused
             && active
             && caret_on
+            && !row.ime_caret_hidden
             && selected_pill.is_none()
             && !row.selected
             && row.selection.is_collapsed()
@@ -841,7 +842,7 @@ pub(crate) fn reminder_flow_anchor(
 }
 
 /// Whether the caret sits in italic (run mark or armed pending italic).
-fn italic_at_caret(row: &Paragraph) -> bool {
+pub(crate) fn italic_at_caret(row: &Paragraph) -> bool {
     if let (Some(marks), _) = row.armed() {
         if marks.has(Mark::Italic) {
             return true;
@@ -1858,8 +1859,8 @@ pub fn draw_scrollbar(scene: &mut Scene, root: Affine, body: &Body, view: &ViewS
 /// What every view of a list of paragraphs draws, in the order it has to happen.
 ///
 /// The order is the one thing no single layer can know, which is why it is here
-/// rather than repeated in each view: background, rows, drag feedback, the
-/// placeholder, then whatever chrome this view wears, then the status bar and
+/// rather than repeated in each view: background, placeholders, rows and their
+/// carets, drag feedback, then whatever chrome this view wears, then the status bar and
 /// the things that float over everything.
 ///
 /// `chrome` is a callback rather than a parameter because it draws *between* two
@@ -1984,6 +1985,46 @@ pub fn frame(
         stroke(scene, root, theme::p().panel_border, 1.0, &sheet);
     }
 
+    // Hints sit behind the rows' carets: painting the first placeholder glyph
+    // afterward can cover the person's chosen caret color and width. This also
+    // applies to an empty embedded composer, which uses this same renderer.
+    // Keep the row's family, step, weight and strut so the first keystroke does
+    // not change the text geometry advertised by the hint.
+    if let Some((x, y)) = body.placeholder_at() {
+        let row = &body.rows[body.first_body_row()];
+        let hint = view.engine.placeholder_layout(
+            f.placeholder,
+            row.type_step(),
+            row.font_choice().stack(),
+            row.weight(),
+        );
+        draw_layout(
+            scene,
+            content_root,
+            &hint,
+            x,
+            y - view.scroll,
+            Some(theme::p().placeholder),
+        );
+    }
+    if let Some((x, y)) = body.title_placeholder_at() {
+        let row = &body.rows[0];
+        let hint = view.engine.placeholder_layout(
+            f.title_placeholder,
+            row.type_step(),
+            row.font_choice().stack(),
+            row.weight(),
+        );
+        draw_layout(
+            scene,
+            content_root,
+            &hint,
+            x,
+            y - view.scroll,
+            Some(theme::p().placeholder),
+        );
+    }
+
     let entity_query = match &view.overlay {
         crate::components::Overlay::Entity(picker) => body
             .row(picker.trigger.node)
@@ -2045,45 +2086,6 @@ pub fn frame(
         view.reduced_motion,
     );
 
-    // Both hints are set exactly the way the row they stand in for is set —
-    // the row's family, its step on the ramp, its weight, and the same strut
-    // geometry body rows use — or an empty document would advertise itself in
-    // the chrome's font, visibly off from the text the first keystroke produces.
-    if let Some((x, y)) = body.placeholder_at() {
-        let y = y - view.scroll;
-        let row = &body.rows[body.first_body_row()];
-        let hint = view.engine.placeholder_layout(
-            f.placeholder,
-            row.type_step(),
-            row.font_choice().stack(),
-            row.weight(),
-        );
-        draw_layout(
-            scene,
-            content_root,
-            &hint,
-            x,
-            y,
-            Some(theme::p().placeholder),
-        );
-    }
-    if let Some((x, y)) = body.title_placeholder_at() {
-        let row = &body.rows[0];
-        let hint = view.engine.placeholder_layout(
-            f.title_placeholder,
-            row.type_step(),
-            row.font_choice().stack(),
-            row.weight(),
-        );
-        draw_layout(
-            scene,
-            content_root,
-            &hint,
-            x,
-            y - view.scroll,
-            Some(theme::p().placeholder),
-        );
-    }
     // A display title, where the title row would be: a document whose name
     // is resolved rather than written shows it in the title's own step and
     // face, in the text ink — a name, not a prompt — and scrolls with the

@@ -227,6 +227,7 @@ pub enum MenuAction {
     /// Parent of the Documents flyout on the `+` menu.
     Documents,
     NewDocument,
+    MiniApp,
     /// A recent document under Documents. Title comes from the snapshot
     /// [`set_plus_snapshots`] captures when the menu opens.
     ///
@@ -1215,6 +1216,9 @@ impl MenuAction {
                 koru_i18n::socials::t(crate::format::lang(), koru_i18n::socials::Key::Title)
             }
             MenuAction::NewDocument => "New",
+            MenuAction::MiniApp => {
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTitle)
+            }
             MenuAction::Canvases => {
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::CanvasesTitle)
             }
@@ -2236,7 +2240,7 @@ pub fn agent_profile_items() -> Vec<MenuAction> {
 /// Documents flyout: New, then up to ten recents and *Clear recents* under
 /// them — offered only when there is something to clear.
 pub fn document_plus_items() -> Vec<MenuAction> {
-    let mut items = vec![MenuAction::NewDocument];
+    let mut items = vec![MenuAction::NewDocument, MenuAction::MiniApp];
     PLUS_RECENTS.with(|cell| {
         let recents = cell.borrow();
         if recents.is_empty() {
@@ -3060,7 +3064,7 @@ pub struct ContextMenu {
 /// Monotonic and never reused: a number that could come round again is the bug
 /// this exists to prevent. The counter only moves forward, and a process would
 /// have to open menus for longer than the universe has existed to wrap it.
-fn mint_menu_instance(rows: usize) -> u64 {
+pub(super) fn mint_menu_instance(rows: usize) -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(rows as u64 + 1, Ordering::Relaxed)

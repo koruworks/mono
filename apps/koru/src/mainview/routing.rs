@@ -197,6 +197,7 @@ impl MainView {
                 TabView::Ocr(_) => "ocr",
                 TabView::Canvas(_) => "canvas",
                 TabView::Reminders(_) => "reminders",
+                TabView::MiniApp(_) => "mini-app",
             },
             self.tabs().active_tab().is_pinned(),
         ));
@@ -230,7 +231,7 @@ impl MainView {
             Layer::Recording => self.recording_modal.is_some(),
             Layer::PlaceChooser => self.place_chooser.is_some(),
             Layer::Launcher => self.launcher.is_some(),
-            Layer::Menu => self.menu.is_some(),
+            Layer::Menu => self.menu.is_some() || self.mini_app_pins.menu.is_some(),
             Layer::ReminderOverlay => self.reminder_shell.overlay_live(),
             Layer::ReminderManagement => self.reminder_creation.is_management(),
             Layer::ReminderCreation => self.reminder_creation.is_creation(),
@@ -291,6 +292,7 @@ impl MainView {
         }
         match &self.tabs().active_tab().view {
             TabView::Leaf(leaf) => leaf.editable_target(TabId(self.tabs().active())),
+            TabView::MiniApp(app) => app.leaf().filter(|_| app.document_focused()).map(|leaf| leaf.editable_target(TabId(self.tabs().active()))).unwrap_or(EditableTarget::None),
             // The note above a Tasks page is a document body while it has
             // the keyboard; the capture row is not a dictation surface this
             // release, and a `None` merely declines a dictation.

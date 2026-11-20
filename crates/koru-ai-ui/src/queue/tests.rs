@@ -16,6 +16,77 @@ use super::*;
 use crate::attachments;
 use crate::reader::{Reader, Update};
 
+#[test]
+fn mini_app_queued_send_retains_the_captured_declaration_in_the_wire_request() {
+    let (mut surface, transcript, commands) = agent_surface(AiProviderId::OPENAI, &[]);
+    surface.context_workspace = Some(koru_ai_core::WorkspaceId::new());
+    surface.profile = Some(koru_ai_core::ProfileId::new());
+    surface.offer_mini_apps(true);
+    let target = koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 9,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 1,
+    };
+    let mut declaration = koru_ai_core::mini_apps::Declaration::parse(
+        koru_ai_core::mini_apps::composition::FIXTURE.as_bytes(),
+    )
+    .unwrap()
+    .envelope;
+    declaration.surface.surface_id = target.surface_name();
+    let context = koru_ai_core::mini_apps::RefinementContext {
+        target,
+        declaration,
+    };
+    surface.set_mini_app_refinement_context(Some(context.clone()));
+    let attempt = send_and_accept(&mut surface, &commands, "First request");
+    type_into(&mut surface, "Change the heading");
+    assert!(press(&mut surface, NamedKey::Enter));
+    end_reply(&mut surface, &transcript, completed(attempt));
+    let requests: Vec<_> = drain(&commands)
+        .into_iter()
+        .filter_map(|command| match command {
+            Command::Send(request) => Some(request),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].mini_app_refinement, Some(context));
+    assert_eq!(requests[0].mini_app_host.unwrap().refinement, Some(target));
+}
+
+#[test]
+fn mini_app_queued_prompt_cannot_recapture_another_surface_at_dispatch() {
+    let (mut surface, transcript, commands) = agent_surface(AiProviderId::OPENAI, &[]);
+    let first = koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 1,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 3,
+    };
+    surface.set_mini_app_refinement_target(Some(first));
+    let attempt = send_and_accept(&mut surface, &commands, "First request");
+    let prompt = "Put the document on the left and tasks on the right";
+    type_into(&mut surface, prompt);
+    assert!(press(&mut surface, NamedKey::Enter));
+    assert_eq!(queued_texts(&surface), [prompt]);
+    surface.set_mini_app_refinement_target(Some(koru_ai_core::mini_apps::RefinementTarget {
+        tab_id: 2,
+        surface_id: uuid::Uuid::new_v4(),
+        base_revision: 0,
+    }));
+    end_reply(&mut surface, &transcript, completed(attempt));
+    assert!(sends(&drain(&commands)).is_empty());
+    assert_eq!(queued_texts(&surface), [prompt]);
+    assert!(surface.queues.is_paused(transcript.chat.id));
+    assert_eq!(
+        surface.status.as_deref(),
+        Some(t(surface.lang, Key::MiniAppRefinementRefused))
+    );
+    // Returning to the exact captured target permits an explicit Send next.
+    surface.set_mini_app_refinement_target(Some(first));
+    assert!(surface.send_queue_head());
+    assert_eq!(sends(&drain(&commands)), [prompt]);
+}
+
 /// A surface on a new agent chat, with the agents the settings list:
 /// `(id, steers)`.
 fn agent_surface(

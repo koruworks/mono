@@ -1718,6 +1718,11 @@ even if the document or Explore last held focus;
 `Alt+Down` walks forward again, and one step past the newest question returns
 the caret to the composer.
 
+Messages above the chat composer have a **Dismiss message** (×) button.
+Click it, or press Shift+Tab from the composer and then Enter or Space.
+Dismissal leaves your draft and any running request unchanged. A new request
+can show the same notice again; different notices still appear normally.
+
 The composer shows the open document and attachments as removable context
 chips inside the message box. Use **+ → Recent** to insert a recent document
 or **+ → Koru context** to open the same document picker as `@`. The band wraps
@@ -4688,6 +4693,16 @@ for you.
 
 ## Documents
 
+Choose **Document** in the **+** launcher to begin a new page. The first text
+you type or paste is kept in its draft while Koru creates the saved document.
+Native composition finishes before that handoff; you do not need to type an
+extra character to save the completed input. If creation fails, the draft stays
+open. Closing it, hiding the window, or switching workspace/profile waits for
+that writing to be transferred. A message explains the refusal; retry the
+action after creation succeeds. An untouched draft can be closed immediately.
+The content present at that first handoff becomes the document's opening
+baseline; later edits use ordinary undo.
+
 Type `@` and start writing a document title. The text beside the caret filters
 the shared search index while the popover lists every matching document as a
 separate row. It starts in the current workspace. Press **Ctrl+Space** while the
@@ -4910,6 +4925,12 @@ it is never stored, so it follows the theme and never bloats a sync.
 
 ### Diagrams
 
+AI chat replies also draw fenced `mermaid` blocks inline, in both chat tabs
+and the side pane. While a reply is streaming, the code stays visible until
+the fence closes. A diagram that is loading or cannot be drawn keeps its
+readable source. **Copy as Markdown** and **Save as document** preserve the
+original Mermaid text.
+
 A code block whose language is **Mermaid** is a diagram: Koru draws it in
 place of the text. Write a flowchart or a sequence diagram in
 [Mermaid](https://mermaid.js.org) notation inside a fence that opens with
@@ -4966,6 +4987,10 @@ allows. The view's copy control puts a picture on the
 clipboard and its save control saves one; `Esc`, the `×`, or a click
 anywhere on the dimmed window closes it. A screen reader hears the
 drawing's title (or *Diagram*), the zoom, and each control's name.
+
+A rendered Mermaid diagram in an AI chat opens the same viewer with a single
+click, in either a chat tab or the AI pane. Zoom, pan, copy, save and dismissal
+work as above. A diagram that has not rendered keeps its readable source.
 
 **Copying and saving.** Copy on a selected drawing copies the whole block;
 it arrives as a diagram wherever it is pasted in Koru, and as a fenced
@@ -6385,7 +6410,10 @@ If Koru opens empty when it should not, check that the Koru Store is running and
 that you are in the profile and workspace you expect (the explore pane's
 switchers). Content lives in the store, not in a profile folder you once picked.
 
-Everything saves continuously; there is no save command.
+Document edits and task changes save continuously. A
+[task/document mini app](TASK-DOCUMENT.md) has a separate **Save mini app**
+action for its arrangement and linked choices; source content keeps saving
+normally whether or not that arrangement is saved or pinned.
 
 ## Usage data
 

@@ -63,6 +63,46 @@ fn tasks_target_of(tab: &Tab) -> Option<RailTarget> {
 }
 
 impl MainView {
+    /// Every split's selected tab is visible, regardless of keyboard focus.
+    /// Hidden tabs keep their invalidation but contribute no request or clock.
+    /// `told` is whether task events are live, so each page trusts them
+    /// rather than its own polling clock (main's event-driven task list).
+    pub(super) fn maintain_task_pages(&mut self, now: std::time::Instant, told: bool) -> bool {
+        let workspace = self.current_workspace();
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let active = group.active();
+            for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
+                let visible = i == active && tab.view.shows_tasks(workspace);
+                if let Some(tasks) = tab.view.tasks_mut() {
+                    let target = tasks.target();
+                    tasks.panel_mut().set_event_driven(told);
+                    if tasks
+                        .panel_mut()
+                        .maintain(workspace, Some(target), visible, now)
+                    {
+                        tasks.mark_stale();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    pub(super) fn task_pages_deadline(&self) -> Option<std::time::Instant> {
+        let workspace = self.current_workspace();
+        self.panes
+            .iter_groups()
+            .filter_map(|(_, group)| {
+                let view = &group.tabs().active_tab().view;
+                view.shows_tasks(workspace)
+                    .then(|| view.tasks().and_then(|tasks| tasks.panel().deadline()))
+                    .flatten()
+            })
+            .min()
+    }
+
     /// Open the Tasks tab on `target`, or point the existing one at it.
     ///
     /// **One per window.** The rail holds one selection, so a second Tasks tab
@@ -310,11 +350,19 @@ impl MainView {
     pub(super) fn drain_tasks_request(&mut self) -> bool {
         let request = match &mut self.tabs_mut().active_mut().view {
             TabView::Tasks(t) => t.take_request(),
+            TabView::MiniApp(app) if app.has_tasks() => app.tasks.take_request(),
             _ => None,
         };
         let Some(request) = request else {
             return false;
         };
+        if let crate::tasks_view::Request::Open { document, node, .. }
+        | crate::tasks_view::Request::ChoosePlace { document, node, .. } = &request
+            && let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view
+        {
+            app.request_document(*document, Some(*node));
+            return true;
+        }
         self.handle_tasks_request(request);
         true
     }
@@ -327,12 +375,30 @@ impl MainView {
 
     /// One request from the Tasks tab, through the door its verb has.
     fn handle_tasks_request(&mut self, request: crate::tasks_view::Request) {
+        if let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+            match &request {
+                crate::tasks_view::Request::Open { document, node, .. }
+                | crate::tasks_view::Request::ChoosePlace { document, node, .. } => {
+                    app.request_document(*document, Some(*node));
+                    return;
+                }
+                crate::tasks_view::Request::OpenNote { document } => {
+                    app.request_document(*document, None);
+                    return;
+                }
+                _ => {}
+            }
+        }
         // **A tab reports in its own coordinates.** The container passes the
         // content rect's size as the viewport and subtracts its origin from
         // every pointer coordinate before delegating, so anything a view hands
         // back has to come the other way before a menu — drawn in window space
         // — can use it.
-        let c = self.regions.content;
+        let mut c = self.focused_view_rect();
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view {
+            c.x += app.regions.tasks.x;
+            c.y += app.regions.tasks.y;
+        }
         let to_window = |at: (f32, f32)| (at.0 + c.x, at.1 + c.y);
         match request {
             crate::tasks_view::Request::Open {
@@ -360,7 +426,7 @@ impl MainView {
                 pinned_today,
                 at,
             } => {
-                let (subject, items) = crate::tasks_view::row_menu(
+                let (subject, mut items) = crate::tasks_view::row_menu(
                     document,
                     node,
                     completed,
@@ -368,6 +434,15 @@ impl MainView {
                     list,
                     pinned_today,
                 );
+                if matches!(self.tabs().active_tab().view, TabView::MiniApp(_)) {
+                    items.retain(|item| {
+                        !matches!(
+                            item,
+                            super::context_menu::MenuAction::TaskCreateDocument
+                                | super::context_menu::MenuAction::TaskDelegate
+                        )
+                    });
+                }
                 self.open_subject_menu(subject, items, to_window(at));
             }
             crate::tasks_view::Request::Complete {
@@ -613,7 +688,12 @@ impl MainView {
                 completed,
                 at,
             } => {
-                let (subject, items) = crate::tasks_view::rows_menu(tasks, native, completed);
+                let (subject, mut items) = crate::tasks_view::rows_menu(tasks, native, completed);
+                if matches!(self.tabs().active_tab().view, TabView::MiniApp(_)) {
+                    items.retain(|item| {
+                        !matches!(item, super::context_menu::MenuAction::TaskCreateDocument)
+                    });
+                }
                 self.open_subject_menu(subject, items, to_window(at));
             }
             crate::tasks_view::Request::RemoveTasks { tasks } => {
@@ -700,9 +780,13 @@ impl MainView {
             _ => super::Landing::Plain,
         };
         self.pending_landings.push_back(landing);
+        self.pending_task_receipts.push_back((
+            (!echo).then_some(self.tabs().active_tab().id),
+            command.clone(),
+        ));
         if echo {
             self.each_tab_mut(|tab| {
-                if let TabView::Tasks(t) = &mut tab.view {
+                if let Some(t) = tab.view.tasks_mut() {
                     t.echo_command(&command);
                 }
                 false
@@ -1185,9 +1269,17 @@ impl MainView {
         &mut self,
         landed: &koru_workspace_host::tasks::Landed,
     ) -> bool {
+        let pending = self.pending_task_receipts.pop_front();
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
-                t.echo_landed(landed);
+            if pending
+                .as_ref()
+                .and_then(|(owner, _)| *owner)
+                .is_some_and(|owner| tab.id != owner)
+            {
+                return false;
+            }
+            if let Some(t) = tab.view.tasks_mut() {
+                t.echo_landed_command(landed, pending.as_ref().map(|(_, command)| command));
             }
             false
         });
@@ -1372,28 +1464,60 @@ impl MainView {
     /// is the one unrecoverable bug, and a toast that names the text without
     /// restoring it is a receipt rather than a recovery.
     pub(super) fn task_command_failed(&mut self, command: &TaskCommand, error: &str) -> bool {
+        self.task_command_failed_at(command, error, false)
+    }
+
+    pub(super) fn task_command_failed_at(
+        &mut self,
+        command: &TaskCommand,
+        error: &str,
+        newest: bool,
+    ) -> bool {
         // The echo was a promise; the refusal takes it back, and the number
         // it would have moved stays where the store has it.
         if !self.pending_count_deltas.is_empty() {
-            self.pending_count_deltas.remove(0);
+            let index = if newest {
+                self.pending_count_deltas.len() - 1
+            } else {
+                0
+            };
+            self.pending_count_deltas.remove(index);
         }
-        self.pending_landings.pop_front();
+        let pending = if newest {
+            self.pending_landings.pop_back();
+            self.pending_task_receipts.pop_back()
+        } else {
+            self.pending_landings.pop_front();
+            self.pending_task_receipts.pop_front()
+        };
+        let owner = pending.as_ref().and_then(|(owner, _)| *owner);
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
-                t.echo_failed();
+            if owner.is_some_and(|owner| tab.id != owner) {
+                return false;
+            }
+            if let Some(t) = tab.view.tasks_mut() {
+                t.echo_failed_command(Some(command), newest);
             }
             false
         });
         if let TaskCommand::Create { title, .. } = command {
             self.each_tab_mut(|tab| {
-                if let TabView::Tasks(t) = &mut tab.view {
+                if owner.is_some_and(|owner| tab.id != owner) {
+                    return false;
+                }
+                if let Some(t) = tab.view.tasks_mut() {
                     t.restore_capture(title);
                 }
                 false
             });
         }
+        let message = if matches!(self.tabs().active_tab().view, TabView::MiniApp(_)) {
+            koru_i18n::t(crate::format::lang(), koru_i18n::Key::MiniAppTaskFailed)
+        } else {
+            error
+        };
         self.toast = Some((
-            koru_ui::Toast::new(error.to_owned(), None, std::time::Instant::now()),
+            koru_ui::Toast::new(message.to_owned(), None, std::time::Instant::now()),
             super::ToastPayload::None,
         ));
         true
@@ -1540,7 +1664,7 @@ impl MainView {
         // The context column's section is a third reading of the same facts.
         self.context_tasks_stale = true;
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
+            if let Some(t) = tab.view.tasks_mut() {
                 match &requirement {
                     Some(requirement) => t.panel_mut().require(requirement.clone()),
                     None => t.panel_mut().invalidate(),
@@ -1613,12 +1737,11 @@ impl MainView {
     /// *since* the last change still has to be told, and `set_list_table`
     /// returns early when the table has not moved.
     pub(super) fn refresh_tasks_context(&mut self, workspace: &Workspace) -> bool {
-        if !self.panes.iter_groups().any(|(_, group)| {
-            group
-                .tabs()
-                .iter()
-                .any(|tab| matches!(tab.view, TabView::Tasks(_)))
-        }) {
+        if !self
+            .panes
+            .iter_groups()
+            .any(|(_, group)| group.tabs().iter().any(|tab| tab.view.tasks().is_some()))
+        {
             return false;
         }
         let documents = workspace.task_list_documents();
@@ -1638,7 +1761,10 @@ impl MainView {
             .collect();
         let mut changed = false;
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
+            if let TabView::MiniApp(app) = &mut tab.view {
+                app.set_lists(&lists);
+            }
+            if let Some(t) = tab.view.tasks_mut() {
                 changed |= t.set_task_documents(documents.clone());
                 changed |= t.set_lists(lists.clone());
             }

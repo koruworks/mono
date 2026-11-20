@@ -748,8 +748,8 @@ fn two_peers_seeding_one_note_converge_on_one_root() {
         );
         assert_eq!(
             ws.children(Parent::Node(roots[0])).unwrap().len(),
-            2,
-            "{who}: both seed paragraphs were kept — the fold moves, never drops"
+            3,
+            "{who}: both seed paragraphs and the duplicate title identity survive"
         );
     }
 }
@@ -823,6 +823,72 @@ fn the_fold_leaves_a_healthy_document_alone() {
     // An empty registered document has nothing to fold either.
     let mut empty = WorkspaceDoc::from_snapshot(&store_registered_empty()).unwrap();
     assert!(!empty.unify_document_roots().unwrap());
+}
+
+#[test]
+fn a_fold_retains_a_duplicate_root_for_late_text_marks_and_attributes() {
+    use koru_core::{Attr, AttrValue, Mark};
+    let empty = store_registered_empty();
+    let mut a = WorkspaceDoc::from_snapshot(&empty).unwrap();
+    let mut b = WorkspaceDoc::from_snapshot(&empty).unwrap();
+    seed_like_an_opener(&mut a, "");
+    seed_like_an_opener(&mut b, "");
+    sync(&mut a, &mut b);
+    let duplicate = document_roots(&a)[1];
+    assert!(a.unify_document_roots().unwrap());
+
+    // B has not received the repair. Local equality at A did not authorize
+    // deleting this identity: B is still editing the root it opened.
+    b.set_text(duplicate, "Late title").unwrap();
+    b.set_mark(duplicate, 0..4, Mark::Bold, true).unwrap();
+    let attr = Attr::new("tag", AttrValue::Text("late".into()));
+    b.set_attr(duplicate, &attr).unwrap();
+    sync(&mut a, &mut b);
+    for ws in [&a, &b] {
+        let node = ws.read(duplicate).unwrap();
+        assert_eq!(node.kind, Kind::Paragraph);
+        assert_eq!(node.content.as_text(), Some("Late title"));
+        assert!(node.content.attrs().contains(&attr));
+        assert!(ws.runs(duplicate).unwrap()[0].has(Mark::Bold));
+        assert_eq!(document_roots(ws).len(), 1);
+    }
+    assert_eq!(texts(&a), texts(&b));
+    assert!(!a.unify_document_roots().unwrap());
+}
+
+#[test]
+fn simultaneous_folds_keep_distinct_titles_and_styles_on_their_original_nodes() {
+    use koru_core::{Attr, AttrValue, Mark};
+    let empty = store_registered_empty();
+    let mut a = WorkspaceDoc::from_snapshot(&empty).unwrap();
+    let mut b = WorkspaceDoc::from_snapshot(&empty).unwrap();
+    seed_like_an_opener(&mut a, "First title");
+    seed_like_an_opener(&mut b, "Second title");
+    let first = document_roots(&a)[0];
+    let second = document_roots(&b)[0];
+    a.set_mark(first, 0..5, Mark::Bold, true).unwrap();
+    b.set_mark(second, 0..6, Mark::Italic, true).unwrap();
+    let attr = Attr::new("tag", AttrValue::Text("second".into()));
+    b.set_attr(second, &attr).unwrap();
+    sync(&mut a, &mut b);
+    assert!(a.unify_document_roots().unwrap());
+    assert!(b.unify_document_roots().unwrap());
+    sync(&mut a, &mut b);
+    for ws in [&a, &b] {
+        assert_eq!(
+            ws.read(first).unwrap().content.as_text(),
+            Some("First title")
+        );
+        assert_eq!(
+            ws.read(second).unwrap().content.as_text(),
+            Some("Second title")
+        );
+        assert!(ws.runs(first).unwrap()[0].has(Mark::Bold));
+        assert!(ws.runs(second).unwrap()[0].has(Mark::Italic));
+        assert!(ws.read(second).unwrap().content.attrs().contains(&attr));
+        assert_eq!(document_roots(ws).len(), 1);
+    }
+    assert_eq!(texts(&a), texts(&b));
 }
 
 // ------------------------------------------------------------------ canvas

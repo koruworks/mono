@@ -391,6 +391,8 @@ debug = false
 # third-party/patches/sherpa-onnx.md. Fetched and patched, not committed:
 # third-party/README.md.
 [patch.crates-io]
+# Same public API; native IME retirement and queued-event guards. See third-party/patches/winit.md.
+winit = { path = "third-party/crates/winit" }
 # ZIP 9 fixes the archive advisories in oar-ocr's language-model loader.
 # See third-party/patches/oar-ocr.md.
 oar-ocr = { path = "third-party/crates/oar-ocr" }

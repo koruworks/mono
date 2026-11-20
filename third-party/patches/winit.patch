@@ -1,0 +1,2298 @@
+diff --git b/src/platform_impl/ime_lifetime/tests.rs b/src/platform_impl/ime_lifetime/tests.rs
+new file mode 100644
+index 00000000..e10c6d0b
+--- /dev/null
++++ b/src/platform_impl/ime_lifetime/tests.rs
+@@ -0,0 +1,69 @@
++use super::*;
++
++#[test]
++fn retiring_rejects_queued_enabled_and_commit_without_waiting_for_disabled() {
++    let life = ImeLifetime::default();
++    let old = life.request(true).unwrap();
++    let queued = [old.clone(), old];
++    life.request(false).unwrap();
++    let new = life.request(true).unwrap();
++    assert!(queued.iter().all(|event| !event.is_current()));
++    assert!(new.is_current());
++    assert!(life.request(true).is_none());
++}
++
++#[test]
++fn reset_from_clear_preedit_callback_retires_the_rest_of_that_batch() {
++    let life = ImeLifetime::default();
++    let batch = life.request(true).unwrap();
++    assert!(batch.is_current()); // Preedit("", None) delivered.
++    life.request(false);
++    life.request(true); // The callback moved the caret in the same control.
++    assert!(!batch.is_current()); // Its Commit must not be retagged on dispatch.
++}
++
++#[test]
++fn windows_and_seats_have_independent_lifetimes() {
++    let window = ImeLifetime::default();
++    let other = ImeLifetime::default();
++    let seat = ImeLifetime::default();
++    let window_stamp = window.request(true).unwrap();
++    let other_stamp = other.request(true).unwrap();
++    let guard = ImeGuard { context: seat.snapshot(), window: Some(window_stamp.clone()) };
++    seat.retire();
++    assert!(!guard.is_current());
++    assert!(window_stamp.is_current());
++    window.request(false);
++    assert!(other_stamp.is_current());
++}
++
++#[test]
++fn wayland_accepts_old_but_current_serial_and_rejects_previous_enable() {
++    let mut serial = ImeSerial::default();
++    serial.commit(Some(true)); // 1
++    serial.commit(None); // Cursor rectangle, 2.
++    assert!(serial.accepts(1));
++    assert!(serial.accepts(1)); // Repeated serial is not a duplicate batch.
++    serial.commit(Some(false)); // 3
++    assert!(!serial.accepts(2));
++    serial.commit(Some(true)); // 4
++    assert!(!serial.accepts(2));
++    assert!(serial.accepts(4));
++    assert!(!serial.accepts(5));
++}
++
++#[test]
++fn wayland_serial_wrap_keeps_context_boundaries() {
++    let mut serial = ImeSerial { sent: u32::MAX - 1, enabled_at: None };
++    serial.commit(Some(true));
++    serial.commit(None);
++    assert!(serial.accepts(u32::MAX));
++    assert!(serial.accepts(0));
++    assert!(!serial.accepts(u32::MAX - 1));
++    serial.commit(Some(false));
++    serial.commit(Some(true));
++    assert!(!serial.accepts(0));
++    assert!(serial.accepts(2));
++    serial.retire();
++    assert!(!serial.accepts(2));
++}
+diff --git b/src/platform_impl/ime_lifetime.rs b/src/platform_impl/ime_lifetime.rs
+new file mode 100644
+index 00000000..8bf7d1e2
+--- /dev/null
++++ b/src/platform_impl/ime_lifetime.rs
+@@ -0,0 +1,118 @@
++//! Private native-input lifetimes. Public IME events deliberately stay unchanged.
++//!
++//! Capture at the native callback/batch boundary, check again at application
++//! dispatch: delivering one event may synchronously retire the rest of its batch.
++
++use std::sync::atomic::{AtomicU64, Ordering};
++use std::sync::Arc;
++
++#[derive(Clone, Debug, Default)]
++pub(crate) struct ImeLifetime(Arc<AtomicU64>);
++
++#[derive(Clone, Debug)]
++pub(crate) struct ImeStamp {
++    lifetime: ImeLifetime,
++    value: u64,
++}
++
++impl ImeLifetime {
++    #[cfg(any(macos_platform, x11_platform, wayland_platform, test))]
++    pub(crate) fn snapshot(&self) -> ImeStamp {
++        ImeStamp { lifetime: self.clone(), value: self.0.load(Ordering::Acquire) }
++    }
++
++    /// Invalidate synchronously, before a queued platform request or cancellation.
++    pub(crate) fn request(&self, allowed: bool) -> Option<ImeStamp> {
++        let mut old = self.0.load(Ordering::Acquire);
++        loop {
++            if (old & 1 != 0) == allowed {
++                return None;
++            }
++            let next =
++                (old & !1).checked_add(2).expect("IME lifetime exhausted") | u64::from(allowed);
++            match self.0.compare_exchange_weak(old, next, Ordering::AcqRel, Ordering::Acquire) {
++                Ok(_) => return Some(ImeStamp { lifetime: self.clone(), value: next }),
++                Err(value) => old = value,
++            }
++        }
++    }
++
++    /// Retire an input context independently of its window's requested permission.
++    #[cfg(any(macos_platform, x11_platform, wayland_platform, test))]
++    pub(crate) fn retire(&self) {
++        let mut old = self.0.load(Ordering::Acquire);
++        loop {
++            let next = old.checked_add(2).expect("IME lifetime exhausted");
++            match self.0.compare_exchange_weak(old, next, Ordering::AcqRel, Ordering::Acquire) {
++                Ok(_) => return,
++                Err(value) => old = value,
++            }
++        }
++    }
++}
++
++impl ImeStamp {
++    #[cfg(windows_platform)]
++    pub(crate) fn same(&self, other: &Self) -> bool {
++        self.value == other.value && Arc::ptr_eq(&self.lifetime.0, &other.lifetime.0)
++    }
++
++    pub(crate) fn is_current(&self) -> bool {
++        self.lifetime.0.load(Ordering::Acquire) == self.value
++    }
++
++    #[cfg(x11_platform)]
++    pub(crate) fn allowed(&self) -> bool {
++        self.value & 1 != 0
++    }
++}
++
++/// A seat/context can retire independently of the window containing it.
++#[derive(Clone, Debug)]
++#[cfg(any(x11_platform, wayland_platform, test))]
++pub(crate) struct ImeGuard {
++    pub(crate) context: ImeStamp,
++    pub(crate) window: Option<ImeStamp>,
++}
++
++#[cfg(any(x11_platform, wayland_platform, test))]
++impl ImeGuard {
++    pub(crate) fn is_current(&self) -> bool {
++        self.context.is_current() && self.window.as_ref().map_or(true, ImeStamp::is_current)
++    }
++}
++
++/// Wayland's counter includes *every* commit, including cursor-area changes.
++/// A lagging serial inside the current enable is valid; an earlier enable is not.
++#[derive(Debug, Default)]
++#[cfg(any(wayland_platform, test))]
++pub(crate) struct ImeSerial {
++    sent: u32,
++    enabled_at: Option<u32>,
++}
++
++#[cfg(any(wayland_platform, test))]
++impl ImeSerial {
++    pub(crate) fn retire(&mut self) {
++        self.enabled_at = None;
++    }
++
++    pub(crate) fn commit(&mut self, enabled: Option<bool>) {
++        self.sent = self.sent.wrapping_add(1);
++        match enabled {
++            Some(true) => self.enabled_at = Some(self.sent),
++            Some(false) => self.enabled_at = None,
++            None => {},
++        }
++    }
++
++    pub(crate) fn accepts(&self, serial: u32) -> bool {
++        self.enabled_at.is_some_and(|start| {
++            let span = self.sent.wrapping_sub(start);
++            span < (1 << 31) && self.sent.wrapping_sub(serial) <= span
++        })
++    }
++}
++
++#[cfg(test)]
++mod tests;
+diff --git a/src/platform_impl/linux/wayland/event_loop/mod.rs b/src/platform_impl/linux/wayland/event_loop/mod.rs
+index fef13f45..03670344 100644
+--- a/src/platform_impl/linux/wayland/event_loop/mod.rs
++++ b/src/platform_impl/linux/wayland/event_loop/mod.rs
+@@ -453,7 +453,10 @@ impl<T: 'static> EventLoop<T> {
+             buffer_sink.append(&mut state.window_events_sink.lock().unwrap());
+         });
+         for event in buffer_sink.drain() {
+-            let event = event.map_nonuser_event().unwrap();
++            if !event.is_current() {
++                continue;
++            }
++            let event = event.event.map_nonuser_event().unwrap();
+             callback(event, &self.window_target);
+         }
+ 
+@@ -462,7 +465,10 @@ impl<T: 'static> EventLoop<T> {
+             buffer_sink.append(&mut state.events_sink);
+         });
+         for event in buffer_sink.drain() {
+-            let event = event.map_nonuser_event().unwrap();
++            if !event.is_current() {
++                continue;
++            }
++            let event = event.event.map_nonuser_event().unwrap();
+             callback(event, &self.window_target);
+         }
+ 
+diff --git b/src/platform_impl/linux/wayland/event_loop/sink/tests.rs b/src/platform_impl/linux/wayland/event_loop/sink/tests.rs
+new file mode 100644
+index 00000000..91b33238
+--- /dev/null
++++ b/src/platform_impl/linux/wayland/event_loop/sink/tests.rs
+@@ -0,0 +1,39 @@
++use super::*;
++use crate::event::Ime;
++use crate::platform_impl::ime_lifetime::ImeLifetime;
++
++#[test]
++fn synthetic_enable_cannot_expose_a_retired_native_commit() {
++    let life = ImeLifetime::default();
++    let old = life.request(true).unwrap();
++    let guard = ImeGuard { context: old, window: None };
++    let mut native = EventSink::new();
++    native.push_ime(Ime::Enabled, WindowId(1), guard.clone());
++    native.push_ime(Ime::Commit("old".into()), WindowId(1), guard);
++    life.request(false);
++    let new = life.request(true).unwrap();
++    let mut synthetic = EventSink::new();
++    synthetic.push_ime(Ime::Enabled, WindowId(1), ImeGuard { context: new, window: None });
++    let mut buffer = EventSink::new();
++    buffer.append(&mut synthetic);
++    buffer.append(&mut native);
++    assert_eq!(buffer.drain().filter(QueuedEvent::is_current).count(), 1);
++}
++
++#[test]
++fn delivery_checks_each_event_after_the_previous_callback() {
++    let life = ImeLifetime::default();
++    let guard = ImeGuard { context: life.request(true).unwrap(), window: None };
++    let mut sink = EventSink::new();
++    sink.push_ime(Ime::Preedit(String::new(), None), WindowId(1), guard.clone());
++    sink.push_ime(Ime::Commit("old".into()), WindowId(1), guard);
++    let mut delivered = 0;
++    for event in sink.drain() {
++        if event.is_current() {
++            delivered += 1;
++            life.request(false);
++            life.request(true);
++        }
++    }
++    assert_eq!(delivered, 1);
++}
+diff --git a/src/platform_impl/linux/wayland/event_loop/sink.rs b/src/platform_impl/linux/wayland/event_loop/sink.rs
+index e506b4a8..ab3a1c0c 100644
+--- a/src/platform_impl/linux/wayland/event_loop/sink.rs
++++ b/src/platform_impl/linux/wayland/event_loop/sink.rs
+@@ -3,16 +3,31 @@
+ use std::vec::Drain;
+ 
+ use crate::event::{DeviceEvent, DeviceId as RootDeviceId, Event, WindowEvent};
++use crate::platform_impl::ime_lifetime::ImeGuard;
+ use crate::platform_impl::platform::DeviceId as PlatformDeviceId;
+ use crate::window::WindowId as RootWindowId;
+ 
+ use super::{DeviceId, WindowId};
+ 
++#[cfg(test)]
++mod tests;
++
+ /// An event loop's sink to deliver events from the Wayland event callbacks
+ /// to the winit's user.
+ #[derive(Default)]
+ pub struct EventSink {
+-    pub window_events: Vec<Event<()>>,
++    window_events: Vec<QueuedEvent>,
++}
++
++pub struct QueuedEvent {
++    pub event: Event<()>,
++    guard: Option<ImeGuard>,
++}
++
++impl QueuedEvent {
++    pub fn is_current(&self) -> bool {
++        self.guard.as_ref().map_or(true, ImeGuard::is_current)
++    }
+ }
+ 
+ impl EventSink {
+@@ -29,16 +44,37 @@ impl EventSink {
+     /// Add new device event to a queue.
+     #[inline]
+     pub fn push_device_event(&mut self, event: DeviceEvent, device_id: DeviceId) {
+-        self.window_events.push(Event::DeviceEvent {
+-            event,
+-            device_id: RootDeviceId(PlatformDeviceId::Wayland(device_id)),
++        self.window_events.push(QueuedEvent {
++            event: Event::DeviceEvent {
++                event,
++                device_id: RootDeviceId(PlatformDeviceId::Wayland(device_id)),
++            },
++            guard: None,
+         });
+     }
+ 
+     /// Add new window event to a queue.
+     #[inline]
+     pub fn push_window_event(&mut self, event: WindowEvent, window_id: WindowId) {
+-        self.window_events.push(Event::WindowEvent { event, window_id: RootWindowId(window_id) });
++        self.window_events.push(QueuedEvent {
++            event: Event::WindowEvent { event, window_id: RootWindowId(window_id) },
++            guard: None,
++        });
++    }
++
++    pub(crate) fn push_ime(
++        &mut self,
++        event: crate::event::Ime,
++        window_id: WindowId,
++        guard: ImeGuard,
++    ) {
++        self.window_events.push(QueuedEvent {
++            event: Event::WindowEvent {
++                event: WindowEvent::Ime(event),
++                window_id: RootWindowId(window_id),
++            },
++            guard: Some(guard),
++        });
+     }
+ 
+     #[inline]
+@@ -47,7 +83,7 @@ impl EventSink {
+     }
+ 
+     #[inline]
+-    pub fn drain(&mut self) -> Drain<'_, Event<()>> {
++    pub fn drain(&mut self) -> Drain<'_, QueuedEvent> {
+         self.window_events.drain(..)
+     }
+ }
+diff --git a/src/platform_impl/linux/wayland/seat/mod.rs b/src/platform_impl/linux/wayland/seat/mod.rs
+index eaecd93b..5e3a63f4 100644
+--- a/src/platform_impl/linux/wayland/seat/mod.rs
++++ b/src/platform_impl/linux/wayland/seat/mod.rs
+@@ -159,6 +159,10 @@ impl SeatHandler for WinitState {
+         };
+ 
+         if let Some(text_input) = seat_state.text_input.take() {
++            text_input.retire_ime();
++            for window in self.windows.get_mut().values() {
++                window.lock().unwrap().text_input_left(&text_input);
++            }
+             text_input.destroy();
+         }
+ 
+@@ -214,7 +218,15 @@ impl SeatHandler for WinitState {
+         _queue_handle: &QueueHandle<Self>,
+         seat: WlSeat,
+     ) {
+-        let _ = self.seats.remove(&seat.id());
++        if let Some(seat) = self.seats.remove(&seat.id()) {
++            if let Some(text_input) = seat.text_input {
++                text_input.retire_ime();
++                for window in self.windows.get_mut().values() {
++                    window.lock().unwrap().text_input_left(&text_input);
++                }
++                text_input.destroy();
++            }
++        }
+         self.on_keyboard_destroy(&seat.id());
+     }
+ }
+diff --git a/src/platform_impl/linux/wayland/seat/text_input/mod.rs b/src/platform_impl/linux/wayland/seat/text_input/mod.rs
+index db724893..2f5d8707 100644
+--- a/src/platform_impl/linux/wayland/seat/text_input/mod.rs
++++ b/src/platform_impl/linux/wayland/seat/text_input/mod.rs
+@@ -11,11 +11,15 @@ use sctk::reexports::protocols::wp::text_input::zv3::client::zwp_text_input_v3::
+     ContentHint, ContentPurpose, Event as TextInputEvent, ZwpTextInputV3,
+ };
+ 
+-use crate::event::{Ime, WindowEvent};
++use crate::event::Ime;
++use crate::platform_impl::ime_lifetime::{ImeGuard, ImeLifetime, ImeSerial, ImeStamp};
+ use crate::platform_impl::wayland;
+ use crate::platform_impl::wayland::state::WinitState;
+ use crate::window::ImePurpose;
+ 
++#[cfg(test)]
++mod tests;
++
+ pub struct TextInputState {
+     text_input_manager: ZwpTextInputManagerV3,
+ }
+@@ -60,47 +64,58 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
+         _qhandle: &QueueHandle<WinitState>,
+     ) {
+         let windows = state.windows.get_mut();
+-        let mut text_input_data = data.inner.lock().unwrap();
+         match event {
+             TextInputEvent::Enter { surface } => {
+                 let window_id = wayland::make_wid(&surface);
+-                text_input_data.surface = Some(surface);
+-
+                 let mut window = match windows.get(&window_id) {
+                     Some(window) => window.lock().unwrap(),
+                     None => return,
+                 };
+ 
++                // WindowState -> TextInputData is the only lock order, including
++                // setters called from another thread. Done needs no window lock.
++                let mut text_input_data = data.inner.lock().unwrap();
++                text_input_data.surface = Some(surface);
++                text_input_data.reset(window.ime_stamp());
++
+                 if window.ime_allowed() {
+                     text_input.enable();
+                     text_input.set_content_type_by_purpose(window.ime_purpose());
+-                    text_input.commit();
+-                    state.events_sink.push_window_event(WindowEvent::Ime(Ime::Enabled), window_id);
++                    text_input_data.commit(text_input, Some(true));
++                    state.events_sink.push_ime(
++                        Ime::Enabled,
++                        window_id,
++                        text_input_data.guard.clone().unwrap(),
++                    );
+                 }
+ 
+                 window.text_input_entered(text_input);
+             },
+             TextInputEvent::Leave { surface } => {
+-                text_input_data.surface = None;
+-
+-                // Always issue a disable.
+-                text_input.disable();
+-                text_input.commit();
+-
+                 let window_id = wayland::make_wid(&surface);
+ 
+                 // XXX this check is essential, because `leave` could have a
+                 // reference to nil surface...
+-                let mut window = match windows.get(&window_id) {
+-                    Some(window) => window.lock().unwrap(),
+-                    None => return,
+-                };
+-
+-                window.text_input_left(text_input);
+-
+-                state.events_sink.push_window_event(WindowEvent::Ime(Ime::Disabled), window_id);
++                let mut window = windows.get(&window_id).map(|window| window.lock().unwrap());
++                let mut text_input_data = data.inner.lock().unwrap();
++                text_input_data.surface = None;
++                text_input_data.lifetime.retire();
++                text_input_data.clear_pending();
++                text_input_data.guard = window.as_ref().map(|window| ImeGuard {
++                    context: text_input_data.lifetime.snapshot(),
++                    window: Some(window.ime_stamp()),
++                });
++                text_input.disable();
++                text_input_data.commit(text_input, Some(false));
++                if let Some(window) = window.as_mut() {
++                    window.text_input_left(text_input);
++                }
++                if let Some(guard) = text_input_data.guard.clone() {
++                    state.events_sink.push_ime(Ime::Disabled, window_id, guard);
++                }
+             },
+             TextInputEvent::PreeditString { text, cursor_begin, cursor_end } => {
++                let mut text_input_data = data.inner.lock().unwrap();
+                 let text = text.unwrap_or_default();
+                 let cursor_begin = usize::try_from(cursor_begin)
+                     .ok()
+@@ -112,40 +127,47 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
+                 text_input_data.pending_preedit = Some(Preedit { text, cursor_begin, cursor_end })
+             },
+             TextInputEvent::CommitString { text } => {
++                let mut text_input_data = data.inner.lock().unwrap();
+                 text_input_data.pending_preedit = None;
+                 text_input_data.pending_commit = text;
+             },
+-            TextInputEvent::Done { .. } => {
++            TextInputEvent::Done { serial } => {
++                let mut text_input_data = data.inner.lock().unwrap();
++                // Even a rejected Done consumes its pending batch. Otherwise a
++                // retired preedit could leak into a later, valid empty Done.
++                let Some((guard, pending_commit, pending_preedit)) =
++                    text_input_data.take_pending(serial)
++                else {
++                    return;
++                };
+                 let window_id = match text_input_data.surface.as_ref() {
+                     Some(surface) => wayland::make_wid(surface),
+                     None => return,
+                 };
+ 
+                 // Clear preedit, unless all we'll be doing next is sending a new preedit.
+-                if text_input_data.pending_commit.is_some()
+-                    || text_input_data.pending_preedit.is_none()
+-                {
+-                    state.events_sink.push_window_event(
+-                        WindowEvent::Ime(Ime::Preedit(String::new(), None)),
++                if pending_commit.is_some() || pending_preedit.is_none() {
++                    state.events_sink.push_ime(
++                        Ime::Preedit(String::new(), None),
+                         window_id,
++                        guard.clone(),
+                     );
+                 }
+ 
+                 // Send `Commit`.
+-                if let Some(text) = text_input_data.pending_commit.take() {
+-                    state
+-                        .events_sink
+-                        .push_window_event(WindowEvent::Ime(Ime::Commit(text)), window_id);
++                if let Some(text) = pending_commit {
++                    state.events_sink.push_ime(Ime::Commit(text), window_id, guard.clone());
+                 }
+ 
+                 // Send preedit.
+-                if let Some(preedit) = text_input_data.pending_preedit.take() {
++                if let Some(preedit) = pending_preedit {
+                     let cursor_range =
+                         preedit.cursor_begin.map(|b| (b, preedit.cursor_end.unwrap_or(b)));
+ 
+-                    state.events_sink.push_window_event(
+-                        WindowEvent::Ime(Ime::Preedit(preedit.text, cursor_range)),
++                    state.events_sink.push_ime(
++                        Ime::Preedit(preedit.text, cursor_range),
+                         window_id,
++                        guard,
+                     );
+                 }
+             },
+@@ -159,9 +181,38 @@ impl Dispatch<ZwpTextInputV3, TextInputData, WinitState> for TextInputState {
+ 
+ pub trait ZwpTextInputV3Ext {
+     fn set_content_type_by_purpose(&self, purpose: ImePurpose);
++    fn set_ime_allowed(&self, allowed: bool, stamp: ImeStamp, purpose: ImePurpose) -> ImeGuard;
++    fn commit_ime_state(&self);
++    fn retire_ime(&self);
+ }
+ 
+ impl ZwpTextInputV3Ext for ZwpTextInputV3 {
++    fn retire_ime(&self) {
++        let mut data = self.data::<TextInputData>().unwrap().inner.lock().unwrap();
++        data.lifetime.retire();
++        data.serial.retire();
++        data.clear_pending();
++        data.surface = None;
++        data.guard = None;
++    }
++
++    fn set_ime_allowed(&self, allowed: bool, stamp: ImeStamp, purpose: ImePurpose) -> ImeGuard {
++        let mut data = self.data::<TextInputData>().unwrap().inner.lock().unwrap();
++        data.reset(stamp);
++        if allowed {
++            self.enable();
++            self.set_content_type_by_purpose(purpose);
++        } else {
++            self.disable();
++        }
++        data.commit(self, Some(allowed));
++        data.guard.clone().unwrap()
++    }
++
++    fn commit_ime_state(&self) {
++        self.data::<TextInputData>().unwrap().inner.lock().unwrap().commit(self, None);
++    }
++
+     fn set_content_type_by_purpose(&self, purpose: ImePurpose) {
+         let (hint, purpose) = match purpose {
+             ImePurpose::Normal => (ContentHint::None, ContentPurpose::Normal),
+@@ -180,6 +231,9 @@ pub struct TextInputData {
+ 
+ #[derive(Default)]
+ pub struct TextInputDataInner {
++    lifetime: ImeLifetime,
++    guard: Option<ImeGuard>,
++    serial: ImeSerial,
+     /// The `WlSurface` we're performing input to.
+     surface: Option<WlSurface>,
+ 
+@@ -190,6 +244,32 @@ pub struct TextInputDataInner {
+     pending_preedit: Option<Preedit>,
+ }
+ 
++impl TextInputDataInner {
++    fn take_pending(&mut self, serial: u32) -> Option<(ImeGuard, Option<String>, Option<Preedit>)> {
++        let commit = self.pending_commit.take();
++        let preedit = self.pending_preedit.take();
++        let guard = self.guard.clone().filter(ImeGuard::is_current)?;
++        self.serial.accepts(serial).then_some((guard, commit, preedit))
++    }
++
++    fn clear_pending(&mut self) {
++        self.pending_commit = None;
++        self.pending_preedit = None;
++    }
++
++    fn reset(&mut self, stamp: ImeStamp) {
++        self.lifetime.retire();
++        self.serial.retire();
++        self.clear_pending();
++        self.guard = Some(ImeGuard { context: self.lifetime.snapshot(), window: Some(stamp) });
++    }
++
++    fn commit(&mut self, text_input: &ZwpTextInputV3, enabled: Option<bool>) {
++        self.serial.commit(enabled);
++        text_input.commit();
++    }
++}
++
+ /// The state of the preedit.
+ struct Preedit {
+     text: String,
+diff --git b/src/platform_impl/linux/wayland/seat/text_input/tests.rs b/src/platform_impl/linux/wayland/seat/text_input/tests.rs
+new file mode 100644
+index 00000000..a18855f7
+--- /dev/null
++++ b/src/platform_impl/linux/wayland/seat/text_input/tests.rs
+@@ -0,0 +1,55 @@
++use super::*;
++
++#[test]
++fn rejected_done_consumes_its_batch_before_a_live_done() {
++    let window = ImeLifetime::default();
++    let mut data = TextInputDataInner::default();
++    data.reset(window.request(true).unwrap());
++    data.serial.commit(Some(true));
++    window.request(false);
++    data.reset(window.request(true).unwrap());
++    data.serial.commit(Some(true));
++    data.pending_commit = Some("old".into());
++    assert!(data.take_pending(1).is_none());
++    let (_, commit, preedit) = data.take_pending(2).unwrap();
++    assert!(commit.is_none());
++    assert!(preedit.is_none());
++}
++
++#[test]
++fn a_retired_window_drops_pending_text_and_other_seat_remains_live() {
++    let window = ImeLifetime::default();
++    let stamp = window.request(true).unwrap();
++    let mut first = TextInputDataInner::default();
++    let mut second = TextInputDataInner::default();
++    first.reset(stamp.clone());
++    second.reset(stamp);
++    first.serial.commit(Some(true));
++    second.serial.commit(Some(true));
++    first.lifetime.retire();
++    first.pending_commit = Some("retired seat".into());
++    assert!(first.take_pending(1).is_none());
++    second.pending_commit = Some("live seat".into());
++    assert_eq!(second.take_pending(1).unwrap().1.as_deref(), Some("live seat"));
++    second.pending_commit = Some("retired target".into());
++    window.request(false);
++    assert!(second.take_pending(1).is_none());
++    assert!(second.pending_commit.is_none());
++}
++
++#[test]
++fn reset_clears_pending_preedit_and_preserves_the_commit_counter() {
++    let window = ImeLifetime::default();
++    let mut data = TextInputDataInner::default();
++    data.reset(window.request(true).unwrap());
++    data.serial.commit(Some(true));
++    data.serial.commit(None);
++    data.pending_preedit =
++        Some(Preedit { text: "old".into(), cursor_begin: Some(0), cursor_end: Some(0) });
++    data.reset(window.request(false).unwrap());
++    data.serial.commit(Some(false));
++    data.reset(window.request(true).unwrap());
++    data.serial.commit(Some(true));
++    assert!(data.take_pending(2).is_none());
++    assert!(data.take_pending(4).unwrap().2.is_none());
++}
+diff --git a/src/platform_impl/linux/wayland/window/mod.rs b/src/platform_impl/linux/wayland/window/mod.rs
+index 6d29a5a5..f4627d8a 100644
+--- a/src/platform_impl/linux/wayland/window/mod.rs
++++ b/src/platform_impl/linux/wayland/window/mod.rs
+@@ -18,7 +18,7 @@ use tracing::warn;
+ 
+ use crate::dpi::{LogicalSize, PhysicalPosition, PhysicalSize, Position, Size};
+ use crate::error::{ExternalError, NotSupportedError, OsError as RootOsError};
+-use crate::event::{Ime, WindowEvent};
++use crate::event::Ime;
+ use crate::event_loop::AsyncRequestSerial;
+ use crate::platform_impl::{
+     Fullscreen, MonitorHandle as PlatformMonitorHandle, OsError, PlatformIcon,
+@@ -613,9 +613,16 @@ impl Window {
+     pub fn set_ime_allowed(&self, allowed: bool) {
+         let mut window_state = self.window_state.lock().unwrap();
+ 
+-        if window_state.ime_allowed() != allowed && window_state.set_ime_allowed(allowed) {
+-            let event = WindowEvent::Ime(if allowed { Ime::Enabled } else { Ime::Disabled });
+-            self.window_events_sink.lock().unwrap().push_window_event(event, self.window_id);
++        let guards = window_state.set_ime_allowed(allowed);
++        if !guards.is_empty() {
++            let mut sink = self.window_events_sink.lock().unwrap();
++            for guard in guards {
++                sink.push_ime(
++                    if allowed { Ime::Enabled } else { Ime::Disabled },
++                    self.window_id,
++                    guard,
++                );
++            }
+             self.event_loop_awakener.ping();
+         }
+     }
+diff --git a/src/platform_impl/linux/wayland/window/state.rs b/src/platform_impl/linux/wayland/window/state.rs
+index 1ef7a065..bf95f5c7 100644
+--- a/src/platform_impl/linux/wayland/window/state.rs
++++ b/src/platform_impl/linux/wayland/window/state.rs
+@@ -33,6 +33,7 @@ use wayland_protocols_plasma::blur::client::org_kde_kwin_blur::OrgKdeKwinBlur;
+ use crate::cursor::CustomCursor as RootCustomCursor;
+ use crate::dpi::{LogicalPosition, LogicalSize, PhysicalPosition, PhysicalSize, Size};
+ use crate::error::{ExternalError, NotSupportedError};
++use crate::platform_impl::ime_lifetime::{ImeGuard, ImeLifetime, ImeStamp};
+ use crate::platform_impl::wayland::logical_to_physical_rounded;
+ use crate::platform_impl::wayland::types::cursor::{CustomCursor, SelectedCursor};
+ use crate::platform_impl::wayland::types::kwin_blur::KWinBlurManager;
+@@ -108,6 +109,7 @@ pub struct WindowState {
+ 
+     /// Whether the IME input is allowed for that window.
+     ime_allowed: bool,
++    ime_lifetime: ImeLifetime,
+ 
+     /// The current IME purpose.
+     ime_purpose: ImePurpose,
+@@ -199,6 +201,7 @@ impl WindowState {
+             seat_focus: Default::default(),
+             has_pending_move: None,
+             ime_allowed: false,
++            ime_lifetime: Default::default(),
+             ime_purpose: ImePurpose::Normal,
+             last_configure: None,
+             max_inner_size: None,
+@@ -1016,22 +1019,22 @@ impl WindowState {
+     }
+ 
+     /// Returns `true` if the requested state was applied.
+-    pub fn set_ime_allowed(&mut self, allowed: bool) -> bool {
++    pub(crate) fn set_ime_allowed(&mut self, allowed: bool) -> Vec<ImeGuard> {
++        let Some(stamp) = self.ime_lifetime.request(allowed) else {
++            return Vec::new();
++        };
+         self.ime_allowed = allowed;
+ 
+-        let mut applied = false;
++        let mut guards = Vec::with_capacity(self.text_inputs.len());
+         for text_input in &self.text_inputs {
+-            applied = true;
+-            if allowed {
+-                text_input.enable();
+-                text_input.set_content_type_by_purpose(self.ime_purpose);
+-            } else {
+-                text_input.disable();
+-            }
+-            text_input.commit();
++            guards.push(text_input.set_ime_allowed(allowed, stamp.clone(), self.ime_purpose));
+         }
+ 
+-        applied
++        guards
++    }
++
++    pub(crate) fn ime_stamp(&self) -> ImeStamp {
++        self.ime_lifetime.snapshot()
+     }
+ 
+     /// Set the IME position.
+@@ -1043,7 +1046,7 @@ impl WindowState {
+         let (width, height) = (size.width as i32, size.height as i32);
+         for text_input in self.text_inputs.iter() {
+             text_input.set_cursor_rectangle(x, y, width, height);
+-            text_input.commit();
++            text_input.commit_ime_state();
+         }
+     }
+ 
+@@ -1053,7 +1056,7 @@ impl WindowState {
+ 
+         for text_input in &self.text_inputs {
+             text_input.set_content_type_by_purpose(purpose);
+-            text_input.commit();
++            text_input.commit_ime_state();
+         }
+     }
+ 
+diff --git a/src/platform_impl/linux/x11/event_processor.rs b/src/platform_impl/linux/x11/event_processor.rs
+index 79f5c114..0eef86cb 100644
+--- a/src/platform_impl/linux/x11/event_processor.rs
++++ b/src/platform_impl/linux/x11/event_processor.rs
+@@ -21,14 +21,15 @@ use xkbcommon_dl::xkb_mod_mask_t;
+ 
+ use crate::dpi::{PhysicalPosition, PhysicalSize};
+ use crate::event::{
+-    DeviceEvent, ElementState, Event, Ime, InnerSizeWriter, MouseButton, MouseScrollDelta,
++    DeviceEvent, ElementState, Event, InnerSizeWriter, MouseButton, MouseScrollDelta,
+     RawKeyEvent, Touch, TouchPhase, WindowEvent,
+ };
+ use crate::event_loop::ActiveEventLoop as RootAEL;
+ use crate::keyboard::ModifiersState;
+ use crate::platform_impl::common::xkb::{self, XkbState};
++use crate::platform_impl::ime_lifetime::ImeGuard;
+ use crate::platform_impl::platform::common::xkb::Context;
+-use crate::platform_impl::platform::x11::ime::{ImeEvent, ImeEventReceiver, ImeRequest};
++use crate::platform_impl::platform::x11::ime::{dispatch_events, ImeEventReceiver, ImeRequest};
+ use crate::platform_impl::platform::x11::ActiveEventLoop;
+ use crate::platform_impl::platform::ActiveEventLoop as PlatformActiveEventLoop;
+ use crate::platform_impl::x11::atoms::*;
+@@ -71,7 +72,7 @@ pub struct EventProcessor {
+     // delivered at near the same time.
+     pub xfiltered_modifiers: VecDeque<u8>,
+     pub xmodmap: util::ModifierKeymap,
+-    pub is_composing: bool,
++    pub composing: HashMap<XWindow, ImeGuard>,
+ }
+ 
+ impl EventProcessor {
+@@ -79,8 +80,6 @@ impl EventProcessor {
+     where
+         F: FnMut(&RootAEL, Event<T>),
+     {
+-        self.process_xevent(xev, &mut callback);
+-
+         let window_target = Self::window_target_mut(&mut self.target);
+ 
+         // Handle IME requests.
+@@ -94,38 +93,24 @@ impl EventProcessor {
+                 ImeRequest::Position(window_id, x, y) => {
+                     ime.send_xim_spot(window_id, x, y);
+                 },
+-                ImeRequest::Allow(window_id, allowed) => {
+-                    ime.set_ime_allowed(window_id, allowed);
++                ImeRequest::Allow(window_id, allowed, stamp) => {
++                    ime.set_ime_allowed(window_id, allowed, stamp);
+                 },
+             }
+         }
+ 
++        // Apply pending context replacements before XFilterEvent sees another
++        // key or XIM protocol message from a retired context.
++        self.process_xevent(xev, &mut callback);
++
+         // Drain IME events.
+-        while let Ok((window, event)) = self.ime_event_receiver.try_recv() {
+-            let window_id = mkwid(window as xproto::Window);
+-            let event = match event {
+-                ImeEvent::Enabled => WindowEvent::Ime(Ime::Enabled),
+-                ImeEvent::Start => {
+-                    self.is_composing = true;
+-                    WindowEvent::Ime(Ime::Preedit("".to_owned(), None))
+-                },
+-                ImeEvent::Update(text, position) if self.is_composing => {
+-                    WindowEvent::Ime(Ime::Preedit(text, Some((position, position))))
+-                },
+-                ImeEvent::End => {
+-                    self.is_composing = false;
+-                    // Issue empty preedit on `Done`.
+-                    WindowEvent::Ime(Ime::Preedit(String::new(), None))
+-                },
+-                ImeEvent::Disabled => {
+-                    self.is_composing = false;
+-                    WindowEvent::Ime(Ime::Disabled)
+-                },
+-                _ => continue,
+-            };
++        dispatch_events(&self.ime_event_receiver, &mut self.composing, |window, event| {
++            callback(&self.target, Event::WindowEvent { window_id: mkwid(window as xproto::Window), event });
++        });
++    }
+ 
+-            callback(&self.target, Event::WindowEvent { window_id, event });
+-        }
++    fn is_composing(&self, window: XWindow) -> bool {
++        self.composing.get(&window).is_some_and(ImeGuard::is_current)
+     }
+ 
+     /// XFilterEvent tells us when an event has been discarded by the input method.
+@@ -821,13 +806,13 @@ impl EventProcessor {
+         callback(&self.target, event);
+     }
+ 
+-    fn destroy_notify<T: 'static, F>(&self, xev: &XDestroyWindowEvent, mut callback: F)
++    fn destroy_notify<T: 'static, F>(&mut self, xev: &XDestroyWindowEvent, mut callback: F)
+     where
+         F: FnMut(&RootAEL, Event<T>),
+     {
+-        let wt = Self::window_target(&self.target);
+-
+         let window = xev.window as xproto::Window;
++        self.composing.remove(&(window as XWindow));
++        let wt = Self::window_target(&self.target);
+         let window_id = mkwid(window);
+ 
+         // In the event that the window's been destroyed without being dropped first, we
+@@ -966,7 +951,7 @@ impl EventProcessor {
+             self.update_mods_from_core_event(window_id, xev.state as u16, &mut callback);
+         }
+ 
+-        if keycode != 0 && !self.is_composing {
++        if keycode != 0 && !self.is_composing(window as XWindow) {
+             // Don't alter the modifiers state from replaying.
+             if replay {
+                 self.send_synthic_modifier_from_core(window_id, xev.state as u16, &mut callback);
+@@ -991,22 +976,15 @@ impl EventProcessor {
+ 
+         let wt = Self::window_target(&self.target);
+ 
+-        if let Some(ic) =
+-            wt.ime.as_ref().and_then(|ime| ime.borrow().get_context(window as XWindow))
++        if let Some((ic, guard)) =
++            wt.ime.as_ref().and_then(|ime| ime.borrow().guarded_context(window as XWindow))
+         {
+             let written = wt.xconn.lookup_utf8(ic, xev);
+-            if !written.is_empty() {
+-                let event = Event::WindowEvent {
+-                    window_id,
+-                    event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
+-                };
+-                callback(&self.target, event);
+-
+-                let event =
+-                    Event::WindowEvent { window_id, event: WindowEvent::Ime(Ime::Commit(written)) };
+-
+-                self.is_composing = false;
+-                callback(&self.target, event);
++            if !written.is_empty() && guard.is_current() {
++                // Use the same ordered channel as context Enabled/preedit.
++                // A direct commit must not overtake a just-created context's
++                // Enabled event; the guard is the context used by lookup_utf8.
++                wt.ime.as_ref().unwrap().borrow().queue_commit(window as XWindow, guard, written);
+             }
+         }
+     }
+diff --git a/src/platform_impl/linux/x11/ime/callbacks.rs b/src/platform_impl/linux/x11/ime/callbacks.rs
+index fa0fa5c6..ca3a2dda 100644
+--- a/src/platform_impl/linux/x11/ime/callbacks.rs
++++ b/src/platform_impl/linux/x11/ime/callbacks.rs
+@@ -120,8 +120,8 @@ unsafe fn replace_im(inner: *mut ImeInner) -> Result<(), ReplaceImError> {
+         let spot = old_context.as_ref().map(|old_context| old_context.ic_spot);
+ 
+         // Check if the IME was allowed on that context.
+-        let is_allowed =
+-            old_context.as_ref().map(|old_context| old_context.is_allowed()).unwrap_or_default();
++        let stamp = unsafe { (&(*inner).context_requests)[window].clone() };
++        let is_allowed = stamp.allowed();
+ 
+         let new_context = {
+             let result = unsafe {
+@@ -132,6 +132,7 @@ unsafe fn replace_im(inner: *mut ImeInner) -> Result<(), ReplaceImError> {
+                     spot,
+                     (*inner).event_sender.clone(),
+                     is_allowed,
++                    stamp,
+                 )
+             };
+             if result.is_err() {
+@@ -190,6 +191,9 @@ pub unsafe extern "C" fn xim_destroy_callback(
+     let inner: *mut ImeInner = client_data as _;
+     if !inner.is_null() {
+         unsafe { (*inner).is_destroyed = true };
++        for context in unsafe { (*inner).contexts.values().flatten() } {
++            context.retire();
++        }
+         let xconn = unsafe { &(*inner).xconn };
+         if unsafe { !(*inner).is_fallback } {
+             let _ = unsafe { set_instantiate_callback(xconn, client_data) };
+diff --git a/src/platform_impl/linux/x11/ime/context.rs b/src/platform_impl/linux/x11/ime/context.rs
+index 2c6c075e..0b3cb8c9 100644
+--- a/src/platform_impl/linux/x11/ime/context.rs
++++ b/src/platform_impl/linux/x11/ime/context.rs
+@@ -1,3 +1,4 @@
++use crate::platform_impl::ime_lifetime::{ImeGuard, ImeLifetime, ImeStamp};
+ use std::ffi::CStr;
+ use std::os::raw::c_short;
+ use std::sync::Arc;
+@@ -36,11 +37,15 @@ extern "C" fn preedit_start_callback(
+ ) -> i32 {
+     let client_data = unsafe { &mut *(client_data as *mut ImeContextClientData) };
+ 
++    if !client_data.guard.is_current() {
++        return -1;
++    }
++
+     client_data.text.clear();
+     client_data.cursor_pos = 0;
+     client_data
+         .event_sender
+-        .send((client_data.window, ImeEvent::Start))
++        .send((client_data.window, client_data.guard.clone(), ImeEvent::Start))
+         .expect("failed to send preedit start event");
+     -1
+ }
+@@ -52,6 +57,9 @@ extern "C" fn preedit_done_callback(
+     _call_data: ffi::XPointer,
+ ) {
+     let client_data = unsafe { &mut *(client_data as *mut ImeContextClientData) };
++    if !client_data.guard.is_current() {
++        return;
++    }
+ 
+     // Drop text buffer and reset cursor position on done.
+     client_data.text = Vec::new();
+@@ -59,7 +67,7 @@ extern "C" fn preedit_done_callback(
+ 
+     client_data
+         .event_sender
+-        .send((client_data.window, ImeEvent::End))
++        .send((client_data.window, client_data.guard.clone(), ImeEvent::End))
+         .expect("failed to send preedit end event");
+ }
+ 
+@@ -74,6 +82,9 @@ extern "C" fn preedit_draw_callback(
+     call_data: ffi::XPointer,
+ ) {
+     let client_data = unsafe { &mut *(client_data as *mut ImeContextClientData) };
++    if !client_data.guard.is_current() {
++        return;
++    }
+     let call_data = unsafe { &mut *(call_data as *mut XIMPreeditDrawCallbackStruct) };
+     client_data.cursor_pos = call_data.caret as usize;
+ 
+@@ -118,6 +129,7 @@ extern "C" fn preedit_draw_callback(
+         .event_sender
+         .send((
+             client_data.window,
++            client_data.guard.clone(),
+             ImeEvent::Update(client_data.text.iter().collect(), cursor_byte_pos),
+         ))
+         .expect("failed to send preedit update event");
+@@ -130,6 +142,9 @@ extern "C" fn preedit_caret_callback(
+     call_data: ffi::XPointer,
+ ) {
+     let client_data = unsafe { &mut *(client_data as *mut ImeContextClientData) };
++    if !client_data.guard.is_current() {
++        return;
++    }
+     let call_data = unsafe { &mut *(call_data as *mut XIMPreeditCaretCallbackStruct) };
+ 
+     if call_data.direction == ffi::XIMCaretDirection::XIMAbsolutePosition {
+@@ -140,6 +155,7 @@ extern "C" fn preedit_caret_callback(
+             .event_sender
+             .send((
+                 client_data.window,
++                client_data.guard.clone(),
+                 ImeEvent::Update(client_data.text.iter().collect(), cursor_byte_pos),
+             ))
+             .expect("failed to send preedit update event");
+@@ -170,6 +186,7 @@ impl PreeditCallbacks {
+ }
+ 
+ struct ImeContextClientData {
++    guard: ImeGuard,
+     window: ffi::Window,
+     event_sender: ImeEventSender,
+     text: Vec<char>,
+@@ -181,6 +198,8 @@ struct ImeContextClientData {
+ // still exists on the server. Since `ImeInner` has that awareness, destruction must be handled
+ // through `ImeInner`.
+ pub struct ImeContext {
++    pub(crate) guard: ImeGuard,
++    lifetime: ImeLifetime,
+     pub(crate) ic: ffi::XIC,
+     pub(crate) ic_spot: ffi::XPoint,
+     pub(crate) allowed: bool,
+@@ -189,7 +208,17 @@ pub struct ImeContext {
+     _client_data: Box<ImeContextClientData>,
+ }
+ 
++impl Drop for ImeContext {
++    fn drop(&mut self) {
++        self.retire();
++    }
++}
++
+ impl ImeContext {
++    pub(crate) fn retire(&self) {
++        self.lifetime.retire();
++    }
++
+     pub(crate) unsafe fn new(
+         xconn: &Arc<XConnection>,
+         im: &InputMethod,
+@@ -197,8 +226,12 @@ impl ImeContext {
+         ic_spot: Option<ffi::XPoint>,
+         event_sender: ImeEventSender,
+         allowed: bool,
++        stamp: ImeStamp,
+     ) -> Result<Self, ImeContextCreationError> {
++        let lifetime = ImeLifetime::default();
++        let guard = ImeGuard { context: lifetime.snapshot(), window: Some(stamp) };
+         let client_data = Box::into_raw(Box::new(ImeContextClientData {
++            guard: guard.clone(),
+             window,
+             event_sender,
+             text: Vec::new(),
+@@ -229,6 +262,8 @@ impl ImeContext {
+         xconn.check_errors().map_err(ImeContextCreationError::XError)?;
+ 
+         let mut context = ImeContext {
++            lifetime,
++            guard,
+             ic,
+             ic_spot: ffi::XPoint { x: 0, y: 0 },
+             allowed,
+diff --git a/src/platform_impl/linux/x11/ime/inner.rs b/src/platform_impl/linux/x11/ime/inner.rs
+index da1ccf40..02cada0e 100644
+--- a/src/platform_impl/linux/x11/ime/inner.rs
++++ b/src/platform_impl/linux/x11/ime/inner.rs
+@@ -23,6 +23,7 @@ pub(crate) struct ImeInner {
+     pub im: Option<InputMethod>,
+     pub potential_input_methods: PotentialInputMethods,
+     pub contexts: HashMap<ffi::Window, Option<ImeContext>>,
++    pub context_requests: HashMap<ffi::Window, crate::platform_impl::ime_lifetime::ImeStamp>,
+     // WARNING: this is initially zeroed!
+     pub destroy_callback: ffi::XIMCallback,
+     pub event_sender: ImeEventSender,
+@@ -43,6 +44,7 @@ impl ImeInner {
+             im: None,
+             potential_input_methods,
+             contexts: HashMap::new(),
++            context_requests: HashMap::new(),
+             destroy_callback: unsafe { mem::zeroed() },
+             event_sender,
+             is_destroyed: false,
+@@ -66,6 +68,10 @@ impl ImeInner {
+     }
+ 
+     pub unsafe fn destroy_all_contexts_if_necessary(&self) -> Result<bool, XError> {
++        // Retire all callbacks before the first native destructor can reenter Xlib.
++        for context in self.contexts.values().flatten() {
++            context.retire();
++        }
+         for context in self.contexts.values().flatten() {
+             unsafe { self.destroy_ic_if_necessary(context.ic)? };
+         }
+diff --git a/src/platform_impl/linux/x11/ime/mod.rs b/src/platform_impl/linux/x11/ime/mod.rs
+index 0a419c8d..3407cfee 100644
+--- a/src/platform_impl/linux/x11/ime/mod.rs
++++ b/src/platform_impl/linux/x11/ime/mod.rs
+@@ -5,6 +5,10 @@ mod context;
+ mod inner;
+ mod input_method;
+ 
++#[cfg(test)]
++mod tests;
++
++use crate::platform_impl::ime_lifetime::{ImeGuard, ImeStamp};
+ use std::sync::mpsc::{Receiver, Sender};
+ use std::sync::Arc;
+ 
+@@ -24,14 +28,58 @@ pub enum ImeEvent {
+     Enabled,
+     Start,
+     Update(String, usize),
++    Commit(String),
+     End,
+     Disabled,
+ }
+ 
+ pub type ImeReceiver = Receiver<ImeRequest>;
+ pub type ImeSender = Sender<ImeRequest>;
+-pub type ImeEventReceiver = Receiver<(ffi::Window, ImeEvent)>;
+-pub type ImeEventSender = Sender<(ffi::Window, ImeEvent)>;
++pub type ImeEventReceiver = Receiver<(ffi::Window, ImeGuard, ImeEvent)>;
++pub type ImeEventSender = Sender<(ffi::Window, ImeGuard, ImeEvent)>;
++
++pub(super) fn dispatch_events(
++    receiver: &ImeEventReceiver,
++    composing: &mut std::collections::HashMap<ffi::Window, ImeGuard>,
++    mut callback: impl FnMut(ffi::Window, crate::event::WindowEvent),
++) {
++    use crate::event::{Ime as PublicIme, WindowEvent};
++    while let Ok((window, guard, event)) = receiver.try_recv() {
++        if !guard.is_current() {
++            continue;
++        }
++        let event = match event {
++            ImeEvent::Enabled => PublicIme::Enabled,
++            ImeEvent::Start => {
++                composing.insert(window, guard.clone());
++                PublicIme::Preedit(String::new(), None)
++            },
++            ImeEvent::Update(text, position)
++                if composing.get(&window).is_some_and(ImeGuard::is_current) =>
++            {
++                PublicIme::Preedit(text, Some((position, position)))
++            },
++            ImeEvent::Commit(text) => {
++                callback(window, WindowEvent::Ime(PublicIme::Preedit(String::new(), None)));
++                if !guard.is_current() {
++                    continue;
++                }
++                composing.remove(&window);
++                PublicIme::Commit(text)
++            },
++            ImeEvent::End => {
++                composing.remove(&window);
++                PublicIme::Preedit(String::new(), None)
++            },
++            ImeEvent::Disabled => {
++                composing.remove(&window);
++                PublicIme::Disabled
++            },
++            _ => continue,
++        };
++        callback(window, WindowEvent::Ime(event));
++    }
++}
+ 
+ /// Request to control XIM handler from the window.
+ pub enum ImeRequest {
+@@ -39,7 +87,7 @@ pub enum ImeRequest {
+     Position(ffi::Window, i16, i16),
+ 
+     /// Allow IME input for the given `window_id`.
+-    Allow(ffi::Window, bool),
++    Allow(ffi::Window, bool, ImeStamp),
+ }
+ 
+ #[derive(Debug)]
+@@ -113,7 +161,9 @@ impl Ime {
+         &mut self,
+         window: ffi::Window,
+         with_ime: bool,
++        stamp: ImeStamp,
+     ) -> Result<bool, ImeContextCreationError> {
++        self.inner.context_requests.insert(window, stamp.clone());
+         let context = if self.is_destroyed() {
+             // Create empty entry in map, so that when IME is rebuilt, this window has a context.
+             None
+@@ -128,11 +178,15 @@ impl Ime {
+                     None,
+                     self.inner.event_sender.clone(),
+                     with_ime,
++                    stamp,
+                 )?
+             };
+ 
+             let event = if context.is_allowed() { ImeEvent::Enabled } else { ImeEvent::Disabled };
+-            self.inner.event_sender.send((window, event)).expect("Failed to send enabled event");
++            self.inner
++                .event_sender
++                .send((window, context.guard.clone(), event))
++                .expect("Failed to send enabled event");
+ 
+             Some(context)
+         };
+@@ -141,19 +195,25 @@ impl Ime {
+         Ok(!self.is_destroyed())
+     }
+ 
+-    pub fn get_context(&self, window: ffi::Window) -> Option<ffi::XIC> {
++    pub fn guarded_context(&self, window: ffi::Window) -> Option<(ffi::XIC, ImeGuard)> {
+         if self.is_destroyed() {
+             return None;
+         }
+-        if let Some(Some(context)) = self.inner.contexts.get(&window) {
+-            Some(context.ic)
+-        } else {
+-            None
+-        }
++        let context = self.inner.contexts.get(&window)?.as_ref()?;
++        (context.allowed && context.guard.is_current()).then(|| (context.ic, context.guard.clone()))
++    }
++
++    pub fn queue_commit(&self, window: ffi::Window, guard: ImeGuard, text: String) {
++        self.inner
++            .event_sender
++            .send((window, guard, ImeEvent::Commit(text)))
++            .expect("Failed to send IME commit");
+     }
+ 
+     pub fn remove_context(&mut self, window: ffi::Window) -> Result<bool, XError> {
++        self.inner.context_requests.remove(&window);
+         if let Some(Some(context)) = self.inner.contexts.remove(&window) {
++            context.retire();
+             unsafe {
+                 self.inner.destroy_ic_if_necessary(context.ic)?;
+             }
+@@ -194,29 +254,39 @@ impl Ime {
+         }
+     }
+ 
+-    pub fn set_ime_allowed(&mut self, window: ffi::Window, allowed: bool) {
++    pub fn set_ime_allowed(&mut self, window: ffi::Window, allowed: bool, stamp: ImeStamp) {
++        // Requests from different callers can reach the channel out of order.
++        // The latest request replaces the XIC even when permission stays true,
++        // so it also performs cancellation for any superseded disable.
++        if !stamp.is_current() {
++            return;
++        }
+         if self.is_destroyed() {
++            self.inner.context_requests.insert(window, stamp);
+             return;
+         }
+ 
+         if let Some(&mut Some(ref mut context)) = self.inner.contexts.get_mut(&window) {
+-            if allowed == context.is_allowed() {
++            if allowed == context.is_allowed() && context.guard.is_current() {
+                 return;
+             }
+         }
+ 
+         // Remove context for that window.
+-        let _ = self.remove_context(window);
++        if let Err(err) = self.remove_context(window) {
++            tracing::warn!("IME context reset failed: {err:?}");
++            return;
++        }
+ 
+         // Create new context supporting IME input.
+-        let _ = self.create_context(window, allowed);
++        let _ = self.create_context(window, allowed, stamp);
+     }
+ 
+     pub fn is_ime_allowed(&self, window: ffi::Window) -> bool {
+         if self.is_destroyed() {
+             false
+         } else if let Some(Some(context)) = self.inner.contexts.get(&window) {
+-            context.is_allowed()
++            context.is_allowed() && context.guard.is_current()
+         } else {
+             false
+         }
+diff --git b/src/platform_impl/linux/x11/ime/tests.rs b/src/platform_impl/linux/x11/ime/tests.rs
+new file mode 100644
+index 00000000..98f13b1d
+--- /dev/null
++++ b/src/platform_impl/linux/x11/ime/tests.rs
+@@ -0,0 +1,51 @@
++use super::*;
++use crate::event::{Ime as PublicIme, WindowEvent};
++use crate::platform_impl::ime_lifetime::ImeLifetime;
++use std::collections::HashMap;
++use std::sync::mpsc::channel;
++
++#[test]
++fn direct_commit_follows_the_context_enabled_event() {
++    let (sender, receiver) = channel();
++    let life = ImeLifetime::default();
++    let guard = ImeGuard { context: life.request(true).unwrap(), window: None };
++    sender.send((1, guard.clone(), ImeEvent::Enabled)).unwrap();
++    sender.send((1, guard, ImeEvent::Commit("live".into()))).unwrap();
++    let mut events = Vec::new();
++    dispatch_events(&receiver, &mut HashMap::new(), |_, event| {
++        if let WindowEvent::Ime(event) = event {
++            events.push(event);
++        }
++    });
++    assert_eq!(
++        events,
++        [
++            PublicIme::Enabled,
++            PublicIme::Preedit(String::new(), None),
++            PublicIme::Commit("live".into())
++        ]
++    );
++}
++
++#[test]
++fn clear_preedit_reentry_retires_commit_without_stopping_another_window() {
++    let (sender, receiver) = channel();
++    let first = ImeLifetime::default();
++    let second = ImeLifetime::default();
++    let guard = ImeGuard { context: first.request(true).unwrap(), window: None };
++    let other = ImeGuard { context: second.request(true).unwrap(), window: None };
++    sender.send((1, guard.clone(), ImeEvent::Start)).unwrap();
++    sender.send((2, other, ImeEvent::Start)).unwrap();
++    let mut composing = HashMap::new();
++    dispatch_events(&receiver, &mut composing, |_, _| {});
++    sender.send((1, guard, ImeEvent::Commit("old".into()))).unwrap();
++    let mut events = Vec::new();
++    dispatch_events(&receiver, &mut composing, |_, event| {
++        events.push(event);
++        first.request(false);
++        first.request(true);
++    });
++    assert_eq!(events.len(), 1);
++    assert!(composing.get(&2).unwrap().is_current());
++    assert!(!composing.get(&1).unwrap().is_current());
++}
+diff --git a/src/platform_impl/linux/x11/mod.rs b/src/platform_impl/linux/x11/mod.rs
+index f29b314a..b3345821 100644
+--- a/src/platform_impl/linux/x11/mod.rs
++++ b/src/platform_impl/linux/x11/mod.rs
+@@ -328,7 +328,7 @@ impl<T: 'static> EventLoop<T> {
+             first_touch: None,
+             active_window: None,
+             modifiers: Default::default(),
+-            is_composing: false,
++            composing: HashMap::new(),
+         };
+ 
+         // Register for device hotplug events
+diff --git a/src/platform_impl/linux/x11/window.rs b/src/platform_impl/linux/x11/window.rs
+index 7e15d5f2..54fddd07 100644
+--- a/src/platform_impl/linux/x11/window.rs
++++ b/src/platform_impl/linux/x11/window.rs
+@@ -121,6 +121,7 @@ pub struct UnownedWindow {
+     #[allow(clippy::mutex_atomic)]
+     cursor_visible: Mutex<bool>,
+     ime_sender: Mutex<ImeSender>,
++    ime_lifetime: crate::platform_impl::ime_lifetime::ImeLifetime,
+     pub shared_state: Mutex<SharedState>,
+     redraw_sender: WakeSender<WindowId>,
+     activation_sender: WakeSender<super::ActivationToken>,
+@@ -348,6 +349,7 @@ impl UnownedWindow {
+             cursor_grabbed_mode: Mutex::new(CursorGrabMode::None),
+             cursor_visible: Mutex::new(true),
+             ime_sender: Mutex::new(event_loop.ime_sender.clone()),
++            ime_lifetime: Default::default(),
+             shared_state: SharedState::new(guessed_monitor, &window_attrs),
+             redraw_sender: event_loop.redraw_sender.clone(),
+             activation_sender: event_loop.activation_sender.clone(),
+@@ -528,7 +530,11 @@ impl UnownedWindow {
+ 
+             // Try to create input context for the window.
+             if let Some(ime) = event_loop.ime.as_ref() {
+-                let result = ime.borrow_mut().create_context(window.xwindow as ffi::Window, false);
++                let result = ime.borrow_mut().create_context(
++                    window.xwindow as ffi::Window,
++                    false,
++                    window.ime_lifetime.snapshot(),
++                );
+                 leap!(result);
+             }
+ 
+@@ -1743,11 +1749,14 @@ impl UnownedWindow {
+ 
+     #[inline]
+     pub fn set_ime_allowed(&self, allowed: bool) {
+-        let _ = self
+-            .ime_sender
+-            .lock()
+-            .unwrap()
+-            .send(ImeRequest::Allow(self.xwindow as ffi::Window, allowed));
++        let Some(stamp) = self.ime_lifetime.request(allowed) else {
++            return;
++        };
++        let _ = self.ime_sender.lock().unwrap().send(ImeRequest::Allow(
++            self.xwindow as ffi::Window,
++            allowed,
++            stamp,
++        ));
+     }
+ 
+     #[inline]
+diff --git a/src/platform_impl/macos/app_state.rs b/src/platform_impl/macos/app_state.rs
+index dd2ccd11..24b76c16 100644
+--- a/src/platform_impl/macos/app_state.rs
++++ b/src/platform_impl/macos/app_state.rs
+@@ -266,6 +266,28 @@ impl ApplicationDelegate {
+         self.maybe_queue_event(Event::WindowEvent { window_id: RootWindowId(window_id), event });
+     }
+ 
++    pub fn maybe_queue_ime_event(
++        &self,
++        window_id: WindowId,
++        event: WindowEvent,
++        stamp: crate::platform_impl::ime_lifetime::ImeStamp,
++    ) {
++        if !stamp.is_current() {
++            return;
++        }
++        let event = Event::WindowEvent { window_id: RootWindowId(window_id), event };
++        if !self.ivars().event_handler.in_use() {
++            self.handle_event(event);
++        } else {
++            let this = self.retain();
++            self.ivars().run_loop.queue_closure(move || {
++                if stamp.is_current() {
++                    this.handle_event(event);
++                }
++            });
++        }
++    }
++
+     pub fn handle_window_event(&self, window_id: WindowId, event: WindowEvent) {
+         self.handle_event(Event::WindowEvent { window_id: RootWindowId(window_id), event });
+     }
+diff --git a/src/platform_impl/macos/view.rs b/src/platform_impl/macos/view.rs
+index c7ca5bc6..b6e33aa9 100644
+--- a/src/platform_impl/macos/view.rs
++++ b/src/platform_impl/macos/view.rs
+@@ -126,6 +126,8 @@ pub struct ViewState {
+     ///
+     /// Can be set using `set_ime_allowed`
+     ime_allowed: Cell<bool>,
++    ime_lifetime: crate::platform_impl::ime_lifetime::ImeLifetime,
++    ime_callback: RefCell<Option<crate::platform_impl::ime_lifetime::ImeStamp>>,
+ 
+     /// True if the current key event should be forwarded
+     /// to the application, even during IME
+@@ -275,6 +277,8 @@ declare_class!(
+         ) {
+             // TODO: Use _replacement_range, requires changing the event to report surrounding text.
+             trace_scope!("setMarkedText:selectedRange:replacementRange:");
++            let stamp = self.ime_stamp();
++            if !self.ivars().ime_allowed.get() || !stamp.is_current() { return; }
+ 
+             // SAFETY: This method is guaranteed to get either a `NSString` or a `NSAttributedString`.
+             let (marked_text, string) = if string.is_kind_of::<NSAttributedString>() {
+@@ -301,9 +305,11 @@ declare_class!(
+             // Notify IME is active if application still doesn't know it.
+             if self.ivars().ime_state.get() == ImeState::Disabled {
+                 *self.ivars().input_source.borrow_mut() = self.current_input_source();
+-                self.queue_event(WindowEvent::Ime(Ime::Enabled));
++                self.queue_ime(&stamp, Ime::Enabled);
+             }
+ 
++            if !stamp.is_current() { return; }
++
+             if unsafe { self.hasMarkedText() } {
+                 self.ivars().ime_state.set(ImeState::Preedit);
+             } else {
+@@ -331,18 +337,21 @@ declare_class!(
+             };
+ 
+             // Send WindowEvent for updating marked text
+-            self.queue_event(WindowEvent::Ime(Ime::Preedit(string.to_string(), cursor_range)));
++            self.queue_ime(&stamp, Ime::Preedit(string.to_string(), cursor_range));
+         }
+ 
+         #[method(unmarkText)]
+         fn unmark_text(&self) {
+             trace_scope!("unmarkText");
++            let stamp = self.ime_stamp();
++            if !self.ivars().ime_allowed.get() || !stamp.is_current() { return; }
+             *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
+ 
+             let input_context = self.inputContext().expect("input context");
+             input_context.discardMarkedText();
+ 
+-            self.queue_event(WindowEvent::Ime(Ime::Preedit(String::new(), None)));
++            self.queue_ime(&stamp, Ime::Preedit(String::new(), None));
++            if !stamp.is_current() { return; }
+             if self.is_ime_enabled() {
+                 // Leave the Preedit self.ivars()
+                 self.ivars().ime_state.set(ImeState::Ground);
+@@ -393,6 +402,8 @@ declare_class!(
+         fn insert_text(&self, string: &NSObject, _replacement_range: NSRange) {
+             // TODO: Use _replacement_range, requires changing the event to report surrounding text.
+             trace_scope!("insertText:replacementRange:");
++            let stamp = self.ime_stamp();
++            if !self.ivars().ime_allowed.get() || !stamp.is_current() { return; }
+ 
+             // SAFETY: This method is guaranteed to get either a `NSString` or a `NSAttributedString`.
+             let string = if string.is_kind_of::<NSAttributedString>() {
+@@ -409,9 +420,9 @@ declare_class!(
+ 
+             // Commit only if we have marked text.
+             if unsafe { self.hasMarkedText() } && self.is_ime_enabled() && !is_control {
+-                self.queue_event(WindowEvent::Ime(Ime::Preedit(String::new(), None)));
+-                self.queue_event(WindowEvent::Ime(Ime::Commit(string)));
+-                self.ivars().ime_state.set(ImeState::Committed);
++                self.queue_ime(&stamp, Ime::Preedit(String::new(), None));
++                self.queue_ime(&stamp, Ime::Commit(string));
++                if stamp.is_current() { self.ivars().ime_state.set(ImeState::Committed); }
+             }
+         }
+ 
+@@ -420,6 +431,7 @@ declare_class!(
+         #[method(doCommandBySelector:)]
+         fn do_command_by_selector(&self, _command: Sel) {
+             trace_scope!("doCommandBySelector:");
++            if !self.ime_stamp().is_current() { return; }
+             // We shouldn't forward any character from just committed text, since we'll end up sending
+             // it twice with some IMEs like Korean one. We'll also always send `Enter` in that case,
+             // which is not desired given it was used to confirm IME input.
+@@ -447,13 +459,19 @@ declare_class!(
+                 if *prev_input_source != current_input_source && self.is_ime_enabled() {
+                     *prev_input_source = current_input_source;
+                     drop(prev_input_source);
++                    self.ivars().ime_lifetime.retire();
+                     self.ivars().ime_state.set(ImeState::Disabled);
+-                    self.queue_event(WindowEvent::Ime(Ime::Disabled));
++                    let transition = self.ivars().ime_lifetime.snapshot();
++                    self.queue_ime(&transition, Ime::Disabled);
++                    // Disabled can synchronously switch the app's target. The
++                    // remainder of this key batch belongs to the old target.
++                    if !transition.is_current() { return; }
+                 }
+             }
+ 
+             // Get the characters from the event.
+             let old_ime_state = self.ivars().ime_state.get();
++            let stamp = self.ivars().ime_lifetime.snapshot();
+             self.ivars().forward_key_to_app.set(false);
+             let event = replace_event(event, self.option_as_alt());
+ 
+@@ -465,7 +483,10 @@ declare_class!(
+             // is not handled by IME and should be handled by the application)
+             if self.ivars().ime_allowed.get() {
+                 let events_for_nsview = NSArray::from_slice(&[&*event]);
++                let previous = self.ivars().ime_callback.replace(Some(stamp.clone()));
+                 unsafe { self.interpretKeyEvents(&events_for_nsview) };
++                self.ivars().ime_callback.replace(previous);
++                if !stamp.is_current() { return; }
+ 
+                 // If the text was committed we must treat the next keyboard event as IME related.
+                 if self.ivars().ime_state.get() == ImeState::Committed {
+@@ -802,6 +823,8 @@ impl WinitView {
+             ime_state: Default::default(),
+             input_source: Default::default(),
+             ime_allowed: Default::default(),
++            ime_lifetime: Default::default(),
++            ime_callback: Default::default(),
+             forward_key_to_app: Default::default(),
+             marked_text: Default::default(),
+             accepts_first_mouse,
+@@ -839,6 +862,22 @@ impl WinitView {
+         self.ivars().app_delegate.maybe_queue_window_event(self.window().id(), event);
+     }
+ 
++    fn ime_stamp(&self) -> crate::platform_impl::ime_lifetime::ImeStamp {
++        self.ivars()
++            .ime_callback
++            .borrow()
++            .clone()
++            .unwrap_or_else(|| self.ivars().ime_lifetime.snapshot())
++    }
++
++    fn queue_ime(&self, stamp: &crate::platform_impl::ime_lifetime::ImeStamp, event: Ime) {
++        self.ivars().app_delegate.maybe_queue_ime_event(
++            self.window().id(),
++            WindowEvent::Ime(event),
++            stamp.clone(),
++        );
++    }
++
+     fn scale_factor(&self) -> f64 {
+         self.window().backingScaleFactor() as f64
+     }
+@@ -878,20 +917,27 @@ impl WinitView {
+     }
+ 
+     pub(super) fn set_ime_allowed(&self, ime_allowed: bool) {
+-        if self.ivars().ime_allowed.get() == ime_allowed {
++        let Some(stamp) = self.ivars().ime_lifetime.request(ime_allowed) else {
+             return;
+-        }
++        };
+         self.ivars().ime_allowed.set(ime_allowed);
+         if self.ivars().ime_allowed.get() {
+             return;
+         }
+ 
+-        // Clear markedText
++        // Retire before AppKit cancellation, which can synchronously call back.
++        let was_enabled = self.is_ime_enabled();
++        self.ivars().ime_state.set(ImeState::Disabled);
++        if let Some(context) = self.inputContext() {
++            context.discardMarkedText();
++        }
++        if !stamp.is_current() {
++            return;
++        }
+         *self.ivars().marked_text.borrow_mut() = NSMutableAttributedString::new();
+ 
+-        if self.ivars().ime_state.get() != ImeState::Disabled {
+-            self.ivars().ime_state.set(ImeState::Disabled);
+-            self.queue_event(WindowEvent::Ime(Ime::Disabled));
++        if was_enabled {
++            self.queue_ime(&stamp, Ime::Disabled);
+         }
+     }
+ 
+diff --git a/src/platform_impl/mod.rs b/src/platform_impl/mod.rs
+index 3bfce688..b04d661e 100644
+--- a/src/platform_impl/mod.rs
++++ b/src/platform_impl/mod.rs
+@@ -1,6 +1,9 @@
+ use crate::monitor::{MonitorHandle as RootMonitorHandle, VideoModeHandle as RootVideoModeHandle};
+ use crate::window::Fullscreen as RootFullscreen;
+ 
++#[cfg(any(windows_platform, macos_platform, x11_platform, wayland_platform))]
++pub(crate) mod ime_lifetime;
++
+ #[cfg(android_platform)]
+ mod android;
+ #[cfg(ios_platform)]
+diff --git b/src/platform_impl/windows/event_loop/runner/tests.rs b/src/platform_impl/windows/event_loop/runner/tests.rs
+new file mode 100644
+index 00000000..174fac3b
+--- /dev/null
++++ b/src/platform_impl/windows/event_loop/runner/tests.rs
+@@ -0,0 +1,56 @@
++use super::*;
++use crate::event::Ime;
++use crate::platform_impl::ime_lifetime::ImeLifetime;
++
++fn ime(event: Ime) -> Event<()> {
++    Event::WindowEvent { window_id: WindowId::dummy(), event: WindowEvent::Ime(event) }
++}
++
++#[test]
++fn buffered_ime_cannot_claim_a_replacement_target() {
++    let life = ImeLifetime::default();
++    let old = life.request(true).unwrap();
++    let queue = [
++        BufferedEvent::Ime(ime(Ime::Enabled), old.clone()),
++        BufferedEvent::Ime(ime(Ime::Commit("old".into())), old),
++    ];
++    life.request(false);
++    let new = life.request(true).unwrap();
++    let mut delivered = Vec::new();
++    for event in queue {
++        event.dispatch_event(|event| delivered.push(event));
++    }
++    assert!(delivered.is_empty());
++    BufferedEvent::Ime(ime(Ime::Commit("live".into())), new)
++        .dispatch_event(|event| delivered.push(event));
++    assert_eq!(delivered.len(), 1);
++}
++
++#[test]
++fn reentrant_clear_preedit_reset_discards_buffered_commit() {
++    let runner = Rc::new(EventLoopRunner::<()>::new(0));
++    let weak = Rc::downgrade(&runner);
++    let life = ImeLifetime::default();
++    let stamp = life.request(true).unwrap();
++    let callback_life = life.clone();
++    let callback_stamp = stamp.clone();
++    let delivered = Rc::new(RefCell::new(Vec::new()));
++    let recorded = delivered.clone();
++    // This is the real runner's reentrant queue, with no window or native calls.
++    unsafe {
++        runner.set_event_handler(move |event| {
++        let is_clear = matches!(&event, Event::WindowEvent { event: WindowEvent::Ime(Ime::Preedit(text, _)), .. } if text.is_empty());
++        recorded.borrow_mut().push(event);
++        if is_clear {
++            weak.upgrade().unwrap().send_ime_event(ime(Ime::Commit("retired".into())), callback_stamp.clone());
++            callback_life.request(false);
++            callback_life.request(true);
++        }
++    });
++    }
++    runner.send_ime_event(ime(Ime::Preedit(String::new(), None)), stamp);
++    runner.clear_event_handler();
++    assert!(runner.panic_error.take().is_none());
++    assert_eq!(delivered.borrow().len(), 1);
++    assert!(runner.event_buffer.borrow().is_empty());
++}
+diff --git a/src/platform_impl/windows/event_loop/runner.rs b/src/platform_impl/windows/event_loop/runner.rs
+index 3243ec47..899bc99c 100644
+--- a/src/platform_impl/windows/event_loop/runner.rs
++++ b/src/platform_impl/windows/event_loop/runner.rs
+@@ -16,6 +16,9 @@ use crate::window::WindowId;
+ 
+ use super::ControlFlow;
+ 
++#[cfg(test)]
++mod tests;
++
+ pub(crate) type EventLoopRunnerShared<T> = Rc<EventLoopRunner<T>>;
+ 
+ type EventHandler<T> = Cell<Option<Box<dyn FnMut(Event<T>)>>>;
+@@ -57,10 +60,26 @@ pub(crate) enum RunnerState {
+ 
+ enum BufferedEvent<T: 'static> {
+     Event(Event<T>),
++    Ime(Event<T>, crate::platform_impl::ime_lifetime::ImeStamp),
+     ScaleFactorChanged(WindowId, f64, PhysicalSize<u32>),
+ }
+ 
+ impl<T> EventLoopRunner<T> {
++    pub(crate) fn send_ime_event(
++        &self,
++        event: Event<T>,
++        stamp: crate::platform_impl::ime_lifetime::ImeStamp,
++    ) {
++        if !stamp.is_current() {
++            return;
++        }
++        if self.should_buffer() {
++            self.event_buffer.borrow_mut().push_back(BufferedEvent::Ime(event, stamp));
++        } else {
++            self.call_event_handler(event);
++            self.dispatch_buffered_events();
++        }
++    }
+     pub(crate) fn new(thread_msg_target: HWND) -> EventLoopRunner<T> {
+         EventLoopRunner {
+             thread_msg_target,
+@@ -375,6 +394,11 @@ impl<T> BufferedEvent<T> {
+ 
+     pub fn dispatch_event(self, dispatch: impl FnOnce(Event<T>)) {
+         match self {
++            Self::Ime(event, stamp) => {
++                if stamp.is_current() {
++                    dispatch(event);
++                }
++            },
+             Self::Event(event) => dispatch(event),
+             Self::ScaleFactorChanged(window_id, scale_factor, new_inner_size) => {
+                 let user_new_inner_size = Arc::new(Mutex::new(new_inner_size));
+diff --git a/src/platform_impl/windows/event_loop.rs b/src/platform_impl/windows/event_loop.rs
+index 6d60c1c5..aaa8fb8f 100644
+--- a/src/platform_impl/windows/event_loop.rs
++++ b/src/platform_impl/windows/event_loop.rs
+@@ -125,6 +125,26 @@ pub(crate) struct WindowData {
+ }
+ 
+ impl WindowData {
++    fn ime_snapshot(&self) -> Option<crate::platform_impl::ime_lifetime::ImeStamp> {
++        let state = self.window_state_lock();
++        state.ime_applied.clone().filter(|stamp| state.ime_allowed && stamp.is_current())
++    }
++
++    fn send_ime(
++        &self,
++        window: HWND,
++        stamp: &crate::platform_impl::ime_lifetime::ImeStamp,
++        event: Ime,
++    ) {
++        self.event_loop_runner.send_ime_event(
++            Event::WindowEvent {
++                window_id: RootWindowId(WindowId(window)),
++                event: WindowEvent::Ime(event),
++            },
++            stamp.clone(),
++        );
++    }
++
+     fn send_event(&self, event: Event<UserEventPlaceholder>) {
+         self.event_loop_runner.send_event(event);
+     }
+@@ -1511,65 +1531,50 @@ unsafe fn public_window_callback_inner(
+         },
+ 
+         WM_IME_STARTCOMPOSITION => {
+-            let ime_allowed = userdata.window_state_lock().ime_allowed;
+-            if ime_allowed {
++            if let Some(stamp) = userdata.ime_snapshot() {
+                 userdata.window_state_lock().ime_state = ImeState::Enabled;
+-
+-                userdata.send_event(Event::WindowEvent {
+-                    window_id: RootWindowId(WindowId(window)),
+-                    event: WindowEvent::Ime(Ime::Enabled),
+-                });
++                userdata.send_ime(window, &stamp, Ime::Enabled);
+             }
+ 
+             result = ProcResult::DefWindowProc(wparam);
+         },
+ 
+         WM_IME_COMPOSITION => {
+-            let ime_allowed_and_composing = {
+-                let w = userdata.window_state_lock();
+-                w.ime_allowed && w.ime_state != ImeState::Disabled
+-            };
++            let stamp = userdata
++                .ime_snapshot()
++                .filter(|_| userdata.window_state_lock().ime_state != ImeState::Disabled);
+             // Windows Hangul IME sends WM_IME_COMPOSITION after WM_IME_ENDCOMPOSITION, so
+             // check whether composing.
+-            if ime_allowed_and_composing {
++            if let Some(stamp) = stamp {
+                 let ime_context = unsafe { ImeContext::current(window) };
+ 
+                 if lparam == 0 {
+-                    userdata.send_event(Event::WindowEvent {
+-                        window_id: RootWindowId(WindowId(window)),
+-                        event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
+-                    });
++                    userdata.send_ime(window, &stamp, Ime::Preedit(String::new(), None));
+                 }
+ 
+                 // Google Japanese Input and ATOK have both flags, so
+                 // first, receive composing result if exist.
+-                if (lparam as u32 & GCS_RESULTSTR) != 0 {
+-                    if let Some(text) = unsafe { ime_context.get_composed_text() } {
++                if stamp.is_current() && (lparam as u32 & GCS_RESULTSTR) != 0 {
++                    if let Some(text) =
++                        unsafe { ime_context.get_composed_text() }.filter(|_| stamp.is_current())
++                    {
+                         userdata.window_state_lock().ime_state = ImeState::Enabled;
+ 
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
+-                        });
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Commit(text)),
+-                        });
++                        userdata.send_ime(window, &stamp, Ime::Preedit(String::new(), None));
++                        userdata.send_ime(window, &stamp, Ime::Commit(text));
+                     }
+                 }
+ 
+                 // Next, receive preedit range for next composing if exist.
+-                if (lparam as u32 & GCS_COMPSTR) != 0 {
++                if stamp.is_current() && (lparam as u32 & GCS_COMPSTR) != 0 {
+                     if let Some((text, first, last)) =
+                         unsafe { ime_context.get_composing_text_and_cursor() }
++                            .filter(|_| stamp.is_current())
+                     {
+                         userdata.window_state_lock().ime_state = ImeState::Preedit;
+                         let cursor_range = first.map(|f| (f, last.unwrap_or(f)));
+ 
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Preedit(text, cursor_range)),
+-                        });
++                        userdata.send_ime(window, &stamp, Ime::Preedit(text, cursor_range));
+                     }
+                 }
+             }
+@@ -1579,33 +1584,21 @@ unsafe fn public_window_callback_inner(
+         },
+ 
+         WM_IME_ENDCOMPOSITION => {
+-            let ime_allowed_or_composing = {
+-                let w = userdata.window_state_lock();
+-                w.ime_allowed || w.ime_state != ImeState::Disabled
+-            };
+-            if ime_allowed_or_composing {
++            if let Some(stamp) = userdata.ime_snapshot() {
+                 if userdata.window_state_lock().ime_state == ImeState::Preedit {
+                     // Windows Hangul IME sends WM_IME_COMPOSITION after WM_IME_ENDCOMPOSITION, so
+                     // trying receiving composing result and commit if exists.
+                     let ime_context = unsafe { ImeContext::current(window) };
+                     if let Some(text) = unsafe { ime_context.get_composed_text() } {
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Preedit(String::new(), None)),
+-                        });
+-                        userdata.send_event(Event::WindowEvent {
+-                            window_id: RootWindowId(WindowId(window)),
+-                            event: WindowEvent::Ime(Ime::Commit(text)),
+-                        });
++                        userdata.send_ime(window, &stamp, Ime::Preedit(String::new(), None));
++                        userdata.send_ime(window, &stamp, Ime::Commit(text));
+                     }
+                 }
+ 
+-                userdata.window_state_lock().ime_state = ImeState::Disabled;
+-
+-                userdata.send_event(Event::WindowEvent {
+-                    window_id: RootWindowId(WindowId(window)),
+-                    event: WindowEvent::Ime(Ime::Disabled),
+-                });
++                if stamp.is_current() {
++                    userdata.window_state_lock().ime_state = ImeState::Disabled;
++                    userdata.send_ime(window, &stamp, Ime::Disabled);
++                }
+             }
+ 
+             result = ProcResult::DefWindowProc(wparam);
+diff --git b/src/platform_impl/windows/ime/tests.rs b/src/platform_impl/windows/ime/tests.rs
+new file mode 100644
+index 00000000..29a2e563
+--- /dev/null
++++ b/src/platform_impl/windows/ime/tests.rs
+@@ -0,0 +1,99 @@
++use super::*;
++use crate::window::{Theme, WindowAttributes};
++
++fn state() -> Mutex<WindowState> {
++    Mutex::new(WindowState::new(&WindowAttributes::default(), 1.0, Theme::Light, None))
++}
++
++fn request(state: &Mutex<WindowState>, allowed: bool) -> ImeStamp {
++    state.lock().unwrap().ime_lifetime.request(allowed).unwrap()
++}
++
++#[test]
++fn inline_enable_overtaking_posted_disable_resets_before_reuse() {
++    let state = state();
++    let first = request(&state, true);
++    apply_ime_request(&state, &first, true, |_| true);
++    state.lock().unwrap().ime_state = ImeState::Preedit;
++    let posted_disable = request(&state, false);
++    let inline_enable = request(&state, true);
++    let mut actions = Vec::new();
++    apply_ime_request(&state, &inline_enable, true, |action| {
++        actions.push(action);
++        true
++    });
++    assert_eq!(actions, [ImeAction::Cancel { active: true }, ImeAction::Associate(true)]);
++    apply_ime_request(&state, &posted_disable, false, |_| {
++        panic!("obsolete disable must not detach the new context")
++    });
++    assert!(state.lock().unwrap().ime_allowed);
++    assert!(inline_enable.is_current());
++    assert!(!first.is_current());
++}
++
++#[test]
++fn idle_reset_does_not_depend_on_a_disabled_callback() {
++    let state = state();
++    let enabled = request(&state, true);
++    let mut actions = Vec::new();
++    apply_ime_request(&state, &enabled, true, |action| {
++        actions.push(action);
++        true
++    });
++    assert_eq!(actions, [ImeAction::Cancel { active: false }, ImeAction::Associate(true)]);
++    let disabled = request(&state, false);
++    apply_ime_request(&state, &disabled, false, |_| true);
++    let enabled = request(&state, true);
++    apply_ime_request(&state, &enabled, true, |_| true);
++    assert!(state.lock().unwrap().ime_allowed);
++}
++
++#[test]
++fn reset_failure_detaches_and_retries_before_enabling() {
++    let state = state();
++    let enabled = request(&state, true);
++    let mut actions = Vec::new();
++    apply_ime_request(&state, &enabled, true, |action| {
++        actions.push(action);
++        !matches!(action, ImeAction::Cancel { .. })
++    });
++    assert_eq!(actions, [ImeAction::Cancel { active: false }, ImeAction::Associate(false)]);
++    assert!(!state.lock().unwrap().ime_allowed);
++    assert!(state.lock().unwrap().ime_reset_failed);
++    let _posted_disable = request(&state, false);
++    let enabled = request(&state, true);
++    actions.clear();
++    apply_ime_request(&state, &enabled, true, |action| {
++        actions.push(action);
++        true
++    });
++    assert_eq!(
++        actions,
++        [
++            ImeAction::Associate(true),
++            ImeAction::Cancel { active: true },
++            ImeAction::Associate(true)
++        ]
++    );
++    assert!(state.lock().unwrap().ime_allowed);
++    assert!(!state.lock().unwrap().ime_reset_failed);
++}
++
++#[test]
++fn native_reentry_cannot_apply_old_completion_to_a_new_epoch() {
++    let state = state();
++    let old = request(&state, true);
++    let mut old_actions = Vec::new();
++    apply_ime_request(&state, &old, true, |action| {
++        old_actions.push(action);
++        if matches!(action, ImeAction::Cancel { .. }) {
++            request(&state, false);
++            let new = request(&state, true);
++            apply_ime_request(&state, &new, true, |_| true);
++        }
++        false // Even failure of the retired action must not detach the new epoch.
++    });
++    assert_eq!(old_actions, [ImeAction::Cancel { active: false }]);
++    assert!(state.lock().unwrap().ime_allowed);
++    assert!(!state.lock().unwrap().ime_reset_failed);
++}
+diff --git a/src/platform_impl/windows/ime.rs b/src/platform_impl/windows/ime.rs
+index eb65abf3..26adb825 100644
+--- a/src/platform_impl/windows/ime.rs
++++ b/src/platform_impl/windows/ime.rs
+@@ -1,6 +1,7 @@
+ use std::ffi::{c_void, OsString};
+ use std::os::windows::prelude::OsStringExt;
+ use std::ptr::null_mut;
++use std::sync::Mutex;
+ 
+ use windows_sys::Win32::Foundation::{POINT, RECT};
+ use windows_sys::Win32::Globalization::HIMC;
+@@ -10,10 +11,82 @@ use windows_sys::Win32::UI::Input::Ime::{
+     ATTR_TARGET_NOTCONVERTED, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPATTR,
+     GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IACE_CHILDREN, IACE_DEFAULT,
+ };
++use windows_sys::Win32::UI::Input::Ime::{ImmNotifyIME, CPS_CANCEL, NI_COMPOSITIONSTR};
+ use windows_sys::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_IMMENABLED};
++use windows_sys::Win32::UI::WindowsAndMessaging::{
++    PeekMessageW, MSG, PM_REMOVE, WM_IME_COMPOSITION, WM_IME_STARTCOMPOSITION,
++};
+ 
++use super::window_state::{ImeState, WindowState};
+ use crate::dpi::{Position, Size};
+ use crate::platform::windows::HWND;
++use crate::platform_impl::ime_lifetime::ImeStamp;
++
++#[cfg(test)]
++mod tests;
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub(super) enum ImeAction {
++    Associate(bool),
++    Cancel { active: bool },
++}
++
++/// Apply the current request behind a closed delivery gate. Every transition,
++/// including enable, resets the native context: an inline enable can overtake
++/// an external caller's posted disable. Obsolete posted work then does nothing.
++/// Native actions are separate so no WindowState lock survives a reentrant call.
++pub(super) fn apply_ime_request(
++    state: &Mutex<WindowState>,
++    stamp: &ImeStamp,
++    allowed: bool,
++    mut native: impl FnMut(ImeAction) -> bool,
++) {
++    let (retry_reset, active) = {
++        let mut state = state.lock().unwrap();
++        if !stamp.is_current() {
++            return;
++        }
++        let active = state.ime_state != ImeState::Disabled;
++        let retry = state.ime_reset_failed;
++        state.ime_allowed = false;
++        state.ime_state = ImeState::Disabled;
++        state.ime_applied = Some(stamp.clone());
++        // A nested request must cancel if this operation has not returned.
++        state.ime_reset_failed = true;
++        (retry, active)
++    };
++    let is_applied =
++        || state.lock().unwrap().ime_applied.as_ref().is_some_and(|applied| applied.same(stamp));
++    // A failed reset detached the context to preserve ordinary keyboard input.
++    // Reassociate it behind the gate before retrying, even for a disable.
++    let associated = !retry_reset || native(ImeAction::Associate(true));
++    if !is_applied() {
++        return;
++    }
++    let reset = associated && native(ImeAction::Cancel { active: active || retry_reset });
++    {
++        let mut state = state.lock().unwrap();
++        if !state.ime_applied.as_ref().is_some_and(|applied| applied.same(stamp)) {
++            return;
++        }
++        state.ime_reset_failed = !reset;
++    }
++    if !reset {
++        native(ImeAction::Associate(false));
++        tracing::warn!("IME composition reset failed; native input remains disabled");
++        return;
++    }
++    if !stamp.is_current() {
++        return;
++    }
++    let associated = native(ImeAction::Associate(allowed));
++    let mut state = state.lock().unwrap();
++    if !stamp.is_current() {
++        return;
++    }
++    state.ime_reset_failed = !associated;
++    state.ime_allowed = allowed && associated;
++}
+ 
+ pub struct ImeContext {
+     hwnd: HWND,
+@@ -21,6 +94,35 @@ pub struct ImeContext {
+ }
+ 
+ impl ImeContext {
++    /// Cancel native state before reusing this HWND for a different insertion
++    /// point. A permission toggle alone does not reset an IMM composition.
++    pub unsafe fn cancel(&self, active: bool) -> bool {
++        let empty =
++            unsafe { self.get_composition_string(GCS_COMPSTR) }.is_some_and(|text| text.is_empty());
++        if self.himc != 0
++            && (active || !empty)
++            && unsafe { ImmNotifyIME(self.himc, NI_COMPOSITIONSTR, CPS_CANCEL, 0) } == 0
++        {
++            return false;
++        }
++        // These messages contain flags, not text or a context identity. After
++        // cancellation they must not be interpreted against the next context.
++        // Only this HWND's three composition messages are removed; keyboard,
++        // mouse, candidate notifications and other windows are untouched.
++        let mut message: MSG = unsafe { std::mem::zeroed() };
++        while unsafe {
++            PeekMessageW(
++                &mut message,
++                self.hwnd,
++                WM_IME_STARTCOMPOSITION,
++                WM_IME_COMPOSITION,
++                PM_REMOVE,
++            )
++        } != 0
++        {}
++        true
++    }
++
+     pub unsafe fn current(hwnd: HWND) -> Self {
+         let himc = unsafe { ImmGetContext(hwnd) };
+         ImeContext { hwnd, himc }
+@@ -138,15 +240,15 @@ impl ImeContext {
+         }
+     }
+ 
+-    pub unsafe fn set_ime_allowed(hwnd: HWND, allowed: bool) {
++    pub unsafe fn set_ime_allowed(hwnd: HWND, allowed: bool) -> bool {
+         if !unsafe { ImeContext::system_has_ime() } {
+-            return;
++            return true;
+         }
+ 
+         if allowed {
+-            unsafe { ImmAssociateContextEx(hwnd, 0, IACE_DEFAULT) };
++            unsafe { ImmAssociateContextEx(hwnd, 0, IACE_DEFAULT) != 0 }
+         } else {
+-            unsafe { ImmAssociateContextEx(hwnd, 0, IACE_CHILDREN) };
++            unsafe { ImmAssociateContextEx(hwnd, 0, IACE_CHILDREN) != 0 }
+         }
+     }
+ 
+diff --git a/src/platform_impl/windows/window.rs b/src/platform_impl/windows/window.rs
+index 228c6f03..ec0d06c7 100644
+--- a/src/platform_impl/windows/window.rs
++++ b/src/platform_impl/windows/window.rs
+@@ -61,7 +61,7 @@ use crate::platform_impl::platform::dpi::{
+ use crate::platform_impl::platform::drop_handler::FileDropHandler;
+ use crate::platform_impl::platform::event_loop::{self, ActiveEventLoop, DESTROY_MSG_ID};
+ use crate::platform_impl::platform::icon::{self, IconType, WinCursor};
+-use crate::platform_impl::platform::ime::ImeContext;
++use crate::platform_impl::platform::ime::{apply_ime_request, ImeAction, ImeContext};
+ use crate::platform_impl::platform::keyboard::KeyEventBuilder;
+ use crate::platform_impl::platform::monitor::{self, MonitorHandle};
+ use crate::platform_impl::platform::window_state::{
+@@ -922,10 +922,28 @@ impl Window {
+     pub fn set_ime_allowed(&self, allowed: bool) {
+         let window = self.window;
+         let state = self.window_state.clone();
+-        self.thread_executor.execute_in_thread(move || unsafe {
+-            state.lock().unwrap().ime_allowed = allowed;
+-            ImeContext::set_ime_allowed(window, allowed);
+-        })
++        let requested = self.window_state.lock().unwrap();
++        let Some(stamp) = requested.ime_lifetime.request(allowed) else {
++            return;
++        };
++        let apply = move || {
++            apply_ime_request(&state, &stamp, allowed, |action| unsafe {
++                match action {
++                    ImeAction::Associate(allowed) => ImeContext::set_ime_allowed(window, allowed),
++                    ImeAction::Cancel { active } => ImeContext::current(window).cancel(active),
++                }
++            });
++        };
++        if self.thread_executor.in_event_loop_thread() {
++            // Inline native calls may reenter; they must never inherit the lock.
++            drop(requested);
++            self.thread_executor.execute_in_thread(apply);
++        } else {
++            // Keep requests and their posted closures in the same order even
++            // when multiple external callers race to toggle permission.
++            self.thread_executor.execute_in_thread(apply);
++            drop(requested);
++        }
+     }
+ 
+     #[inline]
+diff --git a/src/platform_impl/windows/window_state.rs b/src/platform_impl/windows/window_state.rs
+index 8e24a4f2..d3319679 100644
+--- a/src/platform_impl/windows/window_state.rs
++++ b/src/platform_impl/windows/window_state.rs
+@@ -45,6 +45,9 @@ pub(crate) struct WindowState {
+ 
+     pub ime_state: ImeState,
+     pub ime_allowed: bool,
++    pub ime_lifetime: crate::platform_impl::ime_lifetime::ImeLifetime,
++    pub ime_applied: Option<crate::platform_impl::ime_lifetime::ImeStamp>,
++    pub ime_reset_failed: bool,
+ 
+     // Used by WM_NCACTIVATE, WM_SETFOCUS and WM_KILLFOCUS
+     pub is_active: bool,
+@@ -169,6 +172,9 @@ impl WindowState {
+ 
+             ime_state: ImeState::Disabled,
+             ime_allowed: false,
++            ime_lifetime: Default::default(),
++            ime_applied: None,
++            ime_reset_failed: false,
+ 
+             is_active: false,
+             is_focused: false,

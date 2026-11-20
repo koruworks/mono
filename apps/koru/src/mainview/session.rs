@@ -103,6 +103,7 @@ impl MainView {
                 // welcome reads the global default view mode and canvas colour it
                 // offers, so it must not be skipped the way it used to be.
                 match &mut t.view {
+                    TabView::MiniApp(_) => {}
                     TabView::Leaf(l) => View::restore(l, workspace, settings),
                     TabView::Welcome(w) => {
                         View::restore(w, workspace, settings);
@@ -214,6 +215,7 @@ impl MainView {
         for (_, group) in self.panes.iter_groups() {
             for t in group.tabs().iter() {
                 match &t.view {
+                    TabView::MiniApp(_) => {}
                     TabView::Leaf(l) => View::capture(l, settings),
                     TabView::Welcome(w) => View::capture(w, settings),
                     TabView::Manage(w) => View::capture(w, settings),
@@ -658,6 +660,7 @@ impl MainView {
         // empty draft rather than as a node that will not parse. What it
         // *was* is a blank page, and a blank page restores perfectly.
         Some(match &t.view {
+            TabView::MiniApp(_) => return None,
             _ if t.draft.is_some() => TabRef::Draft,
             // **Before the `Leaf` arm, and that ordering is the whole
             // of it.** A notes tab *is* a `Leaf`, so the arm below

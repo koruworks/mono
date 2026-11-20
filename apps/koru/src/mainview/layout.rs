@@ -475,6 +475,7 @@ impl MainView {
         if !self.tab_widths().is_empty() {
             self.ensure_tab_visible(active);
         }
+        self.sync_mini_app_refinement_target();
     }
 
     /// `Ctrl+Shift+E`: **focus the tree, or toggle the pane.**
@@ -848,6 +849,7 @@ impl MainView {
             self.ai_chat.clear_context_document_dismissal();
         }
         let open = self.ai_panel.toggle(now);
+        self.ai_chat.offer_mini_apps(open);
         self.ai_focused = open;
         if open {
             self.ai_chat.activate();

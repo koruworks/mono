@@ -370,6 +370,12 @@ fn recorded_initialization_and_auth_failures_pass_the_real_route_parser_without_
             let mut h = harness(FakeAcpConfig::default(), None, None);
             h.control.config.executable_version = route.parse_version(version).unwrap();
             h.control.config.route = route.clone();
+            h.control.config.mcp_servers = vec![crate::providers::McpServerLaunch {
+                name: "koru".into(),
+                command: "koru-mcp".into(),
+                args: vec!["serve".into(), "--stdio".into()],
+                env: Vec::new(),
+            }];
             let mut frames = h.injected.lock().unwrap();
             frames.push_back(serde_json::from_str(init).unwrap());
             if fail_auth {
@@ -394,6 +400,18 @@ fn recorded_initialization_and_auth_failures_pass_the_real_route_parser_without_
                 assert_eq!(caps.provider, route.provider);
                 assert_eq!(caps.delegation.mcp, McpSupport::Supported);
                 assert!(!format!("{caps:?}").contains("private-session"));
+                let state = h.state.lock().unwrap();
+                let session = state
+                    .sent()
+                    .iter()
+                    .find(|frame| frame["method"] == "session/new")
+                    .unwrap();
+                let bridge = &session["params"]["mcpServers"][0];
+                assert_eq!(bridge["name"], "koru");
+                assert_eq!(bridge["command"], "koru-mcp");
+                assert_eq!(bridge["args"], json!(["serve", "--stdio"]));
+                assert!(bridge.get("type").is_none());
+                drop(state);
                 if route.cached_auth_method.is_some() {
                     let state = h.state.lock().unwrap();
                     let auth = state

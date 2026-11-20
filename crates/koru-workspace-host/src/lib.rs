@@ -44,6 +44,11 @@ pub mod formats;
 mod image_import;
 pub mod images;
 mod inspector;
+/// The F12 inspector for a host that is not [`app`]'s: the same inspector,
+/// handed window events and answering with what the host should do, with its
+/// panel's placement kept in memory only. The inspector itself stays private
+/// to this crate; this facade is the whole of what another host can reach.
+pub use inspector::hosted as hosted_inspector;
 /// What the window actually received, on demand — `KORU_INPUT_DEBUG=1`.
 ///
 /// **Lives in `koru-ui`** as `keys::debug`, beside the `ctrl_letter` whose
@@ -382,7 +387,40 @@ pub enum TabPresence {
 ///
 /// The mouse and key methods return whether anything changed, so the loop only
 /// redraws when it has to rather than spinning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChildDocumentRequest {
+    pub surface: u64,
+    pub generation: u64,
+    pub workspace: WorkspaceId,
+    pub document: koru_core::DocumentId,
+}
+
+/// Native input identity is scoped to a window and an editable occurrence,
+/// never to its changing geometry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImeTargetId {
+    pub owner: u64,
+    pub control: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImeTarget {
+    pub id: ImeTargetId,
+    pub cursor_area: Option<koru_draw::geometry::Rect>,
+}
+
 pub trait View {
+    fn ime_target(&self) -> Option<ImeTarget> {
+        None
+    }
+    fn ime(
+        &mut self,
+        _ws: &mut WorkspaceDoc,
+        _target: ImeTargetId,
+        _event: &winit::event::Ime,
+    ) -> bool {
+        false
+    }
     fn key(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -1006,6 +1044,38 @@ pub trait View {
     /// is no subscription left to report anything.
     fn reseat(&mut self, ws: &WorkspaceDoc);
 
+    /// A bounded child destination. This never reserves a shell tab and the
+    /// exact request must still be live when the off-thread load finishes.
+    fn child_document_request(&self) -> Option<ChildDocumentRequest> {
+        None
+    }
+
+    /// Returning false retires the exact pending intent; it must not be reissued
+    /// on the next maintenance turn without a new user request.
+    fn accept_child_document(
+        &mut self,
+        _request: ChildDocumentRequest,
+        _doc: &WorkspaceDoc,
+    ) -> bool {
+        false
+    }
+
+    fn child_document_loaded(
+        &mut self,
+        _request: ChildDocumentRequest,
+        _doc: &WorkspaceDoc,
+    ) -> bool {
+        false
+    }
+
+    fn child_document_failed(&mut self, _request: ChildDocumentRequest) {}
+
+    /// The retained editor a focused native window expects. The host may
+    /// restore an already-resident document, without I/O or navigation.
+    fn editing_document(&self) -> Option<(WorkspaceId, koru_core::DocumentId)> {
+        None
+    }
+
     /// Show the document the workspace has just made active, in a tab.
     ///
     /// The shell swaps which document is open; the *tab* is the view's, so it
@@ -1546,6 +1616,37 @@ pub trait View {
     /// store failure left a draft permanently un-promotable and silent.
     fn create_document_failed(&mut self) {}
 
+    /// Authored content for the exact draft CreateDocument just returned by
+    /// take_pane_request. The host reads this and completes creation on the
+    /// same stack, before another request or event can change the source.
+    /// None means ordinary creation; an error must refuse, never fall back to
+    /// creating an empty document. This is transient host input, not model I/O.
+    fn draft_document_content(
+        &self,
+        _profile: koru_core::ProfileId,
+        _workspace: Option<koru_core::WorkspaceId>,
+    ) -> Option<Result<koru_core::schema::Cutting, koru_core::StoreError>> {
+        None
+    }
+
+    /// Source-qualified synchronous creation completion, before taking another
+    /// request. Return true when this view claims the new document, suppressing
+    /// broadcast navigation. Draft requests wait for preedit before dispatch.
+    fn created_document(
+        &mut self,
+        _ws: &mut WorkspaceDoc,
+        _document: koru_core::DocumentId,
+    ) -> bool {
+        false
+    }
+
+    /// Cancel provisional input before teardown; refuse while accepted private
+    /// edits still need their ordinary creation handoff. Call before removing
+    /// any window or replacing profile/workspace ownership, not only on quit.
+    fn prepare_document_creation_close(&mut self) -> bool {
+        true
+    }
+
     /// A node the user wants to become an image (the `/image` slash command).
     /// The shell opens the file picker and calls [`insert_image`](Self::insert_image)
     /// with the resulting blob — both need disk, which a view does not touch.
@@ -1756,6 +1857,18 @@ pub trait View {
     /// unrecoverable bug — so the view is handed the command back and can put
     /// the text where it was. Answers whether anything on screen changed.
     fn task_command_failed(&mut self, _command: &tasks::TaskCommand, _error: &str) -> bool {
+        false
+    }
+
+    /// A bounded queue refused a newest intent before execution. A collected
+    /// batch's refusals arrive newest first, separately from ordered receipts.
+    fn task_command_rejected(&mut self, command: &tasks::TaskCommand, error: &str) -> bool {
+        self.task_command_failed(command, error)
+    }
+
+    /// Another window's write: refresh read-model requirements without
+    /// consuming this window's unrelated optimistic intent or navigation.
+    fn task_command_observed(&mut self, _landed: &tasks::Landed) -> bool {
         false
     }
 

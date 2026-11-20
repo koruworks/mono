@@ -68,6 +68,7 @@ enum Stop {
     Bell,
     Lane,
     Apps,
+    MiniApp,
 }
 
 impl MainView {
@@ -86,10 +87,18 @@ impl MainView {
         if self.sidebar.is_open() {
             out.push(Stop::Apps);
         }
+        if matches!(self.tabs().active_tab().view, super::TabView::MiniApp(_)) {
+            out.push(Stop::MiniApp);
+        }
         out
     }
 
     fn current_stop(&self) -> Option<Stop> {
+        if let super::TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && app.header_focused()
+        {
+            return Some(Stop::MiniApp);
+        }
         if self.reminder_creation.pill_focused() {
             return Some(Stop::Pill);
         }
@@ -120,7 +129,16 @@ impl MainView {
         let mut moved = self.reminder_shell.blur_bell();
         moved |= self.reminder_creation.blur_pill();
         moved |= self.chrome_focus.take().is_some();
+        if let super::TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+            app.blur_header();
+        }
         match next {
+            Stop::MiniApp => {
+                if let super::TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+                    app.focus_header();
+                    moved = true;
+                }
+            }
             Stop::Toast => {
                 self.chrome_focus = Some(ChromeStop::Toast(0));
                 moved = true;
@@ -173,6 +191,14 @@ impl MainView {
         if matches!(stop, ChromeStop::Toast(_)) && self.toast_line_count() == 0 {
             self.chrome_focus = None;
             return false;
+        }
+        if let ChromeStop::Apps(i) = stop
+            && let ExploreChromeFocus::Pin(id) = self.rail_focus(i)
+            && let Some(up) = move_chord(key, text, mods)
+        {
+            self.explore.nudge_pin(self.rail_area(), id, up);
+            self.retain_pin_focus(id);
+            return true;
         }
         // An open switcher owns the keyboard (its own Esc, arrows and Enter)
         // until it shuts; the stop takes over again after.
@@ -333,6 +359,12 @@ impl MainView {
                     self.open_rail_overflow();
                 }
                 ExploreChromeFocus::RailProfile => self.explore.toggle_profile_popover(),
+                ExploreChromeFocus::Pin(id) => {
+                    self.open_mini_app_pin(id);
+                }
+                ExploreChromeFocus::PinOverflow => {
+                    self.open_mini_app_pins(None);
+                }
             },
             // What a press on that answer does; the keyboard leaves with it,
             // since the line it was on is gone once answered.

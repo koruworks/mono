@@ -342,6 +342,8 @@ usage: ./koru.sh <command> [cargo args...]
              (run and run-all read .env.production; with none, Koru Cloud is not configured)
   stop-all   stop this worktree's Agent, services, voice worker and Koru
   jank       ...with the stall watch on, logging to koru-jank.log
+  ui         open the UI Lab in its own window: Koru's real components over
+             synthetic data, no profile or services; ui [--window-size WxH]
   release    launch an optimised build
   release-tool run any koru-release subcommand; dist-* ones get the fonts first
   voice-models fetch, repackage and publish the speech models (dry run by default)
@@ -840,6 +842,15 @@ case "$sub" in
     ;;
   run-all)  run_all_verb "$@" ;;
   stop-all) stop_all_verb "$@" ;;
+  # The UI Lab: this binary as `koru --ui`, in its own process. Not a kind of
+  # `run`: no .env.production is read, because the Lab opens no profile, Store
+  # or Cloud. Everything after the verb goes to the app, with or without a
+  # leading `--`:  ./koru.sh ui --window-size 1280x800
+  ui)
+    ensure_fonts
+    [ "${1:-}" = -- ] && shift
+    exec cargo run -- --ui "$@"
+    ;;
   # The table comes from the binary, not from this script: `koru --envs`
   # prints crates/koru-env's registry, the same one reference/ENV.md is generated
   # from. The built exe answers instantly; cargo only runs when nothing is

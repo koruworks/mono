@@ -2084,6 +2084,14 @@ pub const REGISTRY: &[EventSpec] = &[
     // the attr carries the same token so a handler that wants all three can
     // read it uniformly.
     EventSpec {
+        name: "settings.mini_app_pins_changed",
+        version: 1,
+        class: EventClass::Domain,
+        telemetry: TelemetryPolicy::Never,
+        attrs: &[],
+        doc: "The device-local mini-app pin authority committed an ordered-reference mutation. No content or identity is carried; visible clients invalidate and refetch their authorized current scope.",
+    },
+    EventSpec {
         name: "settings.global_changed",
         version: 1,
         class: EventClass::Domain,

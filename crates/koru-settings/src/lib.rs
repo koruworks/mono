@@ -38,6 +38,7 @@
 
 pub mod authority;
 pub mod paths;
+pub mod pins;
 pub mod registry;
 pub mod sections;
 pub mod storage;

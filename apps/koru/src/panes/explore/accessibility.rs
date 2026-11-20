@@ -178,8 +178,15 @@ impl ExploreView {
     /// reader asks for a rectangle when it wants one rather than being told;
     /// rebuilding the tree for it is the per-frame cost §7.3 forbids.
     pub(crate) fn revise(&self, rev: &mut Revision) {
+        rev.bool(self.pins_menu_needed);
         let rail = self.rail_model();
-        for item in rail.workspaces.iter().chain(&rail.views).chain(&rail.foot) {
+        for item in rail
+            .workspaces
+            .iter()
+            .chain(&rail.views)
+            .chain(&rail.pins)
+            .chain(&rail.foot)
+        {
             let key = crate::panes::sidebar::rail_elements::key(item.hit);
             match key.object {
                 koru_draw::el::Object::Model(id) => {
@@ -570,6 +577,10 @@ impl ExploreView {
             ExploreChromeFocus::RailSettings => cx.surface(EXPLORE, parts::RAIL_SETTINGS),
             ExploreChromeFocus::RailOverflow => cx.surface(EXPLORE, parts::RAIL_OVERFLOW),
             ExploreChromeFocus::RailProfile => cx.surface(EXPLORE, parts::RAIL_PROFILE),
+            ExploreChromeFocus::Pin(id) => {
+                cx.model(uuid::Uuid::from_u128(id.0), ControlPart::new("rail-pin"))
+            }
+            ExploreChromeFocus::PinOverflow => cx.surface("rail", ControlPart::new("pin-overflow")),
         })
     }
 
@@ -865,6 +876,16 @@ impl ExploreView {
         if action != Action::Click {
             return None;
         }
+        if target.part.name() == "rail-pin"
+            && let koru_workspace_host::accessibility::ObjectKey::Model(id) = target.object
+        {
+            let id = koru_settings::pins::PinId(id.as_u128());
+            return self
+                .mini_app_pins
+                .iter()
+                .any(|p| p.id == id)
+                .then_some(Outcome::OpenMiniAppPin(id));
+        }
         if target.part.name() == "rail"
             && let koru_workspace_host::accessibility::ObjectKey::Model(id) = target.object
         {
@@ -885,6 +906,7 @@ impl ExploreView {
             _ => return None,
         };
         match surface {
+            "rail" if target.part.name() == "pin-overflow" => Some(Outcome::OpenMiniAppPins),
             "rail" if target.part.name() == "waiting-workspace" => {
                 self.toggle_workspace_menu();
                 Some(Outcome::Consumed)

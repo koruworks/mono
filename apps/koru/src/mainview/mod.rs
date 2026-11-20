@@ -94,6 +94,9 @@ mod launcher;
 pub(crate) mod layout;
 mod link_device;
 pub(crate) mod linked_devices;
+mod mini_app;
+mod mini_app_artifacts;
+mod mini_app_pins;
 mod move_to;
 mod nav;
 mod nav_debug;
@@ -665,6 +668,12 @@ enum AiChatFolderSource {
     AiChatTab,
 }
 
+#[derive(Clone, Copy)]
+struct DraftOrigin {
+    tab: u64,
+    scope: Option<(ProfileId, WorkspaceId)>,
+}
+
 pub struct MainView {
     /// The pane tree: independent tab groups laid out inside the content area.
     panes: panes::PaneTree,
@@ -725,6 +734,7 @@ pub struct MainView {
     /// lifetime.
     ai_panel: Panel,
     ai_chat: ChatSurface,
+    ai_diagrams: crate::chat_diagrams::ChatDiagrams,
     file_preview: Option<file_preview::FilePreview>,
     /// The chat whose folder pick is out with the shell, and which surface
     /// asked: the pane's, or an AI chat tab's.
@@ -875,6 +885,8 @@ pub struct MainView {
     /// lands, in order — `pending_count_deltas`'s twin, popped on the same
     /// two turns.
     pending_landings: std::collections::VecDeque<Landing>,
+    pending_task_receipts:
+        std::collections::VecDeque<(Option<u64>, koru_workspace_host::tasks::TaskCommand)>,
     /// A failure the person at the keyboard has to see. The topmost surface in
     /// the window, and the one a press outside does not dismiss — see
     /// [`error_dialog`]. [`Self::updates_modal`] dismisses on the *release* of
@@ -1160,15 +1172,10 @@ pub struct MainView {
     /// Creating one is a round trip now, so promotion cannot finish inside the
     /// keystroke that triggers it. Without this the draft would ask again on
     /// every character and make one document per keypress.
-    promoting: bool,
-    /// A promoted draft's text, waiting for a `&mut WorkspaceDoc` to write it
-    /// through. `show_active_document` has only `&`, and the characters typed
-    /// during the round trip must not be lost between the two.
-    ///
-    /// The last field is **where the caret was**, as `(row, byte offset)`. It
-    /// used to be a bare `in_title: bool`, which lost the offset in the title
-    /// and the caret entirely everywhere else — see `Leaf::caret_spot`.
-    pending_draft_text: Option<(NodeId, String, Vec<String>, Option<(usize, usize)>)>,
+    promoting: Option<DraftOrigin>,
+    /// At most one queued intent per retained draft tab. A second atomic
+    /// input need not wait for another key after the first creation settles.
+    queued_drafts: std::collections::VecDeque<DraftOrigin>,
     pane_context: Option<(
         Vec<ProfileSummary>,
         ProfileId,
@@ -1434,6 +1441,8 @@ pub struct MainView {
     /// thread of its own. A window that never opens the Agents mode still
     /// holds it; it asks nothing until a workspace is named.
     run_index: koru_runs_ui::RunIndex,
+    mini_app_artifacts: crate::mini_app::artifact::Io,
+    mini_app_pins: mini_app_pins::State,
     /// The workspace's repeating delegations. Its worker blocks on the typed
     /// schedule watch; no timer is attached to this field.
     schedule_index: crate::schedule_index::ScheduleIndex,
@@ -1938,8 +1947,10 @@ impl MainView {
             ai_chat_folder_ask: None,
             ai_computer_ask: None,
             ai_import_asks: std::collections::HashMap::new(),
+            ai_diagrams: Default::default(),
             ai_chat: {
                 let mut chat = ChatSurface::new_at(koru_workspace_host::cli::root_from_args());
+                chat.offer_mini_apps(true);
                 // Koru has a Settings tab: the picker's + opens *Agent
                 // providers*.
                 chat.offer_agent_settings(true);
@@ -2018,6 +2029,7 @@ impl MainView {
             pending_lands: std::collections::VecDeque::new(),
             pending_pane_drops: Vec::new(),
             pending_landings: std::collections::VecDeque::new(),
+            pending_task_receipts: std::collections::VecDeque::new(),
             error: None,
             import_dialog: None,
             pending_trash: None,
@@ -2084,8 +2096,8 @@ impl MainView {
             task_commands: Vec::new(),
             pending_count_deltas: Vec::new(),
             tag_table: Vec::new(),
-            promoting: false,
-            pending_draft_text: None,
+            promoting: None,
+            queued_drafts: Default::default(),
             pane_context: None,
             profile_workspace_counts: std::collections::HashMap::new(),
             profile_lifecycle_reconciled_generation: None,
@@ -2165,6 +2177,8 @@ impl MainView {
             // compiled with `cfg(test)`, so an inert index here is what
             // keeps this binary's suite from listing runs off whatever
             // gateway the machine has running.
+            mini_app_artifacts: crate::mini_app::artifact::Io::default(),
+            mini_app_pins: mini_app_pins::State::default(),
             run_index: match cfg!(test) {
                 true => koru_runs_ui::RunIndex::inert(),
                 false => koru_runs_ui::RunIndex::open(
@@ -2235,6 +2249,18 @@ impl MainView {
         &mut self,
         proxy: winit::event_loop::EventLoopProxy<koru_workspace_host::app::Wake>,
     ) {
+        self.mini_app_artifacts.set_waker(std::sync::Arc::new({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        }));
+        self.mini_app_pins.set_waker(std::sync::Arc::new({
+            let proxy = proxy.clone();
+            move || {
+                let _ = proxy.send_event(koru_workspace_host::app::Wake::Store);
+            }
+        }));
         self.reminders.set_waker(std::sync::Arc::new({
             let proxy = proxy.clone();
             move || {
@@ -3814,78 +3840,84 @@ impl MainView {
         }
     }
 
-    /// Make the active tab's draft real: create the document in the workspace
-    /// and swap the throwaway leaf for one over it.
-    ///
-    /// A no-op unless the active tab is a draft, which is what lets the caller
-    /// ask on every keystroke rather than testing first.
-    ///
-    /// The tab keeps its position, its label and its size — only which document
-    /// it is over changes — so from the outside nothing happens except that
-    /// *Untitled* appears in the library, which is exactly the moment somebody
-    /// committed to it.
-    /// Write a promoted draft's text into the real document and swap the tab.
-    ///
-    /// Runs on the next key after the shell answered, which is the first moment
-    /// the document is available mutably. A draft is at most a title and a line
-    /// — promotion fires on the first keystroke — so this copies text rather
-    /// than nodes: the draft is a separate `LoroDoc`, so its ids mean nothing
-    /// here.
-    fn flush_promoted_draft(&mut self, ws: &mut WorkspaceDoc) {
-        let Some((root, title, body, caret)) = self.pending_draft_text.take() else {
-            return;
+    /// Adopt the exact document initialized from this private draft, after the
+    /// synchronous source-qualified creation. Its content was planted before
+    /// first publication; this callback never replaces a published seed.
+    /// Keep the private source on every refusal or read error.
+    fn flush_promoted_draft(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        origin: DraftOrigin,
+        document: koru_core::DocumentId,
+    ) -> Result<bool, koru_core::StoreError> {
+        let tab_id = origin.tab;
+        if !ws.compatibility().writable()
+            || ws.stamped_document_id() != Some(document)
+            || origin.scope != self.draft_scope()
+            || origin
+                .scope
+                .is_some_and(|(_, scope)| ws.id() != Some(scope))
+        {
+            return Ok(false);
+        }
+        let roots = ws.children(koru_core::schema::Parent::Root)?;
+        if roots.len() != 1 || ws.kind_of(roots[0]) != Some(koru_core::Kind::Document) {
+            return Ok(false);
+        }
+        let root = roots[0];
+        let Some(tab) = self
+            .panes
+            .iter_groups()
+            .flat_map(|(_, g)| g.iter_tabs())
+            .find(|tab| tab.id == tab_id)
+        else {
+            return Ok(false);
         };
-        if ws.read(root).is_err() {
-            return;
+        let (Some(_), TabView::Leaf(old_leaf)) = (&tab.draft, &tab.view) else {
+            return Ok(false);
+        };
+        if old_leaf.body().composition().is_some() {
+            return Ok(false);
         }
-        if !title.is_empty() {
-            let _ = ws.set_text(root, &title);
-        }
-        // The seed left one empty paragraph; fill that, then append the rest.
-        let existing = ws
-            .children(koru_core::schema::Parent::Node(root))
-            .unwrap_or_default();
-        for (i, line) in body.iter().enumerate() {
-            if line.is_empty() {
-                continue;
-            }
-            match existing.get(i) {
-                Some(&node) => {
-                    let _ = ws.set_text(node, line);
-                }
-                None => {
-                    if let Ok(para) = koru_core::node::Node::paragraph(line) {
-                        let _ = ws.insert(koru_core::schema::Parent::Node(root), para);
-                    }
-                }
-            }
-        }
+        let caret = old_leaf.caret_spot();
 
         let home = self.current_workspace();
-        let document = self.active_document;
         let name = koru_workspace::name_of(ws, root);
-        let mut leaf = self.document_leaf(ws, root);
+        let mut leaf = Leaf::document(ws, root);
+        leaf.view_mut().active = false;
+        leaf.set_entity_titles(
+            &self.entity_titles,
+            &self.entity_trashed,
+            &self.entity_live(),
+        );
+        leaf.set_schedule_pills(&self.schedule_pill_presentations());
+        leaf.view_mut().active = true;
         // **Every row here is new**, over a different `LoroDoc` with different
         // ids, so nothing was reused and every caret is at 0. Putting the one
         // the person actually had back is the whole of the fix for `rstFi`.
         if let Some((row, at)) = caret {
             leaf.place_caret_at(row, at);
         }
-        let tab = self.tabs_mut().active_mut();
+        let tab = self
+            .panes
+            .iter_groups_mut()
+            .flat_map(|(_, g)| g.iter_tabs_mut())
+            .find(|tab| tab.id == tab_id)
+            .expect("the draft was just read");
         tab.view = TabView::Leaf(leaf);
         // It is over a real document now, and the tab has to know which — that
         // is what makes selecting it open the right one and what stops the next
         // click on it in Explore opening a second tab.
-        tab.document = document;
+        tab.document = Some(document);
         tab.home = home;
         tab.set_name(&name);
         tab.draft = None;
         tab.invalidate_size();
         self.finish_draft_file_paste();
         self.mark_tab_widths_stale();
-        self.size_visible_groups();
         self.explore_stale = true;
         self.ensure_tab_visible(self.tabs().active());
+        Ok(true)
     }
 
     /// **Ask the shell, and stay a draft until it answers.**
@@ -3893,9 +3925,10 @@ impl MainView {
     /// A document belongs to the workspace and creating one is a round trip, so
     /// promotion cannot complete inside the keystroke that triggers it. The
     /// draft keeps taking keys meanwhile — it is a real editable document, just
-    /// a private one — and its text and caret are carried over at the *swap*
-    /// rather than at the request, so nothing typed while waiting is lost. The
-    /// swap is [`flush_promoted_draft`](Self::flush_promoted_draft).
+    /// a private one. The queued intent is dispatched only after preedit ends;
+    /// that synchronous dispatch reads its latest authored subtree, creates
+    /// the real document and adopts it with the same caret before another
+    /// input event can run. The swap is [`flush_promoted_draft`](Self::flush_promoted_draft).
     ///
     /// Returning `false` is not a failure: it says *this keystroke was not
     /// consumed by promotion*, and the draft handles it as usual.
@@ -3918,23 +3951,103 @@ impl MainView {
     /// unconditional `return` for a while; it is deleted rather than kept,
     /// because dead code that still compiles is the kind that gets revived.
     fn promote_draft(&mut self) -> bool {
-        let Some(child_of) = self.tabs().active_tab().draft.as_ref().map(|d| d.child_of) else {
+        if self.tabs().active_tab().draft.is_none() {
             return false;
+        }
+        let scope = self.draft_scope();
+        let tab = self.tabs_mut().active_mut();
+        let draft = tab.draft.as_mut().unwrap();
+        if !draft.authored {
+            draft.origin_scope = scope;
+        }
+        draft.authored = true;
+        let origin = DraftOrigin {
+            tab: tab.id,
+            scope: draft.origin_scope,
         };
-        if !self.promoting {
-            self.promoting = true;
-            match child_of {
-                // A row's `+` draft: placed as that row's last child.
-                Some(parent) => self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
-                    parent,
-                    title: String::new(),
-                }),
-                None => self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
-                    String::new(),
-                )),
-            };
+        let panes = &self.panes;
+        self.queued_drafts.retain(|pending| {
+            panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.iter_tabs())
+                .any(|tab| tab.id == pending.tab && tab.draft.is_some())
+        });
+        if self
+            .promoting
+            .is_none_or(|pending| pending.tab != origin.tab)
+            && !self
+                .queued_drafts
+                .iter()
+                .any(|pending| pending.tab == origin.tab)
+        {
+            self.queued_drafts.push_back(origin);
         }
         false
+    }
+
+    fn draft_scope(&self) -> Option<(ProfileId, WorkspaceId)> {
+        self.pane_context
+            .as_ref()
+            .and_then(|(_, profile, _, workspace)| workspace.map(|workspace| (*profile, workspace)))
+    }
+
+    /// Explicit teardown cancels provisional text, then lets the ordinary
+    /// creation dispatch secure authored edits before the user retries.
+    fn guard_private_drafts(&mut self, selected: Option<&[u64]>) -> bool {
+        let mut waiting = Vec::new();
+        for (_, group) in self.panes.iter_groups_mut() {
+            for tab in group.iter_tabs_mut() {
+                if selected.is_some_and(|ids| !ids.contains(&tab.id)) {
+                    continue;
+                }
+                let Some(draft) = tab.draft.as_mut() else {
+                    continue;
+                };
+                if let TabView::Leaf(leaf) = &mut tab.view {
+                    leaf.native_ime_cancel(&mut draft.workspace.ws);
+                    koru_editor::dictation::cancel(leaf.body_mut(), &mut draft.workspace.ws);
+                }
+                if draft.authored {
+                    waiting.push(DraftOrigin {
+                        tab: tab.id,
+                        scope: draft.origin_scope,
+                    });
+                }
+            }
+        }
+        if waiting.is_empty() {
+            return false;
+        }
+        for origin in waiting {
+            if self
+                .promoting
+                .is_none_or(|pending| pending.tab != origin.tab)
+                && !self
+                    .queued_drafts
+                    .iter()
+                    .any(|pending| pending.tab == origin.tab)
+            {
+                self.queued_drafts.push_back(origin);
+            }
+        }
+        self.show_notice(
+            koru_i18n::t(
+                crate::format::lang(),
+                koru_i18n::Key::DocumentReplacementPending,
+            )
+            .into(),
+        );
+        true
+    }
+
+    fn draft_close_veto(&mut self, selected: impl Fn(usize) -> bool) -> bool {
+        let ids: Vec<_> = self
+            .tabs()
+            .iter()
+            .enumerate()
+            .filter_map(|(index, tab)| selected(index).then_some(tab.id))
+            .collect();
+        self.mini_app_save_close_veto(Some(&ids)) || self.guard_private_drafts(Some(&ids))
     }
 
     /// Push the active document onto the recents, most recent first and without
@@ -4079,10 +4192,14 @@ impl MainView {
         // The recorder's v1 set: a tab switch, kind only — which tab is
         // content, and content stays out.
         self.observe_recording_tab_switch();
+        if let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view {
+            app.reactivate();
+        }
         // **The window opens the document the tab is over — without moving
         // Explore.** ActivateDocument parks/opens the room in place; Navigate
         // would switch the active workspace whenever locate_document differed.
         if let Some(doc) = self.tabs().active_tab().edits()
+            && !matches!(self.tabs().active_tab().view,TabView::MiniApp(_))
             && self.active_document != Some(doc)
             // A Tasks tab's ask already out is not made again: the shell
             // answers an ask for the document it has just activated with a
@@ -4156,7 +4273,10 @@ impl MainView {
         self.panes
             .iter_groups()
             .flat_map(|(_, group)| group.iter_tabs())
-            .filter_map(Tab::edits)
+            .flat_map(|tab| match &tab.view {
+                TabView::MiniApp(app) => app.retained_documents().collect::<Vec<_>>(),
+                _ => tab.edits().into_iter().collect(),
+            })
             .collect()
     }
 
@@ -4169,19 +4289,18 @@ impl MainView {
     /// because a document may be in two tabs and the *last* one is what releases
     /// it.
     fn released(&mut self, before: Vec<koru_core::DocumentId>) {
+        let retained = self.shown_documents();
         for id in before {
-            let still_edited = self
-                .panes
-                .iter_groups()
-                .flat_map(|(_, group)| group.iter_tabs())
-                .any(|t| t.edits() == Some(id));
-            if !still_edited {
+            if !retained.contains(&id) {
                 self.ask_pane(koru_workspace_host::PaneRequest::CloseDocument(id));
             }
         }
     }
 
     fn close(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index == i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index == i) {
             return true;
         }
@@ -4213,6 +4332,9 @@ impl MainView {
     /// away — so the *pane* goes when the split has others, and only the last
     /// pane standing answers with the window close.
     fn close_requested(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index == i) {
+            return true;
+        }
         if self.tabs().get(i).is_some_and(|t| t.is_pinned()) {
             return false;
         }
@@ -4249,7 +4371,9 @@ impl MainView {
     /// Read off the tab's root rather than its kind so this stays a question
     /// about the tab, not about the document.
     fn is_poppable(&self, i: usize) -> bool {
-        self.tabs().get(i).is_some_and(|t| t.view.pops_out())
+        self.tabs()
+            .get(i)
+            .is_some_and(|t| t.draft.is_none() && t.view.pops_out())
     }
 
     /// Whether tab `i` travels between panes: torn off its strip, dropped into
@@ -4287,7 +4411,7 @@ impl MainView {
         self.panes
             .group(&drag.source)
             .and_then(|g| g.iter_tabs().find(|t| t.id == drag.tab_id))
-            .is_some_and(|t| t.view.pops_out())
+            .is_some_and(|t| t.draft.is_none() && t.view.pops_out())
     }
 
     /// Pop tab `i` out into its own window: close the tab here and ask the shell
@@ -4407,6 +4531,9 @@ impl MainView {
     /// renumbered strip invalidates any slide in flight, and the now-active tab
     /// has to lay out — so the strip and the selection cannot disagree.
     fn close_others(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index != i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index != i) {
             return true;
         }
@@ -4430,6 +4557,9 @@ impl MainView {
     /// is never empty ([`TabSet`]) — so this is one action rather than a loop
     /// that has to stop before the end.
     fn close_all(&mut self) -> bool {
+        if self.draft_close_veto(|_| true) {
+            return true;
+        }
         if self.socials_close_veto(|_| true) {
             return true;
         }
@@ -4446,6 +4576,9 @@ impl MainView {
     }
 
     fn close_left(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index < i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index < i) {
             return true;
         }
@@ -4464,6 +4597,9 @@ impl MainView {
     }
 
     fn close_right(&mut self, i: usize) -> bool {
+        if self.draft_close_veto(|index| index > i) {
+            return true;
+        }
         if self.socials_close_veto(|index| index > i) {
             return true;
         }
@@ -4526,6 +4662,7 @@ impl MainView {
                         | MenuAction::Socials
                         | MenuAction::Delegate
                         | MenuAction::NewDocument
+                        | MenuAction::MiniApp
                         | MenuAction::OpenRecentDocument(_)
                         | MenuAction::Canvases
                         | MenuAction::NewCanvas
@@ -4936,6 +5073,7 @@ impl MainView {
             },
             MenuSubject::NewTab => match action {
                 MenuAction::NewDocument => self.new_tab(),
+                MenuAction::MiniApp => self.open_mini_app_fixture(),
                 MenuAction::OpenWelcome => self.open_welcome_tab(),
                 // The quick switch, for somebody who has not met its chord.
                 MenuAction::ViewOpenTabs => self.cycle_tab(1),
@@ -5370,11 +5508,26 @@ impl MainView {
                 _ => false,
             },
             MenuSubject::Task { document, node } => match action {
-                MenuAction::TaskGoToOrigin => self.open_task_node(document, node, true),
-                MenuAction::TaskGoToList => self
-                    .task_row(document, node)
-                    .and_then(|row| row.list)
-                    .is_some_and(|list| self.go_to_task_list(list)),
+                MenuAction::TaskGoToOrigin => {
+                    if let TabView::MiniApp(app) = self.active_view() {
+                        app.request_document(document, Some(node));
+                        true
+                    } else {
+                        self.open_task_node(document, node, true)
+                    }
+                }
+                MenuAction::TaskGoToList => {
+                    let list = self.task_row(document, node).and_then(|row| row.list);
+                    list.is_some_and(|list| {
+                        if let TabView::MiniApp(app) = self.active_view() {
+                            app.select_tasks(crate::panes::explore::rail::RailTarget::List(list));
+                            app.focus_region(crate::mini_app::Region::Tasks);
+                            true
+                        } else {
+                            self.go_to_task_list(list)
+                        }
+                    })
+                }
                 MenuAction::TaskCreateDocument => {
                     self.queue_task_command(
                         koru_workspace_host::tasks::TaskCommand::CreateHome { document, node },
@@ -6448,11 +6601,14 @@ impl MainView {
     /// happens whether or not the view is showing, and the view is asked to
     /// refresh only when it is: **told, never polled**.
     fn maintain_chats(&mut self) -> bool {
+        // A completed reply may dispatch queued input during step_chats.
+        self.sync_mini_app_refinement_target();
         // Which chats work, wait or hold something unseen (D83), before the
         // Chats view is asked again below.
         let status_changed = self.maintain_chat_status();
         let step_changed = self.step_chats();
         let elsewhere = self.open_chats_elsewhere();
+        let mini_apps_changed = self.open_pending_mini_apps();
         let mut list_changed = self.ai_chat.take_chat_list_changed();
         let mut relabeled = false;
         for (_, group) in self.panes.iter_groups_mut() {
@@ -6474,7 +6630,8 @@ impl MainView {
                 relabeled = true;
             }
         }
-        let mut changed = relabeled || status_changed || step_changed || elsewhere;
+        let mut changed =
+            relabeled || status_changed || step_changed || elsewhere || mini_apps_changed;
         if !self.explore.showing_chats() {
             return changed;
         }
@@ -7611,6 +7768,11 @@ impl MainView {
     /// [`Draft`]: tab::Draft
     /// [`promote_draft`]: Self::promote_draft
     fn new_tab(&mut self) -> bool {
+        if self.current_workspace().is_none() {
+            return self.show_notice(
+                koru_i18n::t(crate::format::lang(), koru_i18n::Key::TerminalNoWorkspace).into(),
+            );
+        }
         self.dismiss_settings_menus();
         // Capture before the draft becomes active — its root is not in the
         // library, and explore.selected would track that private id.
@@ -8318,6 +8480,8 @@ impl MainView {
             Outcome::OpenHelp => self.open_help_beside(),
             Outcome::Help(action) => self.help_action(action),
             Outcome::OpenRailOverflow => self.open_rail_overflow(),
+            Outcome::OpenMiniAppPin(id) => self.open_mini_app_pin(id),
+            Outcome::OpenMiniAppPins => self.open_mini_app_pins(None),
             Outcome::OpenNode(id)
                 if self.explore.navigator_mode() == crate::panes::explore::NavigatorMode::Files =>
             {
@@ -8911,11 +9075,37 @@ impl MainView {
         // focused terminal is on screen, and an edit that arrives from the
         // bridge or a peer has to reach it as much as one in the focused pane.
         let mut changed = false;
-        for (_, group) in self.panes.iter_groups_mut() {
-            changed |= Self::catch_up_tab(group.tabs_mut().active_mut(), ws);
+        let focused = self.panes.focused_path().clone();
+        for (path, group) in self.panes.iter_groups_mut() {
+            let tab = group.tabs_mut().active_mut();
+            // Local input refreshes its own editor, and the host adopts into
+            // other windows. A sibling split is neither: drain its tracker
+            // before checking staleness. Hidden tabs still do no layout work.
+            if path != focused
+                && tab.draft.is_none()
+                && tab.whats_new.is_none()
+                && let Some(leaf) = tab.view.retained_leaf_mut()
+                && leaf.body().root.is_some_and(|root| ws.read(root).is_ok())
+            {
+                leaf.body_mut().defer_pending(ws);
+            }
+            changed |= Self::catch_up_tab(tab, ws);
         }
         if changed {
             self.explore_stale = true;
+        }
+    }
+
+    /// After a paste changed the document it landed in. **A draft's private
+    /// document** asks for promotion; **the window's document** is shown by
+    /// every other pane on it, which main's split-pane sync adopts at once.
+    /// Never both: `ws` is the window's document, and handing it to the
+    /// siblings after a write into a draft would adopt the wrong one.
+    fn settle_paste(&mut self, ws: &WorkspaceDoc) {
+        if self.tabs().active_tab().draft.is_some() {
+            self.promote_draft();
+        } else {
+            self.adopt_siblings(ws);
         }
     }
 
@@ -9874,6 +10064,7 @@ impl MainView {
     /// has the parity a document tab has without each drain naming it.
     fn active_editing_leaf(&mut self) -> Option<&mut Leaf> {
         match self.active_view() {
+            TabView::MiniApp(app) => app.focused_leaf(),
             TabView::Leaf(leaf) => Some(leaf),
             TabView::Tasks(t) => t.body_leaf_mut(),
             _ => None,
@@ -9883,6 +10074,7 @@ impl MainView {
     /// [`active_editing_leaf`](Self::active_editing_leaf), to read.
     fn active_editing_leaf_ref(&self) -> Option<&Leaf> {
         match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) if app.document_focused() => app.leaf(),
             TabView::Leaf(leaf) => Some(leaf),
             TabView::Tasks(t) => t.body_leaf(),
             _ => None,
@@ -10631,6 +10823,7 @@ impl MainView {
     }
 
     fn mouse_down_inner(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32, ctrl: bool) -> bool {
+        self.sync_mini_app_refinement_target();
         self.tooltip.clear();
         self.pointer = (x, y);
         if self.file_preview.is_some() {
@@ -10884,6 +11077,9 @@ impl MainView {
                 let action = sub.items()[i];
                 self.run_menu_action(sub.subject, action);
             }
+            return true;
+        }
+        if self.pin_menu_press(x, y) {
             return true;
         }
         if let Some(menu) = self.menu.clone() {
@@ -11164,6 +11360,10 @@ impl MainView {
                 View::set_mods(t, mods);
                 View::mouse_down(t, doc, lx, ly, ctrl)
             }
+            TabView::MiniApp(app) => {
+                View::set_mods(app.as_mut(), mods);
+                View::mouse_down(app.as_mut(), doc, lx, ly, ctrl)
+            }
             TabView::Reminders(r) => View::mouse_down(r, doc, lx, ly, ctrl),
             TabView::Settings(s) => View::mouse_down(s, doc, lx, ly, ctrl),
             TabView::Home(h) => {
@@ -11419,6 +11619,7 @@ impl MainView {
             TabView::Manage(w) => View::mouse_up(w, doc),
             TabView::Trash(t) => View::mouse_up(t, doc),
             TabView::Tasks(t) => View::mouse_up(t, doc),
+            TabView::MiniApp(app) => View::mouse_up(app.as_mut(), doc),
             TabView::Reminders(r) => View::mouse_up(r, doc),
             TabView::Settings(s) => View::mouse_up(s, doc),
             TabView::Home(h) => View::mouse_up(h, doc),
@@ -11515,6 +11716,126 @@ impl MainView {
 }
 
 impl View for MainView {
+    fn child_document_request(&self) -> Option<koru_workspace_host::ChildDocumentRequest> {
+        match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) => app.pending.map(|(request, _)| request),
+            _ => None,
+        }
+    }
+
+    fn editing_document(&self) -> Option<(WorkspaceId, koru_core::DocumentId)> {
+        let tab = self.tabs().active_tab();
+        Some((
+            tab.home_workspace().or_else(|| self.current_workspace())?,
+            tab.edits()?,
+        ))
+    }
+
+    fn ime_target(&self) -> Option<koru_workspace_host::ImeTarget> {
+        use koru_workspace_host::{ImeTarget, ImeTargetId};
+        if self.blockers().is_blocking()
+            || (self.ai_visible() && self.ai_focused)
+            || (self.sidebar.is_open() && self.explore.has_focus())
+            || self.chrome_focus.is_some()
+            || self.reminder_shell.bell_is_focused()
+            || self.reminder_creation.pill_focused()
+        {
+            return None;
+        }
+        let pane = self.focused_view_rect();
+        let mut target = if let TabView::MiniApp(app) = &self.tabs().active_tab().view {
+            View::ime_target(app.as_ref())?
+        } else {
+            let leaf = self.active_editing_leaf_ref()?;
+            ImeTarget {
+                id: ImeTargetId {
+                    owner: leaf.native_ime_owner(),
+                    control: leaf.native_ime_target()?,
+                },
+                cursor_area: leaf.native_ime_rect(),
+            }
+        };
+        target.cursor_area = target
+            .cursor_area
+            .map(|rect| Rect::new(pane.x + rect.x, pane.y + rect.y, rect.w, rect.h));
+        Some(target)
+    }
+
+    fn ime(
+        &mut self,
+        ws: &mut WorkspaceDoc,
+        target: koru_workspace_host::ImeTargetId,
+        event: &winit::event::Ime,
+    ) -> bool {
+        if matches!(event, winit::event::Ime::Disabled) {
+            for (_, group) in self.panes.iter_groups_mut() {
+                for tab in group.iter_tabs_mut() {
+                    let (view, doc) = tab.doc(ws);
+                    match view {
+                        TabView::MiniApp(app) => {
+                            if View::ime(app.as_mut(), doc, target, event) {
+                                return true;
+                            }
+                        }
+                        TabView::Leaf(leaf) if leaf.native_ime_owner() == target.owner => {
+                            return leaf.native_ime_cancel(doc);
+                        }
+                        TabView::Tasks(tasks) => {
+                            if let Some(leaf) = tasks.body_leaf_mut()
+                                && leaf.native_ime_owner() == target.owner
+                            {
+                                return leaf.native_ime_cancel(doc);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            return false;
+        }
+        if View::ime_target(self).is_none_or(|current| current.id != target) {
+            return false;
+        }
+        // Promotion builds an unsized retained Leaf. An input event can beat
+        // its first frame; apply its deferred caret before accepting input.
+        self.size_focused_input();
+        // A draft is a private document. Keep the event with that authority;
+        // creation waits until this owner's preedit has ended.
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let before = doc.version();
+        let handled = match view {
+            TabView::MiniApp(app) => View::ime(app.as_mut(), doc, target, event),
+            TabView::Leaf(leaf) => leaf.native_ime(doc, event),
+            TabView::Tasks(tasks) => tasks
+                .body_leaf_mut()
+                .is_some_and(|leaf| leaf.native_ime(doc, event)),
+            _ => false,
+        };
+        if handled && doc.version() != before {
+            self.promote_draft();
+        }
+        handled
+    }
+
+    fn accept_child_document(
+        &mut self,
+        request: koru_workspace_host::ChildDocumentRequest,
+        doc: &WorkspaceDoc,
+    ) -> bool {
+        self.accept_mini_app_document(request, doc)
+    }
+
+    fn child_document_loaded(
+        &mut self,
+        request: koru_workspace_host::ChildDocumentRequest,
+        doc: &WorkspaceDoc,
+    ) -> bool {
+        self.land_mini_app_document(request, doc)
+    }
+
+    fn child_document_failed(&mut self, request: koru_workspace_host::ChildDocumentRequest) {
+        self.fail_mini_app_document(request, koru_i18n::Key::MiniAppOpenFailed);
+    }
     /// **A preference changed elsewhere.** Deliberately *not* `restore`, which
     /// reopens the session: a theme change in another window is not a reason to
     /// rebuild a tab strip. It updates open pins when their title preference
@@ -11657,6 +11978,8 @@ impl View for MainView {
         self.workspace_icon = None;
         self.link_device = None;
         self.sidebar_drag = None;
+        self.mini_app_artifacts.invalidate_scope();
+        self.invalidate_mini_app_pin_scope();
         self.pane_context = None;
         self.relayout();
     }
@@ -11798,6 +12121,9 @@ impl View for MainView {
     }
 
     fn context_menu(&mut self, ws: &mut WorkspaceDoc, x: f32, y: f32) -> bool {
+        // A context press replaces the existing group menu; two menus must
+        // never compete for painting, native publication or keyboard input.
+        self.mini_app_pins.menu = None;
         if self.file_preview.is_some() {
             return true;
         }
@@ -11975,6 +12301,7 @@ impl View for MainView {
                     TabView::Canvas(c) => View::context_menu(c, doc, lx, ly),
                     TabView::Trash(t) => View::context_menu(t, doc, lx, ly),
                     TabView::Tasks(t) => View::context_menu(t, doc, lx, ly),
+                    TabView::MiniApp(app) => View::context_menu(app.as_mut(), doc, lx, ly),
                     TabView::Reminders(r) => View::context_menu(r, doc, lx, ly),
                     TabView::Leaf(l) => View::context_menu(l, doc, lx, ly),
                 };
@@ -12248,6 +12575,7 @@ impl View for MainView {
             TabView::Manage(w) => View::mouse_double_click(w, doc, lx, ly),
             TabView::Trash(t) => View::mouse_double_click(t, doc, lx, ly),
             TabView::Tasks(t) => View::mouse_double_click(t, doc, lx, ly),
+            TabView::MiniApp(app) => View::mouse_double_click(app.as_mut(), doc, lx, ly),
             TabView::Reminders(r) => View::mouse_double_click(r, doc, lx, ly),
             TabView::Settings(s) => View::mouse_double_click(s, doc, lx, ly),
             TabView::Home(h) => View::mouse_double_click(h, doc, lx, ly),
@@ -12475,6 +12803,7 @@ impl View for MainView {
             TabView::Manage(w) => View::scroll_by(w, delta),
             TabView::Trash(t) => View::scroll_by(t, delta),
             TabView::Tasks(t) => View::scroll_by(t, delta),
+            TabView::MiniApp(app) => View::scroll_by(app.as_mut(), delta),
             TabView::Reminders(r) => View::scroll_by(r, delta),
             TabView::Settings(s) => View::scroll_by(s, delta),
             TabView::Home(h) => View::scroll_by(h, delta),
@@ -12551,6 +12880,7 @@ impl View for MainView {
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
             TabView::Tasks(t) => View::set_mods(t, mods),
+            TabView::MiniApp(app) => View::set_mods(app.as_mut(), mods),
             TabView::Home(h) => View::set_mods(h, mods),
             TabView::Reminders(r) => View::set_mods(r, mods),
             TabView::Leaf(l) => View::set_mods(l, mods),
@@ -12771,6 +13101,7 @@ impl View for MainView {
                 TabView::Manage(w) => View::cursor_icon(w),
                 TabView::Trash(t) => View::cursor_icon(t),
                 TabView::Tasks(t) => View::cursor_icon(t),
+                TabView::MiniApp(app) => View::cursor_icon(app.as_ref()),
                 TabView::Reminders(r) => View::cursor_icon(r),
                 TabView::Settings(s) => View::cursor_icon(s),
                 TabView::Home(h) => View::cursor_icon(h),
@@ -13031,6 +13362,7 @@ impl View for MainView {
                     TabView::Manage(w) => View::invalidate(w),
                     TabView::Trash(t) => View::invalidate(t),
                     TabView::Tasks(t) => View::invalidate(t),
+                    TabView::MiniApp(app) => View::invalidate(app.as_mut()),
                     TabView::Reminders(r) => View::invalidate(r),
                     TabView::Settings(s) => View::invalidate(s),
                     TabView::Home(h) => View::invalidate(h),
@@ -13317,6 +13649,15 @@ impl View for MainView {
     }
 
     fn set_window_focused(&mut self, focused: bool) {
+        if focused {
+            self.refresh_mini_app_pins();
+        }
+        self.each_tab_mut(|tab| {
+            if let TabView::MiniApp(app) = &mut tab.view {
+                View::set_window_focused(app.as_mut(), focused);
+            }
+            false
+        });
         if !focused {
             self.canvas_focus_lost();
             self.dismiss_settings_menus();
@@ -13387,13 +13728,50 @@ impl View for MainView {
     }
 
     fn take_pane_request(&mut self) -> Option<PaneRequest> {
-        self.pane_requests.pop_front().or_else(|| {
-            if let TabView::Ocr(view) = &mut self.tabs_mut().active_mut().view {
-                View::take_pane_request(view)
-            } else {
-                None
+        if let Some(request) = self.pane_requests.pop_front() {
+            return Some(request);
+        }
+        if let TabView::Ocr(view) = &mut self.tabs_mut().active_mut().view
+            && let Some(request) = View::take_pane_request(view)
+        {
+            return Some(request);
+        }
+        if self.promoting.is_some() {
+            return None;
+        }
+        loop {
+            let origin = *self.queued_drafts.front()?;
+            let tab = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, group)| group.iter_tabs())
+                .find(|tab| tab.id == origin.tab && tab.draft.is_some());
+            let Some(tab) = tab else {
+                self.queued_drafts.pop_front();
+                continue;
+            };
+            if origin.scope != self.draft_scope() {
+                return None;
             }
-        })
+            if matches!(&tab.view, TabView::Leaf(leaf) if leaf.body().composition().is_some()) {
+                return None;
+            }
+            // A row's `+` draft is placed as that row's last child; any other
+            // draft as the next sibling of the open document.
+            let child_of = tab.draft.as_ref().and_then(|draft| draft.child_of);
+            // This latch names the exact request being returned, never an
+            // earlier queued intent. The host completes this creation
+            // synchronously before taking another request (including Agent's).
+            self.queued_drafts.pop_front();
+            self.promoting = Some(origin);
+            return Some(match child_of {
+                Some(parent) => PaneRequest::CreateDocumentIn {
+                    parent,
+                    title: String::new(),
+                },
+                None => PaneRequest::CreateDocument(String::new()),
+            });
+        }
     }
 
     fn create_document_failed(&mut self) {
@@ -13402,10 +13780,73 @@ impl View for MainView {
         // latch, so a failed create must hand the latch back or the draft
         // types forever and never becomes real — found live, against a store
         // that went away between the app opening and the first keystroke.
-        self.promoting = false;
+        self.promoting = None;
+    }
+
+    fn draft_document_content(
+        &self,
+        profile: koru_core::ProfileId,
+        workspace: Option<koru_core::WorkspaceId>,
+    ) -> Option<Result<koru_core::schema::Cutting, koru_core::StoreError>> {
+        let origin = self.promoting?;
+        Some((|| {
+            let refused =
+                || koru_core::StoreError::Malformed("private draft creation ownership changed");
+            if origin.scope.is_none()
+                || origin.scope != self.draft_scope()
+                || origin.scope != workspace.map(|workspace| (profile, workspace))
+            {
+                return Err(refused());
+            }
+            let tab = self
+                .panes
+                .iter_groups()
+                .flat_map(|(_, g)| g.iter_tabs())
+                .find(|tab| tab.id == origin.tab)
+                .ok_or_else(refused)?;
+            let (Some(draft), TabView::Leaf(leaf)) = (&tab.draft, &tab.view) else {
+                return Err(refused());
+            };
+            if leaf.body().composition().is_some() {
+                return Err(refused());
+            }
+            draft
+                .workspace
+                .ws
+                .cutting(leaf.document_root().ok_or_else(refused)?)
+        })())
+    }
+
+    fn created_document(&mut self, ws: &mut WorkspaceDoc, document: koru_core::DocumentId) -> bool {
+        let Some(origin) = self.promoting.take() else {
+            return false;
+        };
+        if !matches!(self.flush_promoted_draft(ws, origin, document), Ok(true)) {
+            // The files pasted into this draft wait on its adoption
+            // (`finish_draft_file_paste` runs at the end of a successful one).
+            // A refused adoption has no document to attach them to.
+            self.pending_file_paste_draft = None;
+            self.show_notice(
+                koru_i18n::t(
+                    crate::format::lang(),
+                    koru_i18n::Key::DocumentReplacementUnsafe,
+                )
+                .into(),
+            );
+        }
+        // Even a failed transfer belongs to this source. Do not broadcast a
+        // replacement over its retained private editor or automatically retry.
+        true
+    }
+
+    fn prepare_document_creation_close(&mut self) -> bool {
+        !self.mini_app_save_close_veto(None) && !self.guard_private_drafts(None)
     }
 
     fn request_close(&mut self) -> bool {
+        if !self.prepare_document_creation_close() {
+            return true;
+        }
         // **A window never dies holding a capture.** The veto drives the
         // lifecycle to its end — stop and finalize a recording, abort a
         // countdown — and the close is re-asked when it lands.
@@ -13859,6 +14300,16 @@ impl View for MainView {
         // by then the push had landed.
         let was = self.active_document;
         self.active_document = active;
+        // A broadcast is not the answer to this window's creation request.
+        // Only source-qualified created_document may bind a private draft.
+        if self.promoting.is_some() || !self.queued_drafts.is_empty() {
+            return false;
+        }
+        // A shell announcement is not a request to replace this composition.
+        // Explicit navigation still reaches its normal open_search_target route.
+        if matches!(self.tabs().active_tab().view, TabView::MiniApp(_)) {
+            return true;
+        }
         // **Recents are recorded here**, the one place the shell tells the
         // container which document is active — store ids that survive a
         // workspace switch, not nodes minted in whichever document happens to
@@ -13926,44 +14377,6 @@ impl View for MainView {
             return false;
         }
 
-        // **A waiting draft becomes this document rather than sitting beside
-        // it.** Its text is captured now — at the swap — so everything typed
-        // during the round trip is kept.
-        if self.promoting && self.tabs().active_tab().draft.is_some() {
-            self.promoting = false;
-            let captured = self.tabs().active_tab().draft.as_ref().and_then(|draft| {
-                let d = &draft.workspace.ws;
-                let droot = d
-                    .children(koru_core::schema::Parent::Root)
-                    .ok()?
-                    .into_iter()
-                    .find(|&n| d.kind_of(n) == Some(koru_core::Kind::Document))?;
-                let title = d
-                    .read(droot)
-                    .ok()
-                    .and_then(|n| n.content.as_text().map(str::to_owned))
-                    .unwrap_or_default();
-                let body: Vec<String> = d
-                    .children(koru_core::schema::Parent::Node(droot))
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|n| d.read(n).ok())
-                    .filter_map(|n| n.content.as_text().map(str::to_owned))
-                    .collect();
-                Some((title, body))
-            });
-            // **Where the caret is, not merely whether it is in the title.**
-            // The row alone is not enough: the swap rebuilds every row, and a
-            // rebuilt row's caret is 0.
-            let caret = match &self.tabs().active_tab().view {
-                TabView::Leaf(l) => l.caret_spot(),
-                _ => None,
-            };
-            if let Some((title, body)) = captured {
-                self.pending_draft_text = Some((root, title, body, caret));
-                return true;
-            }
-        }
         // A Tasks tab activated its own note: it is showing it already, and
         // a document tab over it would be a second view of the page. Any
         // other activation of the same document lands as every document does.
@@ -14039,6 +14452,7 @@ impl View for MainView {
             let leaf = match &mut tab.view {
                 TabView::Leaf(l) => Some(l),
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(l) = leaf {
@@ -14086,6 +14500,7 @@ impl View for MainView {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -14173,6 +14588,7 @@ impl View for MainView {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -14270,6 +14686,14 @@ impl View for MainView {
         if changed {
             if self.current_workspace() != current {
                 self.file_images = file_images::FileImages::default();
+            }
+            if self
+                .pane_context
+                .as_ref()
+                .is_none_or(|(_, profile, _, workspace)| *profile != next.1 || *workspace != next.3)
+            {
+                self.mini_app_artifacts.invalidate_scope();
+                self.invalidate_mini_app_pin_scope();
             }
             if self
                 .pane_context
@@ -15079,7 +15503,7 @@ impl View for MainView {
         self.tag_table = tags.to_vec();
         let mut changed = false;
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(l) = &mut tab.view {
+            if let Some(l) = tab.view.retained_leaf_mut() {
                 changed |= View::set_tag_table(l, tags);
             }
         }
@@ -15102,7 +15526,7 @@ impl View for MainView {
         }
         let mut changed = false;
         for tab in self.tabs_mut().iter_mut() {
-            if let TabView::Leaf(l) = &mut tab.view {
+            if let Some(l) = tab.view.retained_leaf_mut() {
                 changed |= View::set_list_table(l, lists);
             }
         }
@@ -15308,6 +15732,21 @@ impl View for MainView {
         MainView::task_command_landed(self, landed)
     }
 
+    fn task_command_rejected(
+        &mut self,
+        command: &koru_workspace_host::tasks::TaskCommand,
+        error: &str,
+    ) -> bool {
+        self.task_command_failed_at(command, error, true)
+    }
+
+    fn task_command_observed(&mut self, landed: &koru_workspace_host::tasks::Landed) -> bool {
+        self.tasks_changed_with(crate::tasks_view::query::WriteRequirement::of_landed(
+            landed,
+        ));
+        true
+    }
+
     /// Forwarded to every leaf on every push, exactly as the tag table is — a
     /// tab opened after the last workspace switch has to be told too, or a
     /// copy made in it would say it came from nowhere.
@@ -15315,7 +15754,7 @@ impl View for MainView {
         let mut changed = false;
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.tabs_mut().iter_mut() {
-                if let TabView::Leaf(l) = &mut tab.view {
+                if let Some(l) = tab.view.retained_leaf_mut() {
                     changed |= View::set_workspace(l, workspace);
                 }
             }
@@ -15342,6 +15781,7 @@ impl View for MainView {
             Some(TabView::Leaf(l)) => Some(l),
             // The note above a Tasks page asked, through the same `/attach`.
             Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            Some(TabView::MiniApp(app)) if app.owns(ws) => app.leaf_mut(),
             _ => None,
         };
         if let Some(l) = leaf {
@@ -15361,6 +15801,7 @@ impl View for MainView {
         let leaf = match self.tabs_mut().get_mut(i).map(|tab| &mut tab.view) {
             Some(TabView::Leaf(l)) => Some(l),
             Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            Some(TabView::MiniApp(app)) if app.owns(ws) => app.leaf_mut(),
             _ => None,
         };
         if let Some(l) = leaf {
@@ -15372,10 +15813,21 @@ impl View for MainView {
         &mut self,
         ws: &WorkspaceDoc,
     ) -> Option<koru_workspace_host::SaveDiagram> {
-        let request = match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_save_diagram_as(l, ws),
-            _ => None,
-        }?;
+        let request = self
+            .ai_chat
+            .take_diagram_save()
+            .map(|prepared| koru_workspace_host::SaveDiagram {
+                title: prepared.scene().acc_title.clone().unwrap_or_default(),
+                prepared,
+            })
+            .or_else(|| match self.active_view() {
+                TabView::MiniApp(app) if app.owns(ws) => app
+                    .focused_leaf()
+                    .and_then(|leaf| View::take_wants_save_diagram_as(leaf, ws)),
+                TabView::Leaf(l) => View::take_wants_save_diagram_as(l, ws),
+                TabView::AiChat(chat) => View::take_wants_save_diagram_as(chat, ws),
+                _ => None,
+            })?;
         // The route a file's Save takes: a pane request the shell serves
         // against this window, whose device rasterises the PNG. Converted
         // here and `None` returned, so the shell's own drain finds nothing.
@@ -15384,10 +15836,16 @@ impl View for MainView {
     }
 
     fn take_wants_copy_diagram(&mut self) -> Option<koru_workspace_host::CopyDiagram> {
-        let request = match self.active_view() {
-            TabView::Leaf(l) => View::take_wants_copy_diagram(l),
-            _ => None,
-        }?;
+        let request = self
+            .ai_chat
+            .take_diagram_copy()
+            .map(|prepared| koru_workspace_host::CopyDiagram { prepared })
+            .or_else(|| match self.active_view() {
+                TabView::MiniApp(app) => app.focused_leaf().and_then(View::take_wants_copy_diagram),
+                TabView::Leaf(l) => View::take_wants_copy_diagram(l),
+                TabView::AiChat(chat) => View::take_wants_copy_diagram(chat),
+                _ => None,
+            })?;
         // The save's route, for the same reason: this window's device
         // rasterises the bitmap.
         self.ask_pane(PaneRequest::CopyDiagram(request));
@@ -15573,6 +16031,11 @@ impl View for MainView {
         let before = ws.version();
         let i = self.image_request.take().unwrap_or(self.tabs().active());
         match self.tabs_mut().get_mut(i).map(|t| &mut t.view) {
+            Some(TabView::MiniApp(app)) if app.owns(ws) => {
+                if let Some(leaf) = app.leaf_mut() {
+                    View::insert_image(leaf, ws, node, hash, mime, width, height);
+                }
+            }
             Some(TabView::Leaf(l)) => View::insert_image(l, ws, node, hash, mime, width, height),
             Some(TabView::Tasks(t)) => {
                 if let Some(l) = t.body_leaf_mut() {
@@ -15599,6 +16062,11 @@ impl View for MainView {
         }
         let before = ws.version();
         match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::append_image(leaf, ws, hash, mime, width, height);
+                }
+            }
             TabView::Leaf(l) => View::append_image(l, ws, hash, mime, width, height),
             TabView::Tasks(t) => {
                 if let Some(l) = t.body_leaf_in(ws) {
@@ -15623,6 +16091,14 @@ impl View for MainView {
         }
         let before = ws.version();
         let landed = match self.active_view() {
+            TabView::MiniApp(app) if app.owns(ws) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::paste_images(leaf, ws, target, images);
+                    true
+                } else {
+                    false
+                }
+            }
             TabView::Leaf(l) => {
                 View::paste_images(l, ws, target, images);
                 true
@@ -15650,18 +16126,26 @@ impl View for MainView {
     }
 
     fn paste_text(&mut self, ws: &mut WorkspaceDoc, text: &str) {
-        let before = ws.version();
-        match self.active_view() {
-            TabView::Leaf(l) => View::paste_text(l, ws, text),
+        self.size_focused_input();
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let before = doc.version();
+        match view {
+            TabView::MiniApp(app) if app.owns(doc) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::paste_text(leaf, doc, text);
+                }
+            }
+            TabView::Leaf(l) => View::paste_text(l, doc, text),
             TabView::Tasks(t) => {
-                if let Some(l) = t.body_leaf_in(ws) {
-                    View::paste_text(l, ws, text);
+                if let Some(l) = t.body_leaf_in(doc) {
+                    View::paste_text(l, doc, text);
                 }
             }
             _ => {}
         }
-        if ws.version() != before {
-            self.adopt_siblings(ws);
+        let changed = doc.version() != before;
+        if changed {
+            self.settle_paste(ws);
         }
     }
 
@@ -15686,6 +16170,7 @@ impl View for MainView {
             Some(TabView::Leaf(l)) => Some(l),
             // The note above a Tasks page imports the same way.
             Some(TabView::Tasks(t)) => t.body_leaf_mut(),
+            Some(TabView::MiniApp(app)) if app.owns(ws) => app.leaf_mut(),
             _ => None,
         };
         if let Some(l) = leaf {
@@ -15703,6 +16188,7 @@ impl View for MainView {
                 let leaf = match &mut tab.view {
                     TabView::Leaf(l) => Some(l),
                     TabView::Tasks(t) => t.body_leaf_mut(),
+                    TabView::MiniApp(app) => app.leaf_mut(),
                     _ => None,
                 };
                 if let Some(l) = leaf
@@ -15732,6 +16218,7 @@ impl View for MainView {
                 let leaf = match &mut tab.view {
                     TabView::Leaf(l) => Some(l),
                     TabView::Tasks(t) => t.body_leaf_mut(),
+                    TabView::MiniApp(app) if app.owns(ws) => app.leaf_mut(),
                     _ => None,
                 };
                 if let Some(l) = leaf
@@ -15786,7 +16273,7 @@ impl View for MainView {
         let mut drawn = false;
         for (_, group) in self.panes.iter_groups_mut() {
             for tab in group.iter_tabs_mut() {
-                if let TabView::Leaf(l) = &mut tab.view {
+                if let Some(l) = tab.view.retained_leaf_mut() {
                     drawn |= View::end_image_import(l, ticket);
                 }
             }
@@ -15805,28 +16292,39 @@ impl View for MainView {
         target: Option<koru_workspace_host::PasteTarget>,
         blocks: &[koru_workspace_host::RichBlock],
     ) {
-        let before = ws.version();
-        let landed = match self.active_view() {
+        self.size_focused_input();
+        let (view, doc) = self.tabs_mut().active_mut().doc(ws);
+        let before = doc.version();
+        let landed = match view {
+            TabView::MiniApp(app) if app.owns(doc) => {
+                if let Some(leaf) = app.focused_leaf() {
+                    View::paste_rich(leaf, doc, target, blocks);
+                    true
+                } else {
+                    false
+                }
+            }
             TabView::Leaf(l) => {
-                View::paste_rich(l, ws, target, blocks);
+                View::paste_rich(l, doc, target, blocks);
                 true
             }
-            TabView::Tasks(t) => match t.body_leaf_in(ws) {
+            TabView::Tasks(t) => match t.body_leaf_in(doc) {
                 Some(l) => {
-                    View::paste_rich(l, ws, target, blocks);
+                    View::paste_rich(l, doc, target, blocks);
                     true
                 }
                 None => false,
             },
             _ => false,
         };
+        let changed = doc.version() != before;
         if landed {
             // Like `paste_images`: image blocks landed under the active document,
             // so the explore column's library cache is stale.
             self.explore_stale = true;
         }
-        if ws.version() != before {
-            self.adopt_siblings(ws);
+        if changed {
+            self.settle_paste(ws);
         }
     }
 
@@ -15962,9 +16460,6 @@ impl View for MainView {
     }
 
     fn maintenance_deadline(&self) -> Option<Instant> {
-        if self.pending_file_paste_draft.is_some() && self.pending_draft_text.is_some() {
-            return Some(Instant::now());
-        }
         [
             self.files_reader
                 .pending
@@ -16004,15 +16499,7 @@ impl View for MainView {
                 .then(|| Instant::now() + std::time::Duration::from_millis(16)),
             self.document_appearances.deadline(),
             self.welcome_progress.deadline(),
-            // Only a tab in front of its pane has one: a Tasks tab in the
-            // background contributes no clock and therefore no wake.
-            self.panes
-                .iter_groups()
-                .filter_map(|(_, group)| match &group.tabs().active_tab().view {
-                    TabView::Tasks(t) => t.panel().deadline(),
-                    _ => None,
-                })
-                .min(),
+            self.task_pages_deadline(),
             self.reminders.deadline(),
             self.reminder_shell.maintenance_deadline(),
             if self.ai_visible() {
@@ -16055,11 +16542,6 @@ impl View for MainView {
 
     fn maintain(&mut self, ws: &mut WorkspaceDoc, now: Instant) -> bool {
         let files_reader_changed = self.maintain_files_reader();
-        let pasted_draft =
-            self.pending_file_paste_draft.is_some() && self.pending_draft_text.is_some();
-        if pasted_draft {
-            self.flush_promoted_draft(ws);
-        }
         self.refresh_help();
         if self.support.is_some() || self.fab.is_some() {
             // Serviced by the background pass, which runs in both loop paths.
@@ -16265,27 +16747,8 @@ impl View for MainView {
         }
         let landing_changed = self.finish_search_landing(now);
         let context_tasks_changed = self.refresh_context_tasks(ws) | landing_changed;
-        // The Tasks tab's own page. **Visible means the tab in front**: a Tasks
-        // tab in the background has no deadline and makes no request at all,
-        // which is the other half of "a background Tasks tab costs a bool".
         let workspace = self.current_workspace();
-        let mut page_changed = false;
-        for (_, group) in self.panes.iter_groups_mut() {
-            let group_active = group.active();
-            for (i, tab) in group.tabs_mut().iter_mut().enumerate() {
-                if let TabView::Tasks(t) = &mut tab.view {
-                    let target = t.target();
-                    let in_front = i == group_active;
-                    t.panel_mut().set_event_driven(told);
-                    if t.panel_mut()
-                        .maintain(workspace, Some(target), in_front, now)
-                    {
-                        t.mark_stale();
-                        page_changed = true;
-                    }
-                }
-            }
-        }
+        let mut page_changed = self.maintain_task_pages(now, told);
         // Home's Today page, fed the same way: its panel asks only while the
         // tab is in front, and the facts it draws from are compared before
         // they are stored, so a frame with nothing new costs the compares.
@@ -16355,7 +16818,9 @@ impl View for MainView {
         // as a tab. Nothing here reaches a run: that is another thread's,
         // and it is the only one there is. The result tabs are folded in on
         // the same pass, for the same reason.
-        let runs_changed = self.maintain_runs();
+        let runs_changed = self.maintain_runs()
+            | self.maintain_mini_app_artifacts()
+            | self.maintain_mini_app_pins();
         // Schedule invalidations are pushed by the gateway watch. This pass
         // joins their fired RunIds against the run index just maintained above;
         // it starts no poll and performs no I/O on the window thread.
@@ -16388,7 +16853,8 @@ impl View for MainView {
         let chats_before =
             plus_menu_open.then(|| self.ai_chat.recent_chats(context_menu::PLUS_RECENT_MAX));
         let ai_changed = if self.ai_visible() {
-            self.ai_chat.maintain(now)
+            let changed = self.ai_chat.maintain(now);
+            self.ai_diagrams.maintain(&mut self.ai_chat) || changed
         } else {
             self.ai_chat.drain_updates()
         };
@@ -16538,7 +17004,7 @@ impl View for MainView {
             let (view, doc) = group.tabs_mut().active_mut().doc(ws);
             view_changed |= view.maintain(doc, now);
         }
-        if reminder_submitted || reminder_cancelled || pasted_draft {
+        if reminder_submitted || reminder_cancelled {
             self.adopt_siblings(ws);
         }
         // The Manage tab's *Linked devices* page re-asks for presence on its
@@ -16546,7 +17012,6 @@ impl View for MainView {
         let manage_asked = matches!(self.tabs().active_tab().view, TabView::Manage(_))
             && self.drain_manage_requests();
         files_reader_changed
-            || pasted_draft
             || view_changed
             || manage_asked
             || session_changed
@@ -16619,6 +17084,13 @@ impl View for MainView {
     }
 }
 impl MainView {
+    /// Only the input-owning tab needs layout if an event arrives before its
+    /// first visible frame. Tab's size cache makes ordinary input a no-op.
+    fn size_focused_input(&mut self) {
+        let rect = self.focused_view_rect();
+        self.tabs_mut().active_mut().ensure_sized(rect.w, rect.h);
+    }
+
     fn key(
         &mut self,
         ws: &mut WorkspaceDoc,
@@ -16641,11 +17113,7 @@ impl MainView {
         text: Option<&str>,
         mods: ModifiersState,
     ) -> bool {
-        // **A promoted draft's text lands here.** The first point after the
-        // swap where the document is available mutably, and the *inherent*
-        // `key` rather than the trait one because that is what both the shell
-        // and a direct caller reach — an inherent method wins name resolution,
-        // so putting it on the trait impl left the tests going round it.
+        self.sync_mini_app_refinement_target();
         if self.file_preview.is_some() {
             return self.file_preview_key(key);
         }
@@ -16698,7 +17166,6 @@ impl MainView {
         if types && self.search.is_none() && self.menu.is_none() {
             self.mark_tab_used();
         }
-        self.flush_promoted_draft(ws);
         self.trace_input_state("key");
         // **The blocking prefix, in an order this function no longer owns.**
         //
@@ -16809,7 +17276,13 @@ impl MainView {
             // An open context menu takes the keys it cares about (Esc, the
             // arrows, Enter) and lets nothing else through — a chord must not,
             // say, close a tab under a menu that is itself about to dismiss.
-            Blockers::Modal(ModalKind::ContextMenu) => return self.menu_key(key),
+            Blockers::Modal(ModalKind::ContextMenu) => {
+                return if self.mini_app_pins.menu.is_some() {
+                    self.pin_menu_key(key, text, mods)
+                } else {
+                    self.menu_key(key)
+                };
+            }
             // The place chooser, on the menu's terms: its arrows, Enter and
             // Escape, and nothing else gets past it.
             Blockers::Modal(ModalKind::PlaceChooser) => return self.place_chooser_key(ws, key),
@@ -17105,12 +17578,14 @@ impl MainView {
         }
         // A draft is talked to through its own document, never the window's —
         // see `Tab::doc`. Everything below this line is the same for both.
+        self.size_focused_input();
         let (view, doc) = self.tabs_mut().active_mut().doc(ws);
         let handled = match view {
             TabView::Welcome(w) => w.key(doc, key, text, mods),
             TabView::Manage(w) => View::key(w, doc, key, text, mods),
             TabView::Trash(t) => View::key(t, doc, key, text, mods),
             TabView::Tasks(t) => View::key(t, doc, key, text, mods),
+            TabView::MiniApp(app) => View::key(app.as_mut(), doc, key, text, mods),
             TabView::Reminders(r) => View::key(r, doc, key, text, mods),
             TabView::Settings(s) => View::key(s, doc, key, text, mods),
             TabView::Home(h) => View::key(h, doc, key, text, mods),
@@ -18452,6 +18927,7 @@ impl MainView {
             let leaf = match self.active_view() {
                 TabView::Leaf(leaf) => Some(leaf),
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf.filter(|_| have_recents) {
@@ -18601,6 +19077,7 @@ impl MainView {
                         TabView::Leaf(leaf) => Some(leaf),
                         // The note above a Tasks page is a document leaf too.
                         TabView::Tasks(t) => t.body_leaf_mut(),
+                        TabView::MiniApp(app) => app.leaf_mut(),
                         _ => None,
                     };
                     if let Some(leaf) = leaf {
@@ -18611,6 +19088,7 @@ impl MainView {
             let leaf = match self.active_view() {
                 TabView::Leaf(leaf) => Some(leaf),
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -18746,6 +19224,7 @@ impl MainView {
                 TabView::Leaf(leaf) => Some(leaf),
                 // The note above a Tasks page is a document leaf too.
                 TabView::Tasks(t) => t.body_leaf_mut(),
+                TabView::MiniApp(app) => app.leaf_mut(),
                 _ => None,
             };
             if let Some(leaf) = leaf {
@@ -19242,6 +19721,9 @@ impl MainView {
         }
         // While the context menu is up it tracks its own hover; nothing under it
         // is hovered, so a row does not stay lit behind the menu.
+        if self.pin_menu_move(x, y) {
+            return true;
+        }
         if let Some(menu) = self.menu.as_mut() {
             let new = menu.item_at(self.viewport, x, y);
             // A stepper's cells light one at a time, so the control under the
@@ -19593,6 +20075,7 @@ impl MainView {
             TabView::Manage(w) => View::mouse_move(w, lx, ly),
             TabView::Trash(t) => View::mouse_move(t, lx, ly),
             TabView::Tasks(t) => View::mouse_move(t, lx, ly),
+            TabView::MiniApp(app) => View::mouse_move(app.as_mut(), lx, ly),
             TabView::Reminders(r) => View::mouse_move(r, lx, ly),
             TabView::Settings(s) => View::mouse_move(s, lx, ly),
             TabView::Home(h) => View::mouse_move(h, lx, ly),

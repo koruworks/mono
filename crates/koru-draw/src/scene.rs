@@ -771,6 +771,8 @@ pub struct Panel {
     pub border: Option<Color>,
     pub radius: f32,
     pub elevation: Elevation,
+    /// Multiplies only the shadow's opacity, independently of the body and border.
+    pub shadow_alpha: f32,
     /// Multiplies all three colours, shadow included.
     ///
     /// Only the zoom indicator sets anything but 1.0. It matters that the
@@ -788,6 +790,7 @@ impl Panel {
             border: Some(p.panel_border),
             radius,
             elevation: Elevation::Raised,
+            shadow_alpha: 1.0,
             alpha: 1.0,
         }
     }
@@ -799,6 +802,7 @@ impl Panel {
             border: None,
             radius,
             elevation: Elevation::Flat,
+            shadow_alpha: 1.0,
             alpha: 1.0,
         }
     }
@@ -820,6 +824,12 @@ impl Panel {
 
     pub fn faded(mut self, a: f32) -> Self {
         self.alpha = a;
+        self
+    }
+
+    /// Adjust the shadow without fading the body or border.
+    pub fn shadow_alpha(mut self, a: f32) -> Self {
+        self.shadow_alpha = a;
         self
     }
 }
@@ -875,6 +885,11 @@ pub fn floating_panel_scope(
                 "scene::Panel::elevation",
             );
             record.property("radius", panel.radius, "scene::Panel::radius");
+            record.property(
+                "shadow_alpha",
+                panel.shadow_alpha.clamp(0.0, 1.0),
+                "scene::Panel::shadow_alpha",
+            );
         });
     let a = panel.alpha.clamp(0.0, 1.0);
     let dim = |c: Color| c.multiply_alpha(a);
@@ -882,7 +897,7 @@ pub fn floating_panel_scope(
         panel_shadow(
             scene,
             root,
-            dim(theme::p().panel_shadow),
+            dim(theme::p().panel_shadow).multiply_alpha(panel.shadow_alpha.clamp(0.0, 1.0)),
             x,
             y,
             w,

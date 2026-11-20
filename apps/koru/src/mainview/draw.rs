@@ -240,6 +240,15 @@ impl MainView {
                     TabView::Tasks(t) => {
                         View::draw(t, scene, workspace, images, leaf_root, caret_on, local)
                     }
+                    TabView::MiniApp(app) => View::draw(
+                        app.as_mut(),
+                        scene,
+                        workspace,
+                        images,
+                        leaf_root,
+                        caret_on,
+                        local,
+                    ),
                     TabView::Home(h) => {
                         // The Due today panel's client, as the Tasks page's: the
                         // discovered client cloned, no request on this thread.
@@ -483,13 +492,14 @@ impl MainView {
                 (id, title)
             });
             self.ai_chat.set_context_workspace(current_workspace);
+            self.sync_mini_app_refinement_target();
             self.ai_chat.set_context_document(document_context);
             self.ai_chat
                 .set_recent_documents(recent_chat_documents.clone());
             self.ai_chat.set_viewport(ai);
             self.ai_chat
                 .submit_embedded_when_durable(workspace.owed() == 0);
-            self.ai_chat.draw(scene, root);
+            self.ai_chat.draw_with_caret_phase(scene, root, caret_on);
             // AI occupies Context's right-hand slot, so both panes keep their
             // divider and resize grip on the left edge.
             let edge = ai.x;
@@ -514,7 +524,7 @@ impl MainView {
         // place the client reaches it, and no request is made here.
         let client = workspace.store_client();
         self.each_tab_mut(|tab| {
-            if let TabView::Tasks(t) = &mut tab.view {
+            if let Some(t) = tab.view.tasks_mut() {
                 t.panel_mut().set_client(client.clone());
             }
             false
@@ -730,6 +740,25 @@ impl MainView {
     }
 
     fn draw_menu(&mut self, scene: &mut Scene, root: Affine) {
+        if let Some(menu) = self.mini_app_pins.menu.clone() {
+            let rows = (0..menu.items().len())
+                .map(|i| self.pin_menu_row_instance(i))
+                .collect::<Vec<_>>();
+            let row = |i| rows[i];
+            menu.draw_with_inspection(
+                scene,
+                root,
+                &mut self.engine,
+                self.viewport,
+                &vec![true; menu.items().len()],
+                koru_ui::menu::KoruMenuInspection {
+                    occurrence: Some(self.mini_app_pins.menu_instance),
+                    row_occurrence: Some(&row),
+                    owner_row: None,
+                    trigger: None,
+                },
+            );
+        }
         if let Some(menu) = self.menu.clone() {
             let enabled = self.enabled_items(&menu);
             menu.draw_inspected(scene, root, &mut self.engine, self.viewport, &enabled, None);

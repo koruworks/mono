@@ -595,7 +595,7 @@ pub const VARS: &[EnvVar] = &[
     ),
     switch_var(
         name::KORU_ENABLE_AGENT_VIEWS,
-        "Shows Explore's Agents and Artifacts views, which also need KORU_ENABLE_AGENTS on, and with KORU_ENABLE_AI every way to start Delegate. Off by default; a release bakes it on by setting it for koru-release, and a set value overrides the baked one at run time.",
+        "Shows Explore's Agents and Artifacts views, which also need KORU_ENABLE_AGENTS on, and with KORU_ENABLE_AI every way to start Delegate. On by default; a release bakes it off by setting it to 0 for koru-release, and a set value overrides the baked one at run time.",
         "koru.exe (product surfaces)",
     ),
     switch_var(

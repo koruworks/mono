@@ -230,6 +230,7 @@ impl AiProvider for KoruProvider {
             ));
         }
         let has_tools = !request.tools.is_empty();
+        let mut tools_unavailable = false;
         let body = request::encode(&request)?;
         let mut payload_bytes = body.len().try_into().unwrap_or(u64::MAX);
         tracing::info!(
@@ -296,6 +297,7 @@ impl AiProvider for KoruProvider {
                     .map_err(|_| temporary())?;
 
                 if retry_res.status().is_success() {
+                    tools_unavailable = true;
                     response = retry_res;
                 } else {
                     let retry_status = retry_res.status();
@@ -342,7 +344,7 @@ impl AiProvider for KoruProvider {
                 })));
             }
         }
-        Ok(Box::new(stream::KoruStream::new(
+        let stream = stream::KoruStream::new(
             runtime,
             response,
             request.attempt_id,
@@ -350,7 +352,13 @@ impl AiProvider for KoruProvider {
             effective,
             payload_bytes,
             cancellation,
-        )))
+        );
+        let notice = tools_unavailable.then(|| AiEvent::Notice {
+            attempt_id: request.attempt_id,
+            notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+            at: Timestamp::now(),
+        });
+        Ok(Box::new(notice.into_iter().chain(stream)))
     }
 }
 
@@ -839,6 +847,13 @@ mod tests {
         );
 
         let captured = server.finish();
+        assert!(events.iter().any(|event| matches!(
+            event,
+            AiEvent::Notice {
+                notice: koru_ai_core::AttemptNotice::NativeToolsUnavailable,
+                ..
+            }
+        )));
         assert_eq!(captured.len(), 2);
         // First request had tools
         let first_body: Value = serde_json::from_slice(&captured[0].body).unwrap();

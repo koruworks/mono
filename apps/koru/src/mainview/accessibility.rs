@@ -382,6 +382,11 @@ impl MainView {
         // what has the keyboard. Read from `ViewState::active` and
         // `Body::focus` — the two states the caret is drawn from, not a second
         // focus beside them.
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && let Some(focus) = app.chrome_accessibility_focus(cx.window, cx.view)
+        {
+            return Some(focus);
+        }
         if let Some(paragraph) = self.document_focus(&cx) {
             return Some(paragraph);
         }
@@ -446,6 +451,7 @@ impl MainView {
 
     /// Everything the window publishes **except** the document body.
     fn revise_chrome(&self, rev: &mut Revision) {
+        self.revise_pin_menu(rev);
         // A focus-only F6/arrow move still needs a native focus update. The
         // host publishes only after this fingerprint changes.
         use super::chrome_focus::{ChromeStop, LaneControl};
@@ -565,6 +571,7 @@ impl MainView {
         action: Action,
         data: Option<&ActionData>,
     ) -> bool {
+        self.sync_mini_app_refinement_target();
         // **A blocker owns everything beneath it here too.** A request that
         // named a control under an open menu is refused rather than performed,
         // which is the same answer the keyboard gives.
@@ -605,6 +612,11 @@ impl MainView {
         // The open document's own paragraphs, before the explore column: both
         // answer a `Model` target, and the document is the one in front of the
         // person.
+        if let TabView::MiniApp(app) = &mut self.tabs_mut().active_mut().view
+            && app.chrome_accessibility_action(target, action)
+        {
+            return true;
+        }
         if self.document_action(target, action, data) {
             return true;
         }
@@ -651,27 +663,40 @@ impl MainView {
     /// coordinates. A tab lays out at its own origin and reports in its own
     /// coordinates, so this is the one thing it cannot work out for itself.
     fn tasks_context(&self, cx: &Shell) -> crate::tasks_view::accessibility::Context {
+        let area = if let TabView::MiniApp(app) = &self.tabs().active_tab().view {
+            let pane = self.focused_view_rect();
+            let region = app.regions.tasks;
+            Rect::new(pane.x + region.x, pane.y + region.y, region.w, region.h)
+        } else {
+            self.content()
+        };
         crate::tasks_view::accessibility::Context {
             window: cx.window,
             view: cx.view,
-            area: self.content(),
+            area,
             lang: cx.lang,
         }
     }
 
     /// The Tasks page under the content region, when that is the active tab.
     fn tasks_semantics(&self, cx: &Shell) -> Option<SemanticNode> {
-        let TabView::Tasks(page) = &self.tabs().active_tab().view else {
+        let page = self.tabs().active_tab().view.tasks()?;
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && app.regions.tasks.w == 0.0
+        {
             return None;
-        };
+        }
         Some(page.semantics(&self.tasks_context(cx)))
     }
 
     /// Where the keyboard is inside the Tasks page, when it is showing.
     fn tasks_focus(&self, cx: &Shell) -> Option<Occurrence> {
-        let TabView::Tasks(page) = &self.tabs().active_tab().view else {
+        let page = self.tabs().active_tab().view.tasks()?;
+        if let TabView::MiniApp(app) = &self.tabs().active_tab().view
+            && !app.tasks_focused()
+        {
             return None;
-        };
+        }
         Some(page.accessible_focus(&self.tasks_context(cx)))
     }
 
@@ -682,6 +707,13 @@ impl MainView {
     /// nothing, so a change in it must not make the window rebuild.
     fn revise_tasks(&self, rev: &mut Revision) {
         match &self.tabs().active_tab().view {
+            TabView::MiniApp(app) => {
+                rev.byte(2);
+                app.revise_accessibility(rev);
+                if app.regions.tasks.w > 0.0 {
+                    app.tasks.revise(rev);
+                }
+            }
             TabView::Tasks(page) => {
                 rev.byte(1);
                 page.revise(rev);
@@ -695,7 +727,21 @@ impl MainView {
     /// Do what a client asked of the Tasks page, and drain what it asked for.
     fn tasks_action(&mut self, target: Occurrence, action: Action) -> bool {
         let index = self.tabs().active();
-        let Some(TabView::Tasks(page)) = self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
+        if let Some(TabView::MiniApp(app)) = self.tabs_mut().get_mut(index).map(|tab| &mut tab.view)
+        {
+            if app.regions.tasks.w <= 0.0 {
+                return false;
+            }
+            let handled = app.tasks.accessibility_action(target, action);
+            if handled && matches!(action, Action::Focus | Action::Click) {
+                app.focus_region(crate::mini_app::Region::Tasks);
+            }
+            return handled;
+        }
+        let Some(page) = self
+            .tabs_mut()
+            .get_mut(index)
+            .and_then(|tab| tab.view.tasks_mut())
         else {
             return false;
         };
@@ -875,6 +921,18 @@ impl MainView {
         let mut node = SemanticNode::new(cx.surface(SHELL, parts::CONTENT), Role::TabPanel)
             .with_label(label)
             .with_bounds(self.content());
+        if let TabView::MiniApp(app) = &tab.view {
+            let mut children = app.chrome_semantics(cx.window, cx.view, self.focused_view_rect());
+            if let Some(body) = self.body_semantics(cx, scope) {
+                children.push(body);
+            } else {
+                self.bodies.borrow_mut().body_withheld(cx);
+            }
+            if let Some(tasks) = self.tasks_semantics(cx) {
+                children.push(tasks);
+            }
+            return node.with_children(children);
+        }
         match self.body_semantics(cx, scope) {
             Some(body) => node = node.with_children(vec![body]),
             // Not a document: whatever the client held of a document body goes

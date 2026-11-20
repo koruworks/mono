@@ -13,6 +13,7 @@ pub mod chat_tools;
 pub mod conversion;
 pub mod ids;
 pub mod inference;
+pub mod mini_apps;
 pub mod model;
 pub mod ports;
 pub mod profiles;

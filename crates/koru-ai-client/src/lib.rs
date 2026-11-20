@@ -180,6 +180,13 @@ impl Client {
             .update_chat_agent_settings(context, chat, request)
     }
 
+    pub fn mini_app_tool(
+        &self,
+        context: RequestContext,
+        request: koru_ai_wire::MiniAppToolRequest,
+    ) -> Result<koru_ai_wire::MiniAppToolResponse> {
+        self.server.mini_app_tool(context, request)
+    }
     pub fn tool_list_chats(
         &self,
         context: RequestContext,

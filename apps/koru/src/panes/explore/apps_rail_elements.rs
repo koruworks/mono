@@ -119,6 +119,17 @@ impl ExploreView {
         Rail {
             workspaces,
             views,
+            pins: self
+                .mini_app_pins
+                .iter()
+                .map(|pin| Item {
+                    hit: apps_rail::Hit::Pin(pin.id),
+                    name: pin.title.clone(),
+                    contents: Contents::Glyph(icons::SPARKLE),
+                    selected: false,
+                    dimmed: false,
+                })
+                .collect(),
             foot: vec![
                 Item {
                     contents: if self.help.projection().dot {
@@ -200,6 +211,8 @@ impl ExploreView {
                     .position(|m| *m == mode)
                     .unwrap_or(0),
             ),
+            apps_rail::Hit::Pin(id) => ExploreChromeFocus::Pin(id),
+            apps_rail::Hit::PinOverflow => ExploreChromeFocus::PinOverflow,
             apps_rail::Hit::Overflow => ExploreChromeFocus::RailOverflow,
             apps_rail::Hit::Help => ExploreChromeFocus::RailHelp,
             apps_rail::Hit::Settings => ExploreChromeFocus::RailSettings,
@@ -222,6 +235,8 @@ impl ExploreView {
             Some(ExploreChromeFocus::App(i)) => {
                 self.rail_modes().get(i).copied().map(apps_rail::Hit::App)
             }
+            Some(ExploreChromeFocus::Pin(id)) => Some(apps_rail::Hit::Pin(id)),
+            Some(ExploreChromeFocus::PinOverflow) => Some(apps_rail::Hit::PinOverflow),
             Some(ExploreChromeFocus::RailOverflow) => Some(apps_rail::Hit::Overflow),
             Some(ExploreChromeFocus::WorkspaceMenu) => Some(apps_rail::Hit::WorkspaceMenu),
             Some(ExploreChromeFocus::RailHelp) => Some(apps_rail::Hit::Help),
@@ -237,19 +252,28 @@ impl ExploreView {
         let layout = rail.layout(engine, &mut self.rail_layout.borrow_mut(), at, interaction);
         let rects = rail.rectangles(&layout.frame, at);
         let carried = self
-            .rail_carried(&rects)
+            .pin_carried(&rects)
             .map(|(index, rect)| {
                 (
-                    rail_elements::key(apps_rail::Hit::App(rects.apps[index].0)),
+                    rail_elements::key(apps_rail::Hit::Pin(rects.pins[index].0)),
                     rect,
                 )
             })
             .or_else(|| {
-                self.workspace_carried(&rects).and_then(|(index, rect)| {
-                    rects.workspaces[index]
-                        .0
-                        .map(|id| (rail_elements::key(apps_rail::Hit::Workspace(id)), rect))
-                })
+                self.rail_carried(&rects)
+                    .map(|(index, rect)| {
+                        (
+                            rail_elements::key(apps_rail::Hit::App(rects.apps[index].0)),
+                            rect,
+                        )
+                    })
+                    .or_else(|| {
+                        self.workspace_carried(&rects).and_then(|(index, rect)| {
+                            rects.workspaces[index]
+                                .0
+                                .map(|id| (rail_elements::key(apps_rail::Hit::Workspace(id)), rect))
+                        })
+                    })
             });
         let mut offsets: Vec<_> = rects
             .apps
@@ -276,6 +300,12 @@ impl ExploreView {
                     })
                 }),
         );
+        offsets.extend(rects.pins.iter().enumerate().map(|(i, (id, _))| {
+            (
+                rail_elements::key(apps_rail::Hit::Pin(*id)),
+                self.pin_slides.offset(i),
+            )
+        }));
         layout.paint(&rail, scene, root, engine, &offsets, carried);
     }
 }
