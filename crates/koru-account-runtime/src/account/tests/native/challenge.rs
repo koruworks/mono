@@ -7,6 +7,7 @@ impl Transport for ChallengeTransport {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
         assert!(request.path_and_query.ends_with("/native/token/start"));
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(&self.0).unwrap(),
         })

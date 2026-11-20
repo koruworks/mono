@@ -29,6 +29,7 @@ koru-env = { path = "../koru-env" }
 # re-exports all of it.
 koru-tagname = { path = "../koru-tagname" }
 loro.workspace = true
+serde.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 # NFC, for the tag fold key (`tags::fold_key`). Text used as a key is

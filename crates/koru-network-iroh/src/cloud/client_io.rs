@@ -46,6 +46,8 @@ pub struct Messages {
 }
 
 pub enum Event {
+    /// One bounded response owned until the durable consumer releases it.
+    Removal(RemovalMessage),
     Progress,
     Metadata(Messages),
     /// The remote durable Ack AND local final write have both completed.
@@ -67,6 +69,11 @@ pub enum Event {
     },
 }
 
+pub struct RemovalMessage {
+    pub control: Control,
+    _charge: Reservation,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Status {
     pub transfer: StreamStatus,
@@ -81,6 +88,45 @@ enum Writing {
     Metadata,
     Receipt,
     Upload,
+}
+struct RemovalExchange {
+    request: Control,
+    queued: bool,
+    deadline: u64,
+}
+impl RemovalExchange {
+    fn accepts(&self, response: &Control) -> bool {
+        if !self.queued {
+            return false;
+        }
+        match (&self.request, response) {
+            (
+                Control::CloudRemovalsRead { cursor, .. },
+                Control::CloudRemovals {
+                    events,
+                    next_cursor,
+                    ..
+                },
+            ) => {
+                next_cursor >= cursor
+                    && events.first().is_none_or(|event| event.sequence > *cursor)
+                    && (!events.is_empty() || next_cursor == cursor)
+            }
+            (
+                Control::CloudRemoveDocument {
+                    operation_id,
+                    document_id,
+                    ..
+                },
+                Control::CloudDocumentRemoved {
+                    event_id,
+                    document_id: removed,
+                    ..
+                },
+            ) => operation_id == event_id && document_id == removed,
+            _ => false,
+        }
+    }
 }
 struct Commit<'a> {
     unit: Unit,
@@ -119,6 +165,7 @@ pub struct Client<'a, R, W> {
     commit: Option<Commit<'a>>,
     receipt: Option<(Receipt, u64)>,
     upload: Option<Upload<'a>>,
+    removal: Option<RemovalExchange>,
     batch: u64,
     inspection_only: bool,
     inspection_download: Option<Unit>,
@@ -186,6 +233,7 @@ where
             commit: None,
             receipt: None,
             upload: None,
+            removal: None,
             batch: 0,
             inspection_only: false,
             inspection_download: None,
@@ -235,6 +283,7 @@ where
             self.commit.as_ref().map(|c| c.deadline),
             self.receipt.as_ref().map(|r| r.1),
             self.upload.as_ref().map(|u| u.deadline),
+            self.removal.as_ref().map(|r| r.deadline),
             self.controls.front().map(|c| c.2),
         ]
         .into_iter()
@@ -262,17 +311,75 @@ where
         self.commit = None;
         self.receipt = None;
         self.upload = None;
+        self.removal = None;
         self.writing = None;
         self.writing_deadline = None;
         self.policy_pending = 0;
         self.stream.cancel(error)
     }
     fn available_writer(&self) -> bool {
+        self.removal.is_none() && self.writer_ready()
+    }
+    fn writer_ready(&self) -> bool {
         self.io.can_send()
             && self.controls.is_empty()
             && self.receipt.is_none()
             && self.policy_pending == 0
             && self.stream.status().peer_generation.is_some()
+    }
+
+    /// Only called after the credential issuer advertises document removal.
+    /// This exchange is separate from content admission and works while writes
+    /// are paused. The caller must persist events before advancing its cursor.
+    /// Canceling this wait retains the exact request and its original response
+    /// deadline. Calling again with the same request resumes without resending.
+    pub async fn removal_exchange(&mut self, control: Control) -> Result<RemovalMessage, Error> {
+        if self.inspection_only
+            || !matches!(
+                control,
+                Control::CloudRemoveDocument { .. } | Control::CloudRemovalsRead { .. }
+            )
+        {
+            return Err(Error::Invalid);
+        }
+        control.validate()?;
+        if let Some(pending) = &self.removal {
+            if pending.request != control {
+                return Err(self.cancel(Error::Invalid));
+            }
+        } else {
+            self.removal = Some(RemovalExchange {
+                request: control,
+                queued: false,
+                deadline: self
+                    .now()
+                    .saturating_add(transfer::CONTROL_WAIT_MS)
+                    .min(self.stream.expires_at()),
+            });
+        }
+        loop {
+            if self.writer_ready() {
+                let pending = self.removal.as_mut().ok_or(Error::Invalid)?;
+                if !pending.queued {
+                    pending.queued = true;
+                    self.controls.push_back((
+                        Record::Control(pending.request.clone()),
+                        false,
+                        pending.deadline,
+                    ));
+                }
+            }
+            match self.next().await? {
+                Event::Progress => {}
+                Event::Removal(answer) => return Ok(answer),
+                Event::Metadata(messages)
+                    if messages
+                        .values
+                        .iter()
+                        .all(|m| matches!(m, Metadata::SyncRequest | Metadata::Ignore)) => {}
+                _ => return Err(self.cancel(Error::Invalid)),
+            }
+        }
     }
 
     /// No unbounded request queue: a busy owner refuses submission unchanged.
@@ -545,6 +652,22 @@ where
             };
         }
         match record {
+            Record::Control(
+                control @ (Control::CloudRemovals { .. } | Control::CloudDocumentRemoved { .. }),
+            ) => {
+                if !self
+                    .removal
+                    .as_ref()
+                    .is_some_and(|pending| pending.accepts(&control))
+                {
+                    return Err(Error::Invalid);
+                }
+                self.removal = None;
+                Ok(Event::Removal(RemovalMessage {
+                    control,
+                    _charge: charge,
+                }))
+            }
             Record::Control(control) => {
                 let start = match &control {
                     Control::TransferStart(start) => Some(start.clone()),

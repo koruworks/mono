@@ -38,6 +38,7 @@ fn descriptor(placement: Option<CloudId>) -> CloudWorkspaceDescriptorV2 {
 
 fn permit(scope: CloudPermitScopeV2) -> CloudPermitV2 {
     CloudPermitV2 {
+        document_removal: false,
         version: CLOUD_PERMIT_VERSION_V2,
         permit_id: uuid::Uuid::new_v4(),
         account_id: id(4),

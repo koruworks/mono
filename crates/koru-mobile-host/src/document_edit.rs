@@ -64,7 +64,7 @@ fn store_error(error: koru_store_core::Error) -> String {
     error.code().as_str().to_owned()
 }
 
-fn apply_text_edit(
+pub(super) fn apply_text_edit(
     model: &mut WorkspaceDoc,
     block: NodeId,
     edit: &DocumentTextEdit,

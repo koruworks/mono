@@ -8,6 +8,8 @@
 // For information on using the generated types, please see the documentation:
 //   https://github.com/apple/swift-protobuf/
 
+// SPDX-License-Identifier: MPL-2.0
+
 import SwiftProtobuf
 
 // If the compiler emits an error on this type, it is because this file

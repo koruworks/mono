@@ -15,7 +15,9 @@ use koru_core::node::Node;
 use koru_core::schema::{Parent, WorkspaceDoc};
 use koru_core::{Kind, NodeId};
 
+mod document_purge;
 pub mod durability;
+pub use document_purge::{DocumentPurgeDecision, DocumentPurgeProgress, DocumentPurgePrompt};
 pub mod explore;
 pub mod fromstore;
 mod store_open;
@@ -237,6 +239,7 @@ pub struct Workspace {
     /// the writing on disk the store has not confirmed for them. See
     /// [`pages`].
     pages: pages::PageRegistry,
+    document_purges: document_purge::Reconciliation,
     /// The `SystemStore` a test wants the lazy open to use, in place of the
     /// Store client production builds. `system.rs`'s `new_system_session` is
     /// the only reader, so a test exercises the real open path rather than
@@ -353,6 +356,7 @@ impl Workspace {
             entries_changed: false,
             pending_documents: Vec::new(),
             pages: pages::PageRegistry::default(),
+            document_purges: document_purge::Reconciliation::default(),
             system: None,
             tags_changed: false,
             lists_changed: false,
@@ -398,6 +402,7 @@ impl Workspace {
             entries_changed: false,
             pending_documents: Vec::new(),
             pages: pages::PageRegistry::default(),
+            document_purges: document_purge::Reconciliation::default(),
             system: None,
             tags_changed: false,
             lists_changed: false,
@@ -1350,6 +1355,11 @@ impl Workspace {
         workspace: koru_core::WorkspaceId,
         id: koru_core::DocumentId,
     ) -> Result<(), koru_store_core::errors::Error> {
+        if self.current == Some(workspace) && self.document_purge_frozen(id) {
+            return Err(koru_store_core::errors::Error::bare(
+                koru_store_core::errors::Code::InvalidRequest,
+            ));
+        }
         if self.active == Some(id) {
             return Ok(());
         }
@@ -1982,6 +1992,11 @@ impl Workspace {
         &mut self,
         id: koru_core::DocumentId,
     ) -> Result<(), koru_store_core::errors::Error> {
+        if self.is_document_purged(id) {
+            return Err(koru_store_core::errors::Error::bare(
+                koru_store_core::errors::Code::InvalidRequest,
+            ));
+        }
         self.edit_manifest(|manifest| manifest.restore_document(explore::store_document(id)))?;
         // Restoring a page document is a *Recover* of every deletion event
         // this device has observed (page-document plan §6.4, owner Q2): a
@@ -1996,7 +2011,8 @@ impl Workspace {
     ///
     /// Unregisters the entries; their bytes are the store's to reclaim, and
     /// keeping the two apart is what makes an accidental unregister survivable.
-    /// Returns how many went.
+    /// Returns how many completed now. Remaining requests are kept pending
+    /// and resumed by `tick` after their deletion evidence is durable.
     ///
     /// **Not `empty_trash`, which is a different bin.** That one empties the
     /// `Kind::Trash` node inside the *open document* — rows somebody deleted
@@ -2025,7 +2041,9 @@ impl Workspace {
     ///
     /// Unregisters the entry; its bytes are the store's to reclaim, the
     /// same split the sweep makes. Absent is not an error: a document
-    /// another window purged first is a document that is already gone.
+    /// another window purged first is a document that is already gone. A false
+    /// result also covers a pending request: `tick` resumes it once its event
+    /// is durable, without requiring the caller to submit it again.
     pub fn purge_document(
         &mut self,
         id: koru_core::DocumentId,
@@ -2287,7 +2305,7 @@ impl Workspace {
     /// Only the active document publishes, because it is the only one being
     /// typed into.
     fn tick_store(&mut self) -> bool {
-        let mut changed = false;
+        let mut changed = self.tick_document_purges();
         // Accumulated rather than bracketed, because the two halves interleave:
         // the active document publishes and drains, then the background ones
         // drain, then the manifest does both. A single span around the whole
@@ -2504,6 +2522,7 @@ impl Workspace {
             system.buffer_now();
         }
         self.buffer_pages_now();
+        self.buffer_document_purges_now();
     }
 
     /// Whether everything typed has reached the store's disk, and where it is
@@ -2547,6 +2566,11 @@ impl Workspace {
         out.documents += pages;
         if why_not_buffered.is_none() {
             why_not_buffered = pages_not_buffered;
+        }
+        let (purges, purge_not_buffered) = self.document_purges_unconfirmed();
+        out.documents += purges;
+        if why_not_buffered.is_none() {
+            why_not_buffered = purge_not_buffered;
         }
 
         out.not_buffered = why_not_buffered;

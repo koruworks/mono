@@ -3559,13 +3559,24 @@ pub enum Key {
     TasksFromSearchDismiss,
     /// A task result's menu: open the document the task is written in, at its line.
     SearchOpenInDocument,
+    // Permanent document removal and changed-copy choices.
+    DocumentDeletedChanged,
+    DocumentDeletedUnknown,
+    DocumentDeletedTitle,
+    DocumentDeletedKeep,
+    DocumentDeletedDelete,
+    DocumentDeletePending,
+    DocumentDeleteProgress,
+    DocumentDeleteForeverTitle,
+    DocumentDeleteForeverBody,
+    DocumentDeleteForeverConfirm,
 }
 
 impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2495] = [
+    pub const ALL: [Key; 2505] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6061,6 +6072,16 @@ impl Key {
         Key::TasksFromSearch,
         Key::TasksFromSearchDismiss,
         Key::SearchOpenInDocument,
+        Key::DocumentDeletedChanged,
+        Key::DocumentDeletedUnknown,
+        Key::DocumentDeletedTitle,
+        Key::DocumentDeletedKeep,
+        Key::DocumentDeletedDelete,
+        Key::DocumentDeletePending,
+        Key::DocumentDeleteProgress,
+        Key::DocumentDeleteForeverTitle,
+        Key::DocumentDeleteForeverBody,
+        Key::DocumentDeleteForeverConfirm,
     ];
 }
 
@@ -17733,4 +17754,14 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::TasksFromSearch, en: "From search", es: "Desde la búsqueda", pt_br: "Da busca", de: "Aus der Suche", fr: "Depuis la recherche", ar: "من البحث", zh_hans: "来自搜索", ja: "検索から" },
     Row { key: Key::TasksFromSearchDismiss, en: "Dismiss", es: "Descartar", pt_br: "Dispensar", de: "Ausblenden", fr: "Ignorer", ar: "تجاهل", zh_hans: "关闭", ja: "閉じる" },
     Row { key: Key::SearchOpenInDocument, en: "Open in document", es: "Abrir en el documento", pt_br: "Abrir no documento", de: "Im Dokument öffnen", fr: "Ouvrir dans le document", ar: "فتح في المستند", zh_hans: "在文档中打开", ja: "ドキュメントで開く" },
+    Row { key: Key::DocumentDeletedChanged, en: "“{}” was deleted on another device. You changed it here since. Keep your version, or delete it?", es: "“{}” se eliminó en otro dispositivo. Desde entonces lo has modificado aquí. ¿Quieres conservar tu versión o eliminarla?", pt_br: "“{}” foi excluído em outro dispositivo. Você fez alterações aqui desde então. Quer manter sua versão ou excluí-la?", de: "„{}“ wurde auf einem anderen Gerät gelöscht. Sie haben es seitdem hier geändert. Möchten Sie Ihre Version behalten oder löschen?", fr: "« {} » a été supprimé sur un autre appareil. Vous l’avez modifié ici depuis. Voulez-vous conserver votre version ou la supprimer ?", ar: "حُذف «{}» على جهاز آخر. وقد أجريت تغييرات عليه هنا منذ ذلك الحين. هل تريد الاحتفاظ بنسختك أم حذفها؟", zh_hans: "“{}”已在另一台设备上删除。此后您在这里做了修改。要保留您的版本，还是删除它？", ja: "「{}」は別の端末で削除されました。その後、この端末で変更しています。このバージョンを残しますか、削除しますか？" },
+    Row { key: Key::DocumentDeletedUnknown, en: "“{}” was deleted. Koru can’t tell whether this copy has changes. Keep this version, or delete it?", es: "“{}” se eliminó. Koru no puede determinar si esta copia contiene cambios. ¿Quieres conservar esta versión o eliminarla?", pt_br: "“{}” foi excluído. O Koru não consegue determinar se esta cópia tem alterações. Quer manter esta versão ou excluí-la?", de: "„{}“ wurde gelöscht. Koru kann nicht feststellen, ob diese Kopie Änderungen enthält. Möchten Sie diese Version behalten oder löschen?", fr: "« {} » a été supprimé. Koru ne peut pas déterminer si cette copie contient des modifications. Voulez-vous conserver cette version ou la supprimer ?", ar: "حُذف «{}». لا يستطيع Koru تحديد ما إذا كانت هذه النسخة تحتوي على تغييرات. هل تريد الاحتفاظ بهذه النسخة أم حذفها؟", zh_hans: "“{}”已删除。Koru 无法判断此副本是否有修改。要保留此版本，还是删除它？", ja: "「{}」は削除されました。Koru はこのコピーに変更があるかどうかを判断できません。このバージョンを残しますか、削除しますか？" },
+    Row { key: Key::DocumentDeletedTitle, en: "Document deleted", es: "Documento eliminado", pt_br: "Documento excluído", de: "Dokument gelöscht", fr: "Document supprimé", ar: "تم حذف المستند", zh_hans: "文档已删除", ja: "ドキュメントが削除されました" },
+    Row { key: Key::DocumentDeletedKeep, en: "Keep my version", es: "Conservar mi versión", pt_br: "Manter minha versão", de: "Meine Version behalten", fr: "Conserver ma version", ar: "الاحتفاظ بنسختي", zh_hans: "保留我的版本", ja: "自分のバージョンを残す" },
+    Row { key: Key::DocumentDeletedDelete, en: "Delete", es: "Eliminar", pt_br: "Excluir", de: "Löschen", fr: "Supprimer", ar: "حذف", zh_hans: "删除", ja: "削除" },
+    Row { key: Key::DocumentDeletePending, en: "Deleting…", es: "Eliminando…", pt_br: "Excluindo…", de: "Wird gelöscht…", fr: "Suppression…", ar: "جارٍ الحذف…", zh_hans: "正在删除…", ja: "削除中…" },
+    Row { key: Key::DocumentDeleteProgress, en: "Deleting {} from Koru Cloud…", es: "Eliminando {} de Koru Cloud…", pt_br: "Excluindo {} do Koru Cloud…", de: "{} werden aus Koru Cloud gelöscht…", fr: "Suppression de {} dans Koru Cloud…", ar: "جارٍ حذف {} من Koru Cloud…", zh_hans: "正在从 Koru Cloud 删除 {} 项…", ja: "Koru Cloud から {} 件を削除中…" },
+    Row { key: Key::DocumentDeleteForeverTitle, en: "Delete permanently?", es: "¿Eliminar permanentemente?", pt_br: "Excluir permanentemente?", de: "Endgültig löschen?", fr: "Supprimer définitivement ?", ar: "هل تريد الحذف نهائيًا؟", zh_hans: "永久删除？", ja: "完全に削除しますか？" },
+    Row { key: Key::DocumentDeleteForeverBody, en: "“{}” will be removed for good. This cannot be undone.", es: "“{}” se eliminará de forma permanente. Esta acción no se puede deshacer.", pt_br: "“{}” será excluído permanentemente. Esta ação não pode ser desfeita.", de: "„{}“ wird endgültig gelöscht. Dies kann nicht rückgängig gemacht werden.", fr: "« {} » sera supprimé définitivement. Cette action est irréversible.", ar: "سيُحذف «{}» نهائيًا. لا يمكن التراجع عن هذا الإجراء.", zh_hans: "“{}”将被永久删除。此操作无法撤销。", ja: "「{}」は完全に削除されます。この操作は取り消せません。" },
+    Row { key: Key::DocumentDeleteForeverConfirm, en: "Delete permanently", es: "Eliminar permanentemente", pt_br: "Excluir permanentemente", de: "Endgültig löschen", fr: "Supprimer définitivement", ar: "الحذف نهائيًا", zh_hans: "永久删除", ja: "完全に削除" },
 ];

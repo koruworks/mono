@@ -171,6 +171,10 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         if attempt > 0 || !session.scoped.fresh(now) {
             self.renew_session(session)?;
         }
+        if self.removal_refresh.contains(&session.owner) && !session.scoped.permit.document_removal
+        {
+            return Err(Failure::WorkerUnavailable);
+        }
         let now = clock.now_millis().ok_or(Failure::Unavailable)? / 1000;
         if !session.scoped.fresh(now) {
             return Err(Failure::CredentialExpired);

@@ -79,6 +79,7 @@ fn a_refusal_that_is_not_an_envelope_keeps_its_status_and_never_its_body() {
             _: super::super::HttpRequest,
         ) -> Result<super::super::HttpResponse, TransportError> {
             Ok(super::super::HttpResponse {
+                document_removal: false,
                 status: 502,
                 body: b"token_and_email_sentinel".to_vec(),
             })

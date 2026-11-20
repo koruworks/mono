@@ -209,12 +209,14 @@ impl HostedAccount {
     }
     fn json<T: Serialize>(value: &T) -> Result<HttpResponse, TransportError> {
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(value).unwrap(),
         })
     }
     fn refuse(status: u16, code: &str) -> Result<HttpResponse, TransportError> {
         Ok(HttpResponse {
+            document_removal: false,
             status,
             body: serde_json::to_vec(&serde_json::json!({"code": code, "message": "refused"}))
                 .unwrap(),

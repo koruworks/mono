@@ -48,7 +48,11 @@ impl Transport for Hosted {
         } else {
             panic!("unexpected attestation fixture route")
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 

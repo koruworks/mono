@@ -87,7 +87,16 @@ impl Workspace {
             generation += 1;
             document = page_document_id(workspace, page, generation);
         }
-        Some((document, generation))
+        // Final purge always wins, including over a late recover or keep.
+        for _ in 0..64 {
+            if !self.is_document_purged(document) {
+                return Some((document, generation));
+            }
+            generation = generation.checked_add(1)?;
+            document = page_document_id(workspace, page, generation);
+        }
+        // Never fall back to a purged id after the bounded search.
+        None
     }
 
     /// Every page document this workspace's system document knows: each
@@ -329,7 +338,7 @@ impl Workspace {
 
     // ---------------------------------------------------------- the turn
 
-    fn page_doc(&self, id: DocumentId) -> Option<&WorkspaceDoc> {
+    pub(crate) fn page_doc(&self, id: DocumentId) -> Option<&WorkspaceDoc> {
         if self.active == Some(id) {
             return Some(&self.ws);
         }
@@ -346,6 +355,9 @@ impl Workspace {
         let mut changed = self.tick_page_purges();
         let ids: Vec<DocumentId> = self.pages.entries.keys().copied().collect();
         for id in ids {
+            if self.is_document_purged(id) {
+                continue;
+            }
             changed |= self.poll_page(id);
             self.write_page_revision(id, false);
             self.advance_page(id);
@@ -985,7 +997,10 @@ impl Workspace {
 
     /// This device's replica id and version of `document`, when it holds a
     /// copy — open, parked or held by the registry.
-    fn page_local_version(&self, document: DocumentId) -> Option<(u64, loro::VersionVector)> {
+    pub(super) fn page_local_version(
+        &self,
+        document: DocumentId,
+    ) -> Option<(u64, loro::VersionVector)> {
         self.page_doc(document)
             .map(|doc| (doc.peer_id(), doc.version()))
     }
@@ -1039,6 +1054,11 @@ impl Workspace {
         let Some(generation) = self.page_generation(page) else {
             return Resolution::Live;
         };
+        if self.current.is_some_and(|workspace| {
+            self.is_document_purged(page_document_id(workspace, page, generation))
+        }) {
+            return Resolution::Deleted;
+        }
         self.report_page_uncovered(page, generation);
         self.system
             .as_ref()
@@ -1066,6 +1086,11 @@ impl Workspace {
         let Some(generation) = self.page_generation(page) else {
             return false;
         };
+        if self.current.is_some_and(|workspace| {
+            self.is_document_purged(page_document_id(workspace, page, generation))
+        }) {
+            return false;
+        }
         let replica = self.page_replica(page, generation);
         let Some(record) = self
             .system
@@ -1104,6 +1129,11 @@ impl Workspace {
         let Some(generation) = self.page_generation(page) else {
             return false;
         };
+        if self.current.is_some_and(|workspace| {
+            self.is_document_purged(page_document_id(workspace, page, generation))
+        }) {
+            return false;
+        }
         let replica = self.page_replica(page, generation);
         let Some(record) = self
             .system
@@ -1145,13 +1175,8 @@ impl Workspace {
                 }
             }
         }
-        for id in &restored {
-            self.pages
-                .pending_purges
-                .remove(&explore::koru_document(*id));
-        }
         for (id, page, generation) in self.page_documents() {
-            if !restored.contains(&explore::store_document(id)) {
+            if !restored.contains(&explore::store_document(id)) || self.is_document_purged(id) {
                 continue;
             }
             let replica = self.page_replica(page, generation);
@@ -1164,165 +1189,6 @@ impl Workspace {
             }
         }
     }
-
-    pub(crate) fn request_page_purge(&mut self, root: DocumentId) {
-        self.pages.pending_purges.entry(root).or_default();
-    }
-
-    /// Classify the entire subtree before removing anything. The guard stays
-    /// closed while system-document identity or durability is unknown.
-    pub(crate) fn prove_page_purge(&mut self, root: DocumentId) -> Option<TombstoneDurable> {
-        self.ensure_system(false);
-        if self.system.as_ref().is_some_and(|s| !s.pages_loaded()) {
-            return None;
-        }
-        let entries = self.manifest.as_ref()?.entries();
-        let store_root = explore::store_document(root);
-        let mut subtree = std::collections::HashSet::from([store_root]);
-        loop {
-            let before = subtree.len();
-            for entry in &entries {
-                if entry.parent.is_some_and(|parent| subtree.contains(&parent)) {
-                    subtree.insert(entry.id);
-                }
-            }
-            if before == subtree.len() {
-                break;
-            }
-        }
-        // Recovery of an event this request observed cancels that request.
-        // Never mint a replacement event as part of retrying it.
-        let previous = self.pages.pending_purges.get(&root)?.clone();
-        for (page, generation, event) in &previous {
-            let record = self.system.as_ref()?.deletion_record(*page, *generation)?;
-            if !record.events_in_force().contains(event) {
-                self.pages.pending_purges.remove(&root);
-                return None;
-            }
-        }
-        let mut events = previous;
-        for (document, page, generation) in self.page_documents() {
-            if !subtree.contains(&explore::store_document(document)) {
-                continue;
-            }
-            let record = self.system.as_ref()?.deletion_record(page, generation)?;
-            let mut in_force = record.events_in_force();
-            if in_force.is_empty() {
-                let event = koru_core::pages::deletion::EventId::new();
-                let covers = self
-                    .page_local_version(document)
-                    .map(|(_, v)| v)
-                    .unwrap_or_default();
-                if !self.system.as_mut()?.write_deletion(
-                    page,
-                    generation,
-                    event,
-                    &covers,
-                    crate::open::now_ms(),
-                ) {
-                    return None;
-                }
-                in_force.push(event);
-                self.lists_changed = true;
-            }
-            for event in in_force {
-                let item = (page, generation, event);
-                if !events.contains(&item) {
-                    events.push(item);
-                }
-            }
-        }
-        self.pages.pending_purges.insert(root, events.clone());
-        if !events.is_empty() {
-            let system = self.system.as_ref()?;
-            if !system.pages_durable() {
-                return None;
-            }
-            for (page, generation, _) in &events {
-                if system.deletion_record(*page, *generation)?.resolve()
-                    != koru_core::pages::deletion::Resolution::Deleted
-                {
-                    return None;
-                }
-            }
-        }
-        Some(TombstoneDurable { root })
-    }
-
-    /// The only manifest-removal path: proof and removal occur in the same
-    /// event-loop turn, with no opportunity to apply a recovery between them.
-    pub(crate) fn remove_durable_page_tree(
-        &mut self,
-        proof: TombstoneDurable,
-    ) -> Result<bool, koru_store_core::errors::Error> {
-        let root = proof.root;
-        let Some(manifest) = &mut self.manifest else {
-            return Ok(false);
-        };
-        let removed = manifest.remove_document(explore::store_document(root))?;
-        for id in removed {
-            self.pages
-                .pending_purges
-                .remove(&explore::koru_document(id));
-        }
-        self.publish_manifest();
-        self.entries_changed = true;
-        Ok(true)
-    }
-
-    fn tick_page_purges(&mut self) -> bool {
-        let version = (
-            self.current,
-            self.manifest.as_ref().map(|m| m.version()),
-            self.system.as_ref().and_then(|s| s.pages_version()),
-        );
-        if self.pages.last_deletion_scan.as_ref() != Some(&version) {
-            self.pages.last_deletion_scan = Some(version);
-            // The persisted deletion events also carry intent after a restart.
-            // Re-publishing and acknowledging the system document is still required.
-            for (document, page, generation) in self.page_documents() {
-                if self
-                    .manifest
-                    .as_ref()
-                    .is_some_and(|m| m.is_trashed(explore::store_document(document)))
-                    && let Some(record) = self
-                        .system
-                        .as_ref()
-                        .and_then(|s| s.deletion_record(page, generation))
-                    && !record.events_in_force().is_empty()
-                {
-                    self.pages
-                        .pending_purges
-                        .entry(document)
-                        .or_insert_with(|| {
-                            record
-                                .events_in_force()
-                                .into_iter()
-                                .map(|event| (page, generation, event))
-                                .collect()
-                        });
-                }
-            }
-        }
-        let roots: Vec<_> = self.pages.pending_purges.keys().copied().collect();
-        let mut changed = false;
-        for root in roots {
-            if self.manifest.as_ref().is_none_or(|m| {
-                !m.contains(explore::store_document(root))
-                    || !m.is_trashed(explore::store_document(root))
-            }) {
-                self.pages.pending_purges.remove(&root);
-                continue;
-            }
-            if let Some(proof) = self.prove_page_purge(root) {
-                match self.remove_durable_page_tree(proof) {
-                    Ok(removed) => changed |= removed,
-                    Err(error) => tracing::warn!(%error, "could not finish durable page deletion"),
-                }
-            }
-        }
-        changed
-    }
 }
 
 fn phase_token(phase: &PagePhase) -> &'static str {
@@ -1333,9 +1199,4 @@ fn phase_token(phase: &PagePhase) -> &'static str {
         PagePhase::Ready => "ready",
         PagePhase::Failed { .. } => "failed",
     }
-}
-
-/// Constructed only after every page event in a removal subtree is durable.
-pub(crate) struct TombstoneDurable {
-    root: DocumentId,
 }

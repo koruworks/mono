@@ -20,6 +20,7 @@
 //! `docs/decisions/ADR-000-pagedocumentidentity.md`.
 
 pub mod deletion;
+pub mod purge;
 
 use loro::VersionVector;
 

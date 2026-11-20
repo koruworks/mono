@@ -437,6 +437,9 @@ struct World {
     remote_hints: usize,
     open_failures: usize,
     expired_opens: usize,
+    removal_opens: usize,
+    document_removal: bool,
+    downgrade_after_removal: bool,
     blocked: HashMap<WorkspaceId, Arc<Mutex<mpsc::Receiver<()>>>>,
     live_permits: BTreeSet<Uuid>,
 }
@@ -495,6 +498,7 @@ fn codeless_hosted_api(world: Arc<Mutex<World>>, status: u16) -> HostedApi {
                 request.method, request.path_and_query, self.status
             ));
             Ok(koru_account_client::HttpResponse {
+                document_removal: false,
                 status: self.status,
                 body: br#"{"detail":"this deployment does not serve that route"}"#.to_vec(),
             })
@@ -526,6 +530,7 @@ fn coded_hosted_api(world: Arc<Mutex<World>>, status: u16, code: &str) -> Hosted
                 request.method, request.path_and_query, self.status
             ));
             Ok(koru_account_client::HttpResponse {
+                document_removal: false,
                 status: self.status,
                 body: self.body.clone(),
             })
@@ -824,6 +829,8 @@ impl Api for FakeApi {
             }
         };
         Ok(SyncTokenResponseV2 {
+            document_removal: world.document_removal
+                && matches!(scope, CloudSyncScopeV2::Workspace { .. }),
             version: Version2,
             credential,
             expires_at_seconds: world.token_expiry,
@@ -1063,6 +1070,18 @@ impl Host for FakeHost {
             return Ok(SessionReport {
                 stage: Stage::Unavailable,
                 error_code: Some(CREDENTIAL_EXPIRED),
+                ..SessionReport::default()
+            });
+        }
+        if world.removal_opens > 0 && matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }) {
+            world.removal_opens -= 1;
+            if world.downgrade_after_removal {
+                world.document_removal = false;
+            }
+            return Ok(SessionReport {
+                stage: Stage::CheckingCoverage,
+                error_code: Some(DOCUMENT_REMOVED),
+                remote_hint: true,
                 ..SessionReport::default()
             });
         }
@@ -3672,4 +3691,97 @@ fn a_held_profile_is_selected_once_up_front_even_when_nothing_is_refused() {
     harness.control.wake();
     harness.tick(2_000);
     assert_eq!(selections(&harness.log()), 2, "not repeated");
+}
+
+#[test]
+fn removed_document_readmits_immediately_and_fences_before_retry() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.document_removal = true;
+        state.removal_opens = 1;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    // No clock advance/wake: the replacement must run in the same lane turn.
+    harness.wait_for(|world| world.opened.len() == 2);
+    harness.wait_snapshot(|snapshot| snapshot.stage == Stage::Settled);
+    let snapshot = harness.control.snapshot();
+    assert!(snapshot.failure_code.is_none());
+    assert!(snapshot.retry_at_millis.is_none());
+    let state = lock(&harness.world);
+    assert_eq!(state.contexts.len(), 2);
+    let old: BTreeSet<_> = state.contexts[0].2.iter().map(|p| p.permit_id).collect();
+    let renewed: BTreeSet<_> = state.contexts[1].2.iter().map(|p| p.permit_id).collect();
+    assert!(old.is_disjoint(&renewed));
+    assert_eq!(renewed.len(), 1);
+    assert!(old.contains(&state.fenced[0][0]));
+}
+
+#[test]
+fn repeated_removal_refresh_is_bounded_without_outage_backoff() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.document_removal = true;
+        state.removal_opens = 100;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| {
+        snapshot
+            .records
+            .iter()
+            .any(|record| record.error_code == Some(DOCUMENT_REMOVED))
+    });
+    let snapshot = harness.control.snapshot();
+    assert!(snapshot.failure_code.is_none());
+    assert!(snapshot.retry_at_millis.is_none());
+    assert_eq!(
+        lock(&harness.world).removal_opens,
+        98,
+        "one immediate re-admission"
+    );
+    assert!(snapshot.records.iter().any(|record| {
+        record.error_code == Some(DOCUMENT_REMOVED) && record.stage == Stage::CheckingCoverage
+    }));
+}
+
+#[test]
+fn removal_refresh_does_not_downgrade_to_an_old_worker() {
+    let world = one_hosted_pair();
+    {
+        let mut state = lock(&world);
+        state.document_removal = true;
+        state.removal_opens = 1;
+        state.downgrade_after_removal = true;
+    }
+    let harness = Harness::start(world);
+    harness.control.update_authorization(authority("1"));
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(WORKER_UNAVAILABLE));
+    assert!(
+        !lock(&harness.world)
+            .opened
+            .iter()
+            .any(|dataset| { matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }) }),
+        "a stream without the mandatory removal-list read never starts"
+    );
+    // The requirement survives another coordinator pass, rather than just the
+    // immediate renewal attempt. Only a capable admission can resume it.
+    let issued = lock(&harness.world).tokens("workspace");
+    harness.tick_until(2_000, |world| world.tokens("workspace") > issued);
+    harness.wait_snapshot(|snapshot| snapshot.failure_code == Some(WORKER_UNAVAILABLE));
+    assert!(
+        !lock(&harness.world)
+            .opened
+            .iter()
+            .any(|dataset| { matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }) })
+    );
+    lock(&harness.world).document_removal = true;
+    harness.tick_until(2_000, |world| {
+        world
+            .opened
+            .iter()
+            .any(|dataset| matches!(dataset, CloudReplicaPrincipalV1::Workspace { .. }))
+    });
 }

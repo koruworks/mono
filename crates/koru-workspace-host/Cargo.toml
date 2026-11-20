@@ -299,6 +299,9 @@ windows = { version = "0.62.2", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 windows-sys = { version = "0.59", features = [
+    # Custom purge choices resolve TaskDialog dynamically, like the updater.
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Controls",
     "Win32_Foundation",
     "Win32_System_Registry",
     "Win32_UI_Input_KeyboardAndMouse",

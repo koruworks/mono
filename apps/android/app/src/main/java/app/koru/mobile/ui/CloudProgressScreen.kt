@@ -47,6 +47,7 @@ import java.text.NumberFormat
 @Composable
 fun CloudProgressScreen(
     profileName: String,
+    pendingDocumentRemovals: Int = 0,
     state: CloudProgressScreenState,
     onToggle: (WorkspaceId) -> Unit,
     onBack: () -> Unit,
@@ -56,6 +57,9 @@ fun CloudProgressScreen(
             title = {
                 Column {
                     Text(stringResource(R.string.cloud_progress_row), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (pendingDocumentRemovals > 0) {
+                        Text(stringResource(R.string.document_delete_progress, pendingDocumentRemovals), style = MaterialTheme.typography.bodySmall)
+                    }
                     if (profileName.isNotBlank()) {
                         Text(
                             profileName,

@@ -33,6 +33,8 @@ class DocumentEdits(
     private val mutableDrafts = MutableStateFlow<Map<BlockEditKey, BlockDraft>>(emptyMap())
     val drafts = mutableDrafts.asStateFlow()
     private val writers = mutableSetOf<BlockEditKey>()
+    private val writerJobs = mutableMapOf<BlockEditKey, Job>()
+    private val frozen = mutableSetOf<DocumentId>()
     private val idleSaves = mutableMapOf<DocumentId, Job>()
     private val maximumSaves = mutableMapOf<DocumentId, Job>()
     private val ready = mutableSetOf<BlockEditKey>()
@@ -41,6 +43,7 @@ class DocumentEdits(
     private val blockedBy = mutableMapOf<BlockEditKey, BlockEditKey>()
 
     fun enter(key: BlockEditKey, block: Block, before: String, text: String, hasChildren: Boolean, createParagraph: Boolean): BlockId {
+        if (key.document in frozen) return block.id
         val lines = text.split('\n')
         require(lines.size > 1)
         var currentKey = key
@@ -61,6 +64,7 @@ class DocumentEdits(
     /** Enter stages the next row immediately; its writes wait for the split
      * that creates it. Repeated Enter can safely build a chain while JNI runs. */
     fun split(key: BlockEditKey, block: Block, before: String, text: String, at: Int, hasChildren: Boolean, createParagraph: Boolean): BlockId {
+        if (key.document in frozen) return block.id
         val rich = block.content.editableText()!!.copy(text = before)
         change(key, rich, text, createParagraph)
         val current = mutableDrafts.value[key] ?: BlockDraft(rich, text, createParagraph)
@@ -80,6 +84,7 @@ class DocumentEdits(
     }
 
     fun change(key: BlockEditKey, rich: RichText, text: String, createParagraph: Boolean = false) {
+        if (key.document in frozen) return
         val draft = mutableDrafts.value[key] ?: BlockDraft(rich, rich.text, createParagraph)
         if (draft.text == text) return
         put(key, draft.copy(text = text, saving = draft.error == null))
@@ -111,11 +116,13 @@ class DocumentEdits(
     /** Done, navigation and backgrounding spend pending work without waiting. */
     fun flush(document: DocumentId) {
         cancelTimers(document)
+        if (document in frozen) return
         mutableDrafts.value.filter { (key, draft) -> key.document == document && draft.error == null }
             .keys.forEach { key -> ready.add(key); save(key) }
     }
 
     fun retry(key: BlockEditKey) {
+        if (key.document in frozen) return
         val draft = mutableDrafts.value[key] ?: return
         put(key, draft.copy(error = null, saving = true))
         ready.add(key)
@@ -141,13 +148,13 @@ class DocumentEdits(
     private fun put(key: BlockEditKey, draft: BlockDraft) { mutableDrafts.value += key to draft }
 
     private fun save(key: BlockEditKey) {
-        if (key in blockedBy || key !in ready || !writers.add(key)) return
+        if (key.document in frozen || key in blockedBy || key !in ready || !writers.add(key)) return
         put(key, mutableDrafts.value.getValue(key).copy(saving = true))
-        scope.launch {
+        writerJobs[key] = scope.launch {
             try {
                 // Finish staging a multi-paragraph input before publishing any acknowledgement.
                 yield()
-                while (ready.remove(key)) {
+                while (key.document !in frozen && ready.remove(key)) {
                     val sending = mutableDrafts.value[key] ?: break
                     if (sending.split == null && !sending.createParagraph && sending.base.text == sending.text) {
                         mutableDrafts.value -= key
@@ -190,11 +197,63 @@ class DocumentEdits(
                 mutableDrafts.value[key]?.let { put(key, it.copy(error = failure.message ?: "edit_failed")) }
             } finally {
                 writers.remove(key)
+                writerJobs.remove(key)
                 // A newer draft may still be waiting for its batching deadline.
-                mutableDrafts.value[key]?.let { put(key, it.copy(saving = it.error == null)) }
+                mutableDrafts.value[key]?.let { put(key, it.copy(saving = it.error == null && key.document !in frozen)) }
                 if (mutableDrafts.value.keys.none { it.document == key.document }) cancelTimers(key.document)
             }
         }
+    }
+
+    /** Stop admitting writes, but join every JNI write already admitted. A
+     *  rejected frozen-Store write remains a draft and is staged into the local
+     *  purge snapshot by the caller. Enter children follow their parent split. */
+    suspend fun quiesce(document: DocumentId): List<DocumentCommand.EditBlockText> {
+        frozen.add(document)
+        cancelTimers(document)
+        while (true) {
+            val jobs = writerJobs.filterKeys { it.document == document }.values.toList()
+            if (jobs.isEmpty()) break
+            jobs.joinAll()
+        }
+        val pending = mutableDrafts.value.filterKeys { it.document == document }
+        val ordered = mutableListOf<BlockEditKey>()
+        fun add(key: BlockEditKey) {
+            if (key in ordered) return
+            blockedBy[key]?.takeIf { it in pending }?.let(::add)
+            ordered.add(key)
+        }
+        pending.keys.forEach(::add)
+        return ordered.map { key ->
+            val draft = pending.getValue(key)
+            DocumentCommand.EditBlockText(key.block, draft.base.text, draft.text, draft.createParagraph, draft.split)
+        }
+    }
+
+    /** Local permanent delete records coverage only after this device's typed
+     *  edits have committed. An edit error leaves both draft and source intact. */
+    suspend fun flushAndWait(document: DocumentId) {
+        check(document !in frozen) { "document_removed" }
+        flush(document)
+        while (true) {
+            val jobs = writerJobs.filterKeys { it.document == document }.values.toList()
+            if (jobs.isEmpty()) break
+            jobs.joinAll()
+        }
+        check(mutableDrafts.value.keys.none { it.document == document }) { "document_edits_pending" }
+    }
+
+    /** A locally requested delete failed before completion; retained drafts can
+     *  be retried normally. Remote purge handoffs never call this. */
+    fun resume(document: DocumentId) { frozen.remove(document) }
+
+    /** Only after the native retained snapshot durably owns the entire chain. */
+    fun transferred(document: DocumentId) {
+        check(writerJobs.keys.none { it.document == document })
+        val keys = mutableDrafts.value.keys.filter { it.document == document }.toSet()
+        keys.forEach { ready.remove(it); blockedBy.remove(it) }
+        mutableDrafts.value -= keys
+        mutableParagraphs.value -= keys
     }
 
     companion object {

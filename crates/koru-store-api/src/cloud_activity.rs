@@ -151,6 +151,12 @@ impl CloudActivity {
         }
     }
 
+    pub fn document_removal_progress(&mut self, dataset: Uuid, pending: u32, at: i64) {
+        self.dataset_mut(dataset, at)
+            .facts
+            .pending_document_removals = pending;
+    }
+
     /// The existing commit stream is a conservative invalidation, including
     /// imported changes. A quiet follow-up pass confirms the final inventory.
     pub fn documents_changed(&mut self, dataset: Uuid) {

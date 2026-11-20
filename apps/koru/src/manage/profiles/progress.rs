@@ -491,6 +491,17 @@ pub(super) fn row_detail(
     if !on_cloud(status) {
         return t(lang, TextKey::CloudTabSyncOff).to_owned();
     }
+    if let Some(pending) = status
+        .pass
+        .as_ref()
+        .map(|pass| pass.pending_document_removals)
+        .filter(|n| *n > 0)
+    {
+        return fill(
+            t(lang, TextKey::DocumentDeleteProgress),
+            &[&decimal(lang, pending.into())],
+        );
+    }
     // **A completed pass survives a missing permit only while connecting.**
     // Under an unavailable Profile every row says so, a completed one too:
     // *Synced* beneath *Koru Cloud unavailable* reads as a contradiction,

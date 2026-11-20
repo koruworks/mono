@@ -326,7 +326,11 @@ impl Transport for HostedProfiles {
                 route => panic!("unexpected selection route: {route}"),
             }
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 

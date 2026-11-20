@@ -19,6 +19,8 @@ public  final class Inventory extends
     workspaces_ = emptyProtobufList();
     documents_ = emptyProtobufList();
     errorCode_ = "";
+    documentRemovals_ = emptyProtobufList();
+    purgedDocumentIds_ = emptyProtobufList();
   }
   private int bitField0_;
   public static final int PROFILES_FIELD_NUMBER = 1;
@@ -485,6 +487,260 @@ public  final class Inventory extends
   private void clearHiddenRuns() {
 
     hiddenRuns_ = 0;
+  }
+
+  public static final int DOCUMENT_REMOVALS_FIELD_NUMBER = 9;
+  private com.google.protobuf.Internal.ProtobufList<app.koru.contract.api.v1.DocumentRemovalPrompt> documentRemovals_;
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  @java.lang.Override
+  public java.util.List<app.koru.contract.api.v1.DocumentRemovalPrompt> getDocumentRemovalsList() {
+    return documentRemovals_;
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  public java.util.List<? extends app.koru.contract.api.v1.DocumentRemovalPromptOrBuilder> 
+      getDocumentRemovalsOrBuilderList() {
+    return documentRemovals_;
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  @java.lang.Override
+  public int getDocumentRemovalsCount() {
+    return documentRemovals_.size();
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  @java.lang.Override
+  public app.koru.contract.api.v1.DocumentRemovalPrompt getDocumentRemovals(int index) {
+    return documentRemovals_.get(index);
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  public app.koru.contract.api.v1.DocumentRemovalPromptOrBuilder getDocumentRemovalsOrBuilder(
+      int index) {
+    return documentRemovals_.get(index);
+  }
+  private void ensureDocumentRemovalsIsMutable() {
+    com.google.protobuf.Internal.ProtobufList<app.koru.contract.api.v1.DocumentRemovalPrompt> tmp = documentRemovals_;
+    if (!tmp.isModifiable()) {
+      documentRemovals_ =
+          com.google.protobuf.GeneratedMessageLite.mutableCopy(tmp);
+     }
+  }
+
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setDocumentRemovals(
+      int index, app.koru.contract.api.v1.DocumentRemovalPrompt value) {
+    value.getClass();  // minimal bytecode null check
+    ensureDocumentRemovalsIsMutable();
+    documentRemovals_.set(index, value);
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void addDocumentRemovals(app.koru.contract.api.v1.DocumentRemovalPrompt value) {
+    value.getClass();  // minimal bytecode null check
+    ensureDocumentRemovalsIsMutable();
+    documentRemovals_.add(value);
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void addDocumentRemovals(
+      int index, app.koru.contract.api.v1.DocumentRemovalPrompt value) {
+    value.getClass();  // minimal bytecode null check
+    ensureDocumentRemovalsIsMutable();
+    documentRemovals_.add(index, value);
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  private void addAllDocumentRemovals(
+      java.lang.Iterable<? extends app.koru.contract.api.v1.DocumentRemovalPrompt> values) {
+    ensureDocumentRemovalsIsMutable();
+    com.google.protobuf.AbstractMessageLite.addAll(
+        values, documentRemovals_);
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  private void clearDocumentRemovals() {
+    documentRemovals_ = emptyProtobufList();
+  }
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  private void removeDocumentRemovals(int index) {
+    ensureDocumentRemovalsIsMutable();
+    documentRemovals_.remove(index);
+  }
+
+  public static final int PENDING_DOCUMENT_REMOVALS_FIELD_NUMBER = 10;
+  private int pendingDocumentRemovals_;
+  /**
+   * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+   * @return The pendingDocumentRemovals.
+   */
+  @java.lang.Override
+  public int getPendingDocumentRemovals() {
+    return pendingDocumentRemovals_;
+  }
+  /**
+   * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+   * @param value The pendingDocumentRemovals to set.
+   */
+  private void setPendingDocumentRemovals(int value) {
+    
+    pendingDocumentRemovals_ = value;
+  }
+  /**
+   * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+   */
+  private void clearPendingDocumentRemovals() {
+
+    pendingDocumentRemovals_ = 0;
+  }
+
+  public static final int PURGED_DOCUMENT_IDS_FIELD_NUMBER = 11;
+  private com.google.protobuf.Internal.ProtobufList<java.lang.String> purgedDocumentIds_;
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @return A list containing the purgedDocumentIds.
+   */
+  @java.lang.Override
+  public java.util.List<java.lang.String> getPurgedDocumentIdsList() {
+    return purgedDocumentIds_;
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @return The count of purgedDocumentIds.
+   */
+  @java.lang.Override
+  public int getPurgedDocumentIdsCount() {
+    return purgedDocumentIds_.size();
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param index The index of the element to return.
+   * @return The purgedDocumentIds at the given index.
+   */
+  @java.lang.Override
+  public java.lang.String getPurgedDocumentIds(int index) {
+    return purgedDocumentIds_.get(index);
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param index The index of the value to return.
+   * @return The bytes of the purgedDocumentIds at the given index.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString
+      getPurgedDocumentIdsBytes(int index) {
+    return com.google.protobuf.ByteString.copyFromUtf8(
+        purgedDocumentIds_.get(index));
+  }
+  private void ensurePurgedDocumentIdsIsMutable() {
+    com.google.protobuf.Internal.ProtobufList<java.lang.String> tmp =
+        purgedDocumentIds_;  if (!tmp.isModifiable()) {
+      purgedDocumentIds_ =
+          com.google.protobuf.GeneratedMessageLite.mutableCopy(tmp);
+     }
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param index The index to set the value at.
+   * @param value The purgedDocumentIds to set.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void setPurgedDocumentIds(
+      int index, java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    ensurePurgedDocumentIdsIsMutable();
+    purgedDocumentIds_.set(index, value);
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param value The purgedDocumentIds to add.
+   */
+  @java.lang.SuppressWarnings("ReturnValueIgnored")
+  private void addPurgedDocumentIds(
+      java.lang.String value) {
+    value.getClass();  // minimal bytecode null check
+    ensurePurgedDocumentIdsIsMutable();
+    purgedDocumentIds_.add(value);
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param values The purgedDocumentIds to add.
+   */
+  private void addAllPurgedDocumentIds(
+      java.lang.Iterable<java.lang.String> values) {
+    ensurePurgedDocumentIdsIsMutable();
+    com.google.protobuf.AbstractMessageLite.addAll(
+        values, purgedDocumentIds_);
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   */
+  private void clearPurgedDocumentIds() {
+    purgedDocumentIds_ = emptyProtobufList();
+  }
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param value The bytes of the purgedDocumentIds to add.
+   */
+  private void addPurgedDocumentIdsBytes(
+      com.google.protobuf.ByteString value) {
+    checkByteStringIsUtf8(value);
+    ensurePurgedDocumentIdsIsMutable();
+    purgedDocumentIds_.add(value.toStringUtf8());
   }
 
   public static app.koru.contract.api.v1.Inventory parseFrom(
@@ -1074,6 +1330,264 @@ public  final class Inventory extends
       return this;
     }
 
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    @java.lang.Override
+    public java.util.List<app.koru.contract.api.v1.DocumentRemovalPrompt> getDocumentRemovalsList() {
+      return java.util.Collections.unmodifiableList(
+          instance.getDocumentRemovalsList());
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    @java.lang.Override
+    public int getDocumentRemovalsCount() {
+      return instance.getDocumentRemovalsCount();
+    }/**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    @java.lang.Override
+    public app.koru.contract.api.v1.DocumentRemovalPrompt getDocumentRemovals(int index) {
+      return instance.getDocumentRemovals(index);
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder setDocumentRemovals(
+        int index, app.koru.contract.api.v1.DocumentRemovalPrompt value) {
+      copyOnWrite();
+      instance.setDocumentRemovals(index, value);
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder setDocumentRemovals(
+        int index, app.koru.contract.api.v1.DocumentRemovalPrompt.Builder builderForValue) {
+      copyOnWrite();
+      instance.setDocumentRemovals(index,
+          builderForValue.build());
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder addDocumentRemovals(app.koru.contract.api.v1.DocumentRemovalPrompt value) {
+      copyOnWrite();
+      instance.addDocumentRemovals(value);
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder addDocumentRemovals(
+        int index, app.koru.contract.api.v1.DocumentRemovalPrompt value) {
+      copyOnWrite();
+      instance.addDocumentRemovals(index, value);
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder addDocumentRemovals(
+        app.koru.contract.api.v1.DocumentRemovalPrompt.Builder builderForValue) {
+      copyOnWrite();
+      instance.addDocumentRemovals(builderForValue.build());
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder addDocumentRemovals(
+        int index, app.koru.contract.api.v1.DocumentRemovalPrompt.Builder builderForValue) {
+      copyOnWrite();
+      instance.addDocumentRemovals(index,
+          builderForValue.build());
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder addAllDocumentRemovals(
+        java.lang.Iterable<? extends app.koru.contract.api.v1.DocumentRemovalPrompt> values) {
+      copyOnWrite();
+      instance.addAllDocumentRemovals(values);
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder clearDocumentRemovals() {
+      copyOnWrite();
+      instance.clearDocumentRemovals();
+      return this;
+    }
+    /**
+     * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+     */
+    public Builder removeDocumentRemovals(int index) {
+      copyOnWrite();
+      instance.removeDocumentRemovals(index);
+      return this;
+    }
+
+    /**
+     * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+     * @return The pendingDocumentRemovals.
+     */
+    @java.lang.Override
+    public int getPendingDocumentRemovals() {
+      return instance.getPendingDocumentRemovals();
+    }
+    /**
+     * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+     * @param value The pendingDocumentRemovals to set.
+     * @return This builder for chaining.
+     */
+    public Builder setPendingDocumentRemovals(int value) {
+      copyOnWrite();
+      instance.setPendingDocumentRemovals(value);
+      return this;
+    }
+    /**
+     * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearPendingDocumentRemovals() {
+      copyOnWrite();
+      instance.clearPendingDocumentRemovals();
+      return this;
+    }
+
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @return A list containing the purgedDocumentIds.
+     */
+    @java.lang.Override
+    public java.util.List<java.lang.String>
+        getPurgedDocumentIdsList() {
+      return java.util.Collections.unmodifiableList(
+          instance.getPurgedDocumentIdsList());
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @return The count of purgedDocumentIds.
+     */
+    @java.lang.Override
+    public int getPurgedDocumentIdsCount() {
+      return instance.getPurgedDocumentIdsCount();
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @param index The index of the element to return.
+     * @return The purgedDocumentIds at the given index.
+     */
+    @java.lang.Override
+    public java.lang.String getPurgedDocumentIds(int index) {
+      return instance.getPurgedDocumentIds(index);
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @param index The index of the value to return.
+     * @return The bytes of the purgedDocumentIds at the given index.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString
+        getPurgedDocumentIdsBytes(int index) {
+      return instance.getPurgedDocumentIdsBytes(index);
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @param index The index to set the value at.
+     * @param value The purgedDocumentIds to set.
+     * @return This builder for chaining.
+     */
+    public Builder setPurgedDocumentIds(
+        int index, java.lang.String value) {
+      copyOnWrite();
+      instance.setPurgedDocumentIds(index, value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @param value The purgedDocumentIds to add.
+     * @return This builder for chaining.
+     */
+    public Builder addPurgedDocumentIds(
+        java.lang.String value) {
+      copyOnWrite();
+      instance.addPurgedDocumentIds(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @param values The purgedDocumentIds to add.
+     * @return This builder for chaining.
+     */
+    public Builder addAllPurgedDocumentIds(
+        java.lang.Iterable<java.lang.String> values) {
+      copyOnWrite();
+      instance.addAllPurgedDocumentIds(values);
+      return this;
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearPurgedDocumentIds() {
+      copyOnWrite();
+      instance.clearPurgedDocumentIds();
+      return this;
+    }
+    /**
+     * <pre>
+     * Close old editor identities even when no user decision is necessary.
+     * </pre>
+     *
+     * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+     * @param value The bytes of the purgedDocumentIds to add.
+     * @return This builder for chaining.
+     */
+    public Builder addPurgedDocumentIdsBytes(
+        com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.addPurgedDocumentIdsBytes(value);
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.Inventory)
   }
   @java.lang.Override
@@ -1102,10 +1616,15 @@ public  final class Inventory extends
             "failedWorkspaces_",
             "errorCode_",
             "hiddenRuns_",
+            "documentRemovals_",
+            app.koru.contract.api.v1.DocumentRemovalPrompt.class,
+            "pendingDocumentRemovals_",
+            "purgedDocumentIds_",
           };
           java.lang.String info =
-              "\u0000\b\u0000\u0001\u0001\b\b\u0000\u0003\u0000\u0001\u001b\u0002\u001b\u0003\u001b" +
-              "\u0004\u000b\u0005\u000b\u0006\u000b\u0007\u1208\u0000\b\u000b";
+              "\u0000\u000b\u0000\u0001\u0001\u000b\u000b\u0000\u0005\u0000\u0001\u001b\u0002\u001b" +
+              "\u0003\u001b\u0004\u000b\u0005\u000b\u0006\u000b\u0007\u1208\u0000\b\u000b\t\u001b" +
+              "\n\u000b\u000b\u021a";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

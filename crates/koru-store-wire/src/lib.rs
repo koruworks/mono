@@ -461,6 +461,16 @@ pub struct Created {
     pub id: DocumentId,
 }
 
+/// Local final-purge reconciliation. The expected VV fences another writer;
+/// kept names a content-first replacement whose durable coverage is checked.
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReleaseDocumentPurge {
+    pub document: DocumentId,
+    pub expected_version: Vec<u8>,
+    pub kept: Option<DocumentId>,
+}
+
 /// What `POST /v1/workspaces/{id}/documents/{document}/note` answers with.
 ///
 /// [`Created`] would lose the one fact the caller cannot otherwise learn:

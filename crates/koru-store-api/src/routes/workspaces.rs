@@ -1022,6 +1022,37 @@ pub async fn seed_document(
     Ok(response)
 }
 
+pub async fn freeze_document_purge(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path((workspace, document)): Path<(String, String)>,
+) -> ApiResult<Vec<u8>> {
+    caller.require(Scope::EditDocuments)?;
+    let workspace = WorkspaceId::parse(&workspace).ok_or_else(invalid_id)?;
+    let document = DocumentId::parse(&document).ok_or_else(invalid_id)?;
+    Ok(lock(&state)?.freeze_document_purge(workspace, document, now())?)
+}
+
+pub async fn release_document_purge(
+    State(state): State<Arc<AppState>>,
+    Extension(caller): Extension<Caller>,
+    Path(workspace): Path<String>,
+    Json(body): Json<koru_store_wire::ReleaseDocumentPurge>,
+) -> ApiResult<Json<bool>> {
+    caller.require(Scope::EditDocuments)?;
+    let workspace = WorkspaceId::parse(&workspace).ok_or_else(invalid_id)?;
+    let expected = loro::VersionVector::decode(&body.expected_version).map_err(|_| invalid_id())?;
+    let removed = lock(&state)?.release_document_purge(
+        workspace,
+        body.document,
+        &expected,
+        body.kept,
+        now(),
+    )?;
+    state.notify_replication();
+    Ok(Json(removed))
+}
+
 /// Version-fenced seeded creation with a domain-owned document identity.
 /// An older Store has no v2 route and therefore refuses before mutation.
 pub async fn seed_document_with_candidate(

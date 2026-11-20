@@ -404,19 +404,28 @@ fn check_map(
 }
 
 /// Roots of the Workspace system document (`koru_core::system`: `meta`,
-/// `definitions`, `tags`, `lists`, `pages`) and of an OCR reading document
+/// `definitions`, `tags`, `lists`, `dictionary`, `pages`) and of an OCR reading document
 /// (`koru_read::document::ROOT`). Spelled here because both crates keep them
 /// private; a renamed root there is caught by the helper-document tests.
-const SYSTEM_ROOTS: [&str; 5] = ["meta", "definitions", "tags", "lists", "pages"];
+const SYSTEM_ROOTS: [&str; 6] = [
+    "meta",
+    "definitions",
+    "tags",
+    "lists",
+    "dictionary",
+    "pages",
+];
 const SYSTEM_SCHEMA_KEY: &str = "system_schema_version";
+const SYSTEM_TIMEZONE_KEY: &str = "default_timezone";
 const READING_ROOT: &str = "readings";
 
 /// **A helper document uses no file of its own.** The Workspace system document
-/// holds tags, lists, definitions and page records; an OCR reading document
+/// holds tags, lists, definitions, dictionary words and page records (including
+/// permanent deletion events under `pages["purged"]`); an OCR reading document
 /// holds text keyed by the hash of the file it read, which names that file but
 /// is not a use of it. Both are recognized by their exact root shape only —
-/// every root a map, and the system document's `meta` holding nothing but its
-/// schema key — so anything else still goes to the page inspector and is
+/// every root a map, and the system document's `meta` holding its supported
+/// schema and optional timezone — so anything else still goes to the page inspector and is
 /// refused when unknown. Structure is budgeted like any other unit.
 fn helper_document(
     doc: &LoroDoc,
@@ -437,11 +446,51 @@ fn helper_document(
         && {
             let meta = doc.get_map("meta");
             let keys = meta.keys().collect::<Vec<_>>();
-            keys.len() == 1 && keys[0].as_str() == SYSTEM_SCHEMA_KEY
+            keys.iter().any(|key| key.as_str() == SYSTEM_SCHEMA_KEY)
+                && keys
+                    .iter()
+                    .all(|key| matches!(key.as_str(), SYSTEM_SCHEMA_KEY | SYSTEM_TIMEZONE_KEY))
         };
     if !reading && !system {
         return Ok(false);
     }
     structural_budget(doc, budget)?;
+    if system {
+        let meta = doc.get_map("meta");
+        if !matches!(
+            meta.get(SYSTEM_SCHEMA_KEY),
+            Some(ValueOrContainer::Value(LoroValue::I64(1)))
+        ) {
+            return Err(StrictReferenceError::Schema);
+        }
+        if let Some(value) = meta.get(SYSTEM_TIMEZONE_KEY) {
+            let ValueOrContainer::Value(LoroValue::String(zone)) = value else {
+                return Err(StrictReferenceError::Shape);
+            };
+            if koru_core::time::TimeZoneName::parse(&zone).is_none() {
+                return Err(StrictReferenceError::Shape);
+            }
+        }
+        // The dictionary writer stores a set per language. Unlike the UI's
+        // forgiving reader, accounting must not certify an unknown shape.
+        if roots.contains_key("dictionary") {
+            let dictionary = doc.get_map("dictionary");
+            for language in dictionary.keys() {
+                let Some(ValueOrContainer::Container(Container::Map(words))) =
+                    dictionary.get(&language)
+                else {
+                    return Err(StrictReferenceError::Shape);
+                };
+                for word in words.keys() {
+                    if !matches!(
+                        words.get(&word),
+                        Some(ValueOrContainer::Value(LoroValue::Bool(true)))
+                    ) {
+                        return Err(StrictReferenceError::Shape);
+                    }
+                }
+            }
+        }
+    }
     Ok(true)
 }

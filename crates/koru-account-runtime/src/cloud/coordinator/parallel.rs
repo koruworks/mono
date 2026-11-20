@@ -99,7 +99,19 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 || result
                     .as_ref()
                     .is_ok_and(|report| report.error_code == Some(CREDENTIAL_EXPIRED));
-            if expired && lane.attempt == 0 {
+            let removed = lane.current.as_ref().is_some_and(|session| {
+                session.scoped.permit.document_removal
+                    && result
+                        .as_ref()
+                        .is_ok_and(|report| report.error_code == Some(DOCUMENT_REMOVED))
+            });
+            if removed {
+                self.removal_refresh.insert(key);
+            }
+            // The next admitted capable stream reads the removal list before
+            // enumerating documents. Reuse renewal's fence/authority checks;
+            // one immediate retry keeps a racing remover from monopolizing a lane.
+            if (expired || removed) && lane.attempt == 0 {
                 lane.attempt = 1;
             } else {
                 self.finish_session(lane, result, failure, &mut hinted);
@@ -167,6 +179,9 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         let permit = &session.scoped.permit;
         match result {
             Ok(report) => {
+                if report.error_code.is_none() {
+                    self.removal_refresh.remove(&session.owner);
+                }
                 // A lane that answered with a code says something; a settled
                 // one is the ordinary end of every pass and goes to debug.
                 if report.error_code.is_some() {
@@ -176,7 +191,8 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                     tracing::debug!(owner = ?session.owner, dataset = ?permit.dataset(),
                         stage = ?report.stage, "cloud session: lane answered");
                 }
-                *hinted |= report.remote_hint;
+                *hinted |= report.remote_hint
+                    || (permit.document_removal && report.error_code == Some(DOCUMENT_REMOVED));
                 if let Some(record) = self.records.get_mut(&permit.permit_id) {
                     record.stage = report.stage;
                     record.error_code = report.error_code;

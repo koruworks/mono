@@ -511,4 +511,15 @@
     <string name="cloud_upload_physical_bytes">Le stockage Cloud a atteint une limite physique de sécurité. Cet envoi est en attente.</string>
     <string name="cloud_upload_staging_bytes">Le stockage temporaire Cloud est plein. Cet envoi est en attente.</string>
     <string name="cloud_upload_removal_capacity">La capacité de nettoyage Cloud est temporairement indisponible. Cette opération est en attente.</string>
+    <!-- Permanent document removal and changed-copy choices. -->
+    <string name="document_deleted_changed">« %1$s » a été supprimé sur un autre appareil. Vous l’avez modifié ici depuis. Voulez-vous conserver votre version ou la supprimer ?</string>
+    <string name="document_deleted_unknown">« %1$s » a été supprimé. Koru ne peut pas déterminer si cette copie contient des modifications. Voulez-vous conserver cette version ou la supprimer ?</string>
+    <string name="document_deleted_title">Document supprimé</string>
+    <string name="document_deleted_keep">Conserver ma version</string>
+    <string name="document_deleted_delete">Supprimer</string>
+    <string name="document_delete_pending">Suppression…</string>
+    <string name="document_delete_progress">Suppression de %1$d dans Koru Cloud…</string>
+    <string name="document_delete_forever_title">Supprimer définitivement ?</string>
+    <string name="document_delete_forever_body">« %1$s » sera supprimé définitivement. Cette action est irréversible.</string>
+    <string name="document_delete_forever_confirm">Supprimer définitivement</string>
 </resources>

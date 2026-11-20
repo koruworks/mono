@@ -46,6 +46,7 @@ async fn local_commit_reconciles_again_on_the_same_stream_then_fence_stops_it() 
             reader,
             writer,
             cloud_sync::Session {
+                document_removal: false,
                 accepted,
                 scope: f.scope,
                 automatic_limit: transfer::MAX_PAYLOAD,

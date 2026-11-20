@@ -635,6 +635,10 @@ impl Stream {
                     Ok(Admission::AwaitDecision)
                 }
             }
+            Control::CloudRemoveDocument { .. }
+            | Control::CloudRemovalsRead { .. }
+            | Control::CloudRemovals { .. }
+            | Control::CloudDocumentRemoved { .. } => Err(Error::Invalid),
             Control::TransferDecision {
                 policy_generation,
                 unit,

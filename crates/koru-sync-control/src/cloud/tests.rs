@@ -149,6 +149,7 @@ fn descriptor_v2(placement: Option<CloudId>) -> CloudWorkspaceDescriptorV2 {
 
 fn permit_v2(scope: CloudPermitScopeV2) -> CloudPermitV2 {
     CloudPermitV2 {
+        document_removal: false,
         version: CLOUD_PERMIT_VERSION_V2,
         permit_id: Uuid::new_v4(),
         account_id: v4(5),
@@ -162,6 +163,25 @@ fn permit_v2(scope: CloudPermitScopeV2) -> CloudPermitV2 {
 
 fn profile_id(id: CloudId) -> koru_store_core::ProfileId {
     koru_store_core::ProfileId::from_uuid(uuid::Uuid::from_bytes(*id.as_bytes()))
+}
+
+#[test]
+fn installed_permit_removal_capability_defaults_off_and_round_trips_when_issued() {
+    let mut permit = permit_v2(CloudPermitScopeV2::Workspace {
+        descriptor: descriptor_v2(None),
+    });
+    let old_json = serde_json::to_value(&permit).unwrap();
+    assert!(old_json.get("document_removal").is_none());
+    assert!(
+        !serde_json::from_value::<CloudPermitV2>(old_json)
+            .unwrap()
+            .document_removal
+    );
+    permit.document_removal = true;
+    let decoded: CloudPermitV2 =
+        serde_json::from_value(serde_json::to_value(&permit).unwrap()).unwrap();
+    assert!(decoded.document_removal);
+    decoded.validate().unwrap();
 }
 
 #[test]

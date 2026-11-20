@@ -796,6 +796,16 @@ pub trait View {
         false
     }
 
+    /// Close every view of a final-purged source before its kept copy is made.
+    /// Source content/revisions stay with the workspace until durable release.
+    fn quiesce_purged_document(
+        &mut self,
+        _document: koru_core::DocumentId,
+        _root: Option<NodeId>,
+    ) -> bool {
+        false
+    }
+
     fn pinned_search_rows(
         &self,
     ) -> Vec<(String, koru_core::DocumentId, koru_core::WorkspaceId, bool)> {

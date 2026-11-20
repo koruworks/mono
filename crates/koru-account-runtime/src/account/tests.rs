@@ -35,6 +35,7 @@ impl Transport for InspectionResponse {
     fn send(&self, request: HttpRequest) -> Result<HttpResponse, TransportError> {
         assert_eq!(request.path_and_query, "/v1/oauth/native/session/inspect");
         Ok(HttpResponse {
+            document_removal: false,
             status: self.0,
             body: self.1.clone(),
         })
@@ -1182,6 +1183,7 @@ fn device_challenge_response(request: &HttpRequest) -> HttpResponse {
         nonce: [1; 32],
     };
     HttpResponse {
+        document_removal: false,
         status: 200,
         body: serde_json::to_vec(&koru_account_wire::DeviceOwnershipChallengeResponseV1 {
             version: Version1,
@@ -1211,6 +1213,7 @@ fn swapped_device_challenge_is_refused_before_signing_or_exchange() {
             response.challenge = base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .encode(serde_json::to_vec(&challenge).unwrap());
             Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&response).unwrap(),
             })
@@ -1327,7 +1330,11 @@ impl Transport for NativeFlowTransport {
         } else {
             return Err(TransportError::InvalidRequest);
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 
@@ -1447,7 +1454,11 @@ impl Transport for CollisionFlowTransport {
         } else {
             return Err(TransportError::InvalidRequest);
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 
@@ -1460,6 +1471,7 @@ impl Transport for NoCallbackTransport {
         let _: GoogleNativeStartRequestV1 =
             serde_json::from_slice(&request.body).map_err(|_| TransportError::InvalidRequest)?;
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(&AuthStartResponseV1 {
                 version: Version1,
@@ -1483,6 +1495,7 @@ impl Transport for RecordingRefreshTransport {
             .unwrap_or_else(|error| error.into_inner())
             .push(request.body);
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(&seeded_tokens("rotated-after-vault-retry")).unwrap(),
         })
@@ -1541,7 +1554,11 @@ impl Transport for StaleRegistrationTransport {
             }
             route => panic!("unexpected stale registration route: {route:?}"),
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 
@@ -1575,6 +1592,7 @@ impl Transport for RotationRegistrationTransport {
                 self.devices.fetch_add(1, Ordering::AcqRel);
                 if self.devices_fail.load(Ordering::Acquire) {
                     return Ok(HttpResponse {
+                        document_removal: false,
                         status: 503,
                         body: Vec::new(),
                     });
@@ -1622,7 +1640,11 @@ impl Transport for RotationRegistrationTransport {
             }
             route => panic!("unexpected rotation route: {route:?}"),
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 
@@ -1897,6 +1919,7 @@ impl Transport for AckLossExchangeTransport {
                 );
             });
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&AuthStartResponseV1 {
                     version: Version1,
@@ -1917,6 +1940,7 @@ impl Transport for AckLossExchangeTransport {
                 return Err(TransportError::Unavailable);
             }
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&NativeExchangeResponseV1 {
                     version: Version1,
@@ -2629,7 +2653,11 @@ impl Transport for SessionIdentityTransport {
         } else {
             return Err(TransportError::InvalidRequest);
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 
@@ -2807,6 +2835,7 @@ struct RevokedRefreshTransport;
 impl Transport for RevokedRefreshTransport {
     fn send(&self, _: HttpRequest) -> Result<HttpResponse, TransportError> {
         Ok(HttpResponse {
+            document_removal: false,
             status: 401,
             body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
                 retry_after_millis: None,
@@ -2936,6 +2965,7 @@ struct PreconditionErrorTransport(&'static str);
 impl Transport for PreconditionErrorTransport {
     fn send(&self, _: HttpRequest) -> Result<HttpResponse, TransportError> {
         Ok(HttpResponse {
+            document_removal: false,
             status: 428,
             body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
                 retry_after_millis: None,
@@ -2993,7 +3023,11 @@ impl Transport for ReconcileTransport {
         } else {
             return Err(TransportError::InvalidRequest);
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 
@@ -3090,6 +3124,7 @@ impl Transport for DeleteReplayTransport {
             cancel.store(true, Ordering::Release);
         }
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(&koru_account_wire::ProfileLifecycleResponseV1 {
                 version: Version1,

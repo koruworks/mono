@@ -16006,3 +16006,38 @@ fn a_trash_tab_in_an_unfocused_group_takes_the_new_bin() {
         "the Trash tab already holds the new bin"
     );
 }
+
+#[test]
+fn purge_quiescence_closes_pinned_and_unfocused_split_editors_in_every_window() {
+    use crate::mainview::panes::{PanePath, SplitDir};
+    use koru_workspace_host::View;
+    let document = koru_core::DocumentId::new();
+    let other = koru_core::DocumentId::new();
+    let (mut first, _) = on_document();
+    let (mut split, _) = on_document();
+    let (mut second, _) = on_document();
+    for view in [&mut first, &mut split, &mut second] {
+        view.tabs_mut().active_mut().document = Some(document);
+    }
+    let pinned = first.tabs().active();
+    assert!(first.pin_tab(pinned));
+    let split_index = split.tabs().active();
+    let tab = split.tabs_mut().take_no_floor(split_index).unwrap();
+    first.panes.split(&PanePath::root(), SplitDir::Right, tab);
+    // Another document in the other window must survive.
+    let (mut survivor, _) = on_document();
+    survivor.tabs_mut().active_mut().document = Some(other);
+    let survivor_index = survivor.tabs().active();
+    let tab = survivor.tabs_mut().take_no_floor(survivor_index).unwrap();
+    second.tabs_mut().insert_inactive(tab);
+    for view in [&mut first, &mut second] {
+        assert!(view.quiesce_purged_document(document, None));
+        assert!(
+            view.panes
+                .iter_groups()
+                .all(|(_, group)| { group.iter_tabs().all(|tab| tab.edits() != Some(document)) })
+        );
+        assert!(!view.quiesce_purged_document(document, None));
+    }
+    assert!(second.shown_documents().contains(&other));
+}

@@ -13,6 +13,7 @@ type TestClient = Client<'static, ReadHalf<DuplexStream>, WriteHalf<DuplexStream
 
 mod claims;
 mod decision;
+mod removal;
 
 fn config(limit: usize, budget: MemoryBudget) -> Config {
     let profile_id = CloudId::from_bytes(koru_store_core::ProfileId::new().as_uuid().into_bytes());

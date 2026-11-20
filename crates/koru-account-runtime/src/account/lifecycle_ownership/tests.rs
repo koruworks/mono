@@ -96,6 +96,7 @@ impl Transport for Hosted {
             self.deletes.lock().unwrap().push(request.operation_id);
             if self.fresh_auth.load(Ordering::SeqCst) {
                 return Ok(HttpResponse {
+                    document_removal: false,
                     status: 428,
                     body: serde_json::to_vec(&koru_account_wire::DeveloperErrorV1 {
                         retry_after_millis: None,
@@ -112,7 +113,11 @@ impl Transport for Hosted {
         } else {
             panic!("unexpected lifecycle route: {}", request.path_and_query);
         };
-        Ok(HttpResponse { status: 200, body })
+        Ok(HttpResponse {
+            document_removal: false,
+            status: 200,
+            body,
+        })
     }
 }
 fn service(

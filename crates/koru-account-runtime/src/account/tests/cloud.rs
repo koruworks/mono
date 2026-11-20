@@ -13,6 +13,7 @@ impl Transport for Billing {
                 .any(|(name, value)| name == "authorization" && value == "Bearer memory-only")
         );
         Ok(HttpResponse {
+            document_removal: false,
             status: if self.0 { 200 } else { 503 },
             body: if self.0 {
                 br#"{"subscriptions":[{"status":"past_due"}],"next_cursor":null}"#.to_vec()
@@ -102,6 +103,7 @@ impl Transport for StoragePlan {
         )))
         .unwrap();
         Ok(HttpResponse {
+            document_removal: false,
             status: if self.0 { 200 } else { 503 },
             body: if self.0 {
                 serde_json::to_vec(&fixtures["fixtures"][0]["response"]).unwrap()
@@ -186,6 +188,7 @@ impl Transport for InventoryRead {
                 .any(|(name, value)| name == "authorization" && value == "Bearer memory-only")
         );
         Ok(HttpResponse {
+            document_removal: false,
             status: self.status,
             body: self.response.clone(),
         })

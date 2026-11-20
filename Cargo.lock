@@ -6059,6 +6059,7 @@ dependencies = [
  "koru-env",
  "koru-tagname",
  "loro",
+ "serde",
  "serde_json",
  "unicode-normalization",
  "uuid",
@@ -8037,6 +8038,7 @@ dependencies = [
  "koru-core",
  "koru-docstore",
  "koru-env",
+ "koru-replication",
  "koru-store-core",
  "loro",
  "loro-protocol",
@@ -8044,6 +8046,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tracing",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

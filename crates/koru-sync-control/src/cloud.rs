@@ -294,6 +294,10 @@ pub enum CloudPermitScopeV2 {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CloudPermitV2 {
+    /// Issued HTTP route capability, transported only on the local host link.
+    /// Old issuers and old stored/install messages default to no support.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub document_removal: bool,
     pub version: u32,
     pub permit_id: Uuid,
     pub account_id: CloudId,
@@ -310,6 +314,9 @@ pub struct CloudPermitV2 {
 
 impl CloudPermitV2 {
     pub fn validate(&self) -> Result<(), HostCloudError> {
+        if self.document_removal && !matches!(self.scope, CloudPermitScopeV2::Workspace { .. }) {
+            return Err(HostCloudError::PermitScope);
+        }
         if self.version != CLOUD_PERMIT_VERSION_V2 {
             return Err(HostCloudError::PermitVersion);
         }
@@ -472,6 +479,7 @@ impl CloudPermitV2 {
             }
         };
         let converted = Self {
+            document_removal: false,
             version: CLOUD_PERMIT_VERSION_V2,
             permit_id: permit.permit_id,
             account_id: permit.account_id,

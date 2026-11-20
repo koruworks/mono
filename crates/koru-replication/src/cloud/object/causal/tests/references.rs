@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 use super::*;
+use loro::LoroValue;
 use loro::{LoroMap, TreeID, TreeParentId};
 
 fn node(doc: &LoroDoc, parent: TreeParentId, kind: &str, blob: Option<&str>) -> (TreeID, LoroMap) {
@@ -337,5 +338,145 @@ fn helper_documents_use_no_files_and_near_misses_stay_refused() {
     assert_eq!(
         restored(&mixed).strict_blob_references().unwrap_err(),
         StrictReferenceError::Unsupported
+    );
+}
+
+fn system_with_dictionary_and_timezone() -> LoroDoc {
+    let mut system = koru_core::system::SystemDoc::create().unwrap();
+    system.add_dictionary_word("en-US", "Koru").unwrap();
+    system.add_dictionary_word("ja", "仕事場").unwrap();
+    system
+        .set_default_timezone(Some(
+            &koru_core::time::TimeZoneName::parse("America/New_York").unwrap(),
+        ))
+        .unwrap();
+    let doc = LoroDoc::new();
+    doc.import(&system.export_snapshot().unwrap()).unwrap();
+    doc
+}
+
+#[test]
+fn emitted_system_dictionary_timezone_and_purge_events_use_no_files() {
+    let doc = system_with_dictionary_and_timezone();
+    let deleted = uuid::Uuid::new_v4().to_string();
+    let event_id = uuid::Uuid::new_v4().to_string();
+    let events = doc
+        .get_map("pages")
+        .ensure_mergeable_map("purged")
+        .unwrap()
+        .ensure_mergeable_map(&deleted)
+        .unwrap();
+    let event = events.ensure_mergeable_map(&event_id).unwrap();
+    event.insert("event_id", event_id.as_str()).unwrap();
+    event.insert("document_id", deleted.as_str()).unwrap();
+    event.insert("root_id", deleted.as_str()).unwrap();
+    event.insert("by", "Desktop").unwrap();
+    let content = restored(&doc);
+    let references = content.strict_blob_references().unwrap();
+    assert!(references.hashes().is_empty());
+    assert_eq!(references.schema_version(), 0);
+    assert_eq!(references.proof(), content.proof());
+
+    // Clearing the timezone is a deleted key, not a null sentinel. Dictionary
+    // removals also leave their language map empty; both are ordinary shapes.
+    let mut system =
+        koru_core::system::SystemDoc::from_snapshot(&doc.export(ExportMode::snapshot()).unwrap())
+            .unwrap();
+    system.set_default_timezone(None).unwrap();
+    system.remove_dictionary_word("en-US", "Koru").unwrap();
+    system.remove_dictionary_word("ja", "仕事場").unwrap();
+    let cleared = LoroDoc::new();
+    cleared.import(&system.export_snapshot().unwrap()).unwrap();
+    assert!(
+        restored(&cleared)
+            .strict_blob_references()
+            .unwrap()
+            .hashes()
+            .is_empty()
+    );
+}
+
+#[test]
+fn system_helper_rejects_new_schemas_malformed_timezone_and_dictionary() {
+    for version in [0, 2] {
+        let doc = system_with_dictionary_and_timezone();
+        doc.get_map("meta")
+            .insert("system_schema_version", version)
+            .unwrap();
+        assert_eq!(
+            restored(&doc).strict_blob_references().unwrap_err(),
+            StrictReferenceError::Schema
+        );
+    }
+    let doc = system_with_dictionary_and_timezone();
+    doc.get_map("meta")
+        .insert("system_schema_version", "1")
+        .unwrap();
+    assert_eq!(
+        restored(&doc).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Schema
+    );
+
+    for zone in [LoroValue::I64(1), LoroValue::Null, "invalid zone".into()] {
+        let doc = system_with_dictionary_and_timezone();
+        doc.get_map("meta")
+            .insert("default_timezone", zone)
+            .unwrap();
+        assert_eq!(
+            restored(&doc).strict_blob_references().unwrap_err(),
+            StrictReferenceError::Shape
+        );
+    }
+    let doc = system_with_dictionary_and_timezone();
+    doc.get_map("dictionary")
+        .insert("en-US", "not a word set")
+        .unwrap();
+    assert_eq!(
+        restored(&doc).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Shape
+    );
+    for value in [LoroValue::Bool(false), "b3:unrecognized-word-value".into()] {
+        let doc = system_with_dictionary_and_timezone();
+        doc.get_map("dictionary")
+            .ensure_mergeable_map("en-US")
+            .unwrap()
+            .insert("Koru", value)
+            .unwrap();
+        assert_eq!(
+            restored(&doc).strict_blob_references().unwrap_err(),
+            StrictReferenceError::Shape
+        );
+    }
+}
+
+#[test]
+fn extended_system_helper_keeps_unknown_roots_fields_and_budget_failures_closed() {
+    let doc = system_with_dictionary_and_timezone();
+    doc.get_map("future-files")
+        .insert("blob", "b3:unknown")
+        .unwrap();
+    assert_eq!(
+        restored(&doc).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Unsupported
+    );
+
+    let doc = system_with_dictionary_and_timezone();
+    doc.get_map("meta")
+        .insert("future_blob", "b3:unknown")
+        .unwrap();
+    assert_eq!(
+        restored(&doc).strict_blob_references().unwrap_err(),
+        StrictReferenceError::Unsupported
+    );
+
+    let doc = system_with_dictionary_and_timezone();
+    assert_eq!(
+        restored(&doc)
+            .strict_blob_references_with_budget(ReferenceBudget {
+                fields: 1,
+                ..Default::default()
+            })
+            .unwrap_err(),
+        StrictReferenceError::Budget
     );
 }

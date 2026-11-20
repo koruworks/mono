@@ -151,6 +151,7 @@ impl From<CloudStage> for Stage {
 pub fn static_code(code: &str) -> &'static str {
     const KNOWN: &[&str] = &[
         super::CREDENTIAL_EXPIRED,
+        super::DOCUMENT_REMOVED,
         super::SESSION_EXPIRED,
         "sync_transfer_invalid",
         "sync_peer_closed",

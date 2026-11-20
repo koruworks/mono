@@ -18,6 +18,7 @@ public  final class DocumentMutation extends
     documentId_ = "";
     action_ = "";
     title_ = "";
+    expectedVersion_ = com.google.protobuf.ByteString.EMPTY;
   }
   private int bitField0_;
   public static final int HOST_FIELD_NUMBER = 1;
@@ -283,6 +284,45 @@ public  final class DocumentMutation extends
   private void clearTextEdit() {
     textEdit_ = null;
     bitField0_ = (bitField0_ & ~0x00000002);
+  }
+
+  public static final int EXPECTED_VERSION_FIELD_NUMBER = 6;
+  private com.google.protobuf.ByteString expectedVersion_;
+  /**
+   * <pre>
+   * Exact frozen local version being answered by purge_keep/purge_delete.
+   * </pre>
+   *
+   * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+   * @return The expectedVersion.
+   */
+  @java.lang.Override
+  public com.google.protobuf.ByteString getExpectedVersion() {
+    return expectedVersion_;
+  }
+  /**
+   * <pre>
+   * Exact frozen local version being answered by purge_keep/purge_delete.
+   * </pre>
+   *
+   * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+   * @param value The expectedVersion to set.
+   */
+  private void setExpectedVersion(com.google.protobuf.ByteString value) {
+    java.lang.Class<?> valueClass = value.getClass();
+  
+    expectedVersion_ = value;
+  }
+  /**
+   * <pre>
+   * Exact frozen local version being answered by purge_keep/purge_delete.
+   * </pre>
+   *
+   * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+   */
+  private void clearExpectedVersion() {
+
+    expectedVersion_ = getDefaultInstance().getExpectedVersion();
   }
 
   public static app.koru.contract.api.v1.DocumentMutation parseFrom(
@@ -653,6 +693,46 @@ public  final class DocumentMutation extends
       return this;
     }
 
+    /**
+     * <pre>
+     * Exact frozen local version being answered by purge_keep/purge_delete.
+     * </pre>
+     *
+     * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+     * @return The expectedVersion.
+     */
+    @java.lang.Override
+    public com.google.protobuf.ByteString getExpectedVersion() {
+      return instance.getExpectedVersion();
+    }
+    /**
+     * <pre>
+     * Exact frozen local version being answered by purge_keep/purge_delete.
+     * </pre>
+     *
+     * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+     * @param value The expectedVersion to set.
+     * @return This builder for chaining.
+     */
+    public Builder setExpectedVersion(com.google.protobuf.ByteString value) {
+      copyOnWrite();
+      instance.setExpectedVersion(value);
+      return this;
+    }
+    /**
+     * <pre>
+     * Exact frozen local version being answered by purge_keep/purge_delete.
+     * </pre>
+     *
+     * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+     * @return This builder for chaining.
+     */
+    public Builder clearExpectedVersion() {
+      copyOnWrite();
+      instance.clearExpectedVersion();
+      return this;
+    }
+
     // @@protoc_insertion_point(builder_scope:koru.api.v1.DocumentMutation)
   }
   @java.lang.Override
@@ -675,10 +755,11 @@ public  final class DocumentMutation extends
             "action_",
             "title_",
             "textEdit_",
+            "expectedVersion_",
           };
           java.lang.String info =
-              "\u0000\u0005\u0000\u0001\u0001\u0005\u0005\u0000\u0000\u0000\u0001\u1009\u0000\u0002" +
-              "\u0208\u0003\u0208\u0004\u0208\u0005\u1009\u0001";
+              "\u0000\u0006\u0000\u0001\u0001\u0006\u0006\u0000\u0000\u0000\u0001\u1009\u0000\u0002" +
+              "\u0208\u0003\u0208\u0004\u0208\u0005\u1009\u0001\u0006\n";
           return newMessageInfo(DEFAULT_INSTANCE, info, objects);
       }
       case GET_DEFAULT_INSTANCE: {

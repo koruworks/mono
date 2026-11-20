@@ -1147,6 +1147,22 @@ impl WorkspaceDoc {
         Ok(true)
     }
 
+    /// A separately identified copy for Keep after a final document purge.
+    /// Source history and attachment references survive so the seeded Store
+    /// receipt can prove it covers the source vector. The original is never
+    /// restamped or made live again; only the independent copy changes id.
+    pub fn fork_as_document(&self, id: DocumentId) -> Result<Self> {
+        if id.as_uuid().get_version_num() != 4 || self.own_document_id() == Some(id) {
+            return Err(StoreError::Malformed("kept_document_identity"));
+        }
+        let copy = Self::from_snapshot(&self.export_snapshot()?)?;
+        copy.doc
+            .get_map(C_META)
+            .insert(K_DOCUMENT, id.to_storage())?;
+        copy.doc.commit();
+        Ok(copy)
+    }
+
     /// Whether this build may write to the document it just opened.
     pub fn compatibility(&self) -> Compatibility {
         Compatibility::of(self.schema_version())

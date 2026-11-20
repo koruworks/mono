@@ -343,7 +343,193 @@ public object InventoryKt {
     public fun clearHiddenRuns() {
       _builder.clearHiddenRuns()
     }
-  }
+
+    /**
+     * An uninstantiable, behaviorless type to represent the field in
+     * generics.
+     */
+    @kotlin.OptIn(com.google.protobuf.kotlin.OnlyForUseByGeneratedProtoCode::class)
+    public class DocumentRemovalsProxy private constructor() : com.google.protobuf.kotlin.DslProxy()
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     */
+     public val documentRemovals: com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>
+      @kotlin.jvm.JvmSynthetic
+  get() = com.google.protobuf.kotlin.DslList(
+        _builder.documentRemovalsList
+      )
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     * @param value The documentRemovals to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("addDocumentRemovals")
+    public fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>.add(value: app.koru.contract.api.v1.DocumentRemovalPrompt) {
+      _builder.addDocumentRemovals(value)
+    }
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     * @param value The documentRemovals to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("plusAssignDocumentRemovals")
+    @Suppress("NOTHING_TO_INLINE")
+    public inline operator fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>.plusAssign(value: app.koru.contract.api.v1.DocumentRemovalPrompt) {
+      add(value)
+    }
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     * @param values The documentRemovals to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("addAllDocumentRemovals")
+    public fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>.addAll(values: kotlin.collections.Iterable<app.koru.contract.api.v1.DocumentRemovalPrompt>) {
+      _builder.addAllDocumentRemovals(values)
+    }
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     * @param values The documentRemovals to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("plusAssignAllDocumentRemovals")
+    @Suppress("NOTHING_TO_INLINE")
+    public inline operator fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>.plusAssign(values: kotlin.collections.Iterable<app.koru.contract.api.v1.DocumentRemovalPrompt>) {
+      addAll(values)
+    }
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     * @param index The index to set the value at.
+     * @param value The documentRemovals to set.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("setDocumentRemovals")
+    public operator fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>.set(index: kotlin.Int, value: app.koru.contract.api.v1.DocumentRemovalPrompt) {
+      _builder.setDocumentRemovals(index, value)
+    }
+    /**
+     * `repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];`
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("clearDocumentRemovals")
+    public fun com.google.protobuf.kotlin.DslList<app.koru.contract.api.v1.DocumentRemovalPrompt, DocumentRemovalsProxy>.clear() {
+      _builder.clearDocumentRemovals()
+    }
+
+    /**
+     * `uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];`
+     */
+    public var pendingDocumentRemovals: kotlin.Int
+      @kotlin.jvm.JvmName("getPendingDocumentRemovals")
+        get() = _builder.pendingDocumentRemovals
+      @kotlin.jvm.JvmName("setPendingDocumentRemovals")
+        set(value) {
+        _builder.pendingDocumentRemovals = value
+      }
+    /**
+     * `uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];`
+     */
+    public fun clearPendingDocumentRemovals() {
+      _builder.clearPendingDocumentRemovals()
+    }
+
+    /**
+     * An uninstantiable, behaviorless type to represent the field in
+     * generics.
+     */
+    @kotlin.OptIn(com.google.protobuf.kotlin.OnlyForUseByGeneratedProtoCode::class)
+    public class PurgedDocumentIdsProxy private constructor() : com.google.protobuf.kotlin.DslProxy()
+    /**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     * @return A list containing the purgedDocumentIds.
+     */
+    public val purgedDocumentIds: com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>
+    @kotlin.OptIn(com.google.protobuf.kotlin.OnlyForUseByGeneratedProtoCode::class)
+      get() = com.google.protobuf.kotlin.DslList(
+        _builder.purgedDocumentIdsList
+      )
+    /**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     * @param value The purgedDocumentIds to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("addPurgedDocumentIds")
+    public fun com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>.add(value: kotlin.String) {
+      _builder.addPurgedDocumentIds(value)
+    }
+    /**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     * @param value The purgedDocumentIds to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("plusAssignPurgedDocumentIds")
+    @Suppress("NOTHING_TO_INLINE")
+    public inline operator fun com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>.plusAssign(value: kotlin.String) {
+      add(value)
+    }
+    /**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     * @param values The purgedDocumentIds to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("addAllPurgedDocumentIds")
+    public fun com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>.addAll(values: kotlin.collections.Iterable<kotlin.String>) {
+      _builder.addAllPurgedDocumentIds(values)
+    }
+    /**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     * @param values The purgedDocumentIds to add.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("plusAssignAllPurgedDocumentIds")
+    @Suppress("NOTHING_TO_INLINE")
+    public inline operator fun com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>.plusAssign(values: kotlin.collections.Iterable<kotlin.String>) {
+      addAll(values)
+    }
+    /**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     * @param index The index to set the value at.
+     * @param value The purgedDocumentIds to set.
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("setPurgedDocumentIds")
+    public operator fun com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>.set(index: kotlin.Int, value: kotlin.String) {
+      _builder.setPurgedDocumentIds(index, value)
+    }/**
+     * ```
+     * Close old editor identities even when no user decision is necessary.
+     * ```
+     *
+     * `repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];`
+     */
+    @kotlin.jvm.JvmSynthetic
+@kotlin.jvm.JvmName("setPurgedDocumentIds")
+    public fun com.google.protobuf.kotlin.DslList<kotlin.String, PurgedDocumentIdsProxy>.clear() {
+      _builder.clearPurgedDocumentIds()
+    }}
 }
 public inline fun app.koru.contract.api.v1.Inventory.copy(block: `app.koru.contract.api.v1`.InventoryKt.Dsl.() -> kotlin.Unit): app.koru.contract.api.v1.Inventory =
   `app.koru.contract.api.v1`.InventoryKt.Dsl._create(this.toBuilder()).apply { block() }._build()

@@ -126,6 +126,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
         let expires_at_seconds = token.expires_at_seconds();
         let account = cloud_id(authority.owner.account.as_uuid());
         let content_permit = CloudPermitV2 {
+            document_removal: false,
             version: koru_sync_control::cloud::CLOUD_PERMIT_VERSION_V2,
             permit_id: self.mint(),
             account_id: account,
@@ -150,6 +151,7 @@ impl<A: Api, H: Host> Coordinator<A, H> {
                 .map_err(bootstrap_failure)?;
         }
         let profile_permit = CloudPermitV2 {
+            document_removal: false,
             version: koru_sync_control::cloud::CLOUD_PERMIT_VERSION_V2,
             permit_id: self.mint(),
             account_id: account,

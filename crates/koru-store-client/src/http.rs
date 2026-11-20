@@ -1616,6 +1616,47 @@ impl Client {
         Self::seeded_create_response(self.check(response)?)
     }
 
+    pub fn freeze_document_purge(
+        &self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) -> Result<Vec<u8>> {
+        let response = self.send_with_retry(|discovery| {
+            self.http
+                .post(format!(
+                    "{}/v1/internal/workspaces/{}/documents/{}/purge-freeze",
+                    discovery.base_url(),
+                    workspace.to_storage(),
+                    document.to_storage()
+                ))
+                .bearer_auth(&discovery.token)
+        })?;
+        self.check(response)?
+            .bytes()
+            .map(|bytes| bytes.to_vec())
+            .map_err(|_| Error::bare(Code::Internal))
+    }
+
+    pub fn release_document_purge(
+        &self,
+        workspace: WorkspaceId,
+        document: DocumentId,
+        expected_version: Vec<u8>,
+        kept: Option<DocumentId>,
+    ) -> Result<bool> {
+        self.post(
+            &format!(
+                "/v1/internal/workspaces/{}/documents/purge-release",
+                workspace.to_storage()
+            ),
+            &koru_store_wire::ReleaseDocumentPurge {
+                document,
+                expected_version,
+                kept,
+            },
+        )
+    }
+
     /// Seed a document whose identity was minted by a trusted domain adapter.
     /// The Store still owns atomic content-first publication.
     #[allow(clippy::too_many_arguments)]

@@ -13303,6 +13303,32 @@ impl View for MainView {
         self.unpin_live_document(document)
     }
 
+    fn quiesce_purged_document(
+        &mut self,
+        document: koru_core::DocumentId,
+        _root: Option<NodeId>,
+    ) -> bool {
+        let before = self.shown_documents();
+        let mut changed = false;
+        for (_, group) in self.panes.iter_groups_mut() {
+            let doomed: Vec<_> = group
+                .iter_tabs()
+                .enumerate()
+                .filter(|(_, tab)| tab.edits() == Some(document))
+                .map(|(index, _)| index)
+                .collect();
+            for index in doomed.into_iter().rev() {
+                changed |= group.close_tab(index);
+            }
+        }
+        if changed {
+            self.released(before);
+            self.flush_closed_tab_bursts();
+            self.size_visible_groups();
+        }
+        changed
+    }
+
     fn pinned_search_rows(
         &self,
     ) -> Vec<(String, koru_core::DocumentId, koru_core::WorkspaceId, bool)> {

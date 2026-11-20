@@ -271,6 +271,20 @@ fn inventory_value(value: InventoryResult) -> wire::Inventory {
         trashed_documents: value.trashed_documents.min(u32::MAX as usize) as u32,
         failed_workspaces: value.failed_workspaces.min(u32::MAX as usize) as u32,
         hidden_runs: value.hidden_runs.min(u32::MAX as usize) as u32,
+        pending_document_removals: value.pending_document_removals,
+        purged_document_ids: value.purged_document_ids,
+        document_removals: value
+            .document_removals
+            .into_iter()
+            .map(|prompt| wire::DocumentRemovalPrompt {
+                document_id: prompt.document_id,
+                workspace_id: prompt.workspace_id,
+                title: prompt.title,
+                unknown: prompt.unknown,
+                expected_version: prompt.expected_version,
+                needs_quiescence: prompt.needs_quiescence,
+            })
+            .collect(),
         error_code: value.error_code,
     }
 }
@@ -781,7 +795,18 @@ pub fn mutate_profile(r: wire::ProfileMutation) -> wire::MutationResult {
 pub fn mutate_document(r: wire::DocumentMutation) -> wire::MutationResult {
     mutation(
         host(r.host, "store.mutate_document").and_then(|h| {
+            if matches!(r.action.as_str(), "purge_keep" | "purge_delete") && r.text_edit.is_none() {
+                return h.decide_document_removal(
+                    &r.document_id,
+                    &r.expected_version,
+                    r.action == "purge_keep",
+                );
+            }
             match (r.action.as_str(), r.text_edit) {
+                ("purge_stage_text", Some(edit)) => {
+                    h.stage_removed_document_text(&r.document_id, edit)
+                }
+                ("purge_quiesced", None) => h.quiesce_document_removal(&r.document_id),
                 ("edit_text", Some(edit)) => h.edit_document_text(&r.document_id, edit),
                 ("edit_text", None) | (_, Some(_)) => Err("invalid_document_action".to_owned()),
                 (_, None) => h.mutate_document(&r.document_id, &r.action, &r.title),

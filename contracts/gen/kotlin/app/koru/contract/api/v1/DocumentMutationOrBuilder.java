@@ -77,4 +77,14 @@ public interface DocumentMutationOrBuilder extends
    * @return The textEdit.
    */
   app.koru.contract.api.v1.DocumentTextEdit getTextEdit();
+
+  /**
+   * <pre>
+   * Exact frozen local version being answered by purge_keep/purge_delete.
+   * </pre>
+   *
+   * <code>bytes expected_version = 6 [json_name = "expectedVersion"];</code>
+   * @return The expectedVersion.
+   */
+  com.google.protobuf.ByteString getExpectedVersion();
 }

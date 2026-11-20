@@ -285,7 +285,7 @@ where
     /// scheduling is the host's bounded, debounced owner, not a document timer.
     pub fn start(&mut self, unit: Unit) -> Result<(), Error> {
         self.client.check()?;
-        if self.pass.is_some() {
+        if self.pass.is_some() || self.client.removal.is_some() {
             return Err(Error::Unavailable);
         }
         self.client.scope.object_unit(unit)?;
@@ -413,6 +413,16 @@ where
     /// condition under which a timed resource retry may offer its start.
     pub fn upload_decision_required(&self) -> bool {
         self.client.upload_decision_required()
+    }
+
+    pub async fn removal_exchange(
+        &mut self,
+        control: Control,
+    ) -> Result<super::RemovalMessage, Error> {
+        if self.pass.is_some() {
+            return Err(Error::Invalid);
+        }
+        self.client.removal_exchange(control).await
     }
     pub fn change_policy(&mut self, limit: usize) -> Result<(), Error> {
         self.client.change_policy(limit).map_err(|e| self.cancel(e))
@@ -548,6 +558,7 @@ where
 
     fn transport_event(&mut self, event: super::Event) -> Result<Event, Error> {
         Ok(match event {
+            super::Event::Removal(_) => return Err(Error::Invalid),
             super::Event::Progress => Event::Progress,
             super::Event::Metadata(messages) => return self.metadata(messages),
             super::Event::Downloaded(unit) => {

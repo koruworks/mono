@@ -65,6 +65,8 @@ pub struct DocumentPane {
     /// The document node, remembered so "restore as a tab" can name it without
     /// re-asking the editor for its root.
     node: NodeId,
+    /// Survives source retirement, when the host can no longer look up its root.
+    document: koru_core::DocumentId,
     /// The close-choice overlay, open while the user decides what closing does.
     close: Option<CloseDialog>,
     /// A pending request to restore the document as a container tab. The shell
@@ -114,6 +116,7 @@ impl DocumentPane {
         Self {
             doc: BuiltInDocument::open(ws, doc).owns_the_window(ws),
             node: doc,
+            document: ws.own_document_id().unwrap_or_else(|| ws.document_id(doc)),
             close: None,
             support_toast: None,
             pending_request: None,
@@ -173,6 +176,10 @@ impl View for DocumentPane {
         // there is no id left to reopen at — `first` lands on whatever the new
         // workspace's library offers, the same as a cold start.
         self.doc = BuiltInDocument::first(ws);
+        if let Some(root) = View::document_root(&self.doc) {
+            self.node = root;
+            self.document = ws.own_document_id().unwrap_or_else(|| ws.document_id(root));
+        }
     }
 
     fn key(
@@ -1787,6 +1794,25 @@ impl View for ManagerView {
         match self {
             Self::Container(v) => v.unpin_document(document),
             Self::Document(_) => false,
+        }
+    }
+
+    fn quiesce_purged_document(
+        &mut self,
+        document: koru_core::DocumentId,
+        root: Option<NodeId>,
+    ) -> bool {
+        match self {
+            Self::Container(v) => v.quiesce_purged_document(document, root),
+            Self::Document(v) if v.document == document || root == Some(v.node) => {
+                v.closing = true;
+                v.close = None;
+                v.wants_restore_tab = false;
+                v.pending_request = None;
+                v.outgoing = Some(WindowRequest::Close);
+                true
+            }
+            _ => false,
         }
     }
 

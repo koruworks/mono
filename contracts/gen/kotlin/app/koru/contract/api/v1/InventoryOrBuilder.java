@@ -97,4 +97,65 @@ public interface InventoryOrBuilder extends
    * @return The hiddenRuns.
    */
   int getHiddenRuns();
+
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  java.util.List<app.koru.contract.api.v1.DocumentRemovalPrompt> 
+      getDocumentRemovalsList();
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  app.koru.contract.api.v1.DocumentRemovalPrompt getDocumentRemovals(int index);
+  /**
+   * <code>repeated .koru.api.v1.DocumentRemovalPrompt document_removals = 9 [json_name = "documentRemovals"];</code>
+   */
+  int getDocumentRemovalsCount();
+
+  /**
+   * <code>uint32 pending_document_removals = 10 [json_name = "pendingDocumentRemovals"];</code>
+   * @return The pendingDocumentRemovals.
+   */
+  int getPendingDocumentRemovals();
+
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @return A list containing the purgedDocumentIds.
+   */
+  java.util.List<java.lang.String>
+      getPurgedDocumentIdsList();
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @return The count of purgedDocumentIds.
+   */
+  int getPurgedDocumentIdsCount();
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param index The index of the element to return.
+   * @return The purgedDocumentIds at the given index.
+   */
+  java.lang.String getPurgedDocumentIds(int index);
+  /**
+   * <pre>
+   * Close old editor identities even when no user decision is necessary.
+   * </pre>
+   *
+   * <code>repeated string purged_document_ids = 11 [json_name = "purgedDocumentIds"];</code>
+   * @param index The index of the element to return.
+   * @return The purgedDocumentIds at the given index.
+   */
+  com.google.protobuf.ByteString
+      getPurgedDocumentIdsBytes(int index);
 }

@@ -45,6 +45,7 @@ impl Transport for ReadSource {
             .starts_with("/v1/account/subscription")
         {
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 200,
                 body: serde_json::to_vec(&serde_json::json!({"subscriptions":[],"next_cursor":null,"cloud_access":self.mode.load(Ordering::SeqCst)!=5})).unwrap(),
             });
@@ -54,6 +55,7 @@ impl Transport for ReadSource {
         let mode = self.mode.load(Ordering::SeqCst);
         if mode == 2 {
             return Ok(HttpResponse {
+                document_removal: false,
                 status: 409,
                 body: br#"{"code":"usage_revision_changed","message":"changed"}"#.to_vec(),
             });
@@ -66,6 +68,7 @@ impl Transport for ReadSource {
             page["items"][1]["source_head_digest"] = serde_json::json!("ab".repeat(32));
         }
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(&page).unwrap(),
         })

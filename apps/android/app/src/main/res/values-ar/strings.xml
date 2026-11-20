@@ -551,4 +551,15 @@
     <string name="cloud_upload_physical_bytes">بلغ تخزين Cloud حد الأمان الفعلي. هذا الرفع قيد الانتظار.</string>
     <string name="cloud_upload_staging_bytes">التخزين المؤقت في Cloud ممتلئ. هذا الرفع قيد الانتظار.</string>
     <string name="cloud_upload_removal_capacity">سعة التنظيف في Cloud غير متاحة مؤقتًا. هذه العملية قيد الانتظار.</string>
+    <!-- Permanent document removal and changed-copy choices. -->
+    <string name="document_deleted_changed">حُذف «%1$s» على جهاز آخر. وقد أجريت تغييرات عليه هنا منذ ذلك الحين. هل تريد الاحتفاظ بنسختك أم حذفها؟</string>
+    <string name="document_deleted_unknown">حُذف «%1$s». لا يستطيع Koru تحديد ما إذا كانت هذه النسخة تحتوي على تغييرات. هل تريد الاحتفاظ بهذه النسخة أم حذفها؟</string>
+    <string name="document_deleted_title">تم حذف المستند</string>
+    <string name="document_deleted_keep">الاحتفاظ بنسختي</string>
+    <string name="document_deleted_delete">حذف</string>
+    <string name="document_delete_pending">جارٍ الحذف…</string>
+    <string name="document_delete_progress">جارٍ حذف %1$d من Koru Cloud…</string>
+    <string name="document_delete_forever_title">هل تريد الحذف نهائيًا؟</string>
+    <string name="document_delete_forever_body">سيُحذف «%1$s» نهائيًا. لا يمكن التراجع عن هذا الإجراء.</string>
+    <string name="document_delete_forever_confirm">الحذف نهائيًا</string>
 </resources>

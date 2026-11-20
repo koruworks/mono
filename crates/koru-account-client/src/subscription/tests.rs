@@ -25,6 +25,7 @@ impl Transport for Script {
             .pop_front()
             .ok_or(TransportError::Unavailable)?;
         Ok(HttpResponse {
+            document_removal: false,
             status: 200,
             body: serde_json::to_vec(&page).unwrap(),
         })

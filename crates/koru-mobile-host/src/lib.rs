@@ -41,6 +41,7 @@ pub mod account;
 mod blob;
 mod document_edit;
 pub mod document_observer;
+mod document_removal;
 pub mod protobuf;
 mod run_view;
 
@@ -368,6 +369,12 @@ fn connection_path(path: koru_network_iroh::PathKind) -> Option<&'static str> {
 
 #[derive(Serialize, Default)]
 struct InventoryResult {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    document_removals: Vec<document_removal::Prompt>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    purged_document_ids: Vec<String>,
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pending_document_removals: u32,
     profiles: Vec<InventoryProfile>,
     workspaces: Vec<InventoryWorkspace>,
     documents: Vec<InventoryDocument>,
@@ -393,6 +400,10 @@ struct InventoryResult {
 }
 
 fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
+fn is_zero_u32(value: &u32) -> bool {
     *value == 0
 }
 
@@ -586,6 +597,7 @@ struct MobileHost {
     /// guess about which blobs a Workspace has would move the wrong set.
     blobs: Option<blob::MobileBlobs>,
     document_views: Mutex<HashMap<DocumentId, (Vec<u8>, DocumentView)>>,
+    document_removal_pending: Arc<Mutex<HashMap<WorkspaceId, u32>>>,
     document_focus: Mutex<Option<DocumentId>>,
     /// The runs this phone has open: one fork per open, kept for the
     /// document version it was forked at, so a window read costs no store
@@ -786,6 +798,7 @@ impl MobileHost {
             store,
             blobs,
             document_views: Mutex::new(HashMap::new()),
+            document_removal_pending: Arc::new(Mutex::new(HashMap::new())),
             document_focus: Mutex::new(None),
             run_views: Mutex::new(Vec::new()),
             run_forks: AtomicU64::new(0),
@@ -1003,7 +1016,14 @@ impl MobileHost {
     }
 
     fn inventory(&self) -> Result<InventoryResult, String> {
-        self.with_store(|store| {
+        let pending_document_removals = self
+            .document_removal_pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .values()
+            .fold(0u32, |sum, value| sum.saturating_add(*value));
+        let purge_root = self.root.clone();
+        self.with_store(move |store| {
             let profiles = store
                 .profiles()
                 .map_err(|error| error.code().as_str().to_owned())?
@@ -1064,6 +1084,8 @@ impl MobileHost {
                 });
             }
             let mut documents = Vec::new();
+            let mut document_removals = Vec::new();
+            let mut purged_document_ids = Vec::new();
             let mut deleted_workspaces = 0usize;
             let mut trashed_documents = 0usize;
             let mut failed_workspaces = 0usize;
@@ -1074,6 +1096,20 @@ impl MobileHost {
                     // invisible in a list that silently loses rows.
                     deleted_workspaces += 1;
                     continue;
+                }
+                match document_removal::reconcile(
+                    &purge_root,
+                    store,
+                    workspace.id,
+                    Timestamp::from_millis(now_millis()),
+                ) {
+                    Ok((prompts, tombstones)) => {
+                        document_removals.extend(prompts);
+                        purged_document_ids.extend(tombstones);
+                    }
+                    Err(_) => {
+                        failed_workspaces += 1;
+                    }
                 }
                 // One read per Workspace, not one per document: recency is a
                 // repository record and joining it here keeps the listing a
@@ -1140,6 +1176,9 @@ impl MobileHost {
                 }
             }
             Ok(InventoryResult {
+                document_removals,
+                purged_document_ids,
+                pending_document_removals,
                 profiles,
                 workspaces,
                 documents,
@@ -2095,6 +2134,9 @@ impl MobileHost {
                 .locate(document)
                 .map_err(|error| error.code().as_str().to_owned())?
                 .ok_or_else(|| "document_not_found".to_owned())?;
+            if action == "delete_permanently" {
+                return document_removal::permanent(store, workspace, document, at);
+            }
             let entry = store
                 .documents(workspace)
                 .map_err(|error| error.code().as_str().to_owned())?
@@ -5637,6 +5679,377 @@ mod tests {
         assert!(with_test_store(&host, move |store| {
             store.documents(workspace).unwrap().is_empty()
         }));
+    }
+
+    fn document_removal_fixture(host: &MobileHost) -> (WorkspaceId, DocumentId) {
+        let mut model =
+            koru_core::WorkspaceDoc::create(koru_core::WorkspaceId::new(), "Document").unwrap();
+        model
+            .insert(
+                koru_core::schema::Parent::Root,
+                koru_core::Node::document("Original").unwrap(),
+            )
+            .unwrap();
+        let snapshot = model.export_snapshot().unwrap();
+        let pair = with_test_store(host, move |store| {
+            let profile = store
+                .create_profile(
+                    "Mobile",
+                    None,
+                    None,
+                    koru_store_core::Locale::parse("en").unwrap(),
+                    Timestamp::from_millis(1),
+                )
+                .unwrap();
+            let workspace = store
+                .create_workspace(profile.id, "Workspace", Timestamp::from_millis(2))
+                .unwrap();
+            let document = store
+                .import_document(
+                    workspace.id,
+                    "Original",
+                    koru_core::explore::KIND_DOCUMENT,
+                    None,
+                    snapshot,
+                    Timestamp::from_millis(3),
+                )
+                .unwrap()
+                .0;
+            (workspace.id, document)
+        });
+        assert!(
+            host.inventory()
+                .unwrap()
+                .documents
+                .iter()
+                .any(|row| row.id == pair.1.to_storage()),
+            "the fixture must be an ordinary visible document before deletion"
+        );
+        pair
+    }
+
+    #[test]
+    fn mobile_permanent_delete_persists_coverage_before_releasing_source() {
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            MobileHost::open(directory.path().to_path_buf(), [81; 64], "Test", true).unwrap();
+        let (workspace, document) = document_removal_fixture(&host);
+        let before = with_test_store(&host, move |store| {
+            store.version(workspace, document).unwrap()
+        });
+        host.mutate_document(&document.to_storage(), "delete_permanently", "")
+            .unwrap();
+        with_test_store(&host, move |store| {
+            assert!(store.locate(document).unwrap().is_none());
+            let system = koru_replication::cloud::client_store::removal::load(store, workspace)
+                .unwrap()
+                .unwrap();
+            assert!(
+                system
+                    .content
+                    .purge_coverage(koru_core::DocumentId::from_uuid(document.as_uuid()))
+                    .unwrap()
+                    .covers(&before)
+            );
+            let events = system.content.purge_events().unwrap();
+            assert_eq!(events.len(), 1);
+            assert!(koru_replication::cloud::transfer::removal::fits(&events[0]));
+        });
+        let inventory = host.inventory().unwrap();
+        assert!(inventory.documents.is_empty());
+        assert!(inventory.document_removals.is_empty());
+        assert!(
+            inventory
+                .purged_document_ids
+                .contains(&document.to_storage())
+        );
+    }
+
+    #[test]
+    fn mobile_remote_delete_keeps_unanswered_sources_and_preserves_a_kept_copy() {
+        for (unknown, keep) in [(false, true), (true, false)] {
+            let directory = tempfile::tempdir().unwrap();
+            let host =
+                MobileHost::open(directory.path().to_path_buf(), [82; 64], "Test", true).unwrap();
+            let (workspace, document) = document_removal_fixture(&host);
+            let before = with_test_store(&host, move |store| {
+                store.version(workspace, document).unwrap()
+            });
+            host.mutate_document(&document.to_storage(), "rename", "Changed here")
+                .unwrap();
+            with_test_store(&host, move |store| {
+                let mut system = koru_core::SystemDoc::create().unwrap();
+                let event = koru_core::pages::purge::Event::new(
+                    document.as_uuid(),
+                    document.as_uuid(),
+                    (!unknown).then_some(&before),
+                    "Other device",
+                );
+                system.write_purge_event(&event).unwrap();
+                store
+                    .import_document(
+                        workspace,
+                        "",
+                        koru_core::explore::KIND_SYSTEM,
+                        None,
+                        system.export_snapshot().unwrap(),
+                        Timestamp::from_millis(4),
+                    )
+                    .unwrap();
+            });
+            let inventory = host.inventory().unwrap();
+            assert_eq!(inventory.document_removals.len(), 1);
+            let prompt = &inventory.document_removals[0];
+            assert_eq!(prompt.unknown, unknown);
+            assert_eq!(prompt.title, "Changed here");
+            let expected = prompt.expected_version.clone();
+            assert_eq!(
+                host.inventory().unwrap().document_removals[0].expected_version,
+                expected
+            );
+            assert!(with_test_store(&host, move |store| store
+                .locate(document)
+                .unwrap()
+                .is_some()));
+            assert!(
+                host.mutate_document(&document.to_storage(), "rename", "Too late")
+                    .is_err()
+            );
+            assert!(prompt.needs_quiescence);
+            assert!(
+                host.decide_document_removal(&document.to_storage(), &expected, keep)
+                    .is_err()
+            );
+            host.quiesce_document_removal(&document.to_storage())
+                .unwrap();
+            host.decide_document_removal(&document.to_storage(), &expected, keep)
+                .unwrap();
+            with_test_store(&host, move |store| {
+                assert!(store.locate(document).unwrap().is_none());
+                let copies: Vec<_> = store
+                    .documents(workspace)
+                    .unwrap()
+                    .into_iter()
+                    .filter(|entry| koru_core::explore::listed(&entry.kind))
+                    .collect();
+                assert_eq!(copies.len(), usize::from(keep));
+                if let Some(copy) = copies.first() {
+                    assert_ne!(copy.id, document);
+                    assert_eq!(copy.title, "Changed here");
+                    assert!(
+                        store
+                            .version(workspace, copy.id)
+                            .unwrap()
+                            .includes_vv(&loro::VersionVector::decode(&expected).unwrap())
+                    );
+                }
+            });
+            assert!(host.inventory().unwrap().document_removals.is_empty());
+        }
+    }
+
+    fn remote_purge_covering_current(
+        host: &MobileHost,
+        workspace: WorkspaceId,
+        document: DocumentId,
+    ) {
+        with_test_store(host, move |store| {
+            let version = store.version(workspace, document).unwrap();
+            let mut system = koru_core::SystemDoc::create().unwrap();
+            system
+                .write_purge_event(&koru_core::pages::purge::Event::new(
+                    document.as_uuid(),
+                    document.as_uuid(),
+                    Some(&version),
+                    "Other device",
+                ))
+                .unwrap();
+            store
+                .import_document(
+                    workspace,
+                    "",
+                    koru_core::explore::KIND_SYSTEM,
+                    None,
+                    system.export_snapshot().unwrap(),
+                    Timestamp::from_millis(10),
+                )
+                .unwrap();
+        });
+    }
+
+    #[test]
+    fn mobile_covered_source_waits_for_editor_quiescence_then_releases_without_choice() {
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            MobileHost::open(directory.path().to_path_buf(), [83; 64], "Test", true).unwrap();
+        let (workspace, document) = document_removal_fixture(&host);
+        remote_purge_covering_current(&host, workspace, document);
+        let inventory = host.inventory().unwrap();
+        assert!(inventory.document_removals[0].needs_quiescence);
+        assert!(with_test_store(&host, move |store| store
+            .locate(document)
+            .unwrap()
+            .is_some()));
+        host.quiesce_document_removal(&document.to_storage())
+            .unwrap();
+        assert!(host.inventory().unwrap().document_removals.is_empty());
+        assert!(with_test_store(&host, move |store| store
+            .locate(document)
+            .unwrap()
+            .is_none()));
+    }
+
+    #[test]
+    fn mobile_retained_drafts_and_split_chain_are_durable_and_only_seed_the_new_id() {
+        use koru_contract::mobile_proto::{DocumentTextEdit, DocumentTextSplit};
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            MobileHost::open(directory.path().to_path_buf(), [84; 64], "Test", true).unwrap();
+        let (workspace, document) = document_removal_fixture(&host);
+        let block = koru_core::NodeId::new();
+        host.edit_document_text(
+            &document.to_storage(),
+            DocumentTextEdit {
+                block_id: block.to_storage(),
+                before: String::new(),
+                after: "Before".into(),
+                create_paragraph: true,
+                split: None,
+            },
+        )
+        .unwrap();
+        remote_purge_covering_current(&host, workspace, document);
+        let original = host.inventory().unwrap().document_removals[0]
+            .expected_version
+            .clone();
+        let tail = koru_core::NodeId::new();
+        let split = DocumentTextEdit {
+            block_id: block.to_storage(),
+            before: "Before".into(),
+            after: "First tail".into(),
+            create_paragraph: false,
+            split: Some(DocumentTextSplit {
+                block_id: tail.to_storage(),
+                at_utf8: 6,
+            }),
+        };
+        assert!(
+            host.edit_document_text(&document.to_storage(), split.clone())
+                .is_err()
+        );
+        host.stage_removed_document_text(&document.to_storage(), split.clone())
+            .unwrap();
+        host.stage_removed_document_text(
+            &document.to_storage(),
+            DocumentTextEdit {
+                block_id: tail.to_storage(),
+                before: "tail".into(),
+                after: "Retained tail".into(),
+                create_paragraph: false,
+                split: None,
+            },
+        )
+        .unwrap();
+        // The persisted receipt makes retrying the parent split safe even after
+        // its child changed. Every call reconstructs from disk, not cached state.
+        host.stage_removed_document_text(&document.to_storage(), split)
+            .unwrap();
+        assert!(
+            std::fs::metadata(
+                directory
+                    .path()
+                    .join("mobile-purge-copies")
+                    .join(format!("{}.json", document.to_storage()))
+            )
+            .unwrap()
+            .len()
+                > 0
+        );
+        assert_eq!(
+            with_test_store(&host, move |store| store
+                .version(workspace, document)
+                .unwrap()
+                .encode()),
+            original
+        );
+        host.quiesce_document_removal(&document.to_storage())
+            .unwrap();
+        let inventory = host.inventory().unwrap();
+        let prompt = &inventory.document_removals[0];
+        assert!(!prompt.needs_quiescence);
+        assert!(!prompt.unknown);
+        assert_ne!(prompt.expected_version, original);
+        host.decide_document_removal(&document.to_storage(), &prompt.expected_version, true)
+            .unwrap();
+        with_test_store(&host, move |store| {
+            assert!(store.locate(document).unwrap().is_none());
+            let copy = store
+                .documents(workspace)
+                .unwrap()
+                .into_iter()
+                .find(|entry| koru_core::explore::listed(&entry.kind))
+                .unwrap();
+            assert_ne!(copy.id, document);
+            let source = koru_core::WorkspaceDoc::from_snapshot(
+                &store.snapshot(workspace, copy.id).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(
+                source.read(block).unwrap().content.as_text(),
+                Some("First ")
+            );
+            assert_eq!(
+                source.read(tail).unwrap().content.as_text(),
+                Some("Retained tail")
+            );
+        });
+    }
+
+    #[test]
+    fn mobile_recorded_keep_resumes_from_disk_and_cleans_a_completed_journal() {
+        let directory = tempfile::tempdir().unwrap();
+        let host =
+            MobileHost::open(directory.path().to_path_buf(), [85; 64], "Test", true).unwrap();
+        let (workspace, document) = document_removal_fixture(&host);
+        remote_purge_covering_current(&host, workspace, document);
+        host.inventory().unwrap();
+        host.quiesce_document_removal(&document.to_storage())
+            .unwrap();
+        let journal = directory
+            .path()
+            .join("mobile-purge-copies")
+            .join(format!("{}.json", document.to_storage()));
+        let mut retained: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&journal).unwrap()).unwrap();
+        let candidate = DocumentId::new();
+        // A process died after recording its exact choice but before seeding.
+        retained["decision"] = serde_json::json!({"Keep": {
+            "candidate": candidate.to_storage(), "title": "Recovered choice", "kind": koru_core::explore::KIND_DOCUMENT,
+            "key": "recorded-keep-restart-test"
+        }});
+        let bytes = serde_json::to_vec(&retained).unwrap();
+        std::fs::write(&journal, &bytes).unwrap();
+        assert!(host.inventory().unwrap().document_removals.is_empty());
+        assert!(!journal.exists());
+        with_test_store(&host, move |store| {
+            assert!(store.locate(document).unwrap().is_none());
+            assert_eq!(store.locate(candidate).unwrap(), Some(workspace));
+            assert_eq!(
+                store
+                    .documents(workspace)
+                    .unwrap()
+                    .into_iter()
+                    .find(|entry| entry.id == candidate)
+                    .unwrap()
+                    .title,
+                "Recovered choice"
+            );
+        });
+        // A prior best-effort unlink failed after release. Later inventory
+        // retries cleanup without creating a second kept document.
+        std::fs::write(&journal, bytes).unwrap();
+        assert!(host.inventory().unwrap().document_removals.is_empty());
+        assert!(!journal.exists());
     }
 
     #[test]

@@ -43,6 +43,7 @@ data class ContentSyncStatus(
     val profileCount: Int = 0,
     val workspaceCount: Int = 0,
     val documentCount: Int = 0,
+    val pendingDocumentRemovals: Int = 0,
 )
 
 /** Mobile projection of the embedded, replicated Store. */
@@ -53,6 +54,8 @@ class NativeContentServices(
 ) : ProfileService, WorkspaceService, DocumentService, BlobService, WorkspaceFileService {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val inventory = MutableStateFlow(NativeInventory())
+    val removalPrompts = MutableStateFlow<List<DocumentRemovalPrompt>>(emptyList())
+    val purgedDocumentIds = MutableStateFlow<Set<DocumentId>>(emptySet())
 
     /**
      * The §11 announcement as this app reads it: the hash of every picture the
@@ -108,7 +111,10 @@ class NativeContentServices(
                             profileCount = next.profiles.size,
                             workspaceCount = next.workspaces.size,
                             documentCount = next.documents.size,
+                            pendingDocumentRemovals = next.pendingDocumentRemovals,
                         )
+                        removalPrompts.value = next.documentRemovals
+                        purgedDocumentIds.value = next.purgedDocumentIds
                         if (next != previous) {
                             logPeerObjects(previous, next)
                             logger.event("local_inventory", mapOf(
@@ -299,6 +305,28 @@ class NativeContentServices(
         logger.event("document_change", mapOf(
             "direction" to "local", "action" to "trash", "document_id" to id.value,
         ))
+    }
+
+    override suspend fun deletePermanently(id: DocumentId) {
+        native.mutateDocument(id.value, "delete_permanently")
+        inventory.value = native.inventory()
+        removalPrompts.value = inventory.value.documentRemovals
+        purgedDocumentIds.value = inventory.value.purgedDocumentIds
+    }
+
+    override suspend fun quiesceRemoval(prompt: DocumentRemovalPrompt, edits: List<DocumentCommand.EditBlockText>) {
+        edits.forEach { native.stageRemovedDocumentText(prompt.documentId, it) }
+        native.mutateDocument(prompt.documentId.value, "purge_quiesced")
+        inventory.value = native.inventory()
+        removalPrompts.value = inventory.value.documentRemovals
+        purgedDocumentIds.value = inventory.value.purgedDocumentIds
+    }
+
+    override suspend fun answerRemoval(prompt: DocumentRemovalPrompt, keep: Boolean) {
+        native.mutateDocument(prompt.documentId.value, if (keep) "purge_keep" else "purge_delete", expectedVersion = prompt.expectedVersion)
+        inventory.value = native.inventory()
+        removalPrompts.value = inventory.value.documentRemovals
+        purgedDocumentIds.value = inventory.value.purgedDocumentIds
     }
 
     override suspend fun open(id: DocumentId): DocumentSession {

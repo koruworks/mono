@@ -463,6 +463,9 @@ pub struct CloudDocumentActivity {
 /// The coalesced per-dataset record — one pass, the newest one.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CloudPassActivity {
+    /// Exact outstanding permanent-delete requests, independent of upload holds.
+    #[serde(default)]
+    pub pending_document_removals: u32,
     /// Confirmed progress for the unchanged inventory, retained across rechecks.
     /// Separate from this pass's counters; never persisted across restarts.
     #[serde(default)]

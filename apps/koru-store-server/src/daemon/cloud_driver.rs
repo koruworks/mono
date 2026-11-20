@@ -389,6 +389,7 @@ async fn run_session(
         return;
     };
     let dataset_session = cloud_sync::Session {
+        document_removal: permit.document_removal,
         accepted,
         scope,
         // TECHNICAL §4.4: the desktop is unmetered, so every payload up to
@@ -496,7 +497,7 @@ async fn run_session(
         cloud_sync::driver::Parts {
             plan,
             stage: cloud_sync::Stage::Full,
-            jobs: store,
+            jobs: store.clone(),
             authorize,
             downloads,
             deferrals,
@@ -505,6 +506,12 @@ async fn run_session(
             interest: None,
             progress: move |progress| {
                 let step = match progress {
+                    Progress::Removing { pending } => {
+                        record(&progress_activity, |a| {
+                            a.document_removal_progress(dataset, pending, now_millis())
+                        });
+                        None
+                    }
                     Progress::PassStarted => {
                         counted.0.store(0, Ordering::Relaxed);
                         counted.1.store(0, Ordering::Relaxed);
@@ -642,6 +649,14 @@ async fn run_session(
         let code = error.code();
         if ended_with_its_permit(code, lock(&host).cloud_permit_live(permit_id, generation)) {
             tracing::debug!(code, "cloud session: ended with its permit");
+            return;
+        }
+        if error == transfer::Error::CloudDocumentRemoved && permit.document_removal {
+            // A refresh instruction, not an unavailable document. Wake the
+            // existing catalog follower so a retained device session is
+            // re-admitted and reads the removal list before its next pass.
+            set_stage(&host, permit_id, CloudStage::CheckingCoverage, Some(code));
+            store.notify_catalog_change();
             return;
         }
         tracing::warn!(code, "cloud session: pass ended with a refusal");

@@ -511,4 +511,15 @@
     <string name="cloud_upload_physical_bytes">El almacenamiento de Cloud ha alcanzado un límite físico de seguridad. Esta carga está en espera.</string>
     <string name="cloud_upload_staging_bytes">El almacenamiento temporal de Cloud está lleno. Esta carga está en espera.</string>
     <string name="cloud_upload_removal_capacity">La capacidad de limpieza de Cloud no está disponible temporalmente. Esta operación está en espera.</string>
+    <!-- Permanent document removal and changed-copy choices. -->
+    <string name="document_deleted_changed">“%1$s” se eliminó en otro dispositivo. Desde entonces lo has modificado aquí. ¿Quieres conservar tu versión o eliminarla?</string>
+    <string name="document_deleted_unknown">“%1$s” se eliminó. Koru no puede determinar si esta copia contiene cambios. ¿Quieres conservar esta versión o eliminarla?</string>
+    <string name="document_deleted_title">Documento eliminado</string>
+    <string name="document_deleted_keep">Conservar mi versión</string>
+    <string name="document_deleted_delete">Eliminar</string>
+    <string name="document_delete_pending">Eliminando…</string>
+    <string name="document_delete_progress">Eliminando %1$d de Koru Cloud…</string>
+    <string name="document_delete_forever_title">¿Eliminar permanentemente?</string>
+    <string name="document_delete_forever_body">“%1$s” se eliminará de forma permanente. Esta acción no se puede deshacer.</string>
+    <string name="document_delete_forever_confirm">Eliminar permanentemente</string>
 </resources>
