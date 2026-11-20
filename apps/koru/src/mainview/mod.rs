@@ -1387,7 +1387,7 @@ pub struct MainView {
     note_documents: std::collections::HashSet<koru_core::DocumentId>,
     /// When the deep-link captions were last re-asked for.
     deep_links_polled: Option<Instant>,
-    /// A search hidden by successful navigation. Reopening Ctrl+P restores the
+    /// A search hidden by successful navigation. Reopening Ctrl+K restores the
     /// exact query instead of constructing an empty surface; explicit close or
     /// outside-click still discards it.
     retained_search: Option<crate::search::SearchSurface>,
@@ -1804,6 +1804,36 @@ impl MainView {
             .iter_tabs()
             .position(|t| t.id == tab_id)?;
         self.panes.group_mut(source)?.take_tab(index)
+    }
+
+    /// The `+` menu's *Move*: lift the active tab out of its group and split
+    /// the focused pane on `side`, landing the tab in the new pane — the same
+    /// path a cross-pane drag to an edge takes.
+    fn move_active_to_split(&mut self, side: koru_editor::SplitSide) -> bool {
+        let source = self.panes.focused_path().clone();
+        let tab_id = self.tabs().active_tab().id;
+        let Some(tab) = self.take_tab_from_group(&source, tab_id) else {
+            return false;
+        };
+        let doc = tab.document;
+        self.panes
+            .split(&source, place_chooser::split_dir(side), tab);
+        self.settle_pane_drop(doc);
+        true
+    }
+
+    /// Move focus to the next pane, in tree order, wrapping. `false` when the
+    /// window has a single pane, so there is nowhere to move to.
+    fn focus_next_pane(&mut self) -> bool {
+        let groups: Vec<panes::PanePath> = self.panes.iter_groups().map(|(path, _)| path).collect();
+        if groups.len() <= 1 {
+            return false;
+        }
+        let current = self.panes.focused_path().clone();
+        let at = groups.iter().position(|path| *path == current).unwrap_or(0);
+        let next = groups[(at + 1) % groups.len()].clone();
+        self.panes.set_focus(next);
+        true
     }
 
     /// The one tail every drop path runs, **after** the tab has landed:
@@ -3131,14 +3161,26 @@ impl MainView {
         }
     }
 
-    /// A sidebar row's `+` (the review's note): the document's name, then the
-    /// shell makes it as the row's last child and opens it.
+    /// A sidebar row's `+`: make a draft that becomes the row's last child on
+    /// promote, exactly as *New document* makes a plain draft. No name prompt
+    /// — the name is typed in the draft's own title, and Escape cancels the
+    /// whole thing.
     fn prompt_new_child_document(&mut self, parent: NodeId) -> bool {
         self.menu = None;
-        if self.new_document.is_none() {
-            self.new_workspace_owner = None;
-            self.new_document = Some(NewDocument::child(&mut self.engine, parent));
-        }
+        // The `+` was pressed in the sidebar, which took the keyboard for the
+        // tree (or the quick filter). The new draft is what you want to type
+        // into, so give the keyboard to it.
+        self.explore.clear_focus();
+        // Unfold the row first, so the child shows where it lands.
+        self.explore.expand(parent);
+        let parent_id = koru_core::DocumentId::from_uuid(parent.as_uuid());
+        self.record_jump();
+        self.tabs_mut()
+            .push(Tab::child_draft(Some(parent), parent_id).unwrap_or_else(Tab::welcome));
+        self.slides_mut().clear();
+        self.mark_tab_widths_stale();
+        self.size_visible_groups();
+        self.ensure_tab_visible(self.tabs().active());
         true
     }
 
@@ -3746,21 +3788,6 @@ impl MainView {
                 }
                 true
             }
-            // A row's `+`: inside that row, as its last child. The row is
-            // unfolded first so the child shows where it lands.
-            NewDocumentAction::CreateDocument(title)
-                if matches!(purpose, PromptPurpose::ChildDocument(_)) =>
-            {
-                self.new_document = None;
-                if let PromptPurpose::ChildDocument(parent) = purpose {
-                    self.explore.expand(parent);
-                    self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
-                        parent: koru_core::DocumentId::from_uuid(parent.as_uuid()),
-                        title,
-                    });
-                }
-                return true;
-            }
             NewDocumentAction::CreateDocument(title) => {
                 // **A document belongs to the workspace, not to the document in
                 // hand.** `create_document_after` inserts a node into the
@@ -3891,14 +3918,21 @@ impl MainView {
     /// unconditional `return` for a while; it is deleted rather than kept,
     /// because dead code that still compiles is the kind that gets revived.
     fn promote_draft(&mut self) -> bool {
-        if self.tabs().active_tab().draft.is_none() {
+        let Some(child_of) = self.tabs().active_tab().draft.as_ref().map(|d| d.child_of) else {
             return false;
-        }
+        };
         if !self.promoting {
             self.promoting = true;
-            self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
-                String::new(),
-            ));
+            match child_of {
+                // A row's `+` draft: placed as that row's last child.
+                Some(parent) => self.ask_pane(koru_workspace_host::PaneRequest::CreateDocumentIn {
+                    parent,
+                    title: String::new(),
+                }),
+                None => self.ask_pane(koru_workspace_host::PaneRequest::CreateDocument(
+                    String::new(),
+                )),
+            };
         }
         false
     }
@@ -3943,11 +3977,11 @@ impl MainView {
         let Some(switch) = self.quick_switch.take() else {
             return false;
         };
-        // Nothing typed matches a tab: there is nowhere to go.
+        // By identity: a tab closed while the list stood is simply not there.
+        // With no search there is always a highlighted tab to go to.
         let Some((group, chosen)) = switch.chosen() else {
             return true;
         };
-        // By identity: a tab closed while the list stood is simply not there.
         let found = self
             .panes
             .iter_groups()
@@ -3962,6 +3996,74 @@ impl MainView {
             self.wake_workspaces_tab();
         }
         true
+    }
+
+    /// Every split's tabs: the focused split first, each in the order its
+    /// tabs last showed. That is the order among tabs nobody has used. Most
+    /// recent first; the sort is stable, so tabs never used keep the order.
+    /// The tab in front leads whatever its stamp: the list starts from where
+    /// you are.
+    fn quick_switch_entries(&self) -> Vec<quick_switch::Entry> {
+        let focused = self.panes.focused_path().clone();
+        let current = self.tabs().active_tab().id;
+        let mut groups: Vec<_> = self.panes.iter_groups().collect();
+        groups.sort_by_key(|(path, _)| *path != focused);
+        let mut entries: Vec<(u64, quick_switch::Entry)> = Vec::new();
+        for (path, group) in groups {
+            for i in group.tabs().by_recency() {
+                let Some(tab) = group.tabs().get(i) else {
+                    continue;
+                };
+                entries.push((
+                    self.tab_used.get(&tab.id).copied().unwrap_or(0),
+                    quick_switch::Entry {
+                        tab: tab.id,
+                        group: path.clone(),
+                        label: tab.label.clone(),
+                        glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
+                        emoji: tab.icon.clone(),
+                        current: tab.id == current,
+                        status: tab.view.status_mark(),
+                    },
+                ));
+            }
+        }
+        entries.sort_by(|a, b| b.1.current.cmp(&a.1.current).then(b.0.cmp(&a.0)));
+        entries.into_iter().map(|(_, entry)| entry).collect()
+    }
+
+    /// Close the tab the list's `index` row is over — its ✕. The list is
+    /// rebuilt afterwards, so it stays open (or closes, when that was the
+    /// second-to-last tab).
+    fn close_quick_switch_tab(&mut self, index: usize) {
+        let Some((group, tab_id)) = self
+            .quick_switch
+            .as_ref()
+            .and_then(|switch| switch.entry(index))
+            .map(|entry| (entry.group.clone(), entry.tab))
+        else {
+            return;
+        };
+        let found = self
+            .panes
+            .iter_groups()
+            .find(|(path, _)| *path == group)
+            .and_then(|(_, tabs)| tabs.tabs().position(|candidate| candidate.id == tab_id));
+        let Some(i) = found else {
+            // The tab closed while the list stood: rebuild without it.
+            self.rebuild_quick_switch();
+            return;
+        };
+        self.panes.set_focus(group);
+        self.close_requested(i);
+        self.rebuild_quick_switch();
+    }
+
+    /// Stand the list back up from the tabs as they are now. The highlight
+    /// lands on the tab used before this one; with fewer than two tabs open
+    /// there is nothing to switch to and the list closes.
+    fn rebuild_quick_switch(&mut self) {
+        self.quick_switch = quick_switch::QuickSwitch::new(self.quick_switch_entries(), 1);
     }
 
     fn select(&mut self, i: usize) -> bool {
@@ -4403,6 +4505,10 @@ impl MainView {
                 // fixed before the answer landed falls back to.
                 MenuAction::TerminalProfile(index) => self.profile_probe.row_enabled(index),
                 MenuAction::NewTaskIn(_) => true,
+                MenuAction::TaskListRow(..) => true,
+                // Move splits the focused pane; with one tab there is nothing
+                // to split it away from.
+                MenuAction::Move => self.tabs().len() > 1,
                 // Dimmed, with its reason beside it, when this build carries
                 // no configuration for the importer (C6) — never hidden.
                 MenuAction::ImportFormat(id) => {
@@ -4431,6 +4537,10 @@ impl MainView {
                         | MenuAction::OpenRunningSession(_)
                         | MenuAction::Chats
                         | MenuAction::NewAiChat
+                        | MenuAction::Tasks
+                        | MenuAction::NewList
+                        | MenuAction::Move
+                        | MenuAction::MoveToSplit(_)
                         | MenuAction::OpenRecentChat(_)
                         | MenuAction::ClearRecents
                         | MenuAction::ImportAs
@@ -4839,7 +4949,10 @@ impl MainView {
                 | MenuAction::NewAgent
                 | MenuAction::ActiveShells
                 | MenuAction::ActiveAgents
-                | MenuAction::Chats => false,
+                | MenuAction::Chats
+                | MenuAction::Tasks
+                | MenuAction::Move => false,
+                MenuAction::MoveToSplit(side) => self.move_active_to_split(side),
                 MenuAction::OpenRunningSession(session) => {
                     self.open_session_tab_for_existing(session)
                 }
@@ -4852,6 +4965,12 @@ impl MainView {
                 }
                 // The launcher's Shift+T: that page, caret in Add a task.
                 MenuAction::NewTaskIn(target) => self.new_task_in(target, None),
+                // The `+` menu's Tasks flyout: a list row adds a task to it.
+                MenuAction::TaskListRow(id, ..) => {
+                    self.new_task_in(crate::panes::explore::rail::RailTarget::List(id), None)
+                }
+                // *New list*: make one where it lives — the rail's field.
+                MenuAction::NewList => self.begin_new_list_from_plus(),
                 MenuAction::NewAiChat => self.open_ai_chat_tab(),
                 MenuAction::ManageAgents => {
                     self.open_settings_page(koru_settings_ui::PageId::AgentProviders)
@@ -5430,11 +5549,18 @@ impl MainView {
             MenuSubject::Help => match action {
                 MenuAction::HelpSendFeedback => self.open_send_feedback_tab(),
                 MenuAction::HelpStarOnGitHub => {
-                    self.ask_pane(PaneRequest::OpenUri(context_menu::GITHUB_URL));
+                    self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                        "github", None,
+                    )));
                     true
                 }
                 MenuAction::HelpSocial(social) => {
-                    self.ask_pane(PaneRequest::OpenUri(social.url()));
+                    self.ask_pane(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                        match social {
+                            context_menu::Social::X => "x",
+                        },
+                        None,
+                    )));
                     true
                 }
                 _ => false,
@@ -6103,6 +6229,28 @@ impl MainView {
         // move the highlight in a list the pointer is no longer looking at.
         if let Some((at, sub)) = self.submenu.clone() {
             let enabled = self.enabled_items(&sub);
+            // A directional submenu — Move's Top/Right/Bottom/Left — picks its
+            // arm with the matching arrow, so the arrow that names a side
+            // chooses it rather than stepping the highlight.
+            if let Some(side) = match key {
+                Key::Named(NamedKey::ArrowUp) => Some(koru_editor::SplitSide::Up),
+                Key::Named(NamedKey::ArrowRight) => Some(koru_editor::SplitSide::Right),
+                Key::Named(NamedKey::ArrowDown) => Some(koru_editor::SplitSide::Down),
+                Key::Named(NamedKey::ArrowLeft) => Some(koru_editor::SplitSide::Left),
+                _ => None,
+            } && let Some(i) = sub
+                .items()
+                .iter()
+                .position(|a| *a == MenuAction::MoveToSplit(side))
+                .filter(|&i| enabled.get(i) == Some(&true))
+            {
+                let action = sub.items()[i];
+                self.nested = None;
+                self.submenu = None;
+                self.menu = None;
+                self.run_menu_action(sub.subject, action);
+                return true;
+            }
             return match key {
                 // Esc and Left back out one level, leaving the parent standing
                 // with its own row still highlighted — the same "one Esc, one
@@ -6161,6 +6309,36 @@ impl MainView {
             };
         }
         let enabled = self.enabled_items(&menu);
+        // A plain letter chooses the row whose mnemonic it underlines, the way
+        // the launcher's letters do — so Ctrl+T, then D, opens Documents.
+        if let Key::Character(c) = key
+            && let Some(letter) = c.chars().next().filter(|ch| ch.is_ascii_alphabetic())
+        {
+            let letter = letter.to_ascii_lowercase();
+            let matched = menu
+                .items()
+                .iter()
+                .position(|action| {
+                    action
+                        .mnemonic()
+                        .is_some_and(|m| m.to_ascii_lowercase() == letter)
+                })
+                .filter(|&i| enabled.get(i).copied().unwrap_or(false));
+            if let Some(i) = matched {
+                let action = menu.items()[i];
+                if context_menu::submenu(action).is_some() {
+                    self.open_submenu(i);
+                    if let Some((_, m)) = self.submenu.as_mut() {
+                        let inner: Vec<bool> = m.items().iter().map(|a| a.selectable()).collect();
+                        m.step(&inner, 1);
+                    }
+                    return true;
+                }
+                self.menu = None;
+                self.run_menu_action(menu.subject, action);
+            }
+            return true;
+        }
         match key {
             Key::Named(NamedKey::Escape) => {
                 // **Only the menu.** A menu opened over the switcher leaves it
@@ -7832,6 +8010,19 @@ impl MainView {
         let chats = self.plus_recent_chats();
         context_menu::set_plus_snapshots(recents, shells, agents, chats);
         context_menu::set_plus_canvases(canvases);
+        context_menu::set_task_lists(
+            self.list_table
+                .iter()
+                .map(|node| {
+                    (
+                        node.entry.id,
+                        node.entry.name.clone(),
+                        context_menu::static_accent_token(node.entry.color.as_deref()),
+                        node.depth,
+                    )
+                })
+                .collect(),
+        );
         context_menu::set_profile_presence(self.profile_probe.snapshot());
     }
 
@@ -7990,9 +8181,9 @@ impl MainView {
 
     /// Fulfil the entity picker's create row. Once somebody has typed a name,
     /// there is no useful second prompt: create that page directly through the
-    /// shell. With no query this remains the lazy Ctrl+T draft, so merely
-    /// opening the picker and choosing Add new page does not leave an empty
-    /// document behind.
+    /// shell. With no query this remains the lazy draft, so merely opening the
+    /// picker and choosing Add new page does not leave an empty document
+    /// behind.
     fn new_page_from_entity(&mut self, title: String) -> bool {
         let title = title.trim();
         if title.is_empty() {
@@ -9223,18 +9414,7 @@ impl MainView {
             // into view. It used to hang off a row at the foot of the section,
             // which a long rail scrolls out of sight: the field held the
             // keyboard and drew nothing, and the `+` looked dead.
-            Request::BeginNewList { parent } => {
-                let color = self.explore.rail().suggested_color().to_owned();
-                let origin = self.explore.rail().focus();
-                self.close_list_field();
-                self.list_field_origin = origin;
-                self.explore.rail_mut().begin_new_list(parent);
-                self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
-                let area = self.explore_area();
-                let top = self.explore.rail_top(area);
-                self.explore.rail_mut().reveal_new_list(area, top);
-                true
-            }
+            Request::BeginNewList { parent } => self.begin_new_list(parent),
             Request::NewList {
                 parent,
                 name,
@@ -9289,6 +9469,23 @@ impl MainView {
                 true
             }
             Request::RowMenu { target, at } => self.open_rail_menu(target, at),
+            // The swatch's press: the list's colour rows, at the press — the
+            // same picker the Tasks page's heading swatch opens.
+            Request::ListColor { id, at } => {
+                self.close_list_field();
+                let mut menu = ContextMenu::new(
+                    &mut self.engine,
+                    MenuSubject::List(id),
+                    at,
+                    context_menu::list_color_items(),
+                );
+                let enabled = self.enabled_items(&menu);
+                menu.step(&enabled, 1);
+                self.menu = Some(menu);
+                self.submenu = None;
+                self.nested = None;
+                true
+            }
             Request::RenameList { id, name } => {
                 self.list_edits
                     .push(koru_workspace_host::tasks::ListEdit::Rename { id, name });
@@ -9480,6 +9677,32 @@ impl MainView {
             self.explore.rail_mut().set_focus(area, top, origin);
         }
         had
+    }
+
+    /// Open the inline field over the rail's *+ New list* row, for `parent`
+    /// (`None` is the top level). The rail's own request and the `+` menu's
+    /// *New list* both reach here.
+    fn begin_new_list(&mut self, parent: Option<koru_core::ids::ListId>) -> bool {
+        let color = self.explore.rail().suggested_color().to_owned();
+        let origin = self.explore.rail().focus();
+        self.close_list_field();
+        self.list_field_origin = origin;
+        self.explore.rail_mut().begin_new_list(parent);
+        self.new_list = Some(new_list::NewList::new(&mut self.engine, &color, parent));
+        let area = self.explore_area();
+        let top = self.explore.rail_top(area);
+        self.explore.rail_mut().reveal_new_list(area, top);
+        true
+    }
+
+    /// The `+` menu's *New list*: the field lives in the rail, so show the
+    /// Tasks navigator first, then open the field.
+    fn begin_new_list_from_plus(&mut self) -> bool {
+        if !self.sidebar.is_open() {
+            self.toggle_sidebar();
+        }
+        self.explore.show_tasks();
+        self.begin_new_list(None)
     }
 
     /// The names the open field may not take, so it can refuse a duplicate
@@ -10413,15 +10636,29 @@ impl MainView {
         if self.file_preview.is_some() {
             return self.file_preview_press(x, y);
         }
-        // On a row of the quick switch: go there. Anywhere else: put it away,
-        // and the press is spent.
-        if let Some(switch) = self.quick_switch.as_mut() {
-            if switch.press(self.viewport, x, y) {
+        // On a row of the quick switch: go there. On its ✕: close that tab and
+        // keep the list up. Anywhere else: put it away, and the press is spent.
+        if self.quick_switch.is_some() {
+            if let Some(index) = self
+                .quick_switch
+                .as_ref()
+                .and_then(|switch| switch.close_at(self.viewport, x, y))
+            {
+                self.close_quick_switch_tab(index);
+                return true;
+            }
+            let mut go = false;
+            if let Some(switch) = self.quick_switch.as_mut() {
+                if switch.press(self.viewport, x, y) {
+                    go = true;
+                } else if !switch.contains(self.viewport, x, y) {
+                    // Off the panel puts it away; on its padding is not a
+                    // choice and not a dismissal.
+                    self.quick_switch = None;
+                }
+            }
+            if go {
                 self.finish_quick_switch();
-            } else if !switch.contains(self.viewport, x, y) {
-                // Off the panel puts it away; on its heading or its field
-                // is not a choice and not a dismissal.
-                self.quick_switch = None;
             }
             return true;
         }
@@ -12303,7 +12540,13 @@ impl View for MainView {
     }
 
     fn set_mods(&mut self, mods: ModifiersState) {
+        // Ctrl+Tab is hold-to-cycle, release-to-switch: when Control lifts
+        // while the list stands, go to the highlighted tab and put it away.
+        let control_lifted = self.mods.control_key() && !mods.control_key();
         self.mods = mods;
+        if control_lifted && self.quick_switch.is_some() {
+            self.finish_quick_switch();
+        }
         self.ai_chat.set_mods(mods);
         match self.active_view() {
             TabView::Trash(t) => View::set_mods(t, mods),
@@ -15285,6 +15528,19 @@ impl View for MainView {
             .and_then(|leaf| View::take_wants_copy_html(leaf))
     }
 
+    /// A picture's read words are the document's that shows it, as its
+    /// menu's offers are.
+    fn take_wants_picture_texts(&mut self) -> Vec<String> {
+        self.active_editing_leaf()
+            .map(|leaf| View::take_wants_picture_texts(leaf))
+            .unwrap_or_default()
+    }
+
+    fn set_picture_text(&mut self, hash: &str, text: Option<&str>) -> bool {
+        self.active_editing_leaf()
+            .is_some_and(|leaf| View::set_picture_text(leaf, hash, text))
+    }
+
     fn apply_pending_image_cut(&mut self, ws: &mut WorkspaceDoc) -> bool {
         let before = ws.version();
         let done = self
@@ -15604,47 +15860,16 @@ impl View for MainView {
         had
     }
 
-    /// **Ctrl+Tab is the quick switch.** The first press stands the list
-    /// up on the tab used before this one; each further press moves the
-    /// highlight. It stays until Enter or a click chooses, or Escape or a
-    /// click elsewhere puts it away. It used to step along the strip at once.
+    /// **Ctrl+Tab is the quick switch, hold-to-cycle.** The first press stands
+    /// the list up on the tab used before this one; each further press moves
+    /// the highlight. Letting go of Control goes (see [`set_mods`]); Enter or
+    /// a click on a row goes, Escape or a click elsewhere puts it away.
     fn cycle_tab(&mut self, delta: i32) -> bool {
         if let Some(switch) = self.quick_switch.as_mut() {
             switch.step(delta);
             return true;
         }
-        // Every split's tabs: the focused split first, each in the order
-        // its tabs last showed. That is the order among tabs nobody has used.
-        let focused = self.panes.focused_path().clone();
-        let current = self.tabs().active_tab().id;
-        let mut groups: Vec<_> = self.panes.iter_groups().collect();
-        groups.sort_by_key(|(path, _)| *path != focused);
-        let mut entries: Vec<(u64, quick_switch::Entry)> = Vec::new();
-        for (path, group) in groups {
-            for i in group.tabs().by_recency() {
-                let Some(tab) = group.tabs().get(i) else {
-                    continue;
-                };
-                entries.push((
-                    self.tab_used.get(&tab.id).copied().unwrap_or(0),
-                    quick_switch::Entry {
-                        tab: tab.id,
-                        group: path.clone(),
-                        label: tab.label.clone(),
-                        glyph: tab.view.icon().unwrap_or(koru_draw::icons::DOCUMENT),
-                        emoji: tab.icon.clone(),
-                        current: tab.id == current,
-                        status: tab.view.status_mark(),
-                    },
-                ));
-            }
-        }
-        // **By last use**, most recent first; the sort is stable, so tabs
-        // never used keep the order above. The tab in front leads whatever
-        // its stamp: the list starts from where you are.
-        entries.sort_by(|a, b| b.1.current.cmp(&a.1.current).then(b.0.cmp(&a.0)));
-        let entries = entries.into_iter().map(|(_, entry)| entry).collect();
-        self.quick_switch = quick_switch::QuickSwitch::new(entries, delta);
+        self.quick_switch = quick_switch::QuickSwitch::new(self.quick_switch_entries(), delta);
         self.quick_switch.is_some()
     }
 
@@ -16445,12 +16670,21 @@ impl MainView {
                 }
                 Key::Named(winit::keyboard::NamedKey::ArrowDown) => switch.step(1),
                 Key::Named(winit::keyboard::NamedKey::ArrowUp) => switch.step(-1),
-                // Everything else is typed: the list narrows to the tabs
-                // whose name holds it.
-                _ => {
-                    switch.type_key(&mut self.engine, key, text, mods);
-                }
+                // Anything else is consumed while the list stands, and does
+                // nothing — there is no field to type into.
+                _ => {}
             }
+            return true;
+        }
+        // **Ctrl+T while the + menu stands moves it to the next pane's `+`**,
+        // so the chord cycles the split panes' create points rather than being
+        // swallowed by the open menu.
+        if self.menu.is_some() && keys::resolve(key, text, mods) == Some(Chord::NewTab) {
+            self.menu = None;
+            self.submenu = None;
+            self.nested = None;
+            self.focus_next_pane();
+            self.open_new_tab_menu();
             return true;
         }
         // **Writing is using.** A key that types, with nothing standing over
@@ -16805,7 +17039,8 @@ impl MainView {
                 return true;
             }
             return match chord {
-                Chord::NewTab => self.new_tab(),
+                // Ctrl+T is the tab strip's `+`: the New menu, not a document.
+                Chord::NewTab => self.open_new_tab_menu(),
                 Chord::New => self.open_launcher(),
                 Chord::CloseTab => self.close_requested(self.tabs().active()),
                 Chord::ReopenClosedTab => self.reopen_closed_tab(),
@@ -18679,6 +18914,25 @@ impl MainView {
         })
     }
 
+    /// The `+` button the pointer is over, whichever pane it belongs to — the
+    /// New-tab tooltip anchors to this, not to the focused pane's `+`.
+    fn hovered_new_tab_rect(&self) -> Option<Rect> {
+        for (path, _) in self.panes.leaf_rects(self.content()) {
+            let Some(header) = self.lane_rect_for(&path) else {
+                continue;
+            };
+            if !header.contains(self.pointer.0, self.pointer.1) {
+                continue;
+            }
+            let group = self.panes.group(&path)?;
+            let button = tabs::new_tab(header, &group.widths, group.scroll);
+            if button.w > 0.0 {
+                return Some(button);
+            }
+        }
+        None
+    }
+
     fn caption_tooltip(&self, hit: Hit) -> Option<TooltipContent> {
         if self.carrying() || self.sidebar.animating() {
             return None;
@@ -18744,16 +18998,14 @@ impl MainView {
                 ),
                 koru_i18n::t(crate::format::lang(), koru_i18n::Key::ReminderAttention),
             )),
-            Hit::NewTab => {
-                let slot = tabs::new_tab(self.strip(), &self.tab_widths(), self.tab_scroll());
-                (slot.w > 0.0).then(|| {
-                    TooltipContent::new(
-                        4,
-                        slot,
-                        koru_i18n::t(crate::format::lang(), koru_i18n::Key::LauncherTooltip),
-                    )
-                })
-            }
+            Hit::NewTab => self.hovered_new_tab_rect().map(|slot| {
+                TooltipContent::new(
+                    4,
+                    slot,
+                    koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label,
+                )
+                .with_optional_shortcut(hint(koru_keys::ShortcutId::NewTab))
+            }),
             // A hovered history row answers with the exact moment behind its
             // relative time. Keys sit past the caption buttons' 1..4 so a
             // pointer sliding between rows re-anchors while staying warm.

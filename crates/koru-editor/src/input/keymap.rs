@@ -345,7 +345,11 @@ pub const DEFAULT: &[(Chord, Action)] = &[
     ),
     // --------------------------------------------------------------- document
     (
-        Chord::new(On::Letter('k'), C, false, false),
+        // Ctrl+Shift+L is the link prompt (owner, 2026-11-18). It was Ctrl+K;
+        // Ctrl+K moved to the container's command bar. Ctrl+Shift+L is noted in
+        // ADR-63 as a chord some Windows utilities grab as a global hotkey, so
+        // on a machine running one it may never reach the window — accepted.
+        Chord::new(On::Letter('l'), C, S, false),
         Action::OpenLinkPrompt,
     ),
     (

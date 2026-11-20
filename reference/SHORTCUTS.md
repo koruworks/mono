@@ -39,7 +39,7 @@ Chords are shown as this platform writes them.
 | `Ctrl+N` | New… |
 | `Ctrl+W` | Close tab |
 | `Ctrl+Shift+W` | Close all tabs |
-| `Ctrl+P` | Search |
+| `Ctrl+K` | Search |
 | `Ctrl+Shift+E` | Explore |
 | `Alt+H` | Home |
 | `Alt+1` | Rail view 1 |
@@ -114,7 +114,7 @@ Chords are shown as this platform writes them.
 | `Ctrl+Enter` | Mark done |
 | `Ctrl+Shift+Enter` | Tick checkbox |
 | `Ctrl+Shift+X` | Save diagram as… |
-| `Ctrl+K` | Link |
+| `Ctrl+Shift+L` | Link |
 | `Ctrl+Shift+Space` | Emoji |
 | `Ctrl+Space` | Search all workspaces in @ picker |
 | `Ctrl+D` | Delete line (children outdent) |

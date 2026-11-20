@@ -1479,31 +1479,76 @@ fn a_leading_title_emoji_becomes_the_tab_icon() {
     assert_eq!(tab.label, "Craft.do Pricing");
 }
 
-/// **A row's `+` makes a document inside the row** (the review's note): the
-/// same name prompt, and the shell is asked to place the document as the
-/// row's last child, the row unfolded so it shows where it lands.
+/// **A row's `+` makes a child draft** (the review's note), no name prompt:
+/// like Ctrl+T's draft, but the shell is asked to place it as the row's last
+/// child. The name is typed into the draft's own title, and Escape cancels it
+/// outright as it cancels any draft.
 #[test]
-fn a_rows_plus_prompts_for_a_document_inside_the_row() {
+fn a_rows_plus_makes_a_child_draft() {
     let (mut v, mut workspace) = container();
     let parent = NodeId::new();
+    let parent_id = koru_core::DocumentId::from_uuid(parent.as_uuid());
+    let tabs = v.tabs().len();
     assert!(v.apply(
         &mut workspace.ws,
         crate::panes::Outcome::NewChildDocument(parent)
     ));
-    assert!(v.new_document.is_some(), "the name prompt is open");
-    assert!(v.key(&mut workspace.ws, &ch("Inside"), Some("Inside"), NONE,));
+    assert!(v.new_document.is_none(), "no name prompt");
+    assert_eq!(v.tabs().len(), tabs + 1, "a draft tab opened");
+    assert!(
+        v.tabs()
+            .active_tab()
+            .draft
+            .as_ref()
+            .is_some_and(|d| d.child_of == Some(parent_id)),
+        "it is a child draft"
+    );
+
+    // The first character promotes it, placed under the parent with no title
+    // yet — the name is what the person typed into the draft.
+    assert!(v.key(&mut workspace.ws, &ch("H"), Some("H"), NONE));
+    assert!(matches!(
+        koru_workspace_host::View::take_pane_request(&mut v),
+        Some(koru_workspace_host::PaneRequest::CreateDocumentIn { parent, title })
+            if parent == parent_id && title.is_empty()
+    ));
+}
+
+/// Escape on a fresh child draft cancels it, exactly as it cancels Ctrl+T's.
+#[test]
+fn escape_cancels_a_child_draft() {
+    let (mut v, mut workspace) = container();
+    let tabs = v.tabs().len();
+    assert!(v.apply(
+        &mut workspace.ws,
+        crate::panes::Outcome::NewChildDocument(NodeId::new())
+    ));
+    assert_eq!(v.tabs().len(), tabs + 1);
     assert!(v.key(
         &mut workspace.ws,
-        &Key::Named(winit::keyboard::NamedKey::Enter),
+        &Key::Named(winit::keyboard::NamedKey::Escape),
         None,
         NONE,
     ));
-    assert!(v.new_document.is_none(), "commit closes the modal");
-    assert!(matches!(
-        koru_workspace_host::View::take_pane_request(&mut v),
-        Some(koru_workspace_host::PaneRequest::CreateDocumentIn { parent: p, title })
-            if title == "Inside" && p == koru_core::DocumentId::from_uuid(parent.as_uuid())
+    assert_eq!(v.tabs().len(), tabs, "Escape closes the draft");
+}
+
+/// Pressing `+` was a sidebar press, which took the keyboard; the new draft is
+/// what you want to type into, so the keyboard moves to the document.
+#[test]
+fn a_rows_plus_moves_the_keyboard_to_the_document() {
+    let (mut v, mut workspace) = on_document();
+    // Give the sidebar its rows and the keyboard, as a press on a row would.
+    View::adopt(&mut v, &workspace.ws);
+    v.refresh_explore(&workspace.ws, true);
+    assert!(v.explore.focus_tree(v.regions.sidebar));
+    assert!(v.explore.has_focus(), "the sidebar holds the keyboard");
+
+    assert!(v.apply(
+        &mut workspace.ws,
+        crate::panes::Outcome::NewChildDocument(NodeId::new())
     ));
+    assert!(!v.explore.has_focus(), "the keyboard moved to the document");
 }
 
 #[test]
@@ -1715,14 +1760,18 @@ fn closing_the_active_tab_returns_to_the_previously_shown_tab() {
 }
 
 #[test]
-fn ctrl_w_closes_and_ctrl_t_opens() {
+fn ctrl_t_opens_the_new_menu_and_ctrl_w_closes_a_tab() {
     let (mut v, mut workspace) = container();
     let ws = &mut workspace.ws;
-    let before = v.tabs().len();
+    // Ctrl+T opens the New menu — the strip's `+` — not a document.
     assert!(v.key(ws, &ch("t"), Some("t"), PRIMARY));
-    assert_eq!(v.tabs().len(), before + 1);
+    assert!(v.menu.is_some(), "Ctrl+T opens the New menu");
+    v.menu = None;
+    // A document made through the menu, then closed by Ctrl+W.
+    assert!(v.new_tab());
+    let before = v.tabs().len();
     assert!(v.key(ws, &ch("w"), Some("w"), PRIMARY));
-    assert_eq!(v.tabs().len(), before);
+    assert_eq!(v.tabs().len(), before - 1);
 }
 
 /// **Ctrl+N opens the New… launcher**; Ctrl+Shift+A,
@@ -2156,8 +2205,8 @@ fn a_stale_active_document_does_not_make_a_welcome_tab_savable() {
 #[test]
 fn ctrl_s_does_nothing_on_a_draft_tab() {
     let (mut v, mut workspace) = on_a_savable_document();
-    // Ctrl+T opens a draft, which is how the app makes one.
-    assert!(v.key(&mut workspace.ws, &ch("t"), Some("t"), PRIMARY));
+    // A draft is how the app makes a page before it is named.
+    assert!(v.new_tab());
     assert!(
         v.tabs().active_tab().draft.is_some(),
         "the new tab is a draft"
@@ -2268,11 +2317,11 @@ fn ctrl_digits_select_rail_workspaces_and_leave_tab_selection_alone() {
 /// Ctrl+Tab reaches the container as a direction, because the shell is the only
 /// place that can tell it apart from Ctrl+I. See `keys::tests`.
 ///
-/// It stands the quick switch up, and the list stays until something is
-/// chosen: letting go of Control does nothing, Enter goes to the highlighted
-/// tab, Escape leaves everything where it was.
+/// It stands the quick switch up, and **letting go of Control goes to the
+/// highlighted tab** — hold to cycle, release to switch. Enter also goes;
+/// Escape leaves everything where it was.
 #[test]
-fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
+fn ctrl_tab_is_hold_to_cycle_and_release_to_switch() {
     let (mut v, w) = on_document();
     let mut w = w;
     let named = |key| Key::Named(key);
@@ -2280,37 +2329,27 @@ fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
     v.select(0);
     v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
+    assert_eq!(v.tabs().active(), 0, "the list is up, nothing chosen yet");
     v.set_mods(ModifiersState::empty());
     assert_eq!(
         v.tabs().active(),
-        0,
-        "letting go of Control chooses nothing"
+        1,
+        "letting go of Control goes to the highlighted tab"
     );
-    assert!(v.key(
-        &mut w.ws,
-        &named(winit::keyboard::NamedKey::Enter),
-        None,
-        ModifiersState::empty()
-    ));
-    assert_eq!(v.tabs().active(), 1, "Enter goes to the highlighted tab");
 
-    // Tab walks on, and wraps back to the tab in front.
+    // Enter goes while the list is still up.
+    v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
     assert!(v.key(
         &mut w.ws,
-        &named(winit::keyboard::NamedKey::Tab),
-        None,
-        ModifiersState::empty()
-    ));
-    assert!(v.key(
-        &mut w.ws,
         &named(winit::keyboard::NamedKey::Enter),
         None,
         ModifiersState::empty()
     ));
-    assert_eq!(v.tabs().active(), 1);
+    assert_eq!(v.tabs().active(), 0, "Enter goes to the highlighted tab");
 
     // Escape puts it away and goes nowhere.
+    v.set_mods(ModifiersState::CONTROL);
     assert!(v.cycle_tab(1));
     assert!(v.key(
         &mut w.ws,
@@ -2318,7 +2357,7 @@ fn ctrl_tab_is_the_quick_switch_and_stays_until_chosen() {
         None,
         ModifiersState::empty()
     ));
-    assert_eq!(v.tabs().active(), 1);
+    assert_eq!(v.tabs().active(), 0);
     assert!(v.cycle_tab(1), "and it opens again afterwards");
 }
 
@@ -3268,6 +3307,79 @@ fn dragging_a_tab_to_the_right_edge_splits_the_pane() {
         .collect();
     assert!(all_labels.contains(&"Second".to_string()));
     assert!(all_labels.contains(&"Notes".to_string()));
+}
+
+/// The `+` menu's *Move*: the active document moves into a new pane split off
+/// on the chosen side, leaving the rest of its group behind.
+#[test]
+fn moving_the_active_tab_to_the_right_splits_the_pane() {
+    let (mut v, workspace) = two_document_tabs();
+    let active = v.tabs().active_tab().label.clone();
+    assert!(v.move_active_to_split(koru_editor::SplitSide::Right));
+    assert_eq!(v.panes.iter_groups().count(), 2, "the pane split");
+    let labels: Vec<String> = v
+        .panes
+        .iter_groups()
+        .flat_map(|(_, g)| g.iter_tabs().map(|t| t.label.clone()))
+        .collect();
+    assert!(labels.contains(&active), "the moved tab is still open");
+    assert!(
+        labels.contains(&"Notes".to_string()),
+        "the other tab stayed"
+    );
+    let _ = workspace;
+}
+
+/// The Move flyout's arms answer the arrow that names them: Right selects the
+/// Right arm, and so on — no need to step the highlight first.
+#[test]
+fn the_move_flyout_selects_its_arm_with_the_matching_arrow() {
+    let (mut v, workspace) = two_document_tabs();
+    assert!(v.open_new_tab_menu());
+    // 'm' is Move's mnemonic: it opens the flyout.
+    assert!(v.menu_key(&ch("m")));
+    assert!(v.submenu.is_some(), "the Move flyout is open");
+    // ArrowRight chooses the Right arm.
+    assert!(v.menu_key(&Key::Named(winit::keyboard::NamedKey::ArrowRight)));
+    assert_eq!(v.panes.iter_groups().count(), 2, "the pane split right");
+    let _ = workspace;
+}
+
+/// Ctrl+T while the + menu stands moves it to the next pane's `+`, cycling the
+/// split panes' create points.
+#[test]
+fn ctrl_t_cycles_the_new_menu_through_the_panes() {
+    let (mut v, mut workspace) = two_document_tabs();
+    assert!(v.move_active_to_split(koru_editor::SplitSide::Right));
+    assert_eq!(v.panes.iter_groups().count(), 2);
+    // First press opens the menu for the focused pane.
+    assert!(v.key(&mut workspace.ws, &ch("t"), Some("t"), PRIMARY));
+    assert!(v.menu.is_some());
+    let first = v.panes.focused_path().clone();
+    // Second press moves the menu to the next pane.
+    assert!(v.key(&mut workspace.ws, &ch("t"), Some("t"), PRIMARY));
+    assert!(v.menu.is_some(), "still a + menu");
+    assert_ne!(
+        v.panes.focused_path(),
+        &first,
+        "focus moved to the next pane"
+    );
+}
+
+/// *Move* is dimmed when the focused pane has a single tab — there is nothing
+/// to split it away from.
+#[test]
+fn move_is_disabled_when_there_is_one_tab() {
+    let (mut v, _workspace) = container();
+    assert!(v.open_new_tab_menu());
+    let menu = v.menu.as_ref().expect("the + menu");
+    let enabled = v.enabled_items(menu);
+    let at = menu
+        .items()
+        .iter()
+        .position(|a| *a == MenuAction::Move)
+        .expect("Move is in the menu");
+    assert!(!enabled[at], "Move is dimmed with a single tab");
 }
 
 /// Drag a tab to the left edge of the view to create a vertical split with the
@@ -9070,13 +9182,37 @@ fn no_tooltip_shows_while_a_rail_view_is_carried() {
 }
 
 #[test]
-fn the_plus_tooltip_names_new_without_claiming_the_launcher_shortcut() {
-    let (v, _workspace) = container();
+fn the_plus_tooltip_names_new_tab_and_teaches_its_chord() {
+    let (mut v, _workspace) = container();
+    // Point at the + button so the tooltip anchors to it.
+    let slot = tabs::new_tab(v.strip(), v.tab_widths(), v.tab_scroll());
+    v.pointer = (slot.x + slot.w * 0.5, slot.y + slot.h * 0.5);
     let tip = v
         .caption_tooltip(Hit::NewTab)
         .expect("the visible plus has a tooltip");
-    assert_eq!(tip.label, "New…");
-    assert_eq!(tip.shortcut, None);
+    assert_eq!(
+        tip.label,
+        koru_keys::registry::get(koru_keys::ShortcutId::NewTab).label
+    );
+    assert_eq!(
+        tip.shortcut,
+        koru_keys::show_hint(koru_keys::ShortcutId::NewTab, koru_keys::Section::Tooltip)
+    );
+}
+
+/// A plain letter opens the flyout whose mnemonic it matches — Ctrl+T, then D
+/// opens Documents, the way the launcher's letters choose its tiles.
+#[test]
+fn a_letter_opens_the_flyout_whose_mnemonic_it_matches() {
+    let (mut v, _workspace) = container();
+    assert!(v.open_new_tab_menu());
+    assert!(v.menu_key(&ch("d")));
+    let (_, sub) = v.submenu.as_ref().expect("the Documents flyout");
+    assert_eq!(
+        sub.items(),
+        context_menu::document_plus_items().as_slice(),
+        "the letter opened Documents"
+    );
 }
 
 #[test]
@@ -14501,17 +14637,16 @@ fn the_help_rows_open_their_destinations() {
     let (mut v, _w) = container();
     while View::take_pane_request(&mut v).is_some() {}
     for (action, uri) in [
-        (
-            Action::Releases,
-            "https://github.com/koruworks/mono/releases",
-        ),
-        (Action::GitHub, "https://github.com/koruworks/mono"),
-        (Action::X, "https://x.com/korudotdo"),
+        (Action::Releases, "releases"),
+        (Action::GitHub, "github"),
+        (Action::X, "x"),
     ] {
         assert!(v.help_action(action));
         assert_eq!(
             View::take_pane_request(&mut v),
-            Some(PaneRequest::OpenUri(uri)),
+            Some(PaneRequest::OpenWebsite(crate::whatsnew::app_link(
+                uri, None
+            ))),
             "{action:?}"
         );
         assert!(
@@ -14538,7 +14673,7 @@ fn the_help_rows_open_their_destinations() {
     );
     assert_eq!(
         View::take_pane_request(&mut v),
-        Some(PaneRequest::OpenWebsite(crate::whatsnew::release_url(
+        Some(PaneRequest::OpenWebsite(crate::whatsnew::release_link(
             koru_channel::build_info().version,
             koru_channel::ReleaseChannel::of_this_build(),
         )))

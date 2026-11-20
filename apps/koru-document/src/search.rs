@@ -89,6 +89,13 @@ struct Match {
     /// replacement over `source` would delete the anchor and take the pill with
     /// it. Renaming a document is not something the find bar may do.
     pill: bool,
+    /// **Words read out of a picture matched** (OCR), and `node` is the
+    /// picture's row. `source` is the range in the picture's read text
+    /// (`koru_editor::Editor::picture_text`), not in the node's text, which
+    /// an image row does not have. Like [`pill`](Self::pill), found and never
+    /// replaced: the words are the pixels' and not the document's. Landing on
+    /// one flashes the picture's frame, as a global search result does.
+    picture: bool,
     order: usize,
 }
 
@@ -98,6 +105,7 @@ impl Match {
             && self.source == other.source
             && self.caption == other.caption
             && self.pill == other.pill
+            && self.picture == other.picture
             && self.table.as_ref().map(|t| (t.row, t.column, &t.display))
                 == other.table.as_ref().map(|t| (t.row, t.column, &t.display))
     }
@@ -750,6 +758,36 @@ impl LocalSearch {
         self.reveal_active(editor);
     }
 
+    /// **The words read out of a picture arrived or changed** (OCR), while the
+    /// bar may be open. Matches are found again, but unlike
+    /// [`refresh`](Self::refresh), which is a new query, the match being looked
+    /// at stays the one being looked at and the page does not move. Only when
+    /// it is gone, or there was none, does this land the way a query does.
+    pub fn picture_texts_changed(&mut self, editor: &mut Editor) {
+        if !self.open {
+            return;
+        }
+        let current = self
+            .active
+            .and_then(|index| self.matches.get(index))
+            .cloned();
+        let matches = self.scan(editor);
+        if matches == self.matches {
+            return;
+        }
+        let kept = current
+            .as_ref()
+            .and_then(|current| matches.iter().position(|found| found.same_target(current)));
+        match kept {
+            Some(index) => {
+                self.matches = matches;
+                self.active = Some(index);
+                self.sync_highlights(editor);
+            }
+            None => self.refresh(editor),
+        }
+    }
+
     pub fn animating(&self, now: Instant) -> bool {
         self.activated
             .is_some_and(|started| now.saturating_duration_since(started) < PULSE)
@@ -994,6 +1032,7 @@ impl LocalSearch {
                         table: None,
                         caption: true,
                         pill: false,
+                        picture: false,
                         order: 0,
                     }),
             );
@@ -1001,7 +1040,29 @@ impl LocalSearch {
         }
         for (row_order, row) in editor.body.rows.iter().enumerate() {
             let order = row_order + order_offset;
-            if row.image.is_some() || row.kind == koru_core::Kind::Divider {
+            if let Some(image) = row.image.as_ref() {
+                // **A picture is found by the words read out of it** (OCR), when
+                // the host has them: one match per occurrence, as in a sentence,
+                // so the count says how many times the word is there. There is
+                // nothing else in an image row to search.
+                if let Some(text) = editor.picture_text(&image.hash.0) {
+                    found.extend(
+                        find_ranges(text, query, self.match_case, self.whole_words)
+                            .into_iter()
+                            .map(|range| Match {
+                                node: row.id,
+                                source: range,
+                                table: None,
+                                caption: false,
+                                pill: false,
+                                picture: true,
+                                order,
+                            }),
+                    );
+                }
+                continue;
+            }
+            if row.kind == koru_core::Kind::Divider {
                 continue;
             }
             if row.kind == koru_core::Kind::Table
@@ -1028,6 +1089,7 @@ impl LocalSearch {
                                     }),
                                     caption: false,
                                     pill: false,
+                                    picture: false,
                                     order,
                                 });
                             }
@@ -1044,6 +1106,7 @@ impl LocalSearch {
                             table: None,
                             caption: false,
                             pill: false,
+                            picture: false,
                             order,
                         })
                         .collect();
@@ -1090,6 +1153,7 @@ impl LocalSearch {
                 table: None,
                 caption: false,
                 pill: true,
+                picture: false,
                 order,
             })
         })
@@ -1115,6 +1179,9 @@ impl LocalSearch {
             .matches
             .iter()
             .enumerate()
+            // A picture's match has no range in the row to light: its cue is
+            // the frame flash `reveal_active` asks for.
+            .filter(|(_, found)| !found.picture)
             .map(|(index, found)| SearchHighlight {
                 node: found.node,
                 range: found
@@ -1136,6 +1203,8 @@ impl LocalSearch {
         };
         if found.caption {
             // The caption is fixed viewport chrome; it is already visible.
+        } else if found.picture {
+            editor.reveal_picture(found.node);
         } else if let Some(table) = &found.table {
             editor.reveal_table_range(found.node, table.row, table.column);
         } else {
@@ -1151,6 +1220,10 @@ impl LocalSearch {
         };
         if found.caption {
             editor.start_rename_selection(ws, found.source.clone());
+        } else if found.picture {
+            // Closing on a picture's match selects the picture, as clicking it
+            // does: an image is selected, never edited.
+            editor.reveal(found.node);
         } else {
             editor.select_text_range(
                 found.node,
@@ -1175,7 +1248,8 @@ impl LocalSearch {
         // is what makes Replace usable in a document full of links; `direction`
         // is the same ±1 the replacing path uses, so Shift+Enter still walks
         // backwards past one.
-        if active.pill {
+        // A picture's read words are found, never replaced, the same way.
+        if active.pill || active.picture {
             self.step(editor, direction);
             return;
         }
@@ -1249,7 +1323,7 @@ impl LocalSearch {
         let matches: Vec<Match> = self
             .scan(editor)
             .into_iter()
-            .filter(|found| !found.pill)
+            .filter(|found| !found.pill && !found.picture)
             .collect();
         if matches.is_empty() {
             return;
@@ -1684,6 +1758,188 @@ mod tests {
         editor.reflow();
         let search = LocalSearch::new(&mut editor.view.engine);
         (ws, editor, search, ids)
+    }
+
+    const PICTURE: &str = "b3:picture";
+
+    /// A document of a sentence, a picture and another sentence, with the
+    /// picture's read words known to the editor.
+    fn picture_editor(read: Option<&str>) -> (WorkspaceDoc, Editor, LocalSearch, Vec<NodeId>) {
+        let (ws, mut editor, search, ids) = document_editor(&[
+            Node::paragraph("before the receipt").unwrap(),
+            Node::image(
+                koru_core::node::BlobHash(PICTURE.into()),
+                "image/png",
+                Some(40),
+                Some(40),
+            )
+            .unwrap(),
+            Node::paragraph("after the receipt").unwrap(),
+        ]);
+        editor.set_picture_text(PICTURE, read);
+        (ws, editor, search, ids)
+    }
+
+    #[test]
+    fn a_pictures_read_words_are_found_once_per_occurrence() {
+        let (_ws, mut editor, mut search, ids) =
+            picture_editor(Some("TOTAL due\nreceipt 42, receipt copy"));
+        search.query.set_text(&mut editor.view.engine, "receipt");
+        search.open(&mut editor, false);
+        let nodes: Vec<NodeId> = search.matches.iter().map(|found| found.node).collect();
+        assert_eq!(
+            nodes,
+            vec![ids[0], ids[1], ids[1], ids[2]],
+            "in reading order"
+        );
+        let pictures: Vec<&Match> = search.matches.iter().filter(|m| m.picture).collect();
+        assert_eq!(pictures.len(), 2);
+        assert_eq!(pictures[0].source, 10..17, "a range in the read text");
+        assert!(pictures.iter().all(|m| !m.pill && m.table.is_none()));
+        assert_eq!(
+            editor.view.search_highlights.len(),
+            2,
+            "nothing is lit on the picture's row: it has no text"
+        );
+        assert!(
+            editor
+                .view
+                .search_highlights
+                .iter()
+                .all(|highlight| highlight.node != ids[1])
+        );
+    }
+
+    #[test]
+    fn a_picture_with_no_read_words_is_not_found() {
+        let (_ws, mut editor, mut search, _) = picture_editor(None);
+        search.query.set_text(&mut editor.view.engine, "total");
+        search.open(&mut editor, false);
+        assert!(search.matches.is_empty());
+
+        let (_ws, mut editor, mut search, _) = picture_editor(Some("   \n "));
+        search.query.set_text(&mut editor.view.engine, " ");
+        search.open(&mut editor, false);
+        assert!(
+            search.matches.iter().all(|found| !found.picture),
+            "blank read text is no read text"
+        );
+    }
+
+    #[test]
+    fn match_case_and_whole_words_apply_to_a_pictures_words() {
+        let (_ws, mut editor, mut search, _) = picture_editor(Some("Total subtotal TOTAL"));
+        search.query.set_text(&mut editor.view.engine, "total");
+        search.open(&mut editor, false);
+        assert_eq!(search.matches.len(), 3);
+
+        search.whole_words = true;
+        search.refresh(&mut editor);
+        assert_eq!(
+            search
+                .matches
+                .iter()
+                .map(|found| found.source.clone())
+                .collect::<Vec<_>>(),
+            vec![0..5, 15..20]
+        );
+
+        search.match_case = true;
+        search.refresh(&mut editor);
+        assert_eq!(search.matches.len(), 0);
+        search.query.set_text(&mut editor.view.engine, "TOTAL");
+        search.refresh(&mut editor);
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(search.matches[0].source, 15..20);
+    }
+
+    #[test]
+    fn landing_on_a_pictures_match_flashes_and_reveals_the_picture() {
+        let (ws, mut editor, mut search, ids) = picture_editor(Some("invoice 42"));
+        search.query.set_text(&mut editor.view.engine, "invoice");
+        search.open(&mut editor, false);
+        assert_eq!(search.matches.len(), 1);
+        assert_eq!(search.active, Some(0));
+        assert_eq!(editor.body.rows[editor.body.focus].id, ids[1]);
+        let flash = editor
+            .view
+            .search_flash
+            .as_ref()
+            .expect("the frame flashes");
+        assert_eq!(flash.node, ids[1]);
+        assert!(flash.until > Instant::now());
+        assert!(!editor.view.active, "the find field keeps the keyboard");
+
+        // Enter on the bar closes it on the picture: selected, as a click does.
+        search.close(&ws, &mut editor, true);
+        assert_eq!(editor.body.rows[editor.body.focus].id, ids[1]);
+        assert!(editor.view.active);
+    }
+
+    #[test]
+    fn replace_steps_past_a_pictures_words_and_replace_all_leaves_them() {
+        let (mut ws, mut editor, mut search, ids) = picture_editor(Some("receipt"));
+        search.query.set_text(&mut editor.view.engine, "receipt");
+        search.open(&mut editor, true);
+        search.replacement.set_text(&mut editor.view.engine, "bill");
+        // Land on the picture's match, then Replace: nothing is written and
+        // the bar walks on to the next match.
+        search.active = search.matches.iter().position(|found| found.picture);
+        search.replace_one(&mut ws, &mut editor, 1);
+        assert_eq!(
+            ws.read(ids[0]).unwrap().content.as_text(),
+            Some("before the receipt")
+        );
+        assert!(!search.matches[search.active.unwrap()].picture);
+
+        search.replace_all(&mut ws, &mut editor);
+        assert_eq!(
+            ws.read(ids[0]).unwrap().content.as_text(),
+            Some("before the bill")
+        );
+        assert_eq!(
+            ws.read(ids[2]).unwrap().content.as_text(),
+            Some("after the bill")
+        );
+        assert_eq!(editor.picture_text(PICTURE), Some("receipt"));
+        // Replace all closes the bar, leaving the last replacement selected;
+        // open it again on the old word and the picture's words are all that
+        // is left to find.
+        search.open(&mut editor, false);
+        search.query.set_text(&mut editor.view.engine, "receipt");
+        search.refresh(&mut editor);
+        assert_eq!(search.matches.len(), 1);
+        assert!(
+            search.matches[0].picture,
+            "the picture's words are still found"
+        );
+    }
+
+    #[test]
+    fn read_words_arriving_while_the_bar_is_open_keep_the_current_match() {
+        let (_ws, mut editor, mut search, ids) = picture_editor(None);
+        search.query.set_text(&mut editor.view.engine, "receipt");
+        search.open(&mut editor, false);
+        assert_eq!(search.matches.len(), 2);
+        search.active = Some(1);
+        let looking_at = search.matches[search.active.unwrap()].clone();
+        assert_eq!(looking_at.node, ids[2]);
+
+        assert!(editor.set_picture_text(PICTURE, Some("receipt")));
+        search.picture_texts_changed(&mut editor);
+        assert_eq!(search.matches.len(), 3);
+        assert!(
+            search.matches[search.active.unwrap()].same_target(&looking_at),
+            "the match being looked at stays the one being looked at"
+        );
+
+        assert!(
+            !editor.set_picture_text(PICTURE, Some("receipt")),
+            "no change"
+        );
+        assert!(editor.set_picture_text(PICTURE, None));
+        search.picture_texts_changed(&mut editor);
+        assert_eq!(search.matches.len(), 2);
     }
 
     #[test]

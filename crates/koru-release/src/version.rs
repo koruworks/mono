@@ -62,8 +62,14 @@ fn suggest_nightly(
     date: &str,
     short_commit: &str,
 ) -> Result<String, String> {
+    // The higher of the two lines, not beta whenever there is one: a beta
+    // channel left behind (0.1.3 on the update origin while stable reached
+    // 0.1.8 on GitHub) would otherwise name nightlies below the stable they
+    // follow.
     let mut base = manifest_version(beta)
-        .or_else(|| manifest_version(stable))
+        .into_iter()
+        .chain(manifest_version(stable))
+        .max()
         .unwrap_or_else(|| Version::new(0, 0, 0));
     base.patch += 1;
     base.pre = Prerelease::EMPTY;
@@ -183,6 +189,26 @@ mod tests {
             )
             .unwrap(),
             "0.9.2-nightly.20260804+abc1234"
+        );
+    }
+
+    /// A beta line left behind does not hold nightlies below stable.
+    #[test]
+    fn nightly_follows_stable_when_stable_has_passed_beta() {
+        let stable = manifest(ReleaseChannel::Stable, "0.1.9");
+        let beta = manifest(ReleaseChannel::Beta, "0.1.3");
+        let nightly = manifest(ReleaseChannel::Nightly, "0.1.4-nightly.20261119+c96d2f7");
+        assert_eq!(
+            suggest_version(
+                ReleaseChannel::Nightly,
+                Some(&stable),
+                Some(&beta),
+                Some(&nightly),
+                "20261120",
+                "abc1234"
+            )
+            .unwrap(),
+            "0.1.10-nightly.20261120+abc1234"
         );
     }
 

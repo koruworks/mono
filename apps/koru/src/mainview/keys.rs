@@ -33,7 +33,7 @@ pub enum Chord {
     /// Open the New… launcher, the tab strip's `+`.
     New,
     CloseTab,
-    /// Ctrl+P or Ctrl+Shift+F — global search in this window.
+    /// Ctrl+K or Ctrl+Shift+F — global search in this window.
     Search,
     /// Select a workspace by its rail position, zero-based.
     SelectWorkspace(usize),
@@ -241,7 +241,7 @@ fn resolve_any(key: &Key, text: Option<&str>, mods: ModifiersState) -> Option<Ch
         'n' => Some(Chord::New),
         'w' => Some(Chord::CloseTab),
         'j' => Some(Chord::ToggleContext),
-        'p' => Some(Chord::Search),
+        'k' => Some(Chord::Search),
         's' => Some(Chord::SaveSnapshot),
         // Ctrl+1..9 select workspaces by rail position. `ctrl_letter` returns digits verbatim
         // through its non-control arm, so they arrive here unchanged.

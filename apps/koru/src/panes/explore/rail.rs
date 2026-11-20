@@ -286,6 +286,12 @@ pub enum TasksRailRequest {
         id: ListId,
         name: String,
     },
+    /// A press on a list's colour swatch: open its colour picker at the
+    /// press, as the Tasks page's heading swatch does.
+    ListColor {
+        id: ListId,
+        at: (f32, f32),
+    },
     /// A swatch chosen in that menu.
     RecolorList {
         id: ListId,
@@ -1568,6 +1574,12 @@ impl TasksRail {
                     let open = !self.is_open(id);
                     self.set_open(id, open);
                     return None;
+                }
+                // A leaf's swatch is the list's colour, as the page's heading
+                // swatch is: a press there opens the colour picker rather than
+                // the page. The chevron above already took the parent's slot.
+                if parts.icon.contains(x, y) {
+                    return Some(TasksRailRequest::ListColor { id, at: (x, y) });
                 }
                 if self.shows_actions(row) {
                     if parts.add.contains(x, y) {

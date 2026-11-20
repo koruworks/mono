@@ -1541,7 +1541,8 @@ pub fn draw_emoji_picker_surface(
     }
 }
 
-/// The Ctrl+K prompt: a name field and a URL field, with the active one ringed.
+/// The Ctrl+Shift+L prompt: a name field and a URL field, with the active one
+/// ringed.
 pub fn draw_link_prompt(
     scene: &mut Scene,
     root: Affine,

@@ -3021,7 +3021,7 @@ pub enum Key {
     ShowSidebar,
     /// The lane's Search, and the command bar's placeholder.
     SearchOrTypeACommand,
-    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+P`), then
+    /// The Search tooltip's chords: `{}` is this window's (`Ctrl+K`), then
     /// the agent's machine-wide one (`Ctrl+Shift+K`), which opens search from
     /// any app.
     SearchChordsAnywhere,
@@ -3490,6 +3490,7 @@ pub enum Key {
     ReadingCopyText,
     ReadingCopyFailed,
     ReadingForceOcr,
+    ReadingPictureText,
 
     // ---- Text in pictures and PDFs: off, and the partly read list (OCR
     // Plan 3.5). EXPERIENCE §4 gives no words for these; each is the
@@ -3564,7 +3565,7 @@ impl Key {
     /// Every key, in table order. Written out rather than derived, because it
     /// is what the completeness tests compare the table against — a list
     /// generated from the same source it is checking would prove nothing.
-    pub const ALL: [Key; 2494] = [
+    pub const ALL: [Key; 2495] = [
         Key::Language,
         Key::Back,
         Key::TryAgain,
@@ -6026,6 +6027,7 @@ impl Key {
         Key::ReadingCopyText,
         Key::ReadingCopyFailed,
         Key::ReadingForceOcr,
+        Key::ReadingPictureText,
         Key::SettingsReaderOff,
         Key::SettingsReaderPartlyRead,
         Key::SettingsReaderPagesRead,
@@ -17693,6 +17695,7 @@ Row { key: Key::AccountCreationExpiredBody, en: "This sign-in expired. A Koru ac
     Row { key: Key::ReadingCopyText, en: "Copy text", es: "Copiar texto", pt_br: "Copiar texto", de: "Text kopieren", fr: "Copier le texte", ar: "نسخ النص", zh_hans: "复制文本", ja: "テキストをコピー" },
     Row { key: Key::ReadingCopyFailed, en: "Could not copy text.", es: "No se pudo copiar el texto.", pt_br: "Não foi possível copiar o texto.", de: "Text konnte nicht kopiert werden.", fr: "Impossible de copier le texte.", ar: "تعذّر نسخ النص.", zh_hans: "无法复制文本。", ja: "テキストをコピーできませんでした。" },
     Row { key: Key::ReadingForceOcr, en: "Re-scan", es: "Volver a escanear", pt_br: "Digitalizar novamente", de: "Erneut scannen", fr: "Numériser à nouveau", ar: "إعادة المسح", zh_hans: "重新扫描", ja: "再スキャン" },
+    Row { key: Key::ReadingPictureText, en: "Text in picture: {}", es: "Texto en la imagen: {}", pt_br: "Texto na imagem: {}", de: "Text im Bild: {}", fr: "Texte dans l'image : {}", ar: "النص في الصورة: {}", zh_hans: "图片中的文字：{}", ja: "画像内のテキスト: {}" },
     // Text in pictures and PDFs: off, and the partly read list (OCR Plan
     // 3.5). EXPERIENCE §4 gives no words for these; written plainly.
     Row { key: Key::SettingsReaderOff, en: "Off. What was already read can still be found.", es: "Desactivado. Lo que ya se leyó se puede seguir encontrando.", pt_br: "Desativado. O que já foi lido ainda pode ser encontrado.", de: "Aus. Was bereits gelesen wurde, ist weiterhin auffindbar.", fr: "Désactivé. Ce qui a déjà été lu reste trouvable.", ar: "متوقف. ما تمت قراءته من قبل لا يزال يمكن العثور عليه.", zh_hans: "已关闭。已读取的内容仍可找到。", ja: "オフ。すでに読み取ったものは引き続き見つけられます。" },

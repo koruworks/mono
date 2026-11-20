@@ -5210,6 +5210,7 @@ dependencies = [
  "tempfile",
  "tracing",
  "unicode-segmentation",
+ "url",
  "uuid",
  "vello",
  "windows 0.62.2",

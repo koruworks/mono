@@ -655,7 +655,7 @@ pub const REGISTRY: &[Shortcut] = &[
         ShortcutId::Search,
         Layer::Container,
         "Search",
-        Chord::new(On::Letter('p'), PRIMARY),
+        Chord::new(On::Letter('k'), PRIMARY),
     ),
     s(
         ShortcutId::ToggleExplore,
@@ -1063,7 +1063,7 @@ pub const REGISTRY: &[Shortcut] = &[
         ShortcutId::InsertLink,
         Layer::Editor,
         "Link",
-        Chord::new(On::Letter('k'), PRIMARY),
+        Chord::new(On::Letter('l'), PRIMARY_SHIFT),
     ),
     s(
         ShortcutId::EmojiPicker,

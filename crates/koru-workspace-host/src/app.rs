@@ -1216,6 +1216,13 @@ enum ImportMessage {
         target: crate::reading_file::ReadingTarget,
         offers: Option<crate::reading_requests::ReadingOffers>,
     },
+    /// The words read out of pictures (OCR), by blob address, for in-page
+    /// find, *Copy text* and accessibility. `None`: the picture has no
+    /// reading. A picture whose reading could not be asked for is left out,
+    /// so a failed fetch never takes away words a view already has.
+    PictureTexts {
+        texts: Vec<(String, Option<String>)>,
+    },
     ReadingRescanFinished(Result<reading_rescan::Summary, ()>),
     FileOpened {
         name: String,
@@ -1842,13 +1849,41 @@ fn fetch_offers(
     target: &crate::reading_file::ReadingTarget,
     workspace: Option<koru_store_core::ids::WorkspaceId>,
 ) -> Option<crate::reading_requests::ReadingOffers> {
-    let (client, workspace, hash, _) =
-        locate_reading_item(segment, root, target, workspace).ok()?;
-    client
-        .reading(workspace, &hash)
+    fetch_reading(segment, root, target, workspace)
         .ok()
         .flatten()
         .map(|answer| answer.offers)
+}
+
+/// **One item's reading**, on a worker. `Ok(None)` when nothing has been
+/// read of it; `Err` when the Store could not be asked.
+fn fetch_reading(
+    segment: &str,
+    root: Option<&std::path::Path>,
+    target: &crate::reading_file::ReadingTarget,
+    workspace: Option<koru_store_core::ids::WorkspaceId>,
+) -> Result<Option<koru_api_client::ReadingAnswer>, String> {
+    let (client, workspace, hash, _) = locate_reading_item(segment, root, target, workspace)?;
+    client.reading(workspace, &hash).map_err(|e| e.to_string())
+}
+
+/// A picture's words from the reading its menu just fetched (OCR), so *Copy
+/// text* is as fresh as *Read again*. `None` for a file, or when the Store
+/// could not be asked: no answer is not the answer "no words".
+fn picture_text_message(
+    target: &crate::reading_file::ReadingTarget,
+    answer: &Result<Option<koru_api_client::ReadingAnswer>, String>,
+) -> Option<ImportMessage> {
+    let crate::reading_file::ReadingTarget::Picture { hash } = target else {
+        return None;
+    };
+    let answer = answer.as_ref().ok()?;
+    Some(ImportMessage::PictureTexts {
+        texts: vec![(
+            hash.clone(),
+            crate::reading_details::picture_text(answer.as_ref()),
+        )],
+    })
 }
 
 /// **Fetch one item's reading and turn it into the file's text**, on a
@@ -7143,6 +7178,20 @@ Nothing was written. The store starts on demand, so this usually means it could 
                 crate::reading_requests::ReadRequestKind::ReadAgain,
             );
         }
+        // The pictures whose read words a view has not had yet (OCR), for
+        // in-page find, *Copy text* and accessibility. Nothing to do, and no
+        // worker, when no view has anything new.
+        let mut picture_asks: Vec<String> = Vec::new();
+        for pane in self.panes.values_mut() {
+            for hash in pane.view.take_wants_picture_texts() {
+                if !picture_asks.contains(&hash) {
+                    picture_asks.push(hash);
+                }
+            }
+        }
+        if !picture_asks.is_empty() {
+            self.fetch_picture_texts(picture_asks);
+        }
         // /attach and /image both open a native picker on the main thread,
         // matching each other: no parent window (a parented rfd dialog from
         // about_to_wait has failed silently on Windows), and only while no
@@ -11163,6 +11212,18 @@ Nothing was written. The store starts on demand, so this usually means it could 
                         .with_details(error),
                 ),
             },
+            ImportMessage::PictureTexts { texts } => {
+                for pane in self.panes.values_mut() {
+                    let mut changed = false;
+                    for (hash, text) in &texts {
+                        changed |= pane.view.set_picture_text(hash, text.as_deref());
+                    }
+                    if changed {
+                        pane.needs_frame.set(true);
+                        pane.window.request_redraw();
+                    }
+                }
+            }
             ImportMessage::ReadingOffers { target, offers } => {
                 for pane in self.panes.values_mut() {
                     if pane.view.set_reading_offers(&target, offers) {
@@ -11480,7 +11541,11 @@ Nothing was written. The store starts on demand, so this usually means it could 
         let spawned = std::thread::Builder::new()
             .name("koru-reading-offers".into())
             .spawn(move || {
-                let offers = fetch_offers(&segment, root.as_deref(), &target, workspace);
+                let answer = fetch_reading(&segment, root.as_deref(), &target, workspace);
+                if let Some(message) = picture_text_message(&target, &answer) {
+                    let _ = tx.send(message);
+                }
+                let offers = answer.ok().flatten().map(|answer| answer.offers);
                 let _ = tx.send(ImportMessage::ReadingOffers { target, offers });
                 let _ = proxy.send_event(Wake::Import);
             });
@@ -11528,6 +11593,43 @@ Nothing was written. The store starts on demand, so this usually means it could 
             });
         if let Err(error) = spawned {
             tracing::debug!(%error, "a reading request could not be sent");
+        }
+    }
+
+    /// **Ask the Store for the words read out of pictures** (OCR), for in-page
+    /// find, *Copy text* and accessibility. One worker for the batch, which
+    /// asks for each in turn and answers once; the words reach every view
+    /// through `View::set_picture_text`.
+    fn fetch_picture_texts(&mut self, hashes: Vec<String>) {
+        let Some(workspace) = self.current_store_workspace() else {
+            return;
+        };
+        let tx = self.import_tx.clone();
+        let proxy = self.wake_proxy.clone();
+        let root = self.gateway_root.clone();
+        let segment = koru_workspace::fromstore::segment().to_owned();
+        let spawned = std::thread::Builder::new()
+            .name("koru-picture-texts".into())
+            .spawn(move || {
+                let Ok(client) = client_at_segment(&segment, root.as_deref()) else {
+                    return;
+                };
+                let texts: Vec<(String, Option<String>)> = hashes
+                    .into_iter()
+                    .filter_map(|hash| {
+                        let blob = koru_store_core::model::BlobHash::parse(&hash).ok()?;
+                        let answer = client.reading(workspace, &blob).ok()?;
+                        let text = crate::reading_details::picture_text(answer.as_ref());
+                        Some((hash, text))
+                    })
+                    .collect();
+                if !texts.is_empty() {
+                    let _ = tx.send(ImportMessage::PictureTexts { texts });
+                    let _ = proxy.send_event(Wake::Import);
+                }
+            });
+        if let Err(error) = spawned {
+            tracing::debug!(%error, "the pictures' words could not be asked for");
         }
     }
 

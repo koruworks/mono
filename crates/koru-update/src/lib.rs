@@ -17,6 +17,7 @@ mod manifest;
 mod paths;
 #[cfg(target_os = "linux")]
 pub mod processes;
+pub mod site;
 mod state;
 mod verify;
 
